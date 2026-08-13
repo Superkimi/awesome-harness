@@ -10,7 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = path.join(root, "sources");
 const siteRoot = path.join(root, "site");
 const sourceInfo = new Map(projects.map((project) => [project.slug, project]));
-const videoCatalog = videoEntries(projects, chapterDefs);
+const videoCatalog = videoEntries(projects, chapterDefs).map((entry) => ({
+  ...entry,
+  status: fs.existsSync(path.join(siteRoot, entry.mp4)) && fs.existsSync(path.join(siteRoot, entry.srt)) ? "published" : entry.status
+}));
 const videoById = new Map(videoCatalog.map((entry) => [entry.id, entry]));
 
 function mkdir(file) { fs.mkdirSync(path.dirname(file), { recursive: true }); }
