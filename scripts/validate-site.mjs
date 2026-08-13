@@ -28,10 +28,16 @@ assert(htmlFiles.length === projects.length * 2 * (1 + 1 + chapterDefs.length + 
 
 const versions = JSON.parse(fs.readFileSync(path.join(site, "data/versions.json"), "utf8"));
 const videos = JSON.parse(fs.readFileSync(path.join(site, "data/videos.json"), "utf8"));
+const legacyInventory = JSON.parse(fs.readFileSync(path.join(root, "data/legacy/inventory.json"), "utf8"));
+const legacyBySlug = new Map(legacyInventory.repositories.map((repo) => [repo.slug === "MonkeyCode" ? "monkeycode" : repo.slug, repo]));
 assert(videos.entries?.length === projects.length * (1 + chapterDefs.length), `expected ${projects.length * (1 + chapterDefs.length)} video entries, found ${videos.entries?.length ?? 0}`);
 for (const project of projects) {
   const version = versions.projects?.[project.slug];
   assert(version?.commit === project.commit, `${project.slug}: version ledger commit mismatch`);
+  if (project.legacy) {
+    const legacy = legacyBySlug.get(project.slug);
+    assert(legacy?.head === project.commit, `${project.slug}: refreshed legacy inventory commit mismatch`);
+  }
   for (const lang of ["zh", "en"]) {
     const base = path.join(site, "projects", project.slug, lang);
     assert(fs.existsSync(path.join(base, "analysis.html")), `${project.slug}/${lang}: missing analysis`);
