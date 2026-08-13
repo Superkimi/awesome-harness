@@ -9,3 +9,4 @@
 - Key frames: `4` PNG checkpoints in `source/qa/`.
 - Privacy scan: `REVIEW`; no real URL, server path, personal handle, name, key, or private conversation in composition.
 - Editorial audit: concrete work hook, fixed-commit source proof, two implementation facts, data flow, beginner recipe, limitation, and takeaway are present.
+- Status: PUBLISHED.
