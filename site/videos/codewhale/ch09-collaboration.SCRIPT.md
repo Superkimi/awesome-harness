@@ -1,0 +1,14 @@
+1. 研究和实现要并行，我先看 fanout、close-as-cancel、隔离 worktree 和 worker host 协议。
+2. 这一章不猜作者意图，只沿固定版本的运行时代码、契约和测试看事实。
+3. 固定版本证据：crates/tui/src/tools/subagent/mod.rs:1-11 · agent 是模型可见的创建面，coordination tools 复用同一 mailbox/checkpoint machinery；crates/tui/src/tools/subagent/mailbox.rs:1-92 · Mailbox 用单调序列、fanout、close-as-cancel 和结构化工作状态传递协作事实；crates/tui/src/tools/subagent/mod.rs:98-228 · 子 Agent 有 bounded resident context、步骤/时间/响应预算和持久 checkpoint。
+4. 事实一：子 Agent 不是一套旁路脚本：父子共享结构化协调协议，但子 Agent 默认不会继承主 Agent 的全权模式。
+5. 源码含义：协作 API 应与 worker 生命周期共用数据结构，同时让安全 posture 在 child boundary 重新计算。
+6. 事实二：UI 卡片、父 Agent 和成本账本看到的是同一条有序消息流；子 Agent 被取消时，取消信号和“已取消”事件不会互相错位。
+7. 数据流：Core/EngineConfig → turn freeze → ToolSpec/MCP → policy/sandbox → session/checkpoint/receipt。
+8. 小白动作：先把任务拆成能力、预算、审批、执行和证据五格。
+9. 第二个动作：为并行、心跳、取消、恢复和用量归属各留一个明确状态。
+10. 局限提醒：agent/Fleet roles、mailbox、预算/深度/超时、resident lease、Git worktree 与本地/SSH worker host。
+11. 这一章的结论：协作 API 应与 worker 生命周期共用数据结构，同时让安全 posture 在 child boundary 重新计算。
+12. 下一章继续沿固定提交的源码锚点，回答一个真实工作问题。
+
+Fixed commit: cfc2f2b13c070e900ee10dbeffb07028d3beaebd
