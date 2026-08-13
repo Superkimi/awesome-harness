@@ -138,14 +138,22 @@ function projectNav(project, lang, current) {
 
 function diagram(project, lang, type) {
   const labels = lang === "zh"
-    ? { architecture: ["入口 / UI", "控制面", "模型与消息", "工具 / MCP", "状态与证据"], sequence: ["用户", "Session", "Model", "Tool", "Journal"], capability: ["循环", "上下文", "安全", "扩展", "协作"] }
-    : { architecture: ["Entry / UI", "Control plane", "Model / messages", "Tools / MCP", "State / evidence"], sequence: ["User", "Session", "Model", "Tool", "Journal"], capability: ["Loop", "Context", "Security", "Extensions", "Collaboration"] };
+    ? { architecture: ["入口 / UI", "控制面", "模型与上下文", "工具 / MCP", "状态与恢复"], sequence: ["用户", "Session", "模型", "工具", "日志"], capability: ["循环", "上下文", "安全", "扩展", "协作"] }
+    : { architecture: ["Entry / UI", "Control plane", "Model / context", "Tools / MCP", "State / recovery"], sequence: ["User", "Session", "Model", "Tool", "Journal"], capability: ["Loop", "Context", "Security", "Extensions", "Collaboration"] };
   const nodes = labels[type];
+  const dimensionIds = type === "architecture"
+    ? ["architecture", "loop", "modelContext", "tools", "recovery"]
+    : type === "sequence"
+      ? ["loop", "modelContext", "tools", "observability", "recovery"]
+      : ["loop", "modelContext", "security", "connectors", "collaboration"];
   const width = type === "sequence" ? 980 : 900;
   const nodeMarkup = nodes.map((label, i) => {
     const x = type === "sequence" ? 45 + i * 190 : 70 + (i % 3) * 275;
     const y = type === "sequence" ? 100 : 92 + Math.floor(i / 3) * 150;
-    return `<g class="diagram-node" data-node="${i}"><rect x="${x}" y="${y}" width="190" height="70" rx="5"/><text x="${x + 95}" y="${y + 32}" text-anchor="middle">${esc(label)}</text><text class="node-sub" x="${x + 95}" y="${y + 51}" text-anchor="middle">${esc(project.commit.slice(0, 8))}</text></g>`;
+    const note = dimensionNotes[project.slug]?.[lang]?.[dimensionIds[i]] || "";
+    const definition = dimensionDefs.find((dimension) => dimension.id === dimensionIds[i]);
+    const citation = findCitation(project, definition?.anchor || "architecture");
+    return `<g class="diagram-node" data-node="${i}"><title>${esc(`${label}: ${note}`)}</title><rect x="${x}" y="${y}" width="190" height="70" rx="5"/><text x="${x + 95}" y="${y + 32}" text-anchor="middle">${esc(label)}</text><text class="node-sub" x="${x + 95}" y="${y + 51}" text-anchor="middle">${esc(citation.path.split("/").pop())}:${citation.start}</text></g>`;
   }).join("");
   const lines = nodes.slice(0, -1).map((_, i) => {
     if (type === "sequence") return `<path d="M ${235 + i * 190} 135 H ${235 + i * 190 + 135}" marker-end="url(#arrow)"/>`;
