@@ -94,18 +94,18 @@ for (const repo of inventory.repositories.filter((item) => item.status === "read
     commit: repo.head,
     date: repo.commitDate,
     language: languages,
-    kind: "Legacy source-backed harness audit",
+    kind: "Refreshed source-backed audit ledger",
     legacy: true,
     zh: {
-      thesis: `${name} 的既有源码账本覆盖 ${covered} 个 Harness 维度；这次迁移把原有事实重新排成单页分析和十章教程，不把 README 当作实现证据。`,
+      thesis: `${name} 已重新拉取到 ${repo.head.slice(0, 12)}；既有源码账本覆盖 ${covered} 个 Harness 维度，本次重新抓取源码摘录并把事实排成单页分析和十章教程，不把 README 当作实现证据。`,
       strengths: strengthsZh,
       limits: limitsZh,
       lesson: first.plainLanguage || first.fact || "从输入、状态、工具副作用、回执和恢复入口读源码。"
     },
     en: {
-      thesis: `The existing source ledger for ${name} covers ${covered} Harness dimensions. This migration reshapes those facts into a single analysis page and ten standalone chapters instead of treating README claims as implementation evidence.`,
+      thesis: `${name} was refreshed to commit ${repo.head.slice(0, 12)}. The prior source ledger covers ${covered} Harness dimensions; this build re-captures source excerpts and reshapes the facts into a single analysis page and ten standalone chapters instead of treating README claims as implementation evidence.`,
       strengths: ["Pinned source findings expose the control loop", "Context, tools, and policy are separated into reviewable dimensions", "Each chapter keeps a file and line-range trail"],
-      limits: ["This snapshot reuses the prior source ledger and its pinned commit", "Deployment-level behavior still needs a fresh run", "Legacy findings should be re-audited when the repository moves"],
+      limits: ["Finding semantics are migrated from the prior ledger and should be re-audited when behavior changed", "Deployment-level behavior still needs a fresh run", "The refreshed commit does not imply every historical finding was re-proven by a full test run"],
       lesson: "Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list."
     },
     anchors
