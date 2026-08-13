@@ -1,0 +1,254 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "Aider",
+  "snapshot": {
+    "repository": "Aider-AI/aider",
+    "commit": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+    "commitDate": "2026-05-22T07:02:20-07:00"
+  },
+  "method": {
+    "readmePolicy": "README 不承担核心事实证明；结论来自 Coder、RepoMap、编辑器、命令执行、模型和测试实现。",
+    "factPolicy": "以运行时代码和类型契约为主，提示模板只用于解释编辑协议，不反推不存在的隔离能力。",
+    "inferencePolicy": "“不是通用工具 Agent”“没有 OS 沙箱”等否定性判断由完整调用链与代码搜索共同支撑，并标注限制范围。"
+  },
+  "coverage": [
+    { "dimension": "entry-session-loop", "status": "verified", "evidenceLevels": ["L1", "L3"], "notes": "已审计 Coder.run/run_one/send_message 及 reflection 上限。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计 Model.send_completion、LiteLLM 与流/非流处理。" },
+    { "dimension": "context-repomap", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 ChatChunks、RepoMap、历史摘要和 token 门。" },
+    { "dimension": "editing", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计多编辑格式基类、dry-run、授权与反思修复。" },
+    { "dimension": "execution-sandbox", "status": "verified", "evidenceLevels": ["L1"], "notes": "已审计 shell=True/pexpect 宿主执行；无内置 OS 隔离。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L3"], "notes": "已审计文件加入、越界编辑和 shell 建议的人工确认。" },
+    { "dimension": "instructions-prompts", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计按 edit format 选择的 prompt 类和消息装配顺序。" },
+    { "dimension": "tools-connectors-plugins", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "工具面以 CLI 命令、Git、lint/test、网页抓取为主；当前核心无 MCP/Skills/插件总线。" },
+    { "dimension": "collaboration", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "Architect/Editor 是顺序双模型管线，不是递归子 Agent 系统。" },
+    { "dimension": "observability-persistence", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计 markdown 历史、LLM 日志、成本与可选 PostHog。" },
+    { "dimension": "tests-evals-maturity", "status": "partial", "evidenceLevels": ["L2", "L3"], "notes": "编辑格式和 RepoMap 测试已定位；完整 benchmark 体系待报告章节汇总。" }
+  ],
+  "findings": [
+    {
+      "id": "aider-loop-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "交互外环 + 有界 reflection 内环",
+      "fact": "Coder.run 持续读取用户输入；每个输入由 run_one 调用 send_message，若编辑解析、lint 或 test 产生 reflected_message，则最多再反思 3 次。",
+      "plainLanguage": "Aider 的循环很直接：你说一次，它生成修改；修改格式错了或检查失败，就把错误原样喂回模型再试，但不会无限自修。",
+      "implication": "这是“以编辑反馈驱动的局部循环”，而非任意工具调用状态机。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 88, "endLine": 106, "role": "contract", "excerpt": "max_reflections=3，并定义 auto_lint/auto_test。" },
+        { "path": "aider/coders/base_coder.py", "startLine": 876, "endLine": 944, "role": "implementation", "excerpt": "交互外环与 reflected_message 内环。" }
+      ]
+    },
+    {
+      "id": "aider-loop-002",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "一次回复后的固定交付链",
+      "fact": "模型回复后依次检查文件提及、解析并应用编辑、自动提交、自动 lint、执行建议 shell、可选 test；错误可转成下一轮 reflected_message。",
+      "plainLanguage": "Aider 更像一条固定流水线，不是让模型临场决定下一步用什么工具。",
+      "implication": "确定性强、容易理解，但扩展到浏览器、工单、云资源等非代码工具时不如通用 tool-loop 灵活。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 1530, "endLine": 1623, "role": "implementation", "excerpt": "回复落地后的 edit→commit→lint→shell→test 链。" }
+      ]
+    },
+    {
+      "id": "aider-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "LiteLLM 是统一 Provider 适配层",
+      "fact": "Model.send_completion 把模型名、messages、stream、temperature、可选单个 function tool 和 extra params 交给 litellm.completion；流式和非流式结果由 Coder 分别消费。",
+      "plainLanguage": "Aider 把各家模型 API 的差异交给 LiteLLM，自己的核心只面对一套近似 OpenAI 的消息格式。",
+      "implication": "接模型很快，但 Provider 行为、重试和能力元数据也部分受 LiteLLM 语义约束。",
+      "citations": [
+        { "path": "aider/models.py", "startLine": 985, "endLine": 1037, "role": "implementation", "excerpt": "构造 kwargs 并调用 litellm.completion。" },
+        { "path": "aider/coders/base_coder.py", "startLine": 1783, "endLine": 1826, "role": "implementation", "excerpt": "send_completion 后按 stream 分派输出，并记录成本和 LLM 历史。" }
+      ]
+    },
+    {
+      "id": "aider-context-001",
+      "dimension": "context-repomap",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文被拆成稳定的 ChatChunks",
+      "fact": "每次请求按 system、examples、已摘要历史、repo map、只读文件、可编辑文件、当前消息和 reminder 的顺序组装。",
+      "plainLanguage": "Aider 不把所有材料乱塞成一团，而是把“规则、示例、历史、仓库地图、文件正文、当前问题”分舱装箱。",
+      "implication": "分舱让缓存、token 统计和不同模型的 system-message 兼容更可控。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 1226, "endLine": 1338, "role": "implementation", "excerpt": "构造 ChatChunks 并在空间允许时追加 reminder。" }
+      ]
+    },
+    {
+      "id": "aider-repomap-001",
+      "dimension": "context-repomap",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Repo Map 是基于符号引用图的 PageRank",
+      "fact": "RepoMap 用 tree-sitter 查询提取定义/引用，缺少引用时用 Pygments 补齐；构建文件间 MultiDiGraph，并以当前聊天文件、用户提及和符号特征调权后运行 PageRank。",
+      "plainLanguage": "它不是简单列目录，而是判断“哪些文件定义了被很多地方引用的名字、哪些又和当前问题相关”，再把最重要的代码骨架给模型。",
+      "implication": "这是 Aider 最有辨识度的 Harness 能力：用静态代码图在有限 token 内提供全仓导航。",
+      "citations": [
+        { "path": "aider/repomap.py", "startLine": 300, "endLine": 363, "role": "implementation", "excerpt": "tree-sitter captures 生成 def/ref，Pygments 回填引用。" },
+        { "path": "aider/repomap.py", "startLine": 365, "endLine": 545, "role": "implementation", "excerpt": "构图、个性化权重、PageRank 和定义分数分配。" }
+      ]
+    },
+    {
+      "id": "aider-repomap-002",
+      "dimension": "context-repomap",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Repo Map 用二分搜索贴合 token 预算",
+      "fact": "排序后的 tags 被逐步渲染成代码树，算法用二分搜索选择条目数量，以不超预算且尽可能接近预算为目标，15% 误差内可提前停止。",
+      "plainLanguage": "先排好“谁最重要”，再用二分法找出能塞进模型窗口的最大一组，而不是拍脑袋截前 100 个。",
+      "implication": "检索质量和预算控制被明确分成两个阶段，便于调优。",
+      "citations": [
+        { "path": "aider/repomap.py", "startLine": 629, "endLine": 706, "role": "implementation", "excerpt": "对 ranked_tags 做 token 估算和二分选择。" }
+      ]
+    },
+    {
+      "id": "aider-summary-001",
+      "dimension": "context-repomap",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "历史摘要保留近期尾部并递归收缩头部",
+      "fact": "ChatSummary 以模型上下文的 1/16（最少 1K、最多 8K）作为默认历史预算；过大时尽量保留约半数预算的最近消息，摘要较旧头部，必要时最多递归 3 层。",
+      "plainLanguage": "老对话压成摘要，最近几轮尽量原样保留；压完还太大就再压一次。",
+      "implication": "比整段一次摘要更重视近期细节，但摘要是自由文本而非结构化任务状态。",
+      "citations": [
+        { "path": "aider/models.py", "startLine": 339, "endLine": 358, "role": "contract", "excerpt": "max_chat_history_tokens 取上下文 1/16，并限制在 1K–8K。" },
+        { "path": "aider/history.py", "startLine": 27, "endLine": 96, "role": "implementation", "excerpt": "保留 tail、摘要 head、必要时递归。" },
+        { "path": "aider/history.py", "startLine": 98, "endLine": 123, "role": "implementation", "excerpt": "按候选模型顺序生成自由文本 summary。" }
+      ]
+    },
+    {
+      "id": "aider-context-002",
+      "dimension": "context-repomap",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "预测超窗时由用户决定是否硬发",
+      "fact": "check_tokens 若估算输入超过模型上限，会给出 drop/clear/拆文件建议并询问是否仍继续；Provider 真报 ContextWindowExceeded 时结束本轮，不自动做恢复性压缩再发。",
+      "plainLanguage": "Aider 会提前报警，但不会偷偷重写上下文；你可以执意发送，失败后自己缩小范围。",
+      "implication": "行为透明且可控，但长任务自治恢复弱于带自动 compaction 的通用 Agent。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 1396, "endLine": 1417, "role": "implementation", "excerpt": "估算超窗后询问是否继续。" },
+        { "path": "aider/coders/base_coder.py", "startLine": 1457, "endLine": 1467, "role": "implementation", "excerpt": "ContextWindowExceededError 标记 exhausted 并离开重试循环。" }
+      ]
+    },
+    {
+      "id": "aider-edit-001",
+      "dimension": "editing",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "编辑协议是可替换 Coder 家族",
+      "fact": "Coder.create 按 edit_format 选择 Whole、Diff、Unified Diff、Patch、Function、Architect、Ask、Context 等子类；切换格式时会先摘要旧格式历史，避免模型模仿旧输出协议。",
+      "plainLanguage": "Aider 把“模型应该怎样描述改动”做成多种可换的方言，并按模型能力选择最合适的一种。",
+      "implication": "编辑可靠性可以按模型定制，而不必让所有模型都走同一个 JSON tool schema。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 124, "endLine": 201, "role": "implementation", "excerpt": "按 edit_format 查找 Coder 子类，切换时摘要旧历史。" },
+        { "path": "aider/coders/patch_coder.py", "startLine": 210, "endLine": 217, "role": "contract", "excerpt": "PatchCoder 注册 patch edit_format。" },
+        { "path": "aider/coders/udiff_coder.py", "startLine": 46, "endLine": 49, "role": "contract", "excerpt": "UnifiedDiffCoder 注册 udiff edit_format。" }
+      ]
+    },
+    {
+      "id": "aider-edit-002",
+      "dimension": "editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "编辑先 dry-run，再授权，再落盘",
+      "fact": "apply_updates 先解析 edits、执行 apply_edits_dry_run、逐文件 allowed_to_edit/prepare_to_edit，最后才 apply_edits；格式错误或异常会转成 reflected_message。",
+      "plainLanguage": "模型给出的补丁先试演，确认目标文件允许修改后才真正写；补丁坏了会把错误退回给模型修。",
+      "implication": "编辑协议的验证和文件授权是两个独立关卡。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 2269, "endLine": 2336, "role": "implementation", "excerpt": "dry-run→prepare→apply，并把错误反馈给模型。" }
+      ]
+    },
+    {
+      "id": "aider-permission-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "“聊天文件集”就是主要写权限边界",
+      "fact": "模型尝试编辑未加入聊天的文件时，allowed_to_edit 会询问用户；通过后才加入可编辑集合并处理 dirty commit。",
+      "plainLanguage": "文件有没有放进聊天，不只是上下文选择，也决定模型能不能直接改它。",
+      "implication": "Aider 把最重要的权限问题压缩成一个易懂交互，但它不是细粒度路径策略或 RBAC。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 2215, "endLine": 2240, "role": "implementation", "excerpt": "未在聊天中的文件需确认后加入可编辑集合。" }
+      ]
+    },
+    {
+      "id": "aider-shell-001",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "Shell 在宿主机执行，没有 OS 沙箱",
+      "fact": "模型建议的 shell 命令需显式 yes 确认，然后由 run_cmd 在项目 cwd 通过 shell=True 或交互式 pexpect 启动用户 shell。",
+      "plainLanguage": "命令执行前会问你，但点了同意以后就是在真实终端里跑；Aider 本身没有容器、seccomp 或工作区文件系统隔离。",
+      "implication": "安全依赖人类确认和外部运行环境；自动化模式需要额外容器或最小权限账户。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 2434, "endLine": 2485, "role": "implementation", "excerpt": "建议命令必须 explicit_yes_required，随后 run_cmd。" },
+        { "path": "aider/run_cmd.py", "startLine": 42, "endLine": 84, "role": "implementation", "excerpt": "subprocess.Popen(..., shell=True, cwd=cwd)。" },
+        { "path": "aider/run_cmd.py", "startLine": 89, "endLine": 128, "role": "implementation", "excerpt": "TTY 场景通过用户 shell 的 pexpect 交互执行。" }
+      ]
+    },
+    {
+      "id": "aider-git-001",
+      "dimension": "persistence-recovery",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Git 提交是编辑事务和恢复机制",
+      "fact": "成功编辑后默认自动提交，修改前的 dirty 文件也可先提交；/undo 只允许撤销当前会话由 Aider 创建的最近提交。",
+      "plainLanguage": "Aider 用 Git 当保险箱：改前存一份，改后再存一份，出问题可以退回，但不会随便回滚用户自己的提交。",
+      "implication": "在代码仓库场景，VCS 原生事务比自造文件快照更透明。",
+      "citations": [
+        { "path": "aider/coders/base_coder.py", "startLine": 2375, "endLine": 2423, "role": "implementation", "excerpt": "auto_commit 与 dirty_commit。" },
+        { "path": "aider/commands.py", "startLine": 558, "endLine": 646, "role": "implementation", "excerpt": "undo 校验提交归属并恢复文件。" }
+      ]
+    },
+    {
+      "id": "aider-collab-001",
+      "dimension": "collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Architect/Editor 是顺序双模型链",
+      "fact": "ArchitectCoder 先让架构模型产生方案，用户可确认是否编辑；随后创建 editor_coder，清空其历史，以方案作为唯一任务执行修改，再把成本和提交记录回传。",
+      "plainLanguage": "一个模型负责想清楚“怎么改”，另一个模型只拿方案动手；它们不是并行，也不能继续派生更多 Agent。",
+      "implication": "职责分离能让强推理模型配合擅长补丁的模型，但缺少多任务 fan-out、共享黑板和子任务调度。",
+      "citations": [
+        { "path": "aider/coders/architect_coder.py", "startLine": 6, "endLine": 48, "role": "implementation", "excerpt": "架构回复确认后创建 Editor Coder 并顺序执行。" },
+        { "path": "aider/models.py", "startLine": 625, "endLine": 645, "role": "contract", "excerpt": "解析 editor_model 与 editor_edit_format。" }
+      ]
+    },
+    {
+      "id": "aider-tools-001",
+      "dimension": "tools-connectors-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "核心不是 MCP/函数工具循环",
+      "fact": "核心 Coder 的外部能力来自固定 CLI 命令、Git、文件编辑格式、lint/test、网页抓取和可选单一 function edit schema；仓库核心未实现通用 MCP 工具注册与动态插件调度。",
+      "plainLanguage": "Aider 专注“在 Git 仓库里改代码”，不是一个可随时挂几十种业务工具的通用 Agent 平台。",
+      "implication": "专注带来可预测性和编辑深度，连接器生态与跨系统工作流则明显受限。",
+      "citations": [
+        { "path": "aider/models.py", "startLine": 1006, "endLine": 1009, "role": "implementation", "excerpt": "functions 非空时只发送 functions[0] 并强制选择该函数。" },
+        { "path": "aider/commands.py", "startLine": 312, "endLine": 332, "role": "implementation", "excerpt": "命令分发由固定 cmd_* 方法完成。" }
+      ],
+      "caveats": ["结论针对该快照的核心仓库；第三方封装可在 Aider 外层增加 MCP。"]
+    },
+    {
+      "id": "aider-observe-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "本地历史、原始 LLM 日志、成本和产品分析分层记录",
+      "fact": "IO 可分别追加输入历史、Markdown 聊天历史和完整 LLM 请求/响应日志；Coder 统计 token/成本；Analytics 经抽样同意后向 PostHog 或本地 JSONL 发事件，并对未知模型名做脱敏。",
+      "plainLanguage": "给用户看的聊天记录、调试模型的原始记录、花费统计和匿名产品埋点是四套不同通道。",
+      "implication": "分层很好，但它不是逐工具 span/trace 的可回放观测系统。",
+      "citations": [
+        { "path": "aider/io.py", "startLine": 754, "endLine": 765, "role": "implementation", "excerpt": "可选 llm_history_file 追加原始日志。" },
+        { "path": "aider/io.py", "startLine": 1117, "endLine": 1136, "role": "implementation", "excerpt": "Markdown chat history 追加。" },
+        { "path": "aider/analytics.py", "startLine": 119, "endLine": 204, "role": "implementation", "excerpt": "抽样询问、持久禁用、系统信息与模型名脱敏。" },
+        { "path": "aider/analytics.py", "startLine": 213, "endLine": 254, "role": "implementation", "excerpt": "PostHog 与 JSONL 事件写入。" }
+      ]
+    }
+  ]
+}

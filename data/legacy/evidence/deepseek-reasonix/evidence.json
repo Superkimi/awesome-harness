@@ -1,0 +1,490 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "deepseek-reasonix",
+  "snapshot": {
+    "repository": "esengine/DeepSeek-Reasonix",
+    "commit": "22e18cafc0dfe27f192e8e303ffae0a0bc548eb0",
+    "commitDate": "2026-08-03T06:00:46+08:00"
+  },
+  "method": {
+    "readmePolicy": "README 只用于确认项目入口与命名；实现结论来自 Go 的 boot、control、agent、provider、tool、sandbox、permission、plugin、skill、memory、session、evidence、eventwire，以及对应单元/E2E/基准代码。",
+    "factPolicy": "优先引用运行实现和契约；对 DeepSeek thinking、缓存、MCP、Delivery、Plan、沙箱和子 Agent 分别区分模型协议事实、主机强制边界、配置默认值和可选能力。",
+    "inferencePolicy": "不推断 DeepSeek 服务端内部，也不把 README 或 prompt 中的承诺当成已启用能力；源码没有证明默认强制的地方明确标为限制或风险。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "boot/Controller/Agent 的装配、异步 turn admission、主循环上限与 Delivery readiness guard。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "OpenAI-compatible/DeepSeek 与 Anthropic SSE、thinking replay、断流重连和工具调用配对修复。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "软阈值、工具结果瘦身、摘要、归档、机械折叠、固定尾部与 stuck 熔断。" },
+    { "dimension": "context-compaction-memory", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "层级指令、自动记忆、cache-stable system prefix 与 session-only turn injection。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "parse→proxy/policy→delivery/recovery/permission→lease/hooks/preview→execute/evidence。" },
+    { "dimension": "execution-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "macOS Seatbelt、Linux bubblewrap、Windows 差异、workspace roots、network 和 escape approver。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "纯权限策略、Bash 间接执行分类、Auto Guard、MCP 授权与凭据环境过滤。" },
+    { "dimension": "mcp-connectors", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "stdio/HTTP/SSE JSON-RPC、惰性 schema cache、启动并发、身份摘要与 live safety recheck。" },
+    { "dimension": "instructions-skills-plugins", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "内建 Skills、metadata-first 索引、只读子 Agent 入口、项目/全局 memory 和 Hooks。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "Planner/Executor 两模型、parallel_tasks 64 上限、深度/并发/读写调度和持久 transcript。" },
+    { "dimension": "persistence-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "JSONL event log、revision/CAS、recovery branch、typed event wire、usage/cache/evidence receipts。" },
+    { "dimension": "tests-benchmarks-maturity", "status": "verified", "evidenceLevels": ["L1", "L3"], "notes": "真实 Agent loop、断流恢复、配对修复、compaction stuck guard、DeepSeek cache benchmark 与 MIT 许可证。" }
+  ],
+  "findings": [
+    {
+      "id": "reasonix-arch-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Boot 是唯一装配根，所有前端共享同一套 Harness",
+      "fact": "boot 包明确负责加载配置、解析模型、构造内建工具与插件、接入权限 gate、构造 executor，并可包装双模型 Coordinator；TUI、HTTP/SSE、桌面 webview 都通过同一个 Controller 驱动。",
+      "plainLanguage": "终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。",
+      "implication": "自研时应把 frontend 变成事件消费者，避免在 UI 层重复实现 turn、审批和恢复。",
+      "citations": [
+        { "path": "internal/boot/boot.go", "startLine": 1, "endLine": 8, "role": "contract", "excerpt": "boot 作为唯一装配点以及四类前端共享。" },
+        { "path": "internal/control/controller.go", "startLine": 1, "endLine": 10, "role": "contract", "excerpt": "transport-agnostic Controller 与 typed event sink。" }
+      ]
+    },
+    {
+      "id": "reasonix-arch-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "主循环以模型自然结束为主，额外叠加多种止损护栏",
+      "fact": "单个工具结果先被截到 32 KiB；空最终回复、流恢复、handoff 和 final readiness 各有上限。Agent 在 MaxSteps<=0 时不按轮数截断，直到模型给出无工具的 final、取消或 provider 错误；Delivery 模式还要求 todo、验证和 complete_step 证据。",
+      "plainLanguage": "它允许长任务一直做，但每个工具输出和“最后确认”都有保险丝；只要交付模式缺验收或验证，主机就不会让它假装完成。",
+      "implication": "“无限循环”与“无限输出”被拆开治理；建设时要同时设计自然终止、重复调用 guard、输出预算和交付完成判定。",
+      "citations": [
+        { "path": "internal/agent/agent.go", "startLine": 33, "endLine": 62, "role": "implementation", "excerpt": "工具输出、final readiness、流恢复与 Delivery marker 上限。" },
+        { "path": "internal/agent/agent.go", "startLine": 1060, "endLine": 1064, "role": "contract", "excerpt": "MaxSteps<=0 的自然终止契约。" },
+        { "path": "internal/agent/agent.go", "startLine": 1203, "endLine": 1213, "role": "implementation", "excerpt": "Run 的生命周期与工具循环入口。" }
+      ]
+    },
+    {
+      "id": "reasonix-arch-003",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Controller 对并发 turn、旋转、收尾和自动保存有明确状态机",
+      "fact": "Controller 拒绝同一会话并发前台 turn；运行中可选择 park FIFO，finishing 窗口仍保持 admission 关闭，TurnDone 派发完成后才启动排队 turn；rotating 与 running 互斥，避免会话切换与执行产生 TOCTOU。",
+      "plainLanguage": "用户连按几次发送不会把同一个会话撕成两半：新消息要么排队，要么明确被拒；切换会话时也不会恰好换掉正在用的那份上下文。",
+      "implication": "桌面/HTTP 多入口必须把“正在运行、等待审批、后台任务、收尾”分开建模，不能只暴露一个 running 布尔值。",
+      "citations": [
+        { "path": "internal/control/controller.go", "startLine": 60, "endLine": 76, "role": "contract", "excerpt": "重复 turn、rotation 与持久化错误。" },
+        { "path": "internal/control/controller.go", "startLine": 298, "endLine": 308, "role": "contract", "excerpt": "RuntimeStatus 的 foreground/prompt/jobs 细分。" },
+        { "path": "internal/control/controller.go", "startLine": 698, "endLine": 820, "role": "implementation", "excerpt": "admission、park、finishing 与 FIFO drain。" }
+      ]
+    },
+    {
+      "id": "reasonix-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Provider 消息对象把模型内容与本地显示元数据分开",
+      "fact": "provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。",
+      "plainLanguage": "用户看到的半截流式输出可以保存下来，但它不会偷偷再喂给模型；真正发到 API 的内容和本地 UI 账本是两条线。",
+      "implication": "本地可观测性、恢复和 prompt cache 可以同时成立；模型可见消息类型必须有单独的 wire sanitizer。",
+      "citations": [
+        { "path": "internal/provider/provider.go", "startLine": 40, "endLine": 75, "role": "contract", "excerpt": "Message 字段、reasoning 签名与 LocalOnly 语义。" },
+        { "path": "internal/provider/provider.go", "startLine": 194, "endLine": 221, "role": "implementation", "excerpt": "ModelMessages 清除本地/原始字段。" }
+      ]
+    },
+    {
+      "id": "reasonix-provider-002",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "发请求前会修复 tool-call 配对和被截断的 JSON",
+      "fact": "NormalizeMessages 在 wire 层补齐未回答的 assistant tool call、丢弃孤儿 tool result、恢复缺失工具名，并对半流式截断参数闭合 JSON；健康历史走 zero-allocation fast path，存盘历史使用保守的 NormalizeSessionMessages。",
+      "plainLanguage": "模型上次说“我要调用工具”但进程崩了，下一次请求前会补一张“没有结果”的占位回执，避免 API 因为票据对不上直接 400。",
+      "implication": "恢复协议应在 provider 边界做防御性修复，而不是污染用户保存的原始 session。",
+      "citations": [
+        { "path": "internal/provider/provider.go", "startLine": 179, "endLine": 192, "role": "contract", "excerpt": "SanitizeToolPairing 的 wire-safe 定位。" },
+        { "path": "internal/provider/provider.go", "startLine": 223, "endLine": 251, "role": "implementation", "excerpt": "配对、孤儿、工具名与 truncated args 修复规则。" },
+        { "path": "internal/provider/provider.go", "startLine": 364, "endLine": 443, "role": "implementation", "excerpt": "copy-on-write 的 JSON 闭合逻辑。" }
+      ]
+    },
+    {
+      "id": "reasonix-provider-003",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "DeepSeek thinking 与工具调用 reasoning replay 是显式协议分支",
+      "fact": "OpenAI-compatible client 对 DeepSeek 标记 RequiresToolCallReasoning，并按模型/配置决定是否警告缺失 reasoning；构造请求时对包含 tool calls 的 assistant 消息发送 reasoning_content（包括空字符串），同时支持 DeepSeek Beta prefix continuation 和最多三次尚未输出 token 的断流重连。",
+      "plainLanguage": "Reasonix 没把 DeepSeek 当普通 OpenAI 接口：它记得“思考字段”要跟着工具调用回放，并把 Beta 截断续写和断网重试接在同一个流上。",
+      "implication": "如果自研只保存 text/tool_calls 而丢 reasoning，DeepSeek thinking 模型会在下一轮请求失败或失去缓存命中。",
+      "citations": [
+        { "path": "internal/provider/openai/openai.go", "startLine": 279, "endLine": 316, "role": "implementation", "excerpt": "DeepSeek tool-call reasoning requirement 与配置指纹。" },
+        { "path": "internal/provider/openai/openai.go", "startLine": 426, "endLine": 471, "role": "implementation", "excerpt": "SSE open、认证重试与 stream reconnect。" },
+        { "path": "internal/provider/openai/openai.go", "startLine": 473, "endLine": 611, "role": "implementation", "excerpt": "prefix continuation、usage 合并与断流重连上限。" },
+        { "path": "internal/provider/openai/openai.go", "startLine": 627, "endLine": 679, "role": "implementation", "excerpt": "DeepSeek reasoning_content wire 字段的回放规则。" }
+      ]
+    },
+    {
+      "id": "reasonix-provider-004",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Anthropic 与 DeepSeek Anthropic 端点共用抽象但保留签名差异",
+      "fact": "Anthropic provider 使用手写 net/http SSE；原生 Anthropic 的 thinking block 需要签名回放，而 DeepSeek Anthropic 端点使用 unsigned thinking、thinking.type 与 output_config.effort，client 通过 deepseek 标志分别处理。",
+      "plainLanguage": "同一套 Message 能接两种协议，但不会把 Anthropic 的签名规则硬套到 DeepSeek 兼容端点上。",
+      "implication": "Provider adapter 应该把“协议共性”和“供应商必须回放的证明字段”拆开，不要用一套简单 JSON 模板覆盖所有模型。",
+      "citations": [
+        { "path": "internal/provider/anthropic/anthropic.go", "startLine": 1, "endLine": 20, "role": "contract", "excerpt": "手写 SSE、signed thinking 与 DeepSeek unsigned thinking 差异。" },
+        { "path": "internal/provider/anthropic/anthropic.go", "startLine": 129, "endLine": 185, "role": "implementation", "excerpt": "deepseek、thinking、effort 与 RequiresToolCallReasoning。" }
+      ]
+    },
+    {
+      "id": "reasonix-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文维护是 0.5/0.6/0.8/0.9 多级管道",
+      "fact": "默认 softCompactRatio=0.5、toolResultSnipRatio=0.6、compactRatio=0.8、forceRatio=0.9，tail 固定 16384 tokens；先提示并保持 cache prefix，再瘦身旧工具结果，必要时 prune 后摘要，连续两次仍压不下去则设置 compactStuck 暂停自动压缩。",
+      "plainLanguage": "它不会一到 50% 就重写整段历史：先提醒、再剪掉过期工具输出，真的快满才摘要；窗口太小导致反复压缩时会熔断而不是死循环。",
+      "implication": "Context pipeline 应把成本、缓存稳定性、信息损失和熔断作为不同阈值测试，而不是单一 max-token 截断。",
+      "citations": [
+        { "path": "internal/agent/compact.go", "startLine": 19, "endLine": 36, "role": "contract", "excerpt": "压缩比例、尾部预算与估算参数。" },
+        { "path": "internal/agent/compact.go", "startLine": 82, "endLine": 147, "role": "implementation", "excerpt": "soft notice、snip、prune、compact 与 stuck 熔断。" }
+      ]
+    },
+    {
+      "id": "reasonix-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "摘要保留用户事实、最近尾部并归档完整旧历史",
+      "fact": "summarySystemPrompt 要求保留 standing facts、goal、decisions、files/code、commands/outcomes、errors/fixes、pending/next step；compact 会把可折叠区域先 archive，再摘要，摘要失败时使用机械 fold marker，保留小 user turns 和完整 active turn。",
+      "plainLanguage": "压缩不是把聊天变成一句“继续工作”：它把用户硬约束、做过的命令、错误和下一步分栏记录，原始旧消息还留在 archive 里。",
+      "implication": "摘要 schema 本身是 Harness 的恢复协议，应该有 golden tests，不能完全交给模型自由发挥。",
+      "citations": [
+        { "path": "internal/agent/compact.go", "startLine": 49, "endLine": 80, "role": "prompt", "excerpt": "结构化 summary headings 与不可编造规则。" },
+        { "path": "internal/agent/compact.go", "startLine": 194, "endLine": 203, "role": "contract", "excerpt": "archive、Started/Done 事件与 active tail。" },
+        { "path": "internal/agent/compact.go", "startLine": 216, "endLine": 297, "role": "implementation", "excerpt": "保留 active turn、archive、summary retry 与机械折叠。" }
+      ]
+    },
+    {
+      "id": "reasonix-context-003",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "项目指令与记忆在启动时组成稳定 system prefix，编辑延迟到下一 session",
+      "fact": "memory.Load 一次发现层级文档和自动记忆索引，Compose 把 base prompt 放在最前并追加 memory；WriteDoc 只允许写已识别的记忆文件，并明确不会改变当前 cache-stable system prefix，而是由 controller 通过 turn-tail note 临时生效。",
+      "plainLanguage": "REASONIX/AGENTS/全局记忆像开机时装进机器的说明书；本轮改说明书不会偷偷改掉正在复用的缓存前缀，下一次 session 才完全换新。",
+      "implication": "指令层级和 cache key 需要一起设计；动态信息应走短暂 turn injection，不要频繁重写系统前缀。",
+      "citations": [
+        { "path": "internal/memory/memory.go", "startLine": 12, "endLine": 53, "role": "implementation", "excerpt": "Set、Load 与 instruction resolver。" },
+        { "path": "internal/memory/memory.go", "startLine": 94, "endLine": 128, "role": "implementation", "excerpt": "recognized memory path 写边界。" },
+        { "path": "internal/memory/memory.go", "startLine": 175, "endLine": 188, "role": "contract", "excerpt": "base-first cache-stable Compose。" }
+      ]
+    },
+    {
+      "id": "reasonix-tools-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每个工具调用固定经过 parse→policy→prepare→finish 四阶段",
+      "fact": "executeOne 为一个调用创建 toolCallPlan，先解析 canonical tool 并应用重复成功/失败和 stale-anchor guard，再做 Plan/proxy/delivery/recovery/permission，随后获取 lease/写 claim、运行 hooks 和 preview，最后 Execute、记录 receipt、运行 post hooks 并截断结果。",
+      "plainLanguage": "模型只递交一张工单；真正执行前会先确认工具身份、是否允许、是否会改文件、是否拿到写锁和快照，执行后还要把回执写回账本。",
+      "implication": "工具扩展点要落在统一 pipeline 中，不能让某个 MCP 或别名工具绕过审批、锁、证据和输出预算。",
+      "citations": [
+        { "path": "internal/agent/execute_one.go", "startLine": 20, "endLine": 80, "role": "contract", "excerpt": "toolCallPlan 字段与四阶段执行。" },
+        { "path": "internal/agent/execute_one.go", "startLine": 83, "endLine": 150, "role": "implementation", "excerpt": "canonical resolve、重复/锚点 guard 与 policy 路由。" }
+      ]
+    },
+    {
+      "id": "reasonix-tools-002",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "use_capability 代理会先解析真实 MCP 目标，再重新做 Plan 与安全判断",
+      "fact": "proxy resolver 在权限、hooks 和 evidence 之前把 provider-visible call 映射到真实 target/name/args；解析后的目标会再次检查 Plan safety，Plan 中只有已授权、非 destructive 的 MCP 可走 planner trusted path，普通 writer 或未授权 MCP 被阻断。",
+      "plainLanguage": "模型看到的是一个稳定的“能力入口”，但系统不会因为套了一层代理就放过真实目标；拆包后还要重新验一次。",
+      "implication": "统一 capability proxy 能保持 prompt schema 稳定，但必须做 resolution 后的第二次安全判定和审计双回执。",
+      "citations": [
+        { "path": "internal/agent/execute_one.go", "startLine": 153, "endLine": 269, "role": "implementation", "excerpt": "proxy resolve、provider transcript 保持原名与 resolved target Plan re-check。" },
+        { "path": "internal/agent/execute_one.go", "startLine": 396, "endLine": 431, "role": "implementation", "excerpt": "授权 MCP 与 explicit deny 的最终判定。" }
+      ]
+    },
+    {
+      "id": "reasonix-tools-003",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Delivery 模式把验收标准变成 host-enforced tool policy",
+      "fact": "Delivery gates 拒绝会遮蔽 verifier exit code、混合 mutation+verification、opaque inline interpreter 的 Bash；state-changing call 之前必须完成 todo_write 并有 active canonical todo。permission 和 Auto Guard 通过后才获取 workspace write lease，hooks/preview 仍在 Execute 前发生。",
+      "plainLanguage": "交付模式不接受“我顺便跑了个检查并 echo $?”这种无法审计的成功；先列验收清单，改完后单独验证，再签收。",
+      "implication": "这是一种把“完成定义”放入执行器的强约束，比只在 system prompt 里提醒可靠。",
+      "citations": [
+        { "path": "internal/agent/execute_one.go", "startLine": 272, "endLine": 312, "role": "implementation", "excerpt": "Delivery 的验证、混合命令、inline interpreter 与 todo gates。" },
+        { "path": "internal/agent/execute_one.go", "startLine": 315, "endLine": 433, "role": "implementation", "excerpt": "Auto Guard、permission、MCP authorization 与 deny。" },
+        { "path": "internal/agent/execute_one.go", "startLine": 435, "endLine": 550, "role": "implementation", "excerpt": "write lease、parent claim、PreToolUse、preview 与 call context。" }
+      ]
+    },
+    {
+      "id": "reasonix-tools-004",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "执行结果会同时写证据账本、hooks 和恢复观测",
+      "fact": "finishToolExecution 在真实 target 执行后写入 model-visible receipt 和 proxy target receipt，记录 output bytes/todo 状态，触发 PostToolUse 或 failure hook、Auto Guard observation，再统一截断回模型的输出。",
+      "plainLanguage": "工具成功不等于只把一段字符串塞回聊天：系统还保存“谁调用了谁、是否真的产出、哪个 todo 前进了、恢复守卫看到什么”。",
+      "implication": "审计与恢复需要结构化 receipt，而不是从自然语言最终答案里猜发生过什么。",
+      "citations": [
+        { "path": "internal/agent/execute_one.go", "startLine": 552, "endLine": 654, "role": "implementation", "excerpt": "Execute、reader intent、evidence receipt、hooks、recovery observation 与截断。" },
+        { "path": "internal/evidence/evidence.go", "startLine": 363, "endLine": 420, "role": "contract", "excerpt": "DeliveryCheckpoint 与 Ledger 的 receipt/lease 生命周期。" }
+      ]
+    },
+    {
+      "id": "reasonix-sandbox-001",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Bash 沙箱是独立于 permission 的 OS enforcement 层",
+      "fact": "sandbox.Spec 把 Mode、WriteRoots、ForbidReadRoots、Network、MinimalWrites 和 Shell 分开；macOS 使用 Seatbelt，Linux 使用 bubblewrap，Windows 当前没有 OS-level Bash sandbox。要求 enforce 但 backend 不可用时拒绝运行未包装命令，而不是静默降级。",
+      "plainLanguage": "审批是“允许不允许做”，沙箱是“允许做也只能在哪些目录/网络里做”；没有真正的后端时，默认宁可不跑。",
+      "implication": "不要把 Plan mode 或 permission ask 当沙箱；OS backend availability 应有显式 fail-closed 结果。",
+      "citations": [
+        { "path": "internal/sandbox/sandbox.go", "startLine": 1, "endLine": 14, "role": "contract", "excerpt": "policy 与 enforcement 分层及平台后端。" },
+        { "path": "internal/sandbox/sandbox.go", "startLine": 21, "endLine": 83, "role": "implementation", "excerpt": "Spec roots/network、enforce 与 unavailable fail-closed 文案。" }
+      ]
+    },
+    {
+      "id": "reasonix-sandbox-002",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "沙箱逃逸是单次、显式、可审计的二次授权",
+      "fact": "EscapeApprover 只描述在 OS sandbox 启动失败后重跑一次 unconfined command，nil approver 代表 fail closed；boot 根据 workspace root、extra dirs、forbid read roots、network override 和 WorkspaceOnly 组装 bashSpec，并在 enforce 后端不可用时发出告警。",
+      "plainLanguage": "沙箱坏了不自动打开裸 shell；只有带 UI 的宿主明确同意某一条命令，才允许这一次越界。",
+      "implication": "需要把“沙箱失败恢复”和“普通命令审批”拆成两个不同 approval kind，便于后台运行时安全默认拒绝。",
+      "citations": [
+        { "path": "internal/sandbox/escape.go", "startLine": 8, "endLine": 46, "role": "contract", "excerpt": "EscapeRequest、Approver 与 nil fail-closed。" },
+        { "path": "internal/boot/boot.go", "startLine": 442, "endLine": 474, "role": "implementation", "excerpt": "workspace roots、network、WorkspaceOnly、forbid roots 与 sandbox availability。" }
+      ]
+    },
+    {
+      "id": "reasonix-security-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "权限 Policy 是纯函数，deny→ask→allow→fallback 且按每个路径判定",
+      "fact": "permission.Policy 不做 I/O；read-only 默认 Allow，writer 使用 Mode fallback；Decision 优先级为 deny、session allow、ask、allow、fallback。多路径工具必须所有 subject 都安全，Bash 还会把 compound command 拆段，识别 eval/source/xargs/解释器 -c 等间接执行形状。",
+      "plainLanguage": "权限规则可以单测；一个 move 同时碰两个路径时，只要一个路径被拒就拒绝整单；`bash -c`、`eval` 这类能藏第二条命令的写法不会被普通前缀规则轻易放过。",
+      "implication": "把 shell parser 和 policy decision 分离是比字符串黑名单更稳的权限基础，但仍需要持续覆盖新 shell 语法。",
+      "citations": [
+        { "path": "internal/permission/permission.go", "startLine": 1, "endLine": 5, "role": "contract", "excerpt": "纯 Policy 与 Gate 分层。" },
+        { "path": "internal/permission/permission.go", "startLine": 142, "endLine": 191, "role": "implementation", "excerpt": "Decision、Policy 与 precedence。" },
+        { "path": "internal/permission/bash_approval.go", "startLine": 17, "endLine": 67, "role": "implementation", "excerpt": "Bash nested/indirect/expansion 分类。" }
+      ]
+    },
+    {
+      "id": "reasonix-security-002",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "凭据防护同时覆盖子进程环境、敏感文件和诊断文本",
+      "fact": "secrets 由 boot 从 user-global 配置一次性设置；ProcessEnv 永远移除 credential-store 注入的 key，用户可选择再过滤继承环境中的 api_key/token/password 等变量；Redact/RedactCredentials 覆盖 bearer、OpenAI/GitHub/Slack/AWS/JWT、Cookie 和 URL userinfo。",
+      "plainLanguage": "项目目录里的配置不能偷偷改全局 secret 开关；工具子进程拿到的是清理后的环境，日志/错误边界还会把常见 token 形状打码。",
+      "implication": "凭据过滤必须在 composition root 和 subprocess boundary 做，而不是只在最终 UI 文本上补救。",
+      "citations": [
+        { "path": "internal/boot/boot.go", "startLine": 200, "endLine": 211, "role": "implementation", "excerpt": "启动工具/插件前设置 secret filters 与 credential env keys。" },
+        { "path": "internal/secrets/redact.go", "startLine": 48, "endLine": 84, "role": "contract", "excerpt": "user-global toggles 与 credential registration。" },
+        { "path": "internal/secrets/redact.go", "startLine": 142, "endLine": 180, "role": "implementation", "excerpt": "ProcessEnv 与多种 credential redaction。" }
+      ]
+    },
+    {
+      "id": "reasonix-mcp-001",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 以统一 JSON-RPC 适配 stdio、Streamable HTTP 和 legacy SSE",
+      "fact": "plugin 包把握手、tools/list、tools/call 统一在 transport interface 下；stdio 用受 ctx 绑定的子进程与专用 reader demux，HTTP transport 用 session id、单 origin redirect 规则、16 MiB body cap 和串行 request/response mutex。",
+      "plainLanguage": "外部工具可以是本地进程，也可以是远程 HTTP/SSE，但 Agent 看到的都是同一个 Tool；连接、超时、取消和响应大小在连接层处理。",
+      "implication": "连接器治理应是独立 runtime 层，不能让每个工具自己实现 JSON-RPC、超时和取消。",
+      "citations": [
+        { "path": "internal/plugin/plugin.go", "startLine": 1, "endLine": 7, "role": "contract", "excerpt": "MCP JSON-RPC 与三种 transport。" },
+        { "path": "internal/plugin/transport_stdio.go", "startLine": 29, "endLine": 56, "role": "implementation", "excerpt": "stdio reader、取消和 call mutex。" },
+        { "path": "internal/plugin/transport_http.go", "startLine": 18, "endLine": 31, "role": "implementation", "excerpt": "HTTP body cap、session header 与串行同 server calls。" },
+        { "path": "internal/plugin/transport_http.go", "startLine": 45, "endLine": 68, "role": "implementation", "excerpt": "same-origin redirect credential protection。" }
+      ]
+    },
+    {
+      "id": "reasonix-mcp-002",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 项目服务器先做无 secret 的身份授权，再做 live safety 对账",
+      "fact": "project launch identity 对 stdio 固定 executable path 与 SHA-256，对 HTTP 规范化 URL 但只保留 header 名并替换 userinfo/query credentials；cached tool 的 readOnly/destructive 事实与 live server 不一致时，当前调用在执行前阻断。MCP 默认 host mode 不进入 Bash sandbox，confined 只在显式内部模式使用。",
+      "plainLanguage": "换了 MCP 二进制、目标地址或工具安全标记，不会因为旧 schema cache 还在就直接执行；同时默认插件是受信任 host 进程，不能误以为它自动继承 Agent shell 沙箱。",
+      "implication": "MCP 需要 provenance、exact launch grant、schema cache key 和 live reclassification 四件套；Host/Confined 必须在产品上清楚区分。",
+      "citations": [
+        { "path": "internal/plugin/security.go", "startLine": 17, "endLine": 66, "role": "implementation", "excerpt": "project launch identity、executable hash 与 normalized endpoint。" },
+        { "path": "internal/plugin/security.go", "startLine": 127, "endLine": 175, "role": "implementation", "excerpt": "credential-aware URL identity normalization。" },
+        { "path": "internal/plugin/security.go", "startLine": 247, "endLine": 261, "role": "implementation", "excerpt": "cached/live tool safety reconcile。" },
+        { "path": "internal/plugin/plugin.go", "startLine": 37, "endLine": 50, "role": "contract", "excerpt": "host 与 confined process mode 的安全语义。" }
+      ]
+    },
+    {
+      "id": "reasonix-mcp-003",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 启动是 catalog-first、cache-aware、可惰性连接的",
+      "fact": "boot 对有缓存 schema 的服务器只注册 placeholder，不启动进程；cache miss 才做一次后台 catalog discovery，真正首次调用走 EnsureConnected。插件启动有默认并发上限 8、超时和 StartAvailable 的“单个失败不拖垮整场”路径；Economy profile 还把可选 MCP 放到 connect_tool_source。",
+      "plainLanguage": "开一个项目不会立刻 fork 二十个 npm MCP 进程；先用缓存把工具菜单画出来，真正用到时再连，坏一个插件也不必让整场会话起不来。",
+      "implication": "扩展生态的启动成本应被当成调度问题，采用 schema cache、lazy process 和 bounded startup，而不是启动时全量阻塞。",
+      "citations": [
+        { "path": "internal/plugin/plugin.go", "startLine": 243, "endLine": 279, "role": "contract", "excerpt": "StartPolicy 并发、超时、abort 与 persistence。" },
+        { "path": "internal/boot/boot.go", "startLine": 500, "endLine": 563, "role": "implementation", "excerpt": "MCP cache placeholder、Economy on-demand 与 startup specs。" },
+        { "path": "internal/boot/boot.go", "startLine": 642, "endLine": 681, "role": "implementation", "excerpt": "cache-hit 不启动、cache-miss discovery 与 lazy toolset。" }
+      ]
+    },
+    {
+      "id": "reasonix-instruction-001",
+      "dimension": "instructions-skills-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skills 采用 metadata-first 索引，正文按需加载",
+      "fact": "skill.IndexMaxChars 将固定索引限制为 4000 字符；system prompt 只放名称/描述和 subagent tag，skill body 通过 run_skill 或 /name 按需加载。内建 explore/research/review/security_review 使用只读工具，写入型 init/test 以内联主循环执行。",
+      "plainLanguage": "模型开机只拿一张“有哪些 playbook”的目录，不把所有长说明书塞进 prompt；真正需要时才读正文，重研究工作可以放到隔离子 Agent。",
+      "implication": "Skills 是扩展协议，不应把所有脚本正文常驻上下文；metadata、allowed tools、RunAs 和 ReadOnly 应成为 manifest 的核心字段。",
+      "citations": [
+        { "path": "internal/skill/index.go", "startLine": 10, "endLine": 28, "role": "contract", "excerpt": "索引上限与调用策略。" },
+        { "path": "internal/skill/index.go", "startLine": 37, "endLine": 90, "role": "implementation", "excerpt": "metadata-only index、manual exclusion 与 clipped description。" },
+        { "path": "internal/skill/builtins.go", "startLine": 281, "endLine": 354, "role": "config", "excerpt": "builtin skills 的 RunAs、AllowedTools、ReadOnly 和 triggers。" }
+      ]
+    },
+    {
+      "id": "reasonix-instruction-002",
+      "dimension": "instructions-skills-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Memory 写入有封闭路径集合，背景事实与高权指令分开",
+      "fact": "memory.Set 发现 REASONIX.md/AGENTS.md 层级文档、全局 guidance 和 auto-memory index；BackgroundBlock 明确把事实当作可能过期的背景而不是 standing instruction，WriteDoc 只允许写 canonical 或已发现 memory 文件。",
+      "plainLanguage": "记忆里的“上次事实”不会自动压过当前用户指令；Agent 也不能借 memory tool 任意写到磁盘上任何路径。",
+      "implication": "组织级 memory 需要 authority、freshness 和 write allowlist 三种元数据，不能把一个大 MEMORY.md 当万能系统 prompt。",
+      "citations": [
+        { "path": "internal/memory/memory.go", "startLine": 12, "endLine": 24, "role": "contract", "excerpt": "Docs、GlobalGuidance、Store 与 Index 的分层数据结构。" },
+        { "path": "internal/memory/memory.go", "startLine": 131, "endLine": 155, "role": "implementation", "excerpt": "背景事实的低权语义与 stale warning。" },
+        { "path": "internal/memory/memory.go", "startLine": 94, "endLine": 128, "role": "implementation", "excerpt": "recognized memory file write allowlist。" }
+      ]
+    },
+    {
+      "id": "reasonix-collab-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Planner 与 Executor 是两份独立 session，显式审批路线 fail-closed",
+      "fact": "Coordinator 用 planner provider/session 做只读研究和结构化 plan，再把 plan handoff 给完整工具 Executor；两个 session 的 prefix 不互相污染。普通 plan-and-execute 在 planner 失败时可降级 executor-only，但 plan-only 或 plan-for-approval 缺 plan 时直接报错，避免 planner outage 变成未经批准的副作用。",
+      "plainLanguage": "规划模型负责读和写计划，执行模型负责改东西；规划挂掉时，普通请求可继续，但“必须先批准”的路线不会偷偷绕过去。",
+      "implication": "双模型不是简单串两个 API，而是要有独立上下文、路由决策和不同的失败语义。",
+      "citations": [
+        { "path": "internal/agent/coordinator.go", "startLine": 36, "endLine": 81, "role": "prompt", "excerpt": "Planner 只读、结构化 approval/ask/no_changes 契约。" },
+        { "path": "internal/agent/coordinator.go", "startLine": 117, "endLine": 190, "role": "implementation", "excerpt": "独立 planner/executor sessions 与 cache stability。" },
+        { "path": "internal/agent/coordinator.go", "startLine": 340, "endLine": 399, "role": "implementation", "excerpt": "route、planner research budget 与 fail-open/fail-closed 分支。" }
+      ]
+    },
+    {
+      "id": "reasonix-collab-002",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "parallel_tasks 只允许读操作，最多 64 个并发请求并受 scheduler/depth 限制",
+      "fact": "parallel_tasks 工具被标记 ReadOnly/PlanModeSafe，拒绝空、单个或超过 64 个任务；每个 child 有独立 session、read-only registry、child depth、max steps、provider profile 和 nested event sink，并经 scheduler 获取读槽位，取消时 drain/wait 后聚合结果。",
+      "plainLanguage": "它能同时派 64 个“查代码/查资料”的小工，但这些小工不能写文件，且仍要遵守并发和嵌套深度额度。",
+      "implication": "并发 Agent 必须把任务输入上限、工具 allowlist、读写属性、预算、取消和结果聚合一起作为资源合同。",
+      "citations": [
+        { "path": "internal/agent/parallel_tasks.go", "startLine": 17, "endLine": 65, "role": "contract", "excerpt": "parallel_tasks 的只读/Plan-safe 定义和 schema。" },
+        { "path": "internal/agent/parallel_tasks.go", "startLine": 78, "endLine": 115, "role": "implementation", "excerpt": "64 task cap、unknown-field reject 与输入校验。" },
+        { "path": "internal/agent/parallel_tasks.go", "startLine": 163, "endLine": 239, "role": "implementation", "excerpt": "scheduler slot、depth、read-only child、nested sink。" },
+        { "path": "internal/agent/parallel_tasks.go", "startLine": 242, "endLine": 307, "role": "implementation", "excerpt": "cancel drain、WaitGroup 与聚合输出。" }
+      ]
+    },
+    {
+      "id": "reasonix-collab-003",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 复用父工具基座，但单独限制模型、深度、并发、沙箱和 transcript",
+      "fact": "boot 在所有内建/MCP 工具装配后创建 TaskTool，子 Agent 继承 parent registry 但剔除 task，使用 headless gate、独立 provider resolver、transcripts、MaxSubagentDepth、scheduler、workspace lease 和 bash sandbox contract；另外显式注册 parallel_tasks、fleet 与 read_only_task。",
+      "plainLanguage": "子 Agent 不是复制一份全局进程；它们共享已经治理过的工具目录，却有自己的会话、额度和后台审批边界。",
+      "implication": "多 Agent 设计要把“共享能力”与“共享状态”分开，避免 child 绕过 parent 的安全设置或无限递归。",
+      "citations": [
+        { "path": "internal/boot/boot.go", "startLine": 756, "endLine": 779, "role": "implementation", "excerpt": "TaskTool 继承 registry、gate 与 provider resolver。" },
+        { "path": "internal/boot/boot.go", "startLine": 799, "endLine": 879, "role": "implementation", "excerpt": "subagent model/effort、depth、scheduler、transcripts、lease/sandbox。" },
+        { "path": "internal/boot/boot.go", "startLine": 880, "endLine": 909, "role": "implementation", "excerpt": "task、parallel_tasks、fleet、read_only_task 注册顺序。" }
+      ]
+    },
+    {
+      "id": "reasonix-persist-001",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "会话持久化是带 revision/CAS 的 append-only event log",
+      "fact": "Session.Save/SaveSnapshot/SaveRewrite 区分普通追加、快照和显式历史重写；写入前获取进程内与跨进程锁，探测 native event log、修复 torn tail，按 revision/digest 检查 stale prefix 或 diverged transcript，必要时生成 recovery branch 而不是覆盖更新文件。",
+      "plainLanguage": "两个进程同时写同一会话时，旧进程不能把新内容抹掉；坏掉的 JSONL 尾巴先修，冲突会留下可恢复分支。",
+      "implication": "长任务恢复需要 append-only log、版本号、锁和 conflict branch，单纯覆盖一个 chat.json 不够。",
+      "citations": [
+        { "path": "internal/agent/save.go", "startLine": 26, "endLine": 74, "role": "contract", "excerpt": "sidecar、锁、recovery depth cap 与冲突 sentinel。" },
+        { "path": "internal/agent/save.go", "startLine": 183, "endLine": 240, "role": "implementation", "excerpt": "Save modes、locks、snapshot capture 与 event log probe。" },
+        { "path": "internal/agent/save.go", "startLine": 294, "endLine": 329, "role": "implementation", "excerpt": "append/compact event log、revision/index 与 durable save。" }
+      ]
+    },
+    {
+      "id": "reasonix-persist-002",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "前端收到的是稳定 typed event wire，不是拼接日志",
+      "fact": "eventwire.ToWire 把 ToolDispatch/Result/Progress、Usage、Approval、Ask、Compaction、Guardian、TurnDone、Retrying 映射为稳定 JSON；Usage 包含 prompt/completion/cache hit/miss/reasoning/cost，Tool 包含 resolved name、capability id、readOnly、truncated、duration 和 diff。",
+      "plainLanguage": "桌面、TUI、HTTP 都能用同一套事件渲染工具卡、审批卡、压缩卡和成本仪表，不必从人类日志里猜状态。",
+      "implication": "观测 schema 应和执行状态机一起设计，尤其要暴露 resolved target、cache diagnostics、approval kind 和 retry outcome。",
+      "citations": [
+        { "path": "internal/eventwire/wire.go", "startLine": 9, "endLine": 31, "role": "contract", "excerpt": "共享 JSON Event 结构。" },
+        { "path": "internal/eventwire/wire.go", "startLine": 33, "endLine": 125, "role": "implementation", "excerpt": "tool/usage/approval/compaction/guardian/turn 映射。" },
+        { "path": "internal/eventwire/wire.go", "startLine": 197, "endLine": 249, "role": "contract", "excerpt": "Tool 和 Usage 观测字段。" }
+      ]
+    },
+    {
+      "id": "reasonix-persist-003",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Evidence Ledger 把交付验收从文本变成可检查事实",
+      "fact": "evidence.Ledger 保存本轮 receipts 和 background leases；DeliveryCheckpoint 只保留 criteria/work/mutation/pendingMutation 等压缩安全字段，后台任务证据在 turn 成功通过 delivery gate 后才 commit，失败 run 会让证据重新可收集。",
+      "plainLanguage": "后台任务说“我改好了”不会自动算完成；只有主任务成功收下回执，证据才从临时状态转为已提交。",
+      "implication": "构建可恢复 Agent 时，副作用证据应有 provisional/committed 两阶段，避免失败 turn 把半成品当成功历史。",
+      "citations": [
+        { "path": "internal/evidence/evidence.go", "startLine": 348, "endLine": 373, "role": "contract", "excerpt": "BackgroundLease 与 DeliveryCheckpoint 字段。" },
+        { "path": "internal/evidence/evidence.go", "startLine": 375, "endLine": 420, "role": "implementation", "excerpt": "Ledger receipts/background lease reset 与去重。" }
+      ]
+    },
+    {
+      "id": "reasonix-tests-001",
+      "dimension": "tests-benchmarks-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "测试覆盖了真实 loop 的配对、取消、断流恢复和 compaction 熔断",
+      "fact": "loop_e2e_test 驱动实际 Agent.Run 验证空 ID 多工具结果不折叠、取消后 session 无 dangling tool、partial stream 不把 LocalOnly 文本泄漏给 provider，并验证断流重试次数；compact_loop_e2e_test 验证窗口过小时总 compaction 不超过 2 次且进入 paused notice。",
+      "plainLanguage": "这些不是只测 helper 的单元测试，而是把模型流、工具、session 和恢复串起来，专门覆盖最容易把长任务搞坏的边界。",
+      "implication": "评测自研 Harness 时要把“崩溃/断流/重试后下一次请求是否可发送”列为一等场景，而不是只测最终字符串。",
+      "citations": [
+        { "path": "internal/agent/loop_e2e_test.go", "startLine": 68, "endLine": 102, "role": "test", "excerpt": "空 ID 多工具调用的真实 loop pairing。" },
+        { "path": "internal/agent/loop_e2e_test.go", "startLine": 128, "endLine": 202, "role": "test", "excerpt": "取消、LocalOnly、stream recovery 与 retry cap。" },
+        { "path": "internal/agent/compact_loop_e2e_test.go", "startLine": 137, "endLine": 180, "role": "test", "excerpt": "stuck compaction pause 与健康窗口不循环。" }
+      ]
+    },
+    {
+      "id": "reasonix-tests-002",
+      "dimension": "tests-benchmarks-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "仓库有面向真实 DeepSeek cache 的 context maintenance 基准，但它需要外部 API key",
+      "fact": "benchmarks/context-maintenance-e2e 使用 DeepSeek v4 flash 与官方 API，构造大量工具结果，比较 cold restart 的 control/pruned 两臂 cache miss tokens，并把 prune 前后 usage 写成 JSON 结果；许可证是 MIT。",
+      "plainLanguage": "项目不只在本地 mock 上谈缓存，仓库还提供真实 API 的 A/B 脚本；但它需要密钥和网络，不能把基准当成离线 CI 事实。",
+      "implication": "缓存优化要同时有离线 deterministic tests 和受控真实 provider benchmark，报告结果时要标注外部依赖。",
+      "citations": [
+        { "path": "benchmarks/context-maintenance-e2e/main.go", "startLine": 1, "endLine": 41, "role": "test", "excerpt": "DeepSeek API、模型与 key 前置条件。" },
+        { "path": "benchmarks/context-maintenance-e2e/main.go", "startLine": 126, "endLine": 175, "role": "test", "excerpt": "resume、prune/control A/B 与 cache miss reduction 输出。" },
+        { "path": "LICENSE", "startLine": 1, "endLine": 20, "role": "config", "excerpt": "MIT license。" }
+      ],
+      "caveats": ["基准运行需要 DEEPSEEK_API_KEY 和网络；本页没有把远端 API 结果冒充源码内置保证。"]
+    }
+  ]
+}

@@ -1,0 +1,292 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "Goose",
+  "snapshot": {
+    "repository": "aaif-goose/goose",
+    "commit": "021b0db8dbee8d6c7e9ffbab580a4143598a3560",
+    "commitDate": "2026-07-27T16:41:11-04:00"
+  },
+  "method": {
+    "readmePolicy": "README 只用于定位入口、产品命名与作者自述；本账本的核心结论不得只引用 README。",
+    "factPolicy": "实现事实优先引用运行时代码（L1）与类型/协议/配置契约（L2），并尽量用测试（L3）交叉验证。",
+    "inferencePolicy": "由多处代码综合得出的判断必须标为 inference、limitation 或 risk，不伪装为作者原话。"
+  },
+  "coverage": [
+    { "dimension": "entry-session-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已逐段审计 Agent.reply/reply_internal 与 SessionManager。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计 Provider trait、流合并和 Agent 消费逻辑。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计阈值判定、工具结果裁剪、结构化摘要和溢出恢复。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计分类、检查、审批、并发汇流、结果配对。" },
+    { "dimension": "execution-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已核对 shell/edit 的实际系统调用与路径解析；策略门不等于 OS 隔离。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计安全、外连、对抗、权限、重复五级 inspector 顺序。" },
+    { "dimension": "instructions-prompts", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计系统提示构建、项目指令、子目录 hints 与 Unicode 标签清洗。" },
+    { "dimension": "extensions-mcp", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计工具发现缓存、命名空间、HTTP/OAuth、调用分发与元数据净化。" },
+    { "dimension": "skills-plugins-hooks", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计技能目录优先级、文件逃逸防护、插件 hooks 与 MCP 注入。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计子 Agent 的独立 Agent/Session 构造、工具选择和禁止递归委派。" },
+    { "dimension": "observability-persistence", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计 SQLite/WAL、usage ledger、tracing span 与可选遥测。" },
+    { "dimension": "tests-evals-maturity", "status": "partial", "evidenceLevels": ["L2", "L3"], "notes": "关键路径测试已定位；全仓测试与 benchmark 数量统计待补。" }
+  ],
+  "findings": [
+    {
+      "id": "goose-loop-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "单一流式 Agent 循环驱动推理、工具和持久化",
+      "fact": "reply_internal 在一个有界 loop 中调用 provider stream，消费增量消息，执行工具，把结果加入会话，再决定继续、重试、压缩或结束。",
+      "plainLanguage": "它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。",
+      "implication": "Harness 的真正核心是状态机而不是提示词；重试、转向、停止钩子和上下文恢复都进入同一控制环。",
+      "citations": [
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 1930, "endLine": 2043, "role": "implementation", "excerpt": "loop { ... stream_response_from_provider(...).await?; }" },
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 2883, "endLine": 2929, "role": "implementation", "excerpt": "逐条持久化消息，处理 pending steers 与 stop hook 后退出。" }
+      ],
+      "caveats": ["默认最大 turn 是 1000，不代表每次任务都会接近该值；会话配置和环境参数可覆盖。"]
+    },
+    {
+      "id": "goose-loop-002",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "结束条件有防失控上限",
+      "fact": "空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。",
+      "plainLanguage": "即使模型什么都不返回，或插件一直说“还不能停”，Goose 也不会永远卡住。",
+      "implication": "所有“让 Agent 继续”的机制都需要配额和最终逃生门。",
+      "citations": [
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 67, "endLine": 79, "role": "contract", "excerpt": "DEFAULT_MAX_TURNS、DEFAULT_STOP_HOOK_BLOCK_CAP、MAX_EMPTY_TURN_RETRIES。" },
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 2773, "endLine": 2793, "role": "implementation", "excerpt": "空响应有界重试，耗尽后产生可见消息并结束。" },
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 2892, "endLine": 2915, "role": "implementation", "excerpt": "stop hook 连续阻塞超过上限后强制结束。" }
+      ]
+    },
+    {
+      "id": "goose-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "Provider 以流式协议统一，工具调用必须完整再上送",
+      "fact": "Provider trait 只要求实现 stream(model, system, messages, tools)；MessageStream 可以增量返回文本，但工具调用以完整对象返回。",
+      "plainLanguage": "不同模型厂商先被翻译成同一种“消息水管”。普通文字可以一个词一个词流出，但工具参数不能半截就执行。",
+      "implication": "Provider 适配层承担格式差异，Agent 主循环不需要为每家 API 复制控制逻辑。",
+      "citations": [
+        { "path": "crates/goose-provider-types/src/base.rs", "startLine": 281, "endLine": 286, "role": "contract", "excerpt": "partial text content but complete tool calls" },
+        { "path": "crates/goose-provider-types/src/base.rs", "startLine": 394, "endLine": 427, "role": "contract", "excerpt": "Provider::stream 与可覆盖 get_context_limit。" }
+      ]
+    },
+    {
+      "id": "goose-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "80% 阈值触发结构化压缩",
+      "fact": "当 Agent 自管上下文且估算 token/上下文上限大于阈值（默认 0.8）时触发压缩；压缩保留最新用户文本，并插入结构化摘要与继续指令。",
+      "plainLanguage": "快塞满模型记忆时，它不会粗暴删掉全部历史，而是把旧进展整理成一张交接单，再把用户最新要求放回去。",
+      "implication": "压缩的目标不是“越短越好”，而是保留任务状态、文件改动、错误、待办和下一步。",
+      "citations": [
+        { "path": "crates/goose/src/context_mgmt/mod.rs", "startLine": 26, "endLine": 49, "role": "contract", "excerpt": "默认 compaction threshold 为 0.8，并定义 Agent 可见但用户隐藏的继续消息。" },
+        { "path": "crates/goose/src/context_mgmt/mod.rs", "startLine": 78, "endLine": 188, "role": "implementation", "excerpt": "旧消息改可见性，插入摘要和 continuation，再恢复最新用户消息。" },
+        { "path": "crates/goose/src/context_mgmt/structured.rs", "startLine": 13, "endLine": 38, "role": "contract", "excerpt": "摘要字段覆盖意图、概念、文件、错误、待办、当前工作与下一步。" }
+      ]
+    },
+    {
+      "id": "goose-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文超限采用渐进式工具结果剥离和一次恢复重试",
+      "fact": "压缩会依次尝试移除 0%、10%、20%、50%、100% 的中间工具响应；Provider 明确报上下文超限时执行恢复压缩，第二次仍超限则终止。",
+      "plainLanguage": "先保留尽可能多的工具证据，实在放不下才逐级清掉旧工具输出；不能靠无限压缩掩盖超限。",
+      "implication": "Harness 应区分账单 token、保留 token 和可牺牲的工具噪声，并给恢复动作设次数上限。",
+      "citations": [
+        { "path": "crates/goose/src/context_mgmt/mod.rs", "startLine": 319, "endLine": 398, "role": "implementation", "excerpt": "按多个比例过滤工具响应并重试快速摘要。" },
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 2533, "endLine": 2591, "role": "implementation", "excerpt": "ContextLengthExceeded 后恢复压缩；第二次仍失败就给出终止通知。" }
+      ]
+    },
+    {
+      "id": "goose-tools-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "同一模型 turn 的多个工具经检查后并发执行",
+      "fact": "工具请求先统一通过 inspector 和许可分组；已批准及用户批准的工具流随后用 stream::select_all 合并，结果按 request_id 配回各自响应。",
+      "plainLanguage": "模型一次要读三个文件时，不必傻等第一个完成再做第二个；但每个调用先过安全和审批门。",
+      "implication": "并发提高吞吐，但必须用稳定 ID 做结果配对，并允许单个工具发通知、请求交互或取消。",
+      "citations": [
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 2210, "endLine": 2265, "role": "implementation", "excerpt": "inspect_tools 后分为 approved、needs_approval、denied。" },
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 2267, "endLine": 2337, "role": "implementation", "excerpt": "用 stream::select_all 汇流工具结果，并按 request_id 处理。" }
+      ]
+    },
+    {
+      "id": "goose-security-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具检查顺序体现“危险优先”",
+      "fact": "检查器固定按 Security、Egress、Adversary、Permission、Repetition 顺序注册。",
+      "plainLanguage": "先看是否像恶意命令和数据外传，再做额外对抗审查，然后才判断用户是否需要点批准，最后检查重复循环。",
+      "implication": "审批不是唯一防线；危险检测应在便利性策略之前执行。",
+      "citations": [
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 659, "endLine": 688, "role": "implementation", "excerpt": "五类 inspector 的固定注册顺序。" }
+      ],
+      "caveats": ["具体 inspector 是否生效还受配置控制；例如模式扫描可被关闭。"]
+    },
+    {
+      "id": "goose-permission-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Auto、Approve、SmartApprove 是不同权限语义",
+      "fact": "Auto 模式允许所有调用；Approve/SmartApprove 尊重显式许可，SmartApprove 还会依据工具注解或 LLM 判断只读调用是否可自动放行，未知调用默认要求审批。",
+      "plainLanguage": "“智能批准”不是无条件执行：读文件一类操作可能自动过，写文件或判断不清的操作仍会问人。",
+      "implication": "权限模式必须在 UI 和审计记录中显式呈现，不能用一个笼统的“安全模式”标签。",
+      "citations": [
+        { "path": "crates/goose/src/permission/permission_inspector.rs", "startLine": 159, "endLine": 268, "role": "implementation", "excerpt": "按 GooseMode 分支，结合显式许可、工具注解与只读判断返回 inspection result。" }
+      ]
+    },
+    {
+      "id": "goose-sandbox-001",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "内置开发者工具没有强制工作区边界",
+      "fact": "shell 工具最终启动系统 bash/sh/PowerShell；Flatpak 下使用 flatpak-spawn --host。edit 工具解析并接受绝对路径，随后直接 fs::write。",
+      "plainLanguage": "Goose 会先决定“该不该执行”，但一旦放行，命令通常是在真实电脑环境里跑，不是在一个只能碰项目目录的小盒子里。",
+      "implication": "Goose 的默认安全核心是策略检查与人类审批，不是内核级隔离；部署到高风险环境应再叠加容器、VM 或受限执行器。",
+      "citations": [
+        { "path": "crates/goose/src/agents/platform_extensions/developer/shell.rs", "startLine": 25, "endLine": 49, "role": "implementation", "excerpt": "Flatpak 环境配置 flatpak-spawn --host --watch-bus。" },
+        { "path": "crates/goose/src/agents/platform_extensions/developer/shell.rs", "startLine": 633, "endLine": 700, "role": "implementation", "excerpt": "构造系统 shell，设置 cwd/PATH/会话环境后执行。" },
+        { "path": "crates/goose/src/agents/platform_extensions/developer/edit.rs", "startLine": 47, "endLine": 105, "role": "implementation", "excerpt": "解析路径、创建父目录、直接 fs::write。" }
+      ],
+      "caveats": ["外层桌面打包、企业运行平台或用户自行容器化可能增加隔离；本结论针对仓库内置 developer shell/edit 的实现。"]
+    },
+    {
+      "id": "goose-mcp-001",
+      "dimension": "extensions-mcp",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 工具被统一命名空间化、缓存和动态刷新",
+      "fact": "ExtensionManager 从所有客户端分页拉取工具，按 extension__tool 前缀公开（特殊配置可不加前缀），缓存聚合结果；扩展增删会提升版本并失效缓存。",
+      "plainLanguage": "各插件都可能有一个叫 search 的工具，所以 Goose 默认把它们改成“插件名__search”，避免撞名，并缓存工具清单减少重复查询。",
+      "implication": "工具注册表既是性能组件也是一致性组件；热插拔后必须原子失效。",
+      "citations": [
+        { "path": "crates/goose/src/agents/extension_manager.rs", "startLine": 1271, "endLine": 1342, "role": "implementation", "excerpt": "过滤、缓存和版本校验。" },
+        { "path": "crates/goose/src/agents/extension_manager.rs", "startLine": 1391, "endLine": 1455, "role": "implementation", "excerpt": "分页列举客户端工具并添加扩展命名空间。" }
+      ]
+    },
+    {
+      "id": "goose-mcp-002",
+      "dimension": "extensions-mcp",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "远端 MCP 支持 HTTP、OAuth 和交互通知",
+      "fact": "扩展可通过 streamable HTTP（Unix 上还可走 socket）连接，复用凭证存储和 OAuth；工具执行可同时返回通知流、ActionRequired 流与最终结果。",
+      "plainLanguage": "插件不一定是本机子进程，也可以是要登录的远程服务；执行过程中还能弹出“需要用户操作”的中间事件。",
+      "implication": "Connector 模型必须同时处理认证生命周期、取消、通知和最终值，不能只把工具当普通函数。",
+      "citations": [
+        { "path": "crates/goose/src/agents/extension_manager.rs", "startLine": 612, "endLine": 730, "role": "implementation", "excerpt": "构建带请求头的 Streamable HTTP transport，并复用 OAuth 凭证。" },
+        { "path": "crates/goose/src/agents/extension_manager.rs", "startLine": 1786, "endLine": 1895, "role": "implementation", "excerpt": "解析工具归属，调用 MCP client，暴露通知与 ActionRequired stream。" }
+      ]
+    },
+    {
+      "id": "goose-mcp-003",
+      "dimension": "extensions-mcp",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP UI 元数据采用“先剥离、再可信补写”",
+      "fact": "客户端返回的 goose.mcpApp 和内部工具更新元数据会先被删除；只有宿主主动读取关联资源后才插入可信附件。",
+      "plainLanguage": "插件不能只靠自己声称“这是可信 UI”就让前端照单全收，Goose 会清掉敏感标记并由宿主重新验证、重新封装。",
+      "implication": "所有能改变宿主 UI/行为的扩展元数据都应有信任边界。",
+      "citations": [
+        { "path": "crates/goose/src/agents/extension_manager.rs", "startLine": 322, "endLine": 346, "role": "implementation", "excerpt": "remove_untrusted_mcp_app_meta 清理保留键。" },
+        { "path": "crates/goose/src/agents/extension_manager.rs", "startLine": 1866, "endLine": 1880, "role": "implementation", "excerpt": "调用后先清理，再由宿主 hydrate 资源并写回可信 metadata。" },
+        { "path": "crates/goose/src/agents/extension_manager.rs", "startLine": 2881, "endLine": 2904, "role": "test", "excerpt": "测试伪造 payload 会被剥离。" }
+      ]
+    },
+    {
+      "id": "goose-prompt-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "系统提示由稳定骨架、扩展说明和路径 hints 组合",
+      "fact": "PromptBuilder 聚合时间、工作目录、扩展说明、可用工具、模式、系统 extras 与 hints；工具排序稳定以利提示缓存，并清洗扩展提供的 Unicode 标签。",
+      "plainLanguage": "提示词不是一整块写死文本，而是像模板一样拼装；插件能加说明，但会先清理可能伪装成系统标签的字符。",
+      "implication": "指令装配应有稳定顺序、来源边界和可测试的净化规则，否则缓存命中与安全都会漂移。",
+      "citations": [
+        { "path": "crates/goose/src/agents/prompt_manager.rs", "startLine": 95, "endLine": 165, "role": "implementation", "excerpt": "读取 hints、稳定排序工具、清洗标签并渲染系统模板。" },
+        { "path": "crates/goose/src/agents/prompt_manager.rs", "startLine": 170, "endLine": 273, "role": "implementation", "excerpt": "追加 extras 与 hints，固定小时级时间用于缓存。" },
+        { "path": "crates/goose/src/agents/prompt_manager.rs", "startLine": 289, "endLine": 360, "role": "test", "excerpt": "覆盖 Unicode 标签清洗和提示构建。" }
+      ]
+    },
+    {
+      "id": "goose-skills-001",
+      "dimension": "skills-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skills 采用渐进加载和多生态目录兼容",
+      "fact": "项目级 .agents/.goose/.claude 目录先于全局目录发现；系统提示只列技能名与描述，真正调用时才载入 SKILL.md 或支持文件，并校验支持文件解析后仍位于技能目录内。",
+      "plainLanguage": "模型一开始只拿到“技能目录”，需要时再打开说明书和附件，既省上下文，也防止通过 ../ 偷读技能目录外文件。",
+      "implication": "技能系统应把发现、选择、加载分开，并对支持文件做 canonical path 校验。",
+      "citations": [
+        { "path": "crates/goose/src/skills/mod.rs", "startLine": 313, "endLine": 341, "role": "implementation", "excerpt": "项目与全局技能目录及其发现优先级。" },
+        { "path": "crates/goose/src/skills/client.rs", "startLine": 132, "endLine": 187, "role": "implementation", "excerpt": "按名称加载技能或支持文件，并拒绝解析到目录外。" },
+        { "path": "crates/goose/src/skills/client.rs", "startLine": 245, "endLine": 266, "role": "implementation", "excerpt": "系统指令只列出技能名和描述。" }
+      ]
+    },
+    {
+      "id": "goose-hooks-001",
+      "dimension": "skills-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "插件 Hooks 覆盖工具、文件、Shell、会话和停止事件",
+      "fact": "HookManager 从启用插件的 hooks/hooks.json 加载命令动作；PreToolUse 和 Stop 可阻塞，其他 hook 失败默认放行；Stop 阻塞另有连续次数上限。",
+      "plainLanguage": "组织可以在“运行命令前”“改文件后”“会话开始”“Agent 想结束”等时点执行自己的脚本，但普通通知脚本坏掉不会让整个 Agent 瘫痪。",
+      "implication": "Hook 的失败语义必须逐事件定义；治理门可以 fail-closed，旁路观测更适合 fail-open。",
+      "citations": [
+        { "path": "crates/goose/src/hooks/mod.rs", "startLine": 64, "endLine": 95, "role": "contract", "excerpt": "HookEvent 枚举覆盖 Pre/PostTool、Session、Read/Edit、Shell、Stop。" },
+        { "path": "crates/goose/src/hooks/mod.rs", "startLine": 237, "endLine": 284, "role": "implementation", "excerpt": "从启用插件加载 hooks.json。" },
+        { "path": "crates/goose/src/hooks/mod.rs", "startLine": 292, "endLine": 425, "role": "implementation", "excerpt": "普通 emit 失败放行；blocking emit 解释阻塞退出码或 JSON。" }
+      ]
+    },
+    {
+      "id": "goose-subagent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 是独立 Agent 与子会话，不是主提示词里的角色扮演",
+      "fact": "SubagentHandler 新建 Agent，继承/覆盖 provider 与 model，按配置装载扩展和响应 schema，创建 SubAgent 类型会话，并运行标准 Agent.reply；子 Agent 系统提示明确禁止继续创建子 Agent。",
+      "plainLanguage": "主 Agent 真正启动了另一个有独立历史和工具集的执行循环，而不是在同一段对话里假装分身；但只允许一层委派。",
+      "implication": "独立会话便于隔离上下文、统计成本和回传结果；禁止递归可控制爆炸式 fan-out。",
+      "citations": [
+        { "path": "crates/goose/src/agents/subagent_handler.rs", "startLine": 121, "endLine": 230, "role": "implementation", "excerpt": "构造独立 Agent、扩展、响应 schema、会话配置并运行 reply。" },
+        { "path": "crates/goose/src/prompts/subagent_system.md", "startLine": 1, "endLine": 38, "role": "prompt", "excerpt": "子 Agent 有边界任务、最大 turns，并被禁止再生成 subagents。" }
+      ]
+    },
+    {
+      "id": "goose-session-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "会话、消息、成本与压缩指标落到 SQLite/WAL",
+      "fact": "SessionManager 使用 SQLite、WAL 和迁移管理持久化 sessions、messages、usage_ledger；会话记录 provider/model/mode/project/parent，usage ledger 区分输入输出、缓存、总成本与压缩后保留 token。",
+      "plainLanguage": "对话不只是屏幕上的临时文本：每条消息、用的模型、父子会话、花费和压缩前后 token 都能落盘追踪。",
+      "implication": "成本与上下文恢复应成为一等数据模型，而不是散落在日志字符串里。",
+      "citations": [
+        { "path": "crates/goose/src/session/session_manager.rs", "startLine": 45, "endLine": 96, "role": "contract", "excerpt": "SessionType 与 Session 持久字段。" },
+        { "path": "crates/goose/src/session/session_manager.rs", "startLine": 843, "endLine": 890, "role": "implementation", "excerpt": "SQLite 路径、WAL、foreign keys 与 migrations。" },
+        { "path": "crates/goose/src/session/session_manager.rs", "startLine": 893, "endLine": 1031, "role": "migration", "excerpt": "sessions/messages/usage_ledger 表和 parent_session 索引。" }
+      ]
+    },
+    {
+      "id": "goose-observe-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Tracing 以 goose:: span 生成 trace/span 观测事件",
+      "fact": "ObservationLayer 仅处理 target 以 goose:: 开头的 tracing 事件，跟踪 span 层级、输入输出和批次，并可把 reply 最终文本记录为 trace_output。",
+      "plainLanguage": "内部关键步骤会形成一棵调用轨迹，不是只打一长串平面日志；同时避免把所有依赖库噪声都收进来。",
+      "implication": "观测层和业务层通过结构化 span 字段连接，适合接入 Langfuse 等后端，但敏感输出治理仍需部署方关注。",
+      "citations": [
+        { "path": "crates/goose/src/tracing/observation_layer.rs", "startLine": 103, "endLine": 184, "role": "implementation", "excerpt": "创建与更新 trace/span 事件。" },
+        { "path": "crates/goose/src/tracing/observation_layer.rs", "startLine": 196, "endLine": 336, "role": "implementation", "excerpt": "记录输入输出，仅过滤 goose:: targets。" },
+        { "path": "crates/goose/src/agents/agent.rs", "startLine": 2922, "endLine": 2924, "role": "implementation", "excerpt": "把最终助手文本记录到当前 span 的 trace_output。" }
+      ]
+    }
+  ]
+}

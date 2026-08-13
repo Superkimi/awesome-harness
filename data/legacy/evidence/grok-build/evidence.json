@@ -1,0 +1,275 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "Grok Build",
+  "snapshot": {
+    "repository": "xai-org/grok-build",
+    "commit": "02d9359435d0e9c20a20945679389cdce441e431",
+    "commitDate": "2026-07-27T17:54:34Z"
+  },
+  "method": {
+    "readmePolicy": "README 仅定位产品入口；核心结论来自 SessionActor、ToolBridge、sandbox、compaction、subagent、plugin 与 persistence 实现。",
+    "factPolicy": "对安全能力同时审计配置语义、实际 kernel backend 和失败分支，避免只看 profile 名称。",
+    "inferencePolicy": "复杂度、优劣势和建设建议由多个运行时证据综合，明确标为解释而非作者承诺。"
+  },
+  "coverage": [
+    { "dimension": "entry-session-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 SessionActor select loop、turn 和 replay/command/event 通道。" },
+    { "dimension": "provider-streaming", "status": "partial", "evidenceLevels": ["L1", "L2"], "notes": "已定位 sampler 与 Responses/Chat Completions 流；报告正文再展开协议差异。" },
+    { "dimension": "context-compaction-memory", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计预热、自动/恢复压缩、结构化状态注入、段与 checkpoint。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 preflight、权限、并发、同文件锁、postflight。" },
+    { "dimension": "execution-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 nono/Landlock/Seatbelt、bwrap、seccomp 子进程网络与失效语义。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 Ask/Auto/Always Approve、Plan gate、folder/plugin trust 与 hook deny。" },
+    { "dimension": "instructions-prompts", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 PromptContext、AGENTS/Claude/Cursor rules、模板和受众差异。" },
+    { "dimension": "tools-connectors-plugins", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 MCP、LSP、skills、commands、agents、hooks 的统一插件清单。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计后台子 Agent、可恢复会话、深度策略、能力交集和 worktree 隔离。" },
+    { "dimension": "observability-persistence", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计 ACP updates、统一事件、JSONL/会话目录、压缩 checkpoint 和 sandbox JSONL。" },
+    { "dimension": "tests-evals-maturity", "status": "partial", "evidenceLevels": ["L2", "L3"], "notes": "关键并发、安全、恢复测试已定位；完整测试规模待汇总。" }
+  ],
+  "findings": [
+    {
+      "id": "grok-loop-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "SessionActor 是事件驱动的长期存活 Actor",
+      "fact": "run_session 同时监听命令、chat-state 事件、内部事件、模型切换、任务完成和多个定时器；启动时还建立文件监听、MCP liveness dispatcher 与 replay buffer。",
+      "plainLanguage": "它不像一个简单 while 循环，更像一间控制室：用户输入、工具结果、文件变化、后台任务、模型切换都从不同通道进来，由同一个会话 Actor 排队处理。",
+      "implication": "这套 Harness 面向长会话、后台工作和 IDE/ACP 集成，控制面复杂度显著高于纯 CLI Agent。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs", "startLine": 120, "endLine": 183, "role": "implementation", "excerpt": "创建 replay buffer、技能/工作流与文件 watcher。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs", "startLine": 188, "endLine": 246, "role": "implementation", "excerpt": "启动 MCP liveness/auto-restart dispatcher 和初始化任务。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs", "startLine": 247, "endLine": 280, "role": "implementation", "excerpt": "select loop 同时处理模型切换与定时 memory flush。" }
+      ]
+    },
+    {
+      "id": "grok-tools-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具执行明确拆成 prepare、并发 dispatch、post-flight",
+      "fact": "execute_tool_calls_batch 先逐个解析、运行 Plan gate、hooks 和权限；批准后用 FuturesUnordered 并发执行，写同一路径的工具共享 Mutex 串行；完成后按原 slot 做事件和结果处理。",
+      "plainLanguage": "能并行的尽量并行，但两个工具若同时写同一个文件会排队，避免互相覆盖。",
+      "implication": "并发策略不是简单 all-at-once，而是带资源锁的调度。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 355, "endLine": 449, "role": "implementation", "excerpt": "preflight 阶段逐项准备，拒绝可终止后续项。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 453, "endLine": 565, "role": "implementation", "excerpt": "为写路径建锁并以 FuturesUnordered 并发 dispatch。" }
+      ]
+    },
+    {
+      "id": "grok-tools-002",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具参数对模型瑕疵有恢复层",
+      "fact": "prepare_tool_call 会规范空参数、尝试解析 JSON；遇到拼接的多个 JSON 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 ToolParsingError。",
+      "plainLanguage": "模型偶尔把两个 JSON 粘在一起，Grok Build 会先抢救，不是一看到格式错就整轮失败。",
+      "implication": "对模型输出做保守修复能提高成功率，但必须记录恢复行为，避免悄悄改变语义。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 878, "endLine": 950, "role": "implementation", "excerpt": "空参数规范、拼接 JSON 抽取、schema 试配和解析失败处理。" }
+      ]
+    },
+    {
+      "id": "grok-plan-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Plan Mode 的只读约束独立于 Always Approve",
+      "fact": "plan_mode_edit_gate 在权限管理器之前执行，即使 YOLO/always-approve 也不能绕过；普通编辑只允许计划文件，apply_patch 因无法预知目标而保守拒绝，未知退出结果默认取消。",
+      "plainLanguage": "“全部自动批准”也不等于“计划阶段可以乱改代码”。计划模式另有一把更早、更硬的锁。",
+      "implication": "工作流阶段约束不能依赖通用权限模式，否则高权限模式会破坏阶段不变量。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 157, "endLine": 205, "role": "implementation", "excerpt": "Plan gate 规则、apply_patch 保守拒绝与独立于 YOLO 的原因。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 206, "endLine": 215, "role": "contract", "excerpt": "未知 PlanApprovalOutcome 映射为 Cancelled，保持 fail-closed。" }
+      ]
+    },
+    {
+      "id": "grok-permission-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "权限判断理解访问类型和会话上下文",
+      "fact": "工具被分类为 Read、Edit、Bash、Grep、MCP、Web；Ask/Auto/Always Approve 三种模式分别走交互、带最近对话的分类器或快速放行，决定来源与等待时间进入 trace 和 telemetry。",
+      "plainLanguage": "它不是只看工具名，而是知道“这是读哪个路径、改哪个文件、跑什么命令、访问哪个网站”，自动模式还会参考最近几轮对话。",
+      "implication": "权限系统既是策略引擎，也是可观测的决策服务。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 1035, "endLine": 1102, "role": "implementation", "excerpt": "访问类型映射和三种 permission mode。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 1112, "endLine": 1227, "role": "implementation", "excerpt": "Auto 分类上下文、反向请求、决策 trace 与 telemetry。" }
+      ]
+    },
+    {
+      "id": "grok-hooks-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "PreToolUse Hook 可在权限前阻断",
+      "fact": "工具解析和 Plan gate 后，运行服务端/客户端 PreToolUse hooks；任一 hook 的 Deny 会产生 HookDenied，不再进入权限请求和 dispatch。",
+      "plainLanguage": "企业策略脚本可以比用户批准更早说“不”，避免用户误点同意覆盖组织规则。",
+      "implication": "Hook 是治理层而不仅是通知回调。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 977, "endLine": 1034, "role": "implementation", "excerpt": "构造截断 payload，派发 PreToolUse，Deny 立即返回。" }
+      ]
+    },
+    {
+      "id": "grok-sandbox-001",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "提供真正的内核级文件系统沙箱",
+      "fact": "默认 enforce feature 在 Unix 使用 nono，映射到 Landlock/Seatbelt；Profile capability set 控制全盘读、显式只读/读写、deny，应用后不可逆并覆盖进程内文件 API 与子进程。",
+      "plainLanguage": "这不只是“执行前问一下”，操作系统内核会真的挡住不允许的文件访问。",
+      "implication": "在这 14 个项目里，Grok Build 的安全边界属于更强的系统级设计。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-sandbox/src/lib.rs", "startLine": 8, "endLine": 18, "role": "contract", "excerpt": "nono、Landlock/Seatbelt、进程内与子进程覆盖范围。" },
+        { "path": "crates/codegen/xai-grok-sandbox/src/lib.rs", "startLine": 173, "endLine": 219, "role": "implementation", "excerpt": "解析 profile、构建 CapabilitySet、不可逆应用。" },
+        { "path": "crates/codegen/xai-grok-sandbox/src/profiles.rs", "startLine": 24, "endLine": 41, "role": "contract", "excerpt": "SandboxProfile 的 read_only/read_write/deny/default_read/network 字段。" }
+      ]
+    },
+    {
+      "id": "grok-sandbox-002",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "沙箱不支持或应用失败时会降级继续",
+      "fact": "若平台不支持、apply 失败或构建关闭 enforce feature，SandboxManager 记录警告和 apply_failed 事件后返回 Ok，进程继续运行；is_active 可用于区分实际生效与仅请求。",
+      "plainLanguage": "配置了沙箱不等于一定锁住；系统不支持时默认是“报警后继续”，不是整个 Agent 拒绝启动。",
+      "implication": "企业部署必须把“sandbox requested”和“sandbox active”分开做启动门禁；需要 fail-closed 时应由外层策略强制。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-sandbox/src/lib.rs", "startLine": 107, "endLine": 129, "role": "contract", "excerpt": "requested_confinement_profile 与 is_active 的差异。" },
+        { "path": "crates/codegen/xai-grok-sandbox/src/lib.rs", "startLine": 190, "endLine": 243, "role": "implementation", "excerpt": "不支持、应用失败、无 enforce feature 时继续运行。" }
+      ]
+    },
+    {
+      "id": "grok-sandbox-003",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子进程网络隔离与主进程网络分离",
+      "fact": "主进程保留网络供 LLM API；ReadOnly/Strict profile 在已生效的 Linux 沙箱中，对已知子进程启动路径安装 seccomp 网络过滤，并额外锁定 namespace 逃逸 syscall。",
+      "plainLanguage": "Agent 自己可以连模型服务，但它启动的 bash 不一定能上网，减少 curl 下载执行或数据外传风险。",
+      "implication": "网络隔离需要按进程角色拆分；完全断主进程网络会破坏云模型调用。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-sandbox/src/lib.rs", "startLine": 8, "endLine": 18, "role": "contract", "excerpt": "主进程网络开放，子进程网络用 seccomp 阻断。" },
+        { "path": "crates/codegen/xai-grok-sandbox/src/lib.rs", "startLine": 83, "endLine": 95, "role": "implementation", "excerpt": "仅在 Linux 且实际 applied/configured 时限制已知子进程。" },
+        { "path": "crates/codegen/xai-grok-sandbox/src/child_net.rs", "startLine": 62, "endLine": 144, "role": "implementation", "excerpt": "构造 namespace lockdown BPF 并以 NO_NEW_PRIVS/TSYNC 安装。" }
+      ]
+    },
+    {
+      "id": "grok-sandbox-004",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "项目不能覆写同名全局安全 Profile",
+      "fact": "全局 ~/.grok/sandbox.toml 先加载；项目 .grok/sandbox.toml 只能新增自定义 profile，若名称已存在则忽略项目定义。",
+      "plainLanguage": "恶意仓库不能悄悄做一个同名“strict”配置，把你信任的全局规则掏空。",
+      "implication": "配置合并本身也是信任边界，不能简单 last-write-wins。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-sandbox/src/profiles.rs", "startLine": 113, "endLine": 167, "role": "implementation", "excerpt": "全局先加载，项目 profile additive-only，同名不覆盖。" }
+      ]
+    },
+    {
+      "id": "grok-context-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩是一条带预热、两阶段和恢复梯子的子系统",
+      "fact": "会话在阈值前若干百分点预先生成 pass-1；真正压缩支持 two-pass/full-replace，输入溢出时逐级缩小 verbatim/normal conversation，记录多类拒绝原因，并在完成后自动继续。",
+      "plainLanguage": "不是等窗口爆了才临时总结：它会提前准备摘要草稿，到红线时再完成第二遍；若摘要输入也太大，就逐级减料。",
+      "implication": "长任务连续性被当作独立可靠性系统，而非一个 prompt helper。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/compaction.rs", "startLine": 3, "endLine": 35, "role": "contract", "excerpt": "模块覆盖手动、自动、inline continue、恢复、preflight 与 checkpoint。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/compaction.rs", "startLine": 212, "endLine": 262, "role": "implementation", "excerpt": "prefire 在 threshold-lead 启动并记录 pass-1 指标。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/compaction.rs", "startLine": 1098, "endLine": 1197, "role": "implementation", "excerpt": "full-replace 循环与输入溢出 ladder。" }
+      ]
+    },
+    {
+      "id": "grok-context-002",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩后重建的是“任务状态”，不是纯聊天摘要",
+      "fact": "压缩会把 AGENTS.md、skills、编辑路径、运行中子 Agent、MCP server、Todo、Plan mode 和 memory 状态重新注入；清理孤儿 ToolResult，验证失败则退到无 recent_messages 的最小历史，并持久化 segment/checkpoint。",
+      "plainLanguage": "总结完以后还会把“哪些子任务在跑、待办是什么、插件有哪些、当前计划阶段”重新装回去，避免只剩一段模糊回忆。",
+      "implication": "可靠 compaction 必须有结构化状态源，不能只依赖模型自由文本。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/compaction.rs", "startLine": 1282, "endLine": 1460, "role": "implementation", "excerpt": "收集 instructions、skills、subagents、MCP、Todo 与 plan 状态。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/compaction.rs", "startLine": 1577, "endLine": 1655, "role": "implementation", "excerpt": "构造、净化、验证 compacted history 并持久化 segment/checkpoint。" }
+      ]
+    },
+    {
+      "id": "grok-instructions-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "项目指令跨 Grok、Claude、Cursor 生态发现",
+      "fact": "从 home、仓库根到 cwd 分层发现 AGENTS/Claude 指令与 .grok/.claude/.cursor rules，按兼容开关和 gitignore 过滤、canonical path 去重；更深目录排在后面。",
+      "plainLanguage": "它能读懂多个编辑器生态留下的项目规则，并按“越靠近当前目录越具体”叠加。",
+      "implication": "兼容性高，但必须在报告中展示来源和优先级，避免用户不知道哪条规则生效。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-agent/src/prompt/agents_md.rs", "startLine": 1, "endLine": 7, "role": "contract", "excerpt": "发现范围和规则目录。" },
+        { "path": "crates/codegen/xai-grok-agent/src/prompt/agents_md.rs", "startLine": 177, "endLine": 307, "role": "implementation", "excerpt": "home/project roots、root→cwd 链、ignore、去重与读取。" }
+      ]
+    },
+    {
+      "id": "grok-prompt-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "PromptContext 是可序列化、可检查的一等契约",
+      "fact": "PromptContext 保存版本、模式、受众、模板、指令文件、memory、角色、OS/shell/cwd/date 与交互模式；Primary/Subagent 选择不同基础模板，但子 Agent 仍拿到完整 AGENTS.md。",
+      "plainLanguage": "系统提示词的输入不是散落变量，而是一张可以导出检查的配置表。",
+      "implication": "Prompt provenance 和可重放性明显优于只在运行时拼字符串。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-agent/src/prompt/context.rs", "startLine": 80, "endLine": 152, "role": "contract", "excerpt": "PromptContext 的可序列化字段。" },
+        { "path": "crates/codegen/xai-grok-agent/src/prompt/context.rs", "startLine": 199, "endLine": 232, "role": "implementation", "excerpt": "主/子受众的 AGENTS 与 persona 注入差异。" },
+        { "path": "crates/codegen/xai-grok-agent/src/prompt/context.rs", "startLine": 253, "endLine": 301, "role": "implementation", "excerpt": "Extend/Full 与标准/Codex/custom 模板渲染。" }
+      ]
+    },
+    {
+      "id": "grok-plugin-001",
+      "dimension": "tools-connectors-plugins",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "一个插件可同时交付 Skills、Commands、Agents、Hooks、MCP、LSP",
+      "fact": "PluginManifest 明确定义六类组件；所有路径必须位于 canonical plugin root。PluginRegistry 只把 enabled 且 trusted 的插件作为 active，项目插件需要显式信任，disabled 冲突优先。",
+      "plainLanguage": "插件不是只加一个工具，而是可以连同说明书、快捷命令、子 Agent 角色、策略 hook、远程工具和语言服务一起打包。",
+      "implication": "生态能力完整，但插件供应链和信任 UI 变成核心安全面。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-agent/src/plugins/manifest.rs", "startLine": 103, "endLine": 170, "role": "contract", "excerpt": "路径逃逸拒绝与六类组件字段。" },
+        { "path": "crates/codegen/xai-grok-agent/src/plugins/registry.rs", "startLine": 12, "endLine": 78, "role": "contract", "excerpt": "LoadedPlugin 信任、启用和各组件清单。" },
+        { "path": "crates/codegen/xai-grok-agent/src/plugins/registry.rs", "startLine": 114, "endLine": 184, "role": "implementation", "excerpt": "显式 enabled/disabled，disabled 优先，未列出默认禁用。" },
+        { "path": "crates/codegen/xai-grok-agent/src/plugins/registry.rs", "startLine": 274, "endLine": 279, "role": "implementation", "excerpt": "active_plugins 仅 enabled && trusted。" }
+      ]
+    },
+    {
+      "id": "grok-subagent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 支持后台执行、恢复、深度限制与 worktree 隔离",
+      "fact": "task/spawn_subagent 默认后台运行；启动前校验类型白名单和 toggle，能力取父子交集；可选创建独立 Git worktree，持久化子会话并从 snapshot 恢复；达到 max depth 后移除子 Agent 的 task 工具。",
+      "plainLanguage": "它是真正的多 Agent 调度：子任务可以后台跑、以后接着跑、在独立分支目录里改代码，但不能无限生孩子。",
+      "implication": "并行协作能力强，同时引入 worktree 生命周期、结果合并、成本与递归治理的高复杂度。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 811, "endLine": 839, "role": "implementation", "excerpt": "task/spawn_subagent 默认 background=true 并写入 ACP meta。" },
+        { "path": "crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs", "startLine": 84, "endLine": 140, "role": "implementation", "excerpt": "解析定义、toggle/allowlist gate、runtime/persona resolution。" },
+        { "path": "crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs", "startLine": 149, "endLine": 343, "role": "implementation", "excerpt": "恢复来源、snapshot/worktree rehydrate 与新 worktree 创建。" },
+        { "path": "crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs", "startLine": 375, "endLine": 423, "role": "implementation", "excerpt": "能力交集、深度计算、到顶移除 task、max turns。" }
+      ]
+    },
+    {
+      "id": "grok-observe-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具、权限、压缩和沙箱均产出结构化事件",
+      "fact": "工具开始/完成进入 ACP 与统一 SessionEvent，权限记录模式、来源、等待时间，压缩 span 记录 token/尝试/拒绝/TTFT，沙箱事件立即追加 ~/.grok/sandbox-events.jsonl。",
+      "plainLanguage": "不仅能看到“失败了”，还能回答失败在哪个关、谁批准的、等了多久、压缩试了几次、沙箱挡了什么。",
+      "implication": "具备平台级诊断基础，但事件面很大，需要统一 trace/session/tool/subagent ID 规范。",
+      "citations": [
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 392, "endLine": 436, "role": "implementation", "excerpt": "工具开始与 MCP 失败事件。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs", "startLine": 1198, "endLine": 1227, "role": "implementation", "excerpt": "权限 decision/source/wait_ms 的 span 与 telemetry。" },
+        { "path": "crates/codegen/xai-grok-shell/src/session/compaction.rs", "startLine": 859, "endLine": 895, "role": "implementation", "excerpt": "压缩 span 的 token、拒绝、延迟与结果字段。" },
+        { "path": "crates/codegen/xai-grok-sandbox/src/logging.rs", "startLine": 3, "endLine": 97, "role": "implementation", "excerpt": "sandbox 事件、指标和 JSONL flush。" }
+      ]
+    }
+  ]
+}

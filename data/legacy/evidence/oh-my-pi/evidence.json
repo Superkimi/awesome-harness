@@ -1,0 +1,376 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "oh-my-pi",
+  "snapshot": {
+    "repository": "can1357/oh-my-pi",
+    "commit": "ed4c78bc0faafcc79f61cfd0baca7a8413ba74bf",
+    "commitDate": "2026-07-28T02:06:13+02:00"
+  },
+  "method": {
+    "readmePolicy": "README 仅作入口地图；核心事实来自 agent loop、AgentSession、task、compaction、approval、MCP、memory、discovery、extension、storage、telemetry 与测试源码。",
+    "factPolicy": "把 oh-my-pi 作为独立演进的 Pi 衍生 Harness 分析，只归因固定提交中实际实现和默认配置。",
+    "inferencePolicy": "严格区分 tool approval、子任务工作区隔离与 OS/process sandbox；配置存在不等于默认开启。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 loop、session maintenance、steering/asides、yield、错误恢复和 goal continuation。" },
+    { "dimension": "providers-dialects", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 provider catalog、多协议 stream、in-band dialect 与 watchdog。" },
+    { "dimension": "context-compaction-memory", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计多策略压缩、prune/shake/snapcompact、handoff 和长期记忆后端。" },
+    { "dimension": "tools-editing-execution", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计内建工具面、调度、宿主 shell、approval 和 output guard。" },
+    { "dimension": "mcp-connectors", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计多来源配置、stdio/SSE/HTTP、OAuth、缓存、订阅、reconnect 与动态工具刷新。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 batch/async/typed yield、递归、预算、park/revive、hub 和工作区隔离。" },
+    { "dimension": "instructions-plugins-skills", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 capability discovery、跨生态兼容、system/rules/skills/commands/extensions/hooks/marketplace。" },
+    { "dimension": "sessions-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 session tree/storage、artifact、OTEL GenAI spans、cost 与 UI/RPC/ACP/collab surface。" },
+    { "dimension": "tests-benchmarks-maturity", "status": "verified", "evidenceLevels": ["L2", "L3"], "notes": "1858 个 TS 测试文件、metaharness 与 edit benchmark；不等同于公开 coding success 基准成绩。" }
+  ],
+  "findings": [
+    {
+      "id": "omp-architecture-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "核心是强化 Agent loop，产品层再叠加大型 Session maintenance 状态机",
+      "fact": "packages/agent 处理模型、工具、steering 和 telemetry；产品 AgentSession 在 agent_end 后按优先级处理 yield、空 stop、goal compaction、异常 stop、stream stall、model fallback、todo、async wake 和 session_stop。",
+      "plainLanguage": "内层发动机负责每一步，外层管家负责一步结束后判断要不要重试、压缩、换模型、继续目标或等待后台工作。",
+      "implication": "自治恢复能力强，但 session maintenance 已成为复杂调度器，修改顺序容易产生竞态。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 879, "endLine": 918, "role": "implementation", "excerpt": "runLoop 与 invoke_agent telemetry 边界。" },
+        { "path": "packages/coding-agent/src/session/agent-session.ts", "startLine": 2491, "endLine": 2619, "role": "implementation", "excerpt": "yield、empty stop、goal compaction、unexpected stop 与 retry 路由。" },
+        { "path": "packages/coding-agent/src/session/agent-session.ts", "startLine": 2621, "endLine": 2740, "role": "implementation", "excerpt": "abort、model fallback、todo、async wake 与 session_stop。" }
+      ]
+    },
+    {
+      "id": "omp-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "steering 不只在轮间排队，还能在工具执行中协作中断",
+      "fact": "loop 每轮前和 stop boundary 轮询 steering/asides；工具批运行时同时使用 hard abort 与 cooperative steeringSignal，interruptible 等待工具会被 steer 打断，普通有副作用工具只收到软信号并在边界注入消息。",
+      "plainLanguage": "用户插话时，纯等待可以立刻停；正在改文件的工具不会粗暴半路杀死，而是完成到安全边界再让模型听新指令。",
+      "implication": "中断语义按工具类型区分，明显优于统一 AbortController。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 999, "endLine": 1048, "role": "implementation", "excerpt": "起始 steering 与内外循环。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 1402, "endLine": 1438, "role": "implementation", "excerpt": "stop boundary 的 steering/asides 决策。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 2231, "endLine": 2250, "role": "implementation", "excerpt": "hard/soft steering signal 合同。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 2318, "endLine": 2344, "role": "implementation", "excerpt": "工具执行中检测并触发中断。" }
+      ]
+    },
+    {
+      "id": "omp-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具调度支持 shared/exclusive 并发和完整 pre-dispatch 改写",
+      "fact": "tool calls 在流结束前完成参数校验与 beforeToolCall，改写后的参数回写 assistant snapshot；执行时 shared calls 并发，exclusive 会等待之前 exclusive 和所有 shared；afterToolCall 可规范化结果。",
+      "plainLanguage": "先把所有施工单审核、改好并固化，再按“可并行/独占”排程，日志看到的参数就是实际执行参数。",
+      "implication": "既能并发提速，也能避免 edit/bash 等副作用互撞；第三方结果还在单一边界做防腐。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 2067, "endLine": 2200, "role": "implementation", "excerpt": "pre-dispatch validation、hook 与 assistant snapshot。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 2408, "endLine": 2538, "role": "implementation", "excerpt": "执行上下文、结果规范化和 after hook。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 2660, "endLine": 2692, "role": "implementation", "excerpt": "shared/exclusive 排程与 allSettled。" }
+      ]
+    },
+    {
+      "id": "omp-dialect-001",
+      "dimension": "providers-dialects",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "原生 tool calling 之外还有多种 in-band 方言和 Harmony 泄漏修复",
+      "fact": "loop 支持 glm、hermes、kimi、xml、anthropic、deepseek、harmony、qwen3、gemini、gemma、minimax 方言，在 system/history/stream 三处编码；另检测 GPT-5 Harmony 协议泄漏并尝试恢复 tool call。",
+      "plainLanguage": "一些本地模型不会说标准函数调用，它会把工具协议写进文本再解析；对模型意外吐出的内部协议也有专门清洗和恢复。",
+      "implication": "小模型/非标准模型兼容面很广，但解析器是额外攻击面和回归矩阵。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 26, "endLine": 45, "role": "implementation", "excerpt": "in-band dialect 与 Harmony utilities。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 167, "endLine": 186, "role": "implementation", "excerpt": "支持的 dialect 枚举。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 157, "endLine": 165, "role": "implementation", "excerpt": "Harmony leak interruption。" }
+      ]
+    },
+    {
+      "id": "omp-provider-001",
+      "dimension": "providers-dialects",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "模型目录和协议实现分离，Provider 覆盖极广",
+      "fact": "catalog 维护 AIML、Alibaba、Bedrock、Anthropic、Azure、Cerebras、Cloudflare、Cursor、DeepSeek、Devin、Fireworks、Copilot、Google、Groq、HF、Kimi、LiteLLM、Moonshot、Ollama、OpenAI 等大量 provider；AI 包实现 Anthropic/OpenAI Responses/Completions/Codex、Gemini/Vertex、Bedrock、Cursor/Devin 等不同 transport。",
+      "plainLanguage": "模型“有哪些”由目录管理，模型“怎么说话”由协议驱动管理，两者不是一张巨型 if/else。",
+      "implication": "适合作为多模型网关前端，但 catalog 更新、认证和协议正确性必须分开测试。",
+      "citations": [
+        { "path": "packages/catalog/src/provider-models/descriptors.ts", "startLine": 1, "endLine": 66, "role": "implementation", "excerpt": "catalog/runtime/auth 分层与 provider manager imports。" },
+        { "path": "packages/catalog/src/provider-models/descriptors.ts", "startLine": 66, "endLine": 180, "role": "config", "excerpt": "provider catalog 前半段。" },
+        { "path": "packages/ai/src/providers/register-builtins.ts", "startLine": 33, "endLine": 163, "role": "contract", "excerpt": "协议模块类型和 lazy registry。" }
+      ]
+    },
+    {
+      "id": "omp-provider-002",
+      "dimension": "providers-dialects",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "流式请求有首事件与空闲双 watchdog，并识别本地工具忙碌",
+      "fact": "provider wrapper 分别设置 first-item 和 idle timeout；synthetic start 不算真实进展，本地 server-side tool bridge 忙碌时暂停误判，Google CLI 冷推理有独立 5 分钟首事件 floor。",
+      "plainLanguage": "模型一直没开口和说到一半卡死是两种超时；如果它其实在调用本地工具，不会被错杀。",
+      "implication": "对长思考、多协议和 server-side tools 的可靠性处理很细。",
+      "citations": [
+        { "path": "packages/ai/src/providers/register-builtins.ts", "startLine": 181, "endLine": 230, "role": "implementation", "excerpt": "watchdog 配置与 provider 特例。" },
+        { "path": "packages/ai/src/providers/register-builtins.ts", "startLine": 232, "endLine": 289, "role": "implementation", "excerpt": "首事件/空闲超时与 local work guard。" }
+      ]
+    },
+    {
+      "id": "omp-context-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩不是单一摘要，而是 context-full/handoff/shake/snapcompact 多策略",
+      "fact": "CompactionSettings 支持 context-full、handoff、shake、snapcompact、off；默认 reserve 同时取固定值和窗口 15% 的较大者，对小窗口再防止 reserve 不可能；threshold 可按 token 或百分比。",
+      "plainLanguage": "可以选择传统摘要、交接文档、删除低价值块或 frame 化压缩；预算还会随模型窗口缩放。",
+      "implication": "策略实验空间很大，但同一会话跨模型/策略迁移要处理兼容性。",
+      "citations": [
+        { "path": "packages/agent/src/compaction/compaction.ts", "startLine": 148, "endLine": 189, "role": "contract", "excerpt": "compaction result/settings/strategy。" },
+        { "path": "packages/agent/src/compaction/compaction.ts", "startLine": 265, "endLine": 343, "role": "implementation", "excerpt": "reserve 与 threshold 解析。" }
+      ]
+    },
+    {
+      "id": "omp-context-002",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "传统摘要保留近期原文、拆分超长 turn、迁移文件操作和旧 archive",
+      "fact": "cut point 只选合法用户/branch/custom 边界，允许 split turn；历史和 turn prefix 可并行摘要，合并旧 summary，提取 read/modified files。旧 snapcompact archive 在换到不兼容模型时重新展开为本地可读摘要。",
+      "plainLanguage": "远处历史压成结构化摘要，最近工作保留原文；一个回合过长就拆开。换模型时也不会把上一家模型才懂的压缩黑盒直接留下。",
+      "implication": "兼顾近期保真、文件状态和跨 provider 可移植性。",
+      "citations": [
+        { "path": "packages/agent/src/compaction/compaction.ts", "startLine": 501, "endLine": 636, "role": "implementation", "excerpt": "合法 cut point 与 split turn。" },
+        { "path": "packages/agent/src/compaction/compaction.ts", "startLine": 1145, "endLine": 1270, "role": "implementation", "excerpt": "remote archive 可移植性、摘要区间与 file ops。" },
+        { "path": "packages/agent/src/compaction/compaction.ts", "startLine": 1530, "endLine": 1607, "role": "implementation", "excerpt": "历史/turn prefix 并行摘要、short summary 与 file ops 合并。" }
+      ]
+    },
+    {
+      "id": "omp-context-003",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具输出还有独立 prune/protection/shake 层",
+      "fact": "pruning 可清除已消费和被更新结果，tool-protection 保护关键工具/最近预算；shake 依据角色、工具类型、错误/无用标志和 token 权重删除低价值块，并主动失效消息 token cache。",
+      "plainLanguage": "不是等整本对话太厚才总结，旧日志、重复读取和明确无用结果会先做局部瘦身；关键结果和最近工作有保护圈。",
+      "implication": "上下文治理覆盖工具层，但启发式误删需用回归样本监控。",
+      "citations": [
+        { "path": "packages/agent/src/compaction/pruning.ts", "startLine": 1, "endLine": 260, "role": "implementation", "excerpt": "tool output prune 与 superseded result 处理。" },
+        { "path": "packages/agent/src/compaction/tool-protection.ts", "startLine": 1, "endLine": 56, "role": "implementation", "excerpt": "关键工具和近期预算保护。" },
+        { "path": "packages/agent/src/compaction/shake.ts", "startLine": 1, "endLine": 260, "role": "implementation", "excerpt": "shake 评分和删除策略。" }
+      ]
+    },
+    {
+      "id": "omp-memory-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "长期记忆有 off/local/Mnemopi/Hindsight 四种后端",
+      "fact": "runtime 以 memory.backend 为唯一选择器；local 将 rollout 摘要写 SQLite/markdown 且 learned.md 可写但不可结构化搜索，Mnemopi 是本地 SQLite+embedding+实体/三元组/时间/召回/整合管线，Hindsight 为远端后端。主 session 才启动并动态刷新 memory tools/system prompt。",
+      "plainLanguage": "记忆可以关掉、只做本地日志总结、启用本地语义记忆库，或接远端记忆服务；子 Agent 默认不各自建长期脑库。",
+      "implication": "上下文和长期记忆分层清楚，但多后端的隐私、成本与一致性需要治理。",
+      "citations": [
+        { "path": "packages/coding-agent/src/memory-backend/resolve.ts", "startLine": 6, "endLine": 24, "role": "implementation", "excerpt": "后端唯一选择器。" },
+        { "path": "packages/coding-agent/src/memory-backend/local-backend.ts", "startLine": 11, "endLine": 46, "role": "implementation", "excerpt": "local rollout summary/learned 能力边界。" },
+        { "path": "packages/coding-agent/src/session/session-memory.ts", "startLine": 169, "endLine": 221, "role": "implementation", "excerpt": "串行切换、主会话 gate、工具和 prompt 刷新。" },
+        { "path": "packages/mnemopi/src/core/orchestrator.ts", "startLine": 1, "endLine": 63, "role": "implementation", "excerpt": "本地 Mnemopi 编排入口。" }
+      ]
+    },
+    {
+      "id": "omp-tools-001",
+      "dimension": "tools-editing-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "内建工具面远超文件与 shell",
+      "fact": "registry 包含 read/bash/edit/write、AST grep/edit、LSP、eval kernels、glob/grep、browser、computer、GitHub、web search、image inspect/gen、checkpoint/rewind、todo/goal、task/hub/yield、memory tools、skills 管理等；SDK 再合并 extension/custom/MCP/RPC host tools。",
+      "plainLanguage": "它更像一套本地 Agent 操作系统，而不是四件套 coding CLI。",
+      "implication": "覆盖广但默认 prompt/tool schema 成本和安全面都更大，需要动态激活与分组。",
+      "citations": [
+        { "path": "packages/coding-agent/src/tools/index.ts", "startLine": 38, "endLine": 105, "role": "implementation", "excerpt": "工具 imports/exports。" },
+        { "path": "packages/coding-agent/src/tools/index.ts", "startLine": 393, "endLine": 434, "role": "implementation", "excerpt": "builtin registry 与 hidden tools。" },
+        { "path": "packages/coding-agent/src/sdk.ts", "startLine": 2531, "endLine": 2586, "role": "implementation", "excerpt": "builtins、extensions、custom、deferred MCP 合并。" }
+      ]
+    },
+    {
+      "id": "omp-approval-001",
+      "dimension": "tools-editing-execution",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "Approval 分级完整，但默认是 yolo",
+      "fact": "工具声明 read/write/exec tier 和可按参数计算的 policy；user per-tool allow/prompt/deny 高优先级。always-ask 只自动 read，write 自动 read+write，yolo 自动所有 tier；settings 默认 tools.approvalMode=yolo。",
+      "plainLanguage": "门卫机制很成熟，但默认把门敞开；用户不改设置时，bash、browser、task 等执行级工具通常不询问。",
+      "implication": "面向个人效率是合理选择，企业默认策略应反转为 write 或 always-ask。",
+      "citations": [
+        { "path": "packages/coding-agent/src/tools/approval.ts", "startLine": 13, "endLine": 39, "role": "contract", "excerpt": "policy、mode 和 tier 排名。" },
+        { "path": "packages/coding-agent/src/tools/approval.ts", "startLine": 99, "endLine": 185, "role": "implementation", "excerpt": "工具/用户/mode 三层决策。" },
+        { "path": "packages/coding-agent/src/config/settings-schema.ts", "startLine": 3600, "endLine": 3647, "role": "config", "excerpt": "per-tool policy 与 yolo 默认值。" }
+      ]
+    },
+    {
+      "id": "omp-sandbox-001",
+      "dimension": "tools-editing-execution",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "主 Agent 默认宿主执行；子任务 isolation 默认 none 且主要隔离工作区",
+      "fact": "bash runner 使用宿主 shell/native process；源码未给主 Agent 建容器/namespace sandbox。task isolation 可选 APFS/btrfs/ZFS/reflink/overlayfs/ProjFS/block clone/worktree/copy，并用 patch 或 branch 合并，但默认 mode=none。",
+      "plainLanguage": "子工人可以拿一份独立项目副本，防止同时改乱代码；这不自动隔离网络、进程和主机秘密，而且默认连副本也不开。",
+      "implication": "工作区隔离与安全沙箱必须分开标注；无人值守仍需外层 VM/container。",
+      "citations": [
+        { "path": "packages/coding-agent/src/session/bash-runner.ts", "startLine": 1, "endLine": 220, "role": "implementation", "excerpt": "宿主 bash/native runner。" },
+        { "path": "packages/coding-agent/src/config/settings-schema.ts", "startLine": 4359, "endLine": 4405, "role": "config", "excerpt": "子任务 isolation backends 与 none 默认。" },
+        { "path": "packages/coding-agent/src/task/isolation-runner.ts", "startLine": 1, "endLine": 240, "role": "implementation", "excerpt": "工作区准备、运行与变更合并。" }
+      ]
+    },
+    {
+      "id": "omp-mcp-001",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 是完整内建连接器，不是插件样例",
+      "fact": "MCPManager 从多来源配置发现服务器，并行连接、缓存 tools、订阅 resources、接收 notifications、动态刷新；transport 支持 stdio、legacy SSE、Streamable HTTP，HTTP 保存 session id、处理 server request/notification、401/403 刷新后重试。",
+      "plainLanguage": "它不仅能调用 MCP 工具，还管理连接、认证、资源订阅、服务端推送和重连生命周期。",
+      "implication": "连接器成熟度高，适合企业工具生态；同时需审计远端 URL、headers 和本地 command 配置。",
+      "citations": [
+        { "path": "packages/coding-agent/src/mcp/manager.ts", "startLine": 282, "endLine": 380, "role": "implementation", "excerpt": "resource subscriptions、discovery 与并行连接。" },
+        { "path": "packages/coding-agent/src/mcp/loader.ts", "startLine": 44, "endLine": 124, "role": "implementation", "excerpt": "tool cache、manager 生命周期与 custom tool bridge。" },
+        { "path": "packages/coding-agent/src/mcp/transports/http.ts", "startLine": 41, "endLine": 149, "role": "implementation", "excerpt": "HTTP/SSE listener、session 和 server push。" },
+        { "path": "packages/coding-agent/src/mcp/transports/http.ts", "startLine": 181, "endLine": 258, "role": "implementation", "excerpt": "请求、timeout、auth refresh 和 session id。" }
+      ]
+    },
+    {
+      "id": "omp-mcp-002",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "可直接吸收 Claude、Gemini、OpenCode 等生态的 MCP 配置",
+      "fact": "capability discovery providers 解析本产品、Claude、Gemini CLI、OpenCode、Codex、Cline、Cursor、VSCode/Windsurf 等配置；OpenCode local/remote 和 Gemini mcpServers 被归一成同一 stdio/SSE/HTTP contract，并保留 source metadata。",
+      "plainLanguage": "用户换工具时不必手工重写全部 MCP 配置，OMP 会读取其他 Agent 的配置并统一格式。",
+      "implication": "迁移体验突出，但跨生态自动加载需有来源可见性和项目 trust。",
+      "citations": [
+        { "path": "packages/coding-agent/src/discovery/opencode.ts", "startLine": 88, "endLine": 167, "role": "implementation", "excerpt": "OpenCode MCP 配置发现。" },
+        { "path": "packages/coding-agent/src/discovery/opencode.ts", "startLine": 170, "endLine": 220, "role": "implementation", "excerpt": "transport/env/headers 归一化。" },
+        { "path": "packages/coding-agent/src/discovery/gemini.ts", "startLine": 43, "endLine": 119, "role": "implementation", "excerpt": "Gemini MCP 配置归一化。" }
+      ]
+    },
+    {
+      "id": "omp-subagent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Task 是内建多 Agent 调度器，支持 batch、async 与结构化 yield",
+      "fact": "TaskTool 发现 bundled/user/project agent；batch call 强制 shared context 和非空 tasks，每项可选 agent/effort/isolation/outputSchema；async 交给 job manager，sync 按 semaphore 并发并合并 usage/artifacts。子 Agent 必须通过 yield 交付，可增量分段并做 schema validation。",
+      "plainLanguage": "主 Agent 可以一次发一组有共同背景的任务，每个工人独立选角色和输出合同；结果不是随便一段聊天，而是显式交付。",
+      "implication": "比 subprocess 示例级子 Agent 更接近真正控制平面。",
+      "citations": [
+        { "path": "packages/coding-agent/src/task/index.ts", "startLine": 1, "endLine": 53, "role": "implementation", "excerpt": "TaskTool 能力和依赖。" },
+        { "path": "packages/coding-agent/src/task/index.ts", "startLine": 230, "endLine": 329, "role": "implementation", "excerpt": "batch schema、shared context 和 spawn normalization。" },
+        { "path": "packages/coding-agent/src/task/yield-assembly.ts", "startLine": 120, "endLine": 198, "role": "implementation", "excerpt": "typed incremental/terminal yield 组装。" }
+      ]
+    },
+    {
+      "id": "omp-subagent-002",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "递归、并发、预算、闲置 park 与冷恢复都有硬合同",
+      "fact": "默认 maxConcurrency=32、maxRecursionDepth=2、softRequestBudget=200，超过预算提示收尾、1.5x 强制 yield；idle 420 秒后可 park 到磁盘。reviver 从 session_init 恢复 cwd、tools、spawn policy、depth、MCP gate 和 yield requirement，缺失 workspace 时只保留 transcript。",
+      "plainLanguage": "工人不会无限生工人，也能在闲置时卸载、之后按原权限复活；恢复时不凭猜测重建能力。",
+      "implication": "长任务资源治理和 durable collaboration 明显领先多数 CLI Agent。",
+      "citations": [
+        { "path": "packages/coding-agent/src/config/settings-schema.ts", "startLine": 4505, "endLine": 4614, "role": "config", "excerpt": "并发、深度、runtime、idle TTL 和软预算默认。" },
+        { "path": "packages/coding-agent/src/task/persisted-revive.ts", "startLine": 45, "endLine": 139, "role": "implementation", "excerpt": "持久子 Agent 冷恢复与 capability clamp。" }
+      ]
+    },
+    {
+      "id": "omp-subagent-003",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "兄弟 Agent 可用 hub 实时协作，不只回传父节点",
+      "fact": "同批多个子 Agent 会收到 hub 协作建议；AgentRegistry 维护 live/idle/parked 实例，hub 支持 list/message/broadcast/wait，主会话与 RPC 也能显示和路由子 Agent 状态。",
+      "plainLanguage": "几个工人不必各做各的等老板汇总，可以在工作中互相发消息、广播冲突和等待对方。",
+      "implication": "减少串行 handoff，但需要冲突检测、消息审计和身份权限。",
+      "citations": [
+        { "path": "packages/coding-agent/src/task/index.ts", "startLine": 412, "endLine": 429, "role": "prompt", "excerpt": "同批 sibling hub 协作提醒。" },
+        { "path": "packages/coding-agent/src/tools/hub/index.ts", "startLine": 1, "endLine": 260, "role": "implementation", "excerpt": "hub list/message/wait 工具入口。" },
+        { "path": "packages/coding-agent/src/registry/agent-registry.ts", "startLine": 1, "endLine": 218, "role": "implementation", "excerpt": "Agent identity/status/session registry。" }
+      ]
+    },
+    {
+      "id": "omp-instructions-001",
+      "dimension": "instructions-plugins-skills",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "指令层兼容多个 Agent 生态，并支持 @include",
+      "fact": "system builder 组合 personality、tool inventory、环境、workspace tree、active repo、project rules、skills、goals/memory/plan/task guidance；context capability 从父目录到 cwd 加载 AGENTS/CLAUDE/GEMINI 等，近目录后置，并展开相对 @path imports、去重同内容。",
+      "plainLanguage": "它会把多种 Agent 留在仓库里的说明书都读成统一规则，越靠近当前目录的规则越显眼，还能在规则里引用其他文件。",
+      "implication": "跨工具迁移成本低，但最终 prompt provenance 和冲突诊断至关重要。",
+      "citations": [
+        { "path": "packages/coding-agent/src/system-prompt.ts", "startLine": 332, "endLine": 405, "role": "implementation", "excerpt": "context files、@imports、排序、去重与 system override。" },
+        { "path": "packages/coding-agent/src/discovery/opencode.ts", "startLine": 1, "endLine": 40, "role": "contract", "excerpt": "OpenCode context/skills/commands/extensions/MCP 兼容能力。" },
+        { "path": "packages/coding-agent/src/discovery/gemini.ts", "startLine": 1, "endLine": 37, "role": "contract", "excerpt": "Gemini system/context/extensions/MCP 兼容能力。" }
+      ]
+    },
+    {
+      "id": "omp-plugins-001",
+      "dimension": "instructions-plugins-skills",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "Extensions、hooks、custom tools 与 marketplace 都是同进程高权限扩展",
+      "fact": "extension loader 直接加载 JS/TS，API 可改 provider request、system/context、tool call/result、session lifecycle 并注册 tools/providers/UI；hooks 有独立 runner，plugins 可从 npm/git/marketplace 安装并兼容 legacy Pi/Claude manifests。",
+      "plainLanguage": "插件几乎能改 Agent 的每个关节，也能执行宿主代码；插件市场因此既是生态优势，也是供应链入口。",
+      "implication": "企业需要签名、来源锁定、版本 pin、审批和最小权限进程边界。",
+      "citations": [
+        { "path": "packages/coding-agent/src/extensibility/extensions/loader.ts", "startLine": 120, "endLine": 230, "role": "implementation", "excerpt": "extension module load 与 API registration。" },
+        { "path": "packages/coding-agent/src/extensibility/extensions/types.ts", "startLine": 1040, "endLine": 1150, "role": "contract", "excerpt": "provider/agent/tool/session hooks 与 registerTool。" },
+        { "path": "packages/coding-agent/src/extensibility/hooks/runner.ts", "startLine": 268, "endLine": 420, "role": "implementation", "excerpt": "hook tool/before_agent 执行与错误处理。" },
+        { "path": "packages/coding-agent/src/extensibility/plugins/loader.ts", "startLine": 1, "endLine": 220, "role": "implementation", "excerpt": "plugin/marketplace/legacy compatibility 装载。" }
+      ]
+    },
+    {
+      "id": "omp-session-001",
+      "dimension": "sessions-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "会话是树形事件账本，存储层可替换",
+      "fact": "SessionManager 保留 parentId 树、message/compaction/branch/model/thinking/custom/session_init 等 entry；storage contract 支持 append/read/list/lock，仓库实现 indexed local、SQL、Redis 等后端并把大对象放 blob/artifact store。",
+      "plainLanguage": "聊天、分支、压缩和配置变化都作为事件保存；存哪里可以从个人本地换到服务端数据库。",
+      "implication": "同一 Harness 可从 CLI 扩到多用户服务，但多后端一致性/锁/迁移成为核心基础设施。",
+      "citations": [
+        { "path": "packages/coding-agent/src/session/session-storage.ts", "startLine": 1, "endLine": 260, "role": "contract", "excerpt": "storage 与 lock/list/append 合同。" },
+        { "path": "packages/coding-agent/src/session/session-manager.ts", "startLine": 1, "endLine": 220, "role": "implementation", "excerpt": "session manager/tree 初始化。" },
+        { "path": "packages/coding-agent/src/session/redis-session-storage.ts", "startLine": 1, "endLine": 180, "role": "implementation", "excerpt": "Redis 服务端存储实现入口。" },
+        { "path": "packages/coding-agent/src/session/sql-session-storage.ts", "startLine": 1, "endLine": 180, "role": "implementation", "excerpt": "SQL 存储实现入口。" }
+      ]
+    },
+    {
+      "id": "omp-observability-001",
+      "dimension": "sessions-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "观测层原生实现 OTEL GenAI spans、成本与 run coverage",
+      "fact": "loop 生成 invoke_agent→chat/execute_tool 层级和 handoff，覆盖 GenAI semantic conventions、provider/model/usage/cache/reasoning、tool args/results、TTFT、cost、gateway headers、自定义 attributes；内容捕获默认关闭/可 summary/full。",
+      "plainLanguage": "不仅有终端日志，每次模型和工具调用都能变成标准 trace，还能关联费用和网关调用 ID；敏感内容是否进 trace 可配置。",
+      "implication": "是 14 个项目中企业观测设计最完整的一档。",
+      "citations": [
+        { "path": "packages/agent/src/telemetry.ts", "startLine": 1, "endLine": 24, "role": "contract", "excerpt": "span hierarchy 和 opt-in 行为。" },
+        { "path": "packages/agent/src/telemetry.ts", "startLine": 66, "endLine": 174, "role": "contract", "excerpt": "GenAI/OpenAI/Pi attribute surface。" },
+        { "path": "packages/agent/src/telemetry.ts", "startLine": 313, "endLine": 360, "role": "contract", "excerpt": "telemetry config、内容捕获和 cost hooks。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 652, "endLine": 737, "role": "implementation", "excerpt": "run summary/coverage detailed API。" }
+      ]
+    },
+    {
+      "id": "omp-tests-001",
+      "dimension": "tests-benchmarks-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "机制测试和基准工程极密集，但仍需外部成功率验证",
+      "fact": "固定提交含 1858 个 *.test.ts，其中 coding-agent 1163 个，覆盖 MCP reconnect/OAuth/transport、task isolation/revive/budget、compaction、providers、tools、UI 和 storage；另有 metaharness、TypeScript edit benchmark、native/hashline/memory benchmarks。",
+      "plainLanguage": "零件级和故障恢复考试数量非常大，也有专门实验 Harness；但仓库内测试多不代表在 SWE-bench 或真实企业任务上一定胜出。",
+      "implication": "工程可靠性证据强；横向结论应把“机制覆盖”与“端到端任务成功率”分开。",
+      "citations": [
+        { "path": "packages/coding-agent/test/task/isolation-runner.test.ts", "startLine": 1, "endLine": 100, "role": "test", "excerpt": "子任务隔离测试入口。" },
+        { "path": "packages/coding-agent/test/mcp-reconnect-storm.test.ts", "startLine": 1, "endLine": 93, "role": "test", "excerpt": "MCP 重连风暴测试入口。" },
+        { "path": "packages/coding-agent/test/agent-session-auto-compaction-progress-guard.test.ts", "startLine": 1, "endLine": 100, "role": "test", "excerpt": "自动压缩进度/循环保护测试入口。" },
+        { "path": "packages/metaharness/src/runner.ts", "startLine": 1, "endLine": 160, "role": "implementation", "excerpt": "实验/benchmark Harness runner。" }
+      ]
+    }
+  ]
+}

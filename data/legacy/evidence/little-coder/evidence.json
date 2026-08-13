@@ -1,0 +1,332 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "little-coder",
+  "snapshot": {
+    "repository": "itayinbarr/little-coder",
+    "commit": "e758baa38f6f28adefadd567077b05f68a05d6fa",
+    "commitDate": "2026-07-25T22:48:12+03:00"
+  },
+  "method": {
+    "readmePolicy": "README 仅用于定位产品意图；核心结论来自 launcher、pi ExtensionAPI 事件处理、工具实现、测试与 benchmark pipeline。",
+    "factPolicy": "严格区分 little-coder 自己实现的扩展能力与 @earendil-works/pi-coding-agent 提供的内核能力；安全结论同时审计工具旁路与真实子进程实现。",
+    "inferencePolicy": "优劣势和建设建议由多处源码综合，并以 inference/limitation 标注，不把注释中的设计目标自动当作已兑现事实。"
+  },
+  "coverage": [
+    { "dimension": "entry-session-loop", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "确认其是 pi launcher + ExtensionAPI 增强层，不自带独立 Agent 内核。" },
+    { "dimension": "provider-streaming", "status": "partial", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计本地 provider 注册与 context probe；流式协议主体继承 pi。" },
+    { "dimension": "context-compaction-memory", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计中途 watchdog、读结果裁剪、尾部注入、证据跨压缩保留。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计事件层 write/edit/shell guard、allowlist 和 malformed tool-call 修复。" },
+    { "dimension": "execution-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "ShellSession 直接 execSync；项目没有 OS/容器沙箱，主要依赖策略门。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 auto/manual/accept-all、shell 分段与写旁路检测、子 Agent 工具收窄。" },
+    { "dimension": "instructions-prompts", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计固定 AGENTS、技能/知识选择、KV-cache 友好尾部注入与 dedupe。" },
+    { "dimension": "tools-connectors-plugins", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计 bundled/env/user/pi-ecosystem 四类扩展来源和 browser/evidence/shell 工具。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计独立子进程、工具约束、结果截断、并发、超时与 plan/deep-research 编排。" },
+    { "dimension": "observability-persistence", "status": "partial", "evidenceLevels": ["L1", "L2", "L3"], "notes": "有 UI intervention、子 Agent usage、session evidence 与文件 checkpoint；无统一 trace backend。" },
+    { "dimension": "tests-evals-maturity", "status": "verified", "evidenceLevels": ["L2", "L3"], "notes": "关键守卫有 Vitest，deep-research 生产 pipeline 与 batch eval 共用实现。" }
+  ],
+  "findings": [
+    {
+      "id": "little-architecture-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "它是 pi 的 Harness 增强层，而不是另一套 Agent 内核",
+      "fact": "launcher 解析依赖中的 pi CLI，显式加载 bundled/env/user 扩展，以固定 AGENTS.md 启动 pi；package.json 直接依赖 @earendil-works/pi-coding-agent。",
+      "plainLanguage": "可以把它理解成给 pi 装了一套“小模型护栏与外挂”，对话循环、会话和基础工具仍由 pi 驱动。",
+      "implication": "分析和选型时必须把 little-coder 的差异能力与 pi 基座分开计分。",
+      "citations": [
+        { "path": "package.json", "startLine": 33, "endLine": 43, "role": "contract", "excerpt": "运行、测试脚本及 pi 依赖。" },
+        { "path": "bin/little-coder.mjs", "startLine": 84, "endLine": 139, "role": "implementation", "excerpt": "从依赖布局解析 pi CLI 入口。" },
+        { "path": "bin/little-coder.mjs", "startLine": 285, "endLine": 354, "role": "implementation", "excerpt": "用固定指令、显式扩展和用户参数组成 pi argv。" },
+        { "path": "bin/little-coder.mjs", "startLine": 481, "endLine": 513, "role": "implementation", "excerpt": "以当前 Node 进程真正启动 pi。" }
+      ]
+    },
+    {
+      "id": "little-extensions-001",
+      "dimension": "tools-connectors-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "扩展来源分层，默认固定集合，pi 生态桥显式 opt-in",
+      "fact": "launcher 按 bundled、LITTLE_CODER_EXTRA_EXTENSIONS、用户扩展目录的顺序加载，后者可覆盖前者；默认传 --no-extensions 禁止 pi 自动发现，只有 --with-pi-extensions 才开启且由 pi 对项目扩展做 trust prompt。",
+      "plainLanguage": "默认追求可预测：装哪些插件是确定的；想接入 pi 大生态可以开开关，但会牺牲冷启动上下文和固定能力面。",
+      "implication": "这是“小模型少即是多”的插件治理取舍。",
+      "citations": [
+        { "path": "bin/little-coder.mjs", "startLine": 157, "endLine": 217, "role": "implementation", "excerpt": "三类显式扩展的发现和覆盖顺序。" },
+        { "path": "bin/little-coder.mjs", "startLine": 219, "endLine": 227, "role": "contract", "excerpt": "pi 生态发现默认关闭，项目扩展仍走上游信任提示。" },
+        { "path": "bin/little-coder.mjs", "startLine": 338, "endLine": 367, "role": "implementation", "excerpt": "启动参数和扩展 provenance manifest。" }
+      ]
+    },
+    {
+      "id": "little-context-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "80% 中途压缩 watchdog 补上 pi 的长自主运行缺口",
+      "fact": "每个 turn_start 读取 live context usage，默认 80% 触发 ctx.compact；完成后自动发送继续消息。它用 in-flight guard、5% 滞回与效果测量防止重复压缩陷入 Nothing to compact。",
+      "plainLanguage": "模型若连续几十轮调用工具、不把控制权还给用户，原生 pi 可能迟迟不压缩；这个扩展在每一小轮都看油表，快满了就主动整理上下文再接着做。",
+      "implication": "长自治任务的上下文治理不能只挂在用户轮边界。",
+      "citations": [
+        { "path": ".pi/extensions/context-watchdog/index.ts", "startLine": 3, "endLine": 29, "role": "contract", "excerpt": "上游边界缺口、live usage 与中途 compact 机制。" },
+        { "path": ".pi/extensions/context-watchdog/index.ts", "startLine": 59, "endLine": 107, "role": "implementation", "excerpt": "默认阈值、5% progress band 与触发判断。" },
+        { "path": ".pi/extensions/context-watchdog/index.ts", "startLine": 153, "endLine": 223, "role": "implementation", "excerpt": "效果测量、暂停/重启、compact 回调和自动续跑。" }
+      ]
+    },
+    {
+      "id": "little-context-002",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "超大 Read 结果在进入 LLM 前缩成 30 行",
+      "fact": "read 的成功 tool_result 会用 3.5 chars/token 估算；已知 usage 时按剩余窗口判断，未知时单文件不得超过窗口一半。超限则替换为头 30 行和 grep/定向 read 指令，图片保持原样。",
+      "plainLanguage": "文件虽然已经从磁盘读了，但在送给模型前会截流，避免一份两千行源码把小模型的记忆一次塞爆。",
+      "implication": "工具输出也是上下文预算的一等公民，不能只压聊天历史。",
+      "citations": [
+        { "path": ".pi/extensions/read-guard/index.ts", "startLine": 4, "endLine": 27, "role": "contract", "excerpt": "在 tool_result 替换超大文本的原因。" },
+        { "path": ".pi/extensions/read-guard/index.ts", "startLine": 29, "endLine": 82, "role": "implementation", "excerpt": "30 行、窗口一半 fallback 和 token 判断。" },
+        { "path": ".pi/extensions/read-guard/index.ts", "startLine": 108, "endLine": 153, "role": "implementation", "excerpt": "文本限定、usage 检查与替换结果。" }
+      ]
+    },
+    {
+      "id": "little-prompt-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "动态知识放在对话尾部，保护 KV cache",
+      "fact": "技能、知识、计划与研究 brief 默认作为隐藏 custom message 放在用户消息后，而不是改 system prompt；字节相同的块不重复注入。可用环境变量切回旧 system 模式。",
+      "plainLanguage": "固定的历史前缀不动，只在最末尾塞这轮真正需要的小纸条，本地模型就不用每轮重算十几万 token 的缓存。",
+      "implication": "对本地推理，prompt 稳定性本身就是性能架构。",
+      "citations": [
+        { "path": ".pi/extensions/_shared/inject.ts", "startLine": 1, "endLine": 27, "role": "contract", "excerpt": "system prompt 动态变化导致 KV cache 失效的根因。" },
+        { "path": ".pi/extensions/_shared/inject.ts", "startLine": 29, "endLine": 65, "role": "implementation", "excerpt": "隐藏尾消息与 system 兼容模式。" },
+        { "path": ".pi/extensions/_shared/inject.ts", "startLine": 67, "endLine": 86, "role": "implementation", "excerpt": "对持久尾消息做字节级去重。" }
+      ]
+    },
+    {
+      "id": "little-skills-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "技能选择按失败恢复、近期工具、当前意图排序",
+      "fact": "skills/tools/*.md 带 target_tool 和 token_cost；每轮在默认 300 token 内先放上次失败工具，再放近期工具，最后按用户关键词预测，并过滤当前 allowed-tools。研究任务额外注入 browse→EvidenceAdd→再写的指令。",
+      "plainLanguage": "它不会把整本工具手册都塞给小模型，只给最可能马上用到的几张卡；刚失败过的工具优先补课。",
+      "implication": "技能是按预算路由的运行时知识，而非全量静态 prompt。",
+      "citations": [
+        { "path": ".pi/extensions/skill-inject/index.ts", "startLine": 8, "endLine": 31, "role": "contract", "excerpt": "三优先级、缓存和会话信号。" },
+        { "path": ".pi/extensions/skill-inject/index.ts", "startLine": 75, "endLine": 132, "role": "implementation", "excerpt": "加载 frontmatter、预算和三阶段选择。" },
+        { "path": ".pi/extensions/skill-inject/index.ts", "startLine": 169, "endLine": 178, "role": "prompt", "excerpt": "research-first 明确顺序。" },
+        { "path": ".pi/extensions/skill-inject/index.ts", "startLine": 198, "endLine": 270, "role": "implementation", "excerpt": "allowed tools、required tools、去重与尾部注入。" }
+      ]
+    },
+    {
+      "id": "little-knowledge-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "算法知识以关键词打分并反向声明所需工具",
+      "fact": "skills/knowledge 与 skills/protocols 条目按单词 1 分、短语 2 分打分，低于 2 不选，单条最多 150 token、总预算默认 200；当系统 prompt 已超过窗口 40% 或为 subtask 时不注入，并将 requires_tools 发布给 skill injector。",
+      "plainLanguage": "题目像动态规划才临时塞动态规划小抄；而且小抄若要求某工具，会顺带保证那张工具说明也进来。",
+      "implication": "知识选择与工具可用性形成联动，但关键词法的召回精度有限。",
+      "citations": [
+        { "path": ".pi/extensions/knowledge-inject/index.ts", "startLine": 8, "endLine": 35, "role": "contract", "excerpt": "知识目录、预算和 required tools 设计。" },
+        { "path": ".pi/extensions/knowledge-inject/index.ts", "startLine": 38, "endLine": 77, "role": "implementation", "excerpt": "加载、成本上限与词/短语评分。" },
+        { "path": ".pi/extensions/knowledge-inject/index.ts", "startLine": 93, "endLine": 156, "role": "implementation", "excerpt": "上下文门禁、top selection 与工具联动。" }
+      ]
+    },
+    {
+      "id": "little-edit-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "禁止整文件覆写是跨 Write 与 shell 的不变量",
+      "fact": "write tool_call 被原地规范路径；已有文件或 Windows 保留设备名会被拒并给出 Edit recipe。shell 的 >、heredoc、tee 等写目标也用同一 verdict 检查，append 例外。",
+      "plainLanguage": "小模型想偷懒把整个文件重写，换成 `cat > file` 也绕不过去；它被迫做小块精确修改。",
+      "implication": "安全/质量不变量应按“副作用”覆盖所有等价工具，而不是只拦一个工具名。",
+      "citations": [
+        { "path": ".pi/extensions/write-guard/index.ts", "startLine": 35, "endLine": 75, "role": "implementation", "excerpt": "相对路径、根目录裸文件与绝对路径规范化。" },
+        { "path": ".pi/extensions/write-guard/index.ts", "startLine": 119, "endLine": 168, "role": "implementation", "excerpt": "保留设备名、新文件、append 和已有文件 verdict。" },
+        { "path": ".pi/extensions/write-guard/index.ts", "startLine": 158, "endLine": 205, "role": "implementation", "excerpt": "事件层 Write 与 shell 写旁路拦截。" },
+        { "path": ".pi/extensions/write-guard/write-guard.test.ts", "startLine": 197, "endLine": 279, "role": "test", "excerpt": "heredoc、redirect、tee、append 与只读命令测试。" }
+      ]
+    },
+    {
+      "id": "little-edit-002",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Edit 强制先 Read，成功 Write/Edit 也更新已知文件集",
+      "fact": "每会话维护 canonicalized readFiles；只有成功的 read/edit/write tool_result 才加入，未读文件的 edit 在执行前阻断，新会话清空。",
+      "plainLanguage": "模型不能凭印象猜 oldText；先亲眼看过文件，才有资格改。",
+      "implication": "把编辑前置条件做成运行时门禁，比仅写进提示词可靠。",
+      "citations": [
+        { "path": ".pi/extensions/read-guard-edit/index.ts", "startLine": 4, "endLine": 29, "role": "contract", "excerpt": "先读后改不变量及成功写入也算已知。" },
+        { "path": ".pi/extensions/read-guard-edit/index.ts", "startLine": 59, "endLine": 89, "role": "implementation", "excerpt": "session reset、成功结果登记和 edit 阻断。" },
+        { "path": ".pi/extensions/read-guard-edit/read-guard-edit.test.ts", "startLine": 34, "endLine": 99, "role": "test", "excerpt": "未读、失败读、写后改和路径拼写等测试。" }
+      ]
+    },
+    {
+      "id": "little-permission-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "shell 权限是分段白名单，并显式检测写重定向",
+      "fact": "auto 模式把命令按 &&、||、;、| 拆段，所有段都必须命中 safe prefix；在此前先检测写目标，阻止 cat/tee/redirection 绕过。manual 阻止未预批准命令，accept-all 放行供 benchmark 使用。",
+      "plainLanguage": "不是看到开头是 `ls` 就放行 `ls && rm -rf /`，整条链每一段都要安全。",
+      "implication": "字符串白名单比简单前缀更稳，但仍不是操作系统沙箱。",
+      "citations": [
+        { "path": ".pi/extensions/permission-gate/index.ts", "startLine": 11, "endLine": 58, "role": "implementation", "excerpt": "模式、safe prefix、命令链拆分和 isSafeBash。" },
+        { "path": ".pi/extensions/permission-gate/index.ts", "startLine": 60, "endLine": 121, "role": "implementation", "excerpt": "Write/Edit 旁路检测与三种模式。" }
+      ]
+    },
+    {
+      "id": "little-sandbox-001",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "默认执行是宿主 bash，不是容器或内核沙箱",
+      "fact": "ShellSession 的本地后端直接 execSync(command, shell=/bin/bash)，共享 process.cwd，最大 buffer 10MB；TB 模式仅代理给外部 tmux adapter。源码未施加 namespace、seccomp、Seatbelt 或容器隔离。",
+      "plainLanguage": "一旦命令通过权限门，它就在你的真实机器上跑；白名单是保安问话，不是墙。",
+      "implication": "高风险仓库或全自动模式应由外层容器/VM 提供强隔离。",
+      "citations": [
+        { "path": ".pi/extensions/shell-session/index.ts", "startLine": 6, "endLine": 16, "role": "contract", "excerpt": "tmux proxy 与 subprocess 两后端。" },
+        { "path": ".pi/extensions/shell-session/index.ts", "startLine": 24, "endLine": 38, "role": "implementation", "excerpt": "宿主 /bin/bash execSync。" },
+        { "path": ".pi/extensions/shell-session/index.ts", "startLine": 65, "endLine": 96, "role": "implementation", "excerpt": "工具参数、timeout 与后端选择。" }
+      ]
+    },
+    {
+      "id": "little-subagent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 是独立 little-coder 进程，父上下文只收短报告",
+      "fact": "dispatch 最多接收 4 个任务；每个 child 以 launcher 的 headless JSON 模式、独立上下文、同模型启动。全 transcript 只放 UI details，父模型只收到 ≤2000 chars 报告。",
+      "plainLanguage": "子任务的搜索过程不会把父模型记忆塞满，父亲只看一页简报。",
+      "implication": "这是上下文隔离型协作，不是共享黑板式多 Agent。",
+      "citations": [
+        { "path": ".pi/extensions/subagent/index.ts", "startLine": 12, "endLine": 20, "role": "contract", "excerpt": "隔离 session、短报告与并行上限。" },
+        { "path": ".pi/extensions/subagent/index.ts", "startLine": 49, "endLine": 73, "role": "contract", "excerpt": "dispatch schema 与只读能力说明。" },
+        { "path": ".pi/extensions/subagent/spawn.ts", "startLine": 46, "endLine": 77, "role": "contract", "excerpt": "报告后缀、2000 字符上限、full transcript UI-only。" },
+        { "path": ".pi/extensions/subagent/spawn.ts", "startLine": 251, "endLine": 320, "role": "implementation", "excerpt": "headless child 启动、JSON event 解析和 usage 累积。" }
+      ]
+    },
+    {
+      "id": "little-subagent-002",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 工具能力收窄且禁止递归 dispatch",
+      "fact": "child 环境设置 allowed-tools 为 read/search/browser/bash，不含 edit/write/dispatch，并把 permission mode 设为 auto；tool-gating 对任何不在集合的 tool_call 返回 block。默认并发 1，可配置，支持 watchdog、SIGTERM→SIGKILL 和超时重试一次。",
+      "plainLanguage": "孩子能查资料但不能改仓库，也不能再生孙子；本地单 GPU 默认串行，避免所谓并行反而拖慢。",
+      "implication": "能力交集和递归上限应在执行面强制，而不只写在子 Agent prompt 里。",
+      "citations": [
+        { "path": ".pi/extensions/subagent/spawn.ts", "startLine": 25, "endLine": 44, "role": "contract", "excerpt": "子 Agent 工具集合明确排除写和 dispatch。" },
+        { "path": ".pi/extensions/subagent/spawn.ts", "startLine": 91, "endLine": 121, "role": "implementation", "excerpt": "child env、auto 权限和默认串行。" },
+        { "path": ".pi/extensions/tool-gating/index.ts", "startLine": 8, "endLine": 37, "role": "implementation", "excerpt": "allowlist 同时进入 prompt options 与执行前 block。" },
+        { "path": ".pi/extensions/subagent/spawn.ts", "startLine": 333, "endLine": 375, "role": "implementation", "excerpt": "abort、两阶段 kill 与 watchdog。" }
+      ]
+    },
+    {
+      "id": "little-plan-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Plan Mode 本身就是一条多 Agent 工作流",
+      "fact": "计划模式先用 reasoning child 拆出 1–4 个探索任务，再跑只读 explorer，生成 1–3 个澄清问题让用户选择，最后把 digest 和答案隐藏注入主 Agent 写计划；合成阶段启用 edit/write guard。",
+      "plainLanguage": "它不是让一个模型说一句“我先计划”，而是先派侦察、再问人、最后写方案。",
+      "implication": "阶段式 Harness 能把计划质量从 prompt 风格提升为可执行工作流。",
+      "citations": [
+        { "path": ".pi/extensions/plan-mode/index.ts", "startLine": 15, "endLine": 35, "role": "contract", "excerpt": "六阶段 research→ask→plan 流。" },
+        { "path": ".pi/extensions/plan-mode/index.ts", "startLine": 95, "endLine": 147, "role": "implementation", "excerpt": "目标拆解与澄清问题生成。" },
+        { "path": ".pi/extensions/plan-mode/index.ts", "startLine": 186, "endLine": 278, "role": "implementation", "excerpt": "探索、问答、隐藏合成与退出计划模式。" }
+      ]
+    },
+    {
+      "id": "little-research-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Deep Research 用生产同一 pipeline 做多波次研究",
+      "fact": "pipeline 顺序是澄清→brief→lead 分解→wave 1→gap 分析→可选 wave 2；研究 child 禁 bash、要求实际 URL 与不猜测，推理 child 只拿本地只读工具；每 child 有超时，失败不阻断兄弟与后续阶段，meta 记录耗时、失败和 JSON fallback。",
+      "plainLanguage": "它像一个小型研究团队：先定题、分工、第一轮搜集，再专门找遗漏补第二轮；评测调用的也是同一套生产函数。",
+      "implication": "工作流可测性较好，但多子进程对本地推理延迟很敏感。",
+      "citations": [
+        { "path": ".pi/extensions/deep-research/pipeline.ts", "startLine": 1, "endLine": 11, "role": "contract", "excerpt": "生产与 batch eval 共用单一 pipeline。" },
+        { "path": ".pi/extensions/deep-research/pipeline.ts", "startLine": 30, "endLine": 61, "role": "contract", "excerpt": "研究/推理工具隔离、超时与 URL 证据要求。" },
+        { "path": ".pi/extensions/deep-research/pipeline.ts", "startLine": 160, "endLine": 220, "role": "implementation", "excerpt": "澄清、brief 与单 Agent 分支。" },
+        { "path": ".pi/extensions/deep-research/pipeline.ts", "startLine": 223, "endLine": 290, "role": "implementation", "excerpt": "lead、wave1、gap 和 wave2。" }
+      ]
+    },
+    {
+      "id": "little-evidence-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "证据是 session-scoped 结构化对象，并显式跨压缩",
+      "fact": "EvidenceAdd/Get/List 保存 source、note、≤1KB snippet 到进程内 session map；消息 compaction 不会删除该 extension state，session_compact 后发送 bridge 提醒模型仍可查询。",
+      "plainLanguage": "引用依据不只躺在长聊天里，而是放到一个小抽屉；聊天被总结后，抽屉还在。",
+      "implication": "可寻址的结构化证据比让模型从摘要里回忆来源可靠，但进程退出后不持久。",
+      "citations": [
+        { "path": ".pi/extensions/evidence/index.ts", "startLine": 5, "endLine": 42, "role": "implementation", "excerpt": "session map、entry shape 和重置接口。" },
+        { "path": ".pi/extensions/evidence/index.ts", "startLine": 49, "endLine": 118, "role": "implementation", "excerpt": "EvidenceAdd/Get/List 工具和 snippet cap。" },
+        { "path": ".pi/extensions/evidence-compact/index.ts", "startLine": 4, "endLine": 31, "role": "implementation", "excerpt": "扩展状态跨压缩和 bridge follow-up。" }
+      ]
+    },
+    {
+      "id": "little-quality-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "质量监控会 steer 自纠，但最多连续两次",
+      "fact": "turn_end 基于回答文本、当前与上一轮工具调用及观察到的 known-tools 评估失败模式；非 aborted 失败会立即 steer correction，连续超过 2 次则停止纠正并发出 intervention。",
+      "plainLanguage": "模型答歪时 Harness 会马上插一句纠偏，但不会无限唠叨把自己困进循环。",
+      "implication": "自动修复必须带 backoff 和中断语义。",
+      "citations": [
+        { "path": ".pi/extensions/quality-monitor/index.ts", "startLine": 5, "endLine": 18, "role": "contract", "excerpt": "steer 修正和连续上限。" },
+        { "path": ".pi/extensions/quality-monitor/index.ts", "startLine": 30, "endLine": 79, "role": "implementation", "excerpt": "aborted 排除、质量判定、backoff 与 steer。" }
+      ]
+    },
+    {
+      "id": "little-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "面向 llama.cpp/Ollama 的 provider 注册会探测真实上下文窗",
+      "fact": "provider 由 shipped models、用户 override 和 URL env 合并；llama.cpp 启动时调用 /props 探测 live n_ctx，模型切换后重新探测并重新注册，使 read-guard 和预算使用真实窗口；失败静默回退声明值。",
+      "plainLanguage": "服务端若实际开了 128K，它不会死信配置里的 32K；换模型后也会重新量尺。",
+      "implication": "上下文治理依赖 provider 元数据准确，动态模型路由后应重新校准。",
+      "citations": [
+        { "path": ".pi/extensions/llama-cpp-provider/index.ts", "startLine": 13, "endLine": 21, "role": "contract", "excerpt": "三层 provider 配置来源。" },
+        { "path": ".pi/extensions/llama-cpp-provider/index.ts", "startLine": 43, "endLine": 86, "role": "implementation", "excerpt": "启动探测与 provider 注册。" },
+        { "path": ".pi/extensions/llama-cpp-provider/index.ts", "startLine": 89, "endLine": 121, "role": "implementation", "excerpt": "模型切换重新探测并更新窗口。" }
+      ]
+    },
+    {
+      "id": "little-checkpoint-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "checkpoint 是 best-effort 文件快照，且存在 path 键兼容缺口",
+      "fact": "首次 Write/Edit 前把原文件或 absent sentinel 写到 ~/.little-coder/checkpoints/<session>；异常全部吞掉。当前 tool_call handler 只读取 input.file_path，而同仓库的现代 pi 守卫已同时兼容 path/file_path，因此 path 形态的内置工具调用可能不备份。",
+      "plainLanguage": "它有安全网，但不是保证能回滚的事务；而且某些正常工具参数形态可能连网都没张开。",
+      "implication": "不能把该 checkpoint 当成 Git 事务或灾难恢复承诺，建设自有 Agent 时应统一 canonical ToolIntent 后再做副作用审计。",
+      "citations": [
+        { "path": ".pi/extensions/checkpoint/index.ts", "startLine": 6, "endLine": 45, "role": "implementation", "excerpt": "首写快照、absent sentinel 与吞错语义。" },
+        { "path": ".pi/extensions/checkpoint/index.ts", "startLine": 48, "endLine": 65, "role": "implementation", "excerpt": "事件处理只读取 file_path。" },
+        { "path": ".pi/extensions/read-guard-edit/index.ts", "startLine": 32, "endLine": 53, "role": "implementation", "excerpt": "同项目其他现代守卫明确兼容 path/file_path。" }
+      ]
+    },
+    {
+      "id": "little-output-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "文本化 tool call 只能纠偏，不能由扩展代执行",
+      "fact": "turn_end 检测 fenced/XML/bare JSON 调用后发送 follow-up，Liquid Pythonic 格式只提示服务端启用匹配 --jinja；源码明确指出 pi ExtensionAPI 无法执行解析出的调用并合成 tool_result。",
+      "plainLanguage": "它能看出模型把工具调用写成了普通文字，但没法替模型按下执行键，只能让模型重发，或要求修服务器模板。",
+      "implication": "对弱模型的协议容错受上游 ExtensionAPI 能力上限约束。",
+      "citations": [
+        { "path": ".pi/extensions/output-parser/index.ts", "startLine": 5, "endLine": 20, "role": "contract", "excerpt": "不做 active repair 的边界和 Liquid 特例。" },
+        { "path": ".pi/extensions/output-parser/index.ts", "startLine": 38, "endLine": 85, "role": "implementation", "excerpt": "native 检查、一次性诊断与 follow-up 重发。" }
+      ]
+    }
+  ]
+}

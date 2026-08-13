@@ -1,0 +1,466 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "jcode",
+  "snapshot": {
+    "repository": "1jehuang/jcode",
+    "commit": "119301ac9d605fc4c50e88dc347a783901e54b73",
+    "commitDate": "2026-07-27T18:36:20-07:00"
+  },
+  "method": {
+    "readmePolicy": "README 只作入口；结论来自 Rust 主循环、Provider trait/runtime、compaction/memory、tool registry、bash/MCP、Swarm server、prompt/skill/hook、session journal、telemetry 与对应测试。",
+    "factPolicy": "区分内建策略闸门与 OS 级隔离，区分普通串行工具循环与显式 batch 并发，区分轻量 swarm 与 deep DAG workflow。",
+    "inferencePolicy": "不推断第三方模型服务内部实现；对后台命令、匿名遥测和赞助商工具发现按代码中的默认值、退出条件与 opt-out 边界陈述。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "持久化入口、流事件状态机、重试回滚、空响应/上下文恢复与 soft interrupt。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "统一 Provider、MultiProvider 路由、认证/模型切换、provider-native tool/compaction。" },
+    { "dimension": "context-compaction-memory", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "cache-aware prompt、三种压缩策略、紧急恢复、后台跨会话 memory agent。" },
+    { "dimension": "tools-execution", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "typed registry、工具快照、batch、输出预算、前后台命令和 stdin。" },
+    { "dimension": "security-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "allowed/disabled tools、pre_tool hook、危险命令 gate；未发现默认 OS 容器/系统沙箱。" },
+    { "dimension": "mcp-connectors", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "shared pool/per-session client、stdio JSON-RPC、schema late registration、按需连接。" },
+    { "dimension": "instructions-skills-hooks", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "AGENTS.md、overlay、preferred-tools、跨工具 skills、lifecycle hooks、自开发模式。" },
+    { "dimension": "collaboration-swarm", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "轻 fan-out、持久 Swarm、deep DAG/gates/artifacts、消息/频道、崩溃回收。" },
+    { "dimension": "persistence-observability-maturity", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "snapshot+JSONL、损坏恢复、事件日志/metrics/opt-out telemetry、MIT。" }
+  ],
+  "findings": [
+    {
+      "id": "jcode-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每个用户 turn 先写盘，再进入可恢复的流式循环",
+      "fact": "run_once/run_once_capture 先把用户消息加入 Session 并 save，再调用 run_turn；远程流入口还先注入跨 Agent 通知、图片和本轮 system reminder，并在 turn 前后触发 observer hooks。",
+      "plainLanguage": "模型还没开口，用户输入已经落账；即使后面 API 或工具出错，恢复时也不会连问题本身都丢掉。",
+      "implication": "耐崩溃性强，但每轮和工具结果频繁保存会增加本地 I/O，需要 journal 快路径配合。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/turn_execution.rs", "startLine": 4, "endLine": 35, "role": "implementation", "excerpt": "run_once/capture 先 append+save。" },
+        { "path": "crates/jcode-app-core/src/agent/turn_execution.rs", "startLine": 37, "endLine": 90, "role": "implementation", "excerpt": "通知、图片、reminder 与 turn hooks。" }
+      ]
+    },
+    {
+      "id": "jcode-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "循环在每次请求前修复工具配对并重建稳定快照",
+      "fact": "run_turn 注册 streaming/cancel guard；每圈先补齐缺失 tool outputs，再取得可能已压缩的 provider messages，锁定 tool definitions，取上一轮准备好的 memory，并构造静态/动态分离的 prompt。",
+      "plainLanguage": "每次再问模型前先查账：工具有没有开单不回执、旧历史是否已折叠、这一轮工具箱和提示词是否稳定。",
+      "implication": "把异常历史修复、缓存稳定和请求生命周期放在一个明确关口。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 17, "endLine": 68, "role": "implementation", "excerpt": "guard、repair、compaction、tools、memory、split prompt。" }
+      ]
+    },
+    {
+      "id": "jcode-loop-003",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "中途断流先撤销半截状态再完整重播",
+      "fact": "Provider 发出 RetryRollback 后，Agent 清空该次尝试的文本、tool calls、SDK results、reasoning 与 native compaction；Copilot runtime 仅在已向消费者发过可见输出且错误可重试时发送该事件。",
+      "plainLanguage": "网络半路断了，不把前半句和前半个工具调用留在账上；先橡皮擦掉，再从头重放。",
+      "implication": "显著降低重试导致的重复文本和重复副作用；普通 stdout 无法擦除，只会显示断点标记。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 455, "endLine": 484, "role": "implementation", "excerpt": "消费者回滚所有 partial state。" },
+        { "path": "crates/jcode-provider-copilot-runtime/src/lib.rs", "startLine": 615, "endLine": 659, "role": "implementation", "excerpt": "provider 追踪是否已输出并条件发 rollback。" },
+        { "path": "crates/jcode-provider-openrouter-runtime/src/openrouter_tests.rs", "startLine": 2629, "endLine": 2718, "role": "test", "excerpt": "mid-stream fault 必须先 rollback 再 replay。" }
+      ]
+    },
+    {
+      "id": "jcode-loop-004",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文、截断回复和工具后空回复各有独立止损上限",
+      "fact": "上下文自动压缩重试最多 5 次，不完整回复 continuation 最多 3 次，工具结果后的空白 final 最多 5 次；工具后空白会写入一条明确要求给 final answer 的 user message。",
+      "plainLanguage": "不同故障不共用一个模糊的“最多重试 N 次”：箱子装不下、回答被截断、工具后失语分别计数。",
+      "implication": "长任务韧性好，也避免无限循环；自动补写的 user message会成为真实历史。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 5, "endLine": 15, "role": "config", "excerpt": "三类 retry budget。" },
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 798, "endLine": 825, "role": "implementation", "excerpt": "tool-result 后空白 continuation。" }
+      ]
+    },
+    {
+      "id": "jcode-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "Provider 契约不仅抽象生成，还抽象认证、路由、transport 与原生能力",
+      "fact": "Provider trait 提供 complete/complete_split、模型/route/effort/tier/transport 切换、认证解析、context window、fork、native tool result sender 和 native compaction；fork 明确要求独立可变状态。",
+      "plainLanguage": "它不是只把 URL 换掉；连“谁付费、用哪条线路、能不能续上服务端会话、工具由谁执行、压缩由谁做”都在同一接口里。",
+      "implication": "多后端能力完整，但 trait 面积很大，新 Provider 的一致性测试成本高。",
+      "citations": [
+        { "path": "crates/jcode-provider-core/src/lib.rs", "startLine": 76, "endLine": 126, "role": "contract", "excerpt": "生成、split prompt、身份和 auth 契约。" },
+        { "path": "crates/jcode-provider-core/src/lib.rs", "startLine": 293, "endLine": 436, "role": "contract", "excerpt": "transport、tools、compaction、context、fork 与 native result。" }
+      ]
+    },
+    {
+      "id": "jcode-provider-002",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MultiProvider 同时容纳九类 runtime 与兼容端点 profile",
+      "fact": "MultiProvider 持有 Claude CLI、Anthropic API、OpenAI、Copilot、Antigravity、Gemini、Cursor、Bedrock、OpenRouter，以及独立 keyed OpenAI-compatible profiles；active provider 可热切换。",
+      "plainLanguage": "像一个总机：同一 Agent 可以接订阅 CLI、官方 API、Copilot、Gemini、Bedrock 或自定义兼容网关，并保留各自认证身份。",
+      "implication": "模型路由覆盖面极广；OpenRouter 槽位兼容多 profile，代码中有大量防止 profile 身份丢失的分支。",
+      "citations": [
+        { "path": "crates/jcode-base/src/provider/mod.rs", "startLine": 328, "endLine": 374, "role": "implementation", "excerpt": "MultiProvider runtime slots 与 active state。" }
+      ]
+    },
+    {
+      "id": "jcode-provider-003",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "服务端会话、原生工具和原生压缩都能穿过统一事件流",
+      "fact": "StreamEvent::SessionId 会保存 provider resumable session；Compaction 可保存 OpenAI encrypted content；NativeToolCall 经本地 registry 执行后通过 provider native_result_sender 回传 SDK bridge。",
+      "plainLanguage": "底层 Provider 可以说“以后用这个会话号续聊”“我已经压缩过了”或“替我本地跑这个工具”，上层都能接住。",
+      "implication": "兼容 provider-native agent runtime，而非强迫所有后端退化成纯文本 function calling。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 485, "endLine": 547, "role": "implementation", "excerpt": "session id、reasoning 与 compaction event。" },
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 548, "endLine": 585, "role": "implementation", "excerpt": "native tool 本地执行与回传。" }
+      ]
+    },
+    {
+      "id": "jcode-context-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "静态前缀与每轮动态上下文分离，memory 放尾部保缓存",
+      "fact": "system prompt 把 base prompt、AGENTS、overlay、preferred-tools、skills 放 static_part；memory、active skill、reminder 与 swarm effort 放 dynamic_part。run_turn 在 client cache 检查后把 memory 作为末尾 user message注入。",
+      "plainLanguage": "不常变的说明书放书脊，记忆和本轮提醒贴在最后一页；这样改便签不会让整本书的缓存失效。",
+      "implication": "明显以 prompt-cache economics 为一等设计目标。",
+      "citations": [
+        { "path": "crates/jcode-base/src/prompt.rs", "startLine": 451, "endLine": 557, "role": "implementation", "excerpt": "static/dynamic prompt 组成。" },
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 63, "endLine": 92, "role": "implementation", "excerpt": "cache 检查后 suffix memory。" }
+      ]
+    },
+    {
+      "id": "jcode-context-002",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩器不复制历史，只记录被摘要的前缀游标",
+      "fact": "CompactionManager 不拥有 messages，只存 compacted_count、active_summary、active suffix char estimate 与 pending background task；恢复旧会话时先抑制压缩，直到真正的新消息加入。",
+      "plainLanguage": "原始账本仍归 Session 管，压缩器只记“前 N 条已折叠成摘要”，不会偷偷维护第二份容易漂移的历史。",
+      "implication": "所有权清楚且便于 rewind；游标、摘要和 session persistence 必须原子同步。",
+      "citations": [
+        { "path": "crates/jcode-base/src/compaction.rs", "startLine": 128, "endLine": 205, "role": "implementation", "excerpt": "manager state 与 ownership。" },
+        { "path": "crates/jcode-base/src/compaction.rs", "startLine": 283, "endLine": 345, "role": "implementation", "excerpt": "restore suppression 与 persisted compaction。" },
+        { "path": "crates/jcode-base/src/compaction_tests.rs", "startLine": 61, "endLine": 95, "role": "test", "excerpt": "restore 不立即 compact，新消息才重新启用。" }
+      ]
+    },
+    {
+      "id": "jcode-context-003",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩支持 reactive、趋势预测和语义换题三种策略",
+      "fact": "reactive 在固定阈值触发；proactive 用 token history 的 EWMA 增长投影；semantic 用 turn embeddings 检测 topic shift，无 embedding 时回退 proactive。统一 anti-signals 防止重复、过早、停滞期和 cooldown 内压缩。",
+      "plainLanguage": "可以等箱子快满再整理，也可以看增长速度提前整理，还可以在话题换挡时整理；但都会先检查“现在整理是否值得”。",
+      "implication": "上下文策略比多数单摘要 Agent 丰富，语义模式依赖本地 embedding 可用性和阈值调优。",
+      "citations": [
+        { "path": "crates/jcode-base/src/compaction.rs", "startLine": 456, "endLine": 543, "role": "implementation", "excerpt": "anti-signals 与 EWMA proactive trigger。" },
+        { "path": "crates/jcode-base/src/compaction.rs", "startLine": 552, "endLine": 605, "role": "implementation", "excerpt": "semantic topic shift 与 fallback。" }
+      ]
+    },
+    {
+      "id": "jcode-context-004",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文溢出与请求体过大走不同紧急恢复路径",
+      "fact": "context-limit error 触发同步 hard compact 并重置 cache/tool/provider session；HTTP 413 类 byte-size 错误先从持久历史剥离超大 inline images；超长 OpenAI encrypted compaction 则丢 native state 改文本 fallback。",
+      "plainLanguage": "“字太多”“图片字节太大”“服务端压缩包本身太大”不是同一种病，分别治疗。",
+      "implication": "避免对 413 做无效 token 摘要；紧急路径会改写持久 transcript，报告需明确这是有损恢复。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/compaction.rs", "startLine": 90, "endLine": 182, "role": "implementation", "excerpt": "context-limit hard compaction。" },
+        { "path": "crates/jcode-app-core/src/agent/compaction.rs", "startLine": 185, "endLine": 241, "role": "implementation", "excerpt": "413 image stripping。" },
+        { "path": "crates/jcode-app-core/src/agent/compaction.rs", "startLine": 244, "endLine": 283, "role": "implementation", "excerpt": "oversized native compaction fallback。" }
+      ]
+    },
+    {
+      "id": "jcode-memory-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "跨会话 memory 是独立后台 Agent，不阻塞主 turn",
+      "fact": "MemoryAgent 通过容量 16 的 channel 接收主 Agent context，使用 embedding 检索、Haiku/sidecar relevance judge 和 memory-only tools；结果放入 pending memory，下一次新 user turn 才消费。",
+      "plainLanguage": "主 Agent 回答时，旁边有个只管记忆的小秘书；它来不及的结果不会卡住当前回答，而是下一轮再递纸条。",
+      "implication": "延迟低且职责隔离，但 memory freshness 天生滞后一轮，channel 满时 try_send 可能丢更新。",
+      "citations": [
+        { "path": "crates/jcode-base/src/memory_agent.rs", "startLine": 1, "endLine": 45, "role": "implementation", "excerpt": "后台 memory agent 架构与 channel。" },
+        { "path": "crates/jcode-base/src/memory_agent.rs", "startLine": 234, "endLine": 275, "role": "implementation", "excerpt": "nonblocking handle 与 try_send。" },
+        { "path": "crates/jcode-app-core/src/agent/prompting.rs", "startLine": 20, "endLine": 55, "role": "implementation", "excerpt": "只在 fresh user turn 消费/更新。" }
+      ]
+    },
+    {
+      "id": "jcode-memory-002",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "memory 分 project/global，带向量空间标识与重复抑制",
+      "fact": "MemoryManager 按 working directory hash 存 project graph，也支持 global；embedding 写入 model id，避免跨向量空间比较。pending 注入按 prompt signature、memory set overlap 和 TTL 抑制重复，并把已从本会话抽取的 memory 标为 known。",
+      "plainLanguage": "不同项目各有笔记本；换了 embedding 模型不会把两种坐标硬比。刚提过的记忆也不会每轮重复唠叨。",
+      "implication": "比单纯向量 top-k 多了去重与 provenance；路径 hash 迁移/重命名会形成新的 project memory scope。",
+      "citations": [
+        { "path": "crates/jcode-base/src/memory.rs", "startLine": 159, "endLine": 185, "role": "implementation", "excerpt": "embedding model id。" },
+        { "path": "crates/jcode-base/src/memory.rs", "startLine": 248, "endLine": 275, "role": "implementation", "excerpt": "working-dir hashed project storage。" },
+        { "path": "crates/jcode-base/src/memory/pending.rs", "startLine": 129, "endLine": 174, "role": "implementation", "excerpt": "prompt/set duplicate suppression。" }
+      ]
+    },
+    {
+      "id": "jcode-tools-001",
+      "dimension": "tools-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具是 typed registry，定义顺序与 intent 字段集中标准化",
+      "fact": "Tool trait 统一 name/description/JSON Schema/async execute；to_definition 集中给所有 object schema（含 MCP proxy）加入必填 intent。Registry 内建读写编辑、shell、浏览器、web、swarm、memory、goal、gmail、schedule、自开发等工具，并按名称排序 definitions。",
+      "plainLanguage": "每件工具都交同一种说明书和回执；“为什么调用”不是每个工具自己记得就写，而是总装配线强制补上。",
+      "implication": "便于 UI 显示与审计，稳定排序提高 prompt cache hit。",
+      "citations": [
+        { "path": "crates/jcode-tool-core/src/lib.rs", "startLine": 9, "endLine": 65, "role": "contract", "excerpt": "intent schema normalization。" },
+        { "path": "crates/jcode-tool-core/src/lib.rs", "startLine": 75, "endLine": 139, "role": "contract", "excerpt": "ToolContext 与 Tool trait。" },
+        { "path": "crates/jcode-app-core/src/tool/mod.rs", "startLine": 150, "endLine": 255, "role": "implementation", "excerpt": "内建工具表。" },
+        { "path": "crates/jcode-app-core/src/tool/mod.rs", "startLine": 318, "endLine": 341, "role": "implementation", "excerpt": "allow filter、MCP key 与 deterministic sort。" }
+      ]
+    },
+    {
+      "id": "jcode-tools-002",
+      "dimension": "tools-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "普通模型工具调用串行，显式 batch 最多并发十个",
+      "fact": "run_turn 对 tool_calls 逐个 await registry.execute 并逐条持久化结果；BatchTool 禁止递归 batch，最多 10 个 subcalls，用 FuturesUnordered 并发执行、实时发布 progress，最终恢复原调用顺序。",
+      "plainLanguage": "模型一次开几张普通工单时按顺序做；只有明确使用 batch 托盘，才会同时跑最多十件事。",
+      "implication": "默认副作用顺序可预测；性能并行需要模型主动选择 batch。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/turn_loops.rs", "startLine": 878, "endLine": 917, "role": "implementation", "excerpt": "普通 tool_calls 串行循环。" },
+        { "path": "crates/jcode-app-core/src/tool/batch.rs", "startLine": 180, "endLine": 202, "role": "implementation", "excerpt": "batch 输入、上限与禁止嵌套。" },
+        { "path": "crates/jcode-app-core/src/tool/batch.rs", "startLine": 202, "endLine": 281, "role": "implementation", "excerpt": "FuturesUnordered、progress 与顺序恢复。" }
+      ]
+    },
+    {
+      "id": "jcode-tools-003",
+      "dimension": "tools-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具输出有双预算闸门，前台命令超时可升级后台",
+      "fact": "Registry 在输出将超过 context 90% 或单个输出超过 budget 30% 时截断。Bash 默认前台 timeout 120s、上限 10 分钟；前台超时不会杀进程，而是把 JoinHandle 交给 background manager。显式后台模式按 timeout 杀整个 Unix process group 并写 output/status file。",
+      "plainLanguage": "一份巨型日志不能吃掉整本上下文；长命令如果只是前台等不及，会转到后台继续，而显式后台设置的超时才负责杀进程组。",
+      "implication": "特别适合长 build/test；用户必须理解前台 timeout 是“停止等待”而不是“停止执行”。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/tool/mod.rs", "startLine": 627, "endLine": 678, "role": "implementation", "excerpt": "90% context 与 30% single-output guard。" },
+        { "path": "crates/jcode-app-core/src/tool/bash.rs", "startLine": 742, "endLine": 760, "role": "implementation", "excerpt": "foreground timeout/cwd/process。" },
+        { "path": "crates/jcode-app-core/src/tool/bash.rs", "startLine": 884, "endLine": 930, "role": "implementation", "excerpt": "timeout promotion to background。" },
+        { "path": "crates/jcode-app-core/src/tool/bash.rs", "startLine": 1095, "endLine": 1175, "role": "implementation", "excerpt": "explicit background process-group timeout kill。" }
+      ]
+    },
+    {
+      "id": "jcode-security-001",
+      "dimension": "security-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具边界由 session allow/disable 与外部 pre_tool gate 双层控制",
+      "fact": "Registry.execute 先解析 alias，再检查 session allowed_tools/disabled_tools；若配置 pre_tool hook，退出 2 阻止调用并把 stderr 反馈模型，其他非零、超时或启动失败均 fail-open。",
+      "plainLanguage": "先看这把工具是否在本会话工具箱里，再给企业自定义门卫一次否决机会；门卫自己坏了时默认放行。",
+      "implication": "可扩展治理强，但 pre_tool 的 fail-open 语义不适合要求故障关闭的高风险环境。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/tool/mod.rs", "startLine": 543, "endLine": 601, "role": "implementation", "excerpt": "session policy 与 pre_tool gate。" },
+        { "path": "crates/jcode-base/src/hooks.rs", "startLine": 220, "endLine": 323, "role": "contract", "excerpt": "0 allow、2 block、其他 fail-open。" }
+      ]
+    },
+    {
+      "id": "jcode-security-002",
+      "dimension": "security-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Bash 有确定性危险命令 gate，灾难目标直接拒绝",
+      "fact": "所有前后台 Bash 在 dispatch 前调用 jcode_command_risk::assess/gate；普通危险命令要求模型带针对已拒绝调用的 justification 反思后再发，根目录、HOME、凭证库、设备节点等 catastrophic targets 直接 deny。",
+      "plainLanguage": "不是让模型自己判断 rm 是否危险：命令先过代码规则；有些可解释后重试，有些目标永远不给过。",
+      "implication": "比纯提示词可靠，但命令解析器仍需要覆盖 shell 展开、别名、子 shell 和平台差异。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/tool/bash_destructive_gate.rs", "startLine": 1, "endLine": 39, "role": "implementation", "excerpt": "deterministic risk assessment、deny/reflect。" },
+        { "path": "crates/jcode-app-core/src/tool/bash.rs", "startLine": 689, "endLine": 704, "role": "implementation", "excerpt": "background dispatch 前必经 gate。" }
+      ]
+    },
+    {
+      "id": "jcode-security-003",
+      "dimension": "security-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "默认执行环境不是 OS 级沙箱",
+      "fact": "Bash 直接用 bash/cmd.exe 子进程并继承宿主环境，在 session working_dir 下运行；代码提供 kill_on_drop、process group、timeout、策略 gate 与 hook，但审计范围内未见 bubblewrap、Seatbelt、容器或 restricted token 作为默认执行层。",
+      "plainLanguage": "它有门禁和刹车，但不是把命令关进另一个房间；一旦获准，进程仍在你的机器权限下跑。",
+      "implication": "企业部署应外包给容器/VM/OS sandbox 或增加 capability-based executor，不能把危险命令 gate 等同隔离。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/tool/bash.rs", "startLine": 724, "endLine": 760, "role": "implementation", "excerpt": "宿主 shell 子进程与 working_dir。" },
+        { "path": "crates/jcode-app-core/src/tool/bash.rs", "startLine": 1095, "endLine": 1134, "role": "implementation", "excerpt": "后台仍是宿主 shell/process group。" }
+      ],
+      "caveats": ["这是对所审提交的内建 Bash 执行路径结论；用户可在 jcode 外层自行运行容器或受限账户。"]
+    },
+    {
+      "id": "jcode-mcp-001",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 区分共享池与 session-owned client",
+      "fact": "daemon 中 shared:true 默认服务器复用 SharedMcpPool，shared:false 状态型服务器每 session 单独启动；并行 connect_all 不阻塞 agent spawn，第一次真实调用尚未连接的 server 时最多等待 30 秒。",
+      "plainLanguage": "无状态工具服务像公共电梯，多会话共用；带浏览器状态的服务像独立房间，每个会话一套。",
+      "implication": "降低重复进程与连接成本，同时避免 stateful connector 串会话。",
+      "citations": [
+        { "path": "crates/jcode-base/src/mcp/manager.rs", "startLine": 1, "endLine": 59, "role": "implementation", "excerpt": "shared/owned 架构与 30s bound。" },
+        { "path": "crates/jcode-base/src/mcp/manager.rs", "startLine": 114, "endLine": 199, "role": "implementation", "excerpt": "parallel pool/session connect_all。" },
+        { "path": "crates/jcode-base/src/mcp/manager.rs", "startLine": 318, "endLine": 360, "role": "implementation", "excerpt": "connect-on-first-call。" }
+      ]
+    },
+    {
+      "id": "jcode-mcp-002",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP schema 晚到只允许一次 cache miss，JSON-RPC 请求按 ID 隔离",
+      "fact": "首轮不等待慢 MCP；tool list 锁定后若发现新 mcp__ tools，仅重建一次 snapshot。McpHandle 用 atomic request id、pending oneshot map 与 30s request timeout，使共享 server 的并发响应互不串线。",
+      "plainLanguage": "先让用户马上说话，不为插件启动卡住；插件工具后来到时只付一次缓存失效成本。多会话共用服务时每张工单都有号码。",
+      "implication": "启动延迟与 prompt cache 之间做了明确折中。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/agent/turn_execution.rs", "startLine": 335, "endLine": 393, "role": "implementation", "excerpt": "locked snapshot 与 MCP late-register one-shot。" },
+        { "path": "crates/jcode-base/src/mcp/client.rs", "startLine": 14, "endLine": 55, "role": "implementation", "excerpt": "request id、pending map、30s timeout。" }
+      ]
+    },
+    {
+      "id": "jcode-instructions-001",
+      "dimension": "instructions-skills-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "指令层有稳定优先级：base、AGENTS、overlay、preferred tools、skills、动态 memory",
+      "fact": "prompt builder 编译内建 base prompt，加载 global/project AGENTS.md，再读 ~/.jcode 与项目 .jcode overlay/preferred-tools，列出可用 skills；memory 和 active skill 进入动态部分。Session context 还冻结日期、OS、架构、版本、cwd 与 git 摘要。",
+      "plainLanguage": "通用规则、用户规则、项目规则、工具偏好、技能和临时记忆各有自己的插槽，不是拼成一团不知谁覆盖谁。",
+      "implication": "可解释性好；用户应能在 UI 查看最终合成与各部分 token 占用。",
+      "citations": [
+        { "path": "crates/jcode-base/src/prompt.rs", "startLine": 374, "endLine": 448, "role": "implementation", "excerpt": "full prompt 组成顺序。" },
+        { "path": "crates/jcode-base/src/prompt.rs", "startLine": 615, "endLine": 643, "role": "implementation", "excerpt": "immutable session context。" }
+      ]
+    },
+    {
+      "id": "jcode-instructions-002",
+      "dimension": "instructions-skills-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skills 跨 Jcode/Agents/Claude/Codex 生态并做 per-workspace overlay",
+      "fact": "SkillRegistry 解析 SKILL.md frontmatter 的 name/description/allowed-tools；global 来源含 Claude plugins、~/.jcode/skills、~/.agents/skills，首跑可导入 Claude/Codex；project overlay 每次从 .jcode/.agents/.claude skills 读取且 project 同名覆盖 global，不进入共享 registry。",
+      "plainLanguage": "它会借用其他 Agent 生态的技能包，但项目私有技能只在当前工作区叠加，不会污染另一个项目。",
+      "implication": "兼容性与热更新强；递归扫描 plugin root 有深度上限 5，复杂布局可能漏检。",
+      "citations": [
+        { "path": "crates/jcode-base/src/skill.rs", "startLine": 11, "endLine": 60, "role": "contract", "excerpt": "Skill shape、frontmatter 与 global/project 边界。" },
+        { "path": "crates/jcode-base/src/skill.rs", "startLine": 98, "endLine": 145, "role": "migration", "excerpt": "首跑导入 Claude/Codex skills。" },
+        { "path": "crates/jcode-base/src/skill.rs", "startLine": 231, "endLine": 303, "role": "implementation", "excerpt": "global sources 与 per-session overlay。" }
+      ]
+    },
+    {
+      "id": "jcode-collab-001",
+      "dimension": "collaboration-swarm",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "轻量 swarm 先让协调者规划 2–4 个任务，再并发 fork Provider",
+      "fact": "run_swarm_message 用当前 Agent 生成 JSON task plan，对每项创建 child Session、fork provider、继承模型/认证/cwd，移除 subagent/task/todo 等递归工具，并用 try_join_all 并发；最终把所有输出交给协调者综合。",
+      "plainLanguage": "先拆成几张独立工单，让多个复制了同一模型线路的工人同时做，最后由原会话汇总。",
+      "implication": "简单易用；worker 共享 registry 与工作目录，文件级冲突仍需任务切分和外部 git/worktree 纪律。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/server/swarm.rs", "startLine": 1528, "endLine": 1613, "role": "implementation", "excerpt": "child session/provider/tool surface。" },
+        { "path": "crates/jcode-app-core/src/server/swarm.rs", "startLine": 1615, "endLine": 1700, "role": "implementation", "excerpt": "plan、parallel fan-out 与 synthesis。" }
+      ]
+    },
+    {
+      "id": "jcode-collab-002",
+      "dimension": "collaboration-swarm",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "deep swarm 把协作升级成可增长 DAG、强制 artifact 与审计 gate",
+      "fact": "swarm-deep 动态指令要求 task_graph、depends_on、expand_node、complete_node typed artifact、critique/verify gate 与 inject_gap；worker 未 expand/complete 会重排队，gate 必须按 audited node id 覆盖范围并优先处理低置信 artifact。",
+      "plainLanguage": "不是“多叫几个人聊天”，而是把任务画成图：每个节点要交证据包，审计员可以发现缺口后现场加新节点，图没验完就不能宣布完成。",
+      "implication": "非常接近研究/工程编排 Harness；复杂度、成本和并发写冲突风险也显著提高。",
+      "citations": [
+        { "path": "crates/jcode-base/src/prompt.rs", "startLine": 75, "endLine": 91, "role": "prompt", "excerpt": "deep DAG workflow 总契约。" },
+        { "path": "crates/jcode-swarm-core/src/lib.rs", "startLine": 377, "endLine": 432, "role": "prompt", "excerpt": "worker expand/complete 与 typed artifact。" },
+        { "path": "crates/jcode-swarm-core/src/lib.rs", "startLine": 435, "endLine": 496, "role": "prompt", "excerpt": "gate audit/inject-gap 契约。" },
+        { "path": "crates/jcode-swarm-core/src/lib.rs", "startLine": 699, "endLine": 740, "role": "test", "excerpt": "deep node/gate prompt contract tests。" }
+      ]
+    },
+    {
+      "id": "jcode-collab-003",
+      "dimension": "collaboration-swarm",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Swarm 有持久成员树、频道、heartbeat 和死亡任务回收",
+      "fact": "SwarmMemberRecord 保存 parent/report-back、角色、状态、working_dir 和 report；ChannelIndex 双向索引订阅。worker 死亡时非终态任务按 reclaim cap 重新排队，超上限转 failed，并持久化/broadcast/通知协调者。",
+      "plainLanguage": "每个工人有户口、上级、频道和心跳；工人挂了，手里的活不会静默卡死，会有限次数重新派发，反复致命才明确失败。",
+      "implication": "协作是耐久调度系统而非内存 future；需要持续治理 member cap、staleness 和 replay idempotency。",
+      "citations": [
+        { "path": "crates/jcode-swarm-core/src/lib.rs", "startLine": 213, "endLine": 253, "role": "contract", "excerpt": "durable member 与 channel index。" },
+        { "path": "crates/jcode-app-core/src/server/swarm.rs", "startLine": 333, "endLine": 448, "role": "implementation", "excerpt": "dead member salvage、cap、persist、broadcast。" },
+        { "path": "crates/jcode-app-core/src/server/swarm_mutation_state_tests.rs", "startLine": 39, "endLine": 83, "role": "test", "excerpt": "spawn mutation response 可幂等 replay。" }
+      ]
+    },
+    {
+      "id": "jcode-persist-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Session 用完整 snapshot 加 append-only JSONL journal",
+      "fact": "save 比较 metadata/vector dirty state：需要全量时 checkpoint snapshot 并删 journal，否则只追加 messages/env snapshots/memory injections/replay events delta；journal 超上限或 append 失败再回退 snapshot。",
+      "plainLanguage": "平时只往流水账追加新变化，偶尔把整本账重抄成快照；这样频繁保存不会每次重写全部历史。",
+      "implication": "兼顾耐久与 I/O；多写者必须依靠更上层会话所有权避免交错 append。",
+      "citations": [
+        { "path": "crates/jcode-base/src/session/persistence.rs", "startLine": 307, "endLine": 395, "role": "implementation", "excerpt": "dirty 判定、delta journal、checkpoint threshold。" },
+        { "path": "crates/jcode-base/src/session_tests/cases.rs", "startLine": 835, "endLine": 880, "role": "test", "excerpt": "journal append/load replay 回归。" }
+      ]
+    },
+    {
+      "id": "jcode-persist-002",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "损坏 journal 跳过坏行、挽救 glued entries，并在下次保存自愈",
+      "fact": "replay 不在首个 parse error 停止，而是继续后续行；对 torn append 与下一条粘在同一行的情况扫描结构起点并 stream-parse。发现腐坏后备份 corrupt.jsonl，强制下次 checkpoint 把已挽救状态固化。",
+      "plainLanguage": "流水账中间坏一行，不会把后面所有对话一起判死；能捞的条目先捞出来，再重写一本干净快照。",
+      "implication": "长会话恢复质量高，且保留法证副本。",
+      "citations": [
+        { "path": "crates/jcode-base/src/session/persistence.rs", "startLine": 26, "endLine": 128, "role": "implementation", "excerpt": "torn/glued salvage 与继续 replay。" },
+        { "path": "crates/jcode-base/src/session/persistence.rs", "startLine": 142, "endLine": 172, "role": "implementation", "excerpt": "backup + next-save healing。" },
+        { "path": "crates/jcode-base/src/session_tests/cases.rs", "startLine": 930, "endLine": 1095, "role": "test", "excerpt": "skip tail、glued salvage、自愈回归。" }
+      ]
+    },
+    {
+      "id": "jcode-observe-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "观测覆盖结构化 lifecycle、实时 session metrics 与可选择遥测",
+      "fact": "工具/MCP/Swarm/Session/Provider 路径记录带 session/message/tool id、latency、bytes、状态的结构化事件；独立 lock-free-ish session registry 维护 60 秒 token churn、turns 和 last activity。匿名 telemetry 默认启用，可用 JCODE_NO_TELEMETRY、DO_NOT_TRACK 或 marker 关闭；prompt/transcript 内容分享另行显式 opt-in。",
+      "plainLanguage": "本地能看每个工人最近是否真在干活、花了多少 token、工具跑多久；发往服务端的匿名统计能关闭，而对话内容默认不发。",
+      "implication": "可观测维度很丰富；隐私评审需同时检查 usage telemetry、content-sharing 和 sponsor provenance 三条数据面。",
+      "citations": [
+        { "path": "crates/jcode-app-core/src/tool/mod.rs", "startLine": 603, "endLine": 638, "role": "implementation", "excerpt": "tool lifecycle 与 telemetry。" },
+        { "path": "crates/jcode-base/src/session_metrics.rs", "startLine": 1, "endLine": 25, "role": "implementation", "excerpt": "独立 live metrics 设计。" },
+        { "path": "crates/jcode-base/src/session_metrics.rs", "startLine": 63, "endLine": 128, "role": "implementation", "excerpt": "token/turn/activity registry。" },
+        { "path": "crates/jcode-telemetry-core/src/lib.rs", "startLine": 312, "endLine": 395, "role": "config", "excerpt": "usage opt-out 与 content separate opt-in。" }
+      ]
+    },
+    {
+      "id": "jcode-maturity-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "关键故障边界有源码级回归测试，许可证为 MIT",
+      "fact": "仓库对 compaction restore/hard threshold、mid-stream rollback、session journal corruption、MCP management、hook gate、Swarm prompt/assignment/report-back 和 tool schema 等关键路径有测试；LICENSE 为 MIT。",
+      "plainLanguage": "不只是代码注释说“应该安全”：断流、损坏账本、深度协作契约等都有回归用例钉住。",
+      "implication": "成熟度高，但 1,198 个 Rust 文件的系统仍需 CI 测试矩阵覆盖多 Provider、三平台和远程 daemon。",
+      "citations": [
+        { "path": "crates/jcode-base/src/compaction_tests.rs", "startLine": 388, "endLine": 451, "role": "test", "excerpt": "95% hard-compaction guard。" },
+        { "path": "crates/jcode-app-core/src/tool/communicate_tests/end_to_end.rs", "startLine": 370, "endLine": 442, "role": "test", "excerpt": "spawn completion report-back E2E。" },
+        { "path": "crates/jcode-base/src/hooks.rs", "startLine": 325, "endLine": 352, "role": "test", "excerpt": "hook payload/truncation tests。" },
+        { "path": "LICENSE", "startLine": 1, "endLine": 21, "role": "contract", "excerpt": "MIT License。" }
+      ]
+    }
+  ]
+}

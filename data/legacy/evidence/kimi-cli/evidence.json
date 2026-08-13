@@ -1,0 +1,484 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "kimi-cli",
+  "snapshot": {
+    "repository": "MoonshotAI/kimi-cli",
+    "commit": "4a550effdfcb29a25a5d325bf935296cc50cd417",
+    "commitDate": "2026-07-16T10:03:00Z"
+  },
+  "method": {
+    "readmePolicy": "README 只作入口；结论来自 KimiSoul 主循环、Kosong 流/工具契约、Context/Compaction、Approval/KAOS、MCP、Plugin/Hook、Subagent、Session/Wire、Telemetry、默认 agent spec/system prompt 与对应测试。",
+    "factPolicy": "明确区分 KAOS 执行抽象与 OS 级沙箱，区分同 step 工具并发与跨 step 重复抑制，区分 prompt 约束与代码强制 allowlist/approval。",
+    "inferencePolicy": "不推断 Moonshot 服务端内部；对无默认沙箱、遥测字段边界和子 Agent 隔离只按本提交可见本地代码陈述。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "turn/step 状态机、流式生成、工具异步执行、重试、steer、D-Mail 回滚与重复调用止损。" },
+    { "dimension": "providers-streaming", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "Kosong provider abstraction、Kimi/OpenAI/Anthropic/Gemini/Vertex、thinking 与请求级 completion budget。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "JSONL、usage/pending estimate、checkpoint/revert、摘要保尾、背景任务快照。" },
+    { "dimension": "tools-execution", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "动态工具装载、并发 futures、重复调用治理、前后台 Shell 与结果预算。" },
+    { "dimension": "security-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "统一 approval、YOLO/AFK、Plan gate、hook；本地 KAOS 直接宿主执行，非 OS 沙箱。" },
+    { "dimension": "mcp-plugins-hooks", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "延迟 MCP、OAuth、输出截断、subprocess plugins、server/wire hooks。" },
+    { "dimension": "instructions-skills", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "Jinja system prompt、AGENTS 层级与预算、跨品牌 skills、slash/flow skills。" },
+    { "dimension": "collaboration-subagents", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "coder/explore/plan、前后台执行、持久实例/resume、模型覆盖、统一 approval/wire。" },
+    { "dimension": "persistence-observability-maturity", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "context/wire/state/subagent artifacts、trace/wire events、opt-out telemetry、Apache-2.0。" }
+  ],
+  "findings": [
+    {
+      "id": "kimi-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每轮是带检查点的多步状态机，不是单次聊天请求",
+      "fact": "run 先刷新 OAuth、建立 approval source、运行 UserPromptSubmit hook，再进入 _turn；_turn 先 checkpoint、持久化 user message，然后 _agent_loop 逐 step 做压缩、checkpoint、LLM+工具执行，直到无工具调用、拒绝或重复调用强停。",
+      "plainLanguage": "一次用户输入可能触发多次“模型思考—调工具—看结果—再思考”，每一步前都留存档点。",
+      "implication": "长任务可恢复、可插话，也需要严格的步数上限和副作用治理。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 659, "endLine": 742, "role": "implementation", "excerpt": "turn 初始化、hook、slash/flow/普通 turn 路由。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 841, "endLine": 852, "role": "implementation", "excerpt": "checkpoint、user message 落盘、进入 agent loop。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 998, "endLine": 1041, "role": "implementation", "excerpt": "step guard、auto compaction、checkpoint 和 step execution。" }
+      ]
+    },
+    {
+      "id": "kimi-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每 step 先注入通知/动态约束，再一次生成并等待并发工具",
+      "fact": "root 每 step 最多领取 4 条 pending notification；Plan/AFK 等 injection 合并成 user-side system reminder；历史归一化后调用 kosong.step，流式回调消息和工具结果，随后 await 所有 tool results 并 shield 写回上下文。",
+      "plainLanguage": "模型每次再开口前都会先收新通知和当前模式规则；工具可以边生成边启动，结果到齐后才记账。",
+      "implication": "实时性和并行性强；动态注入是上下文的一部分，会影响 token 与缓存。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1132, "endLine": 1194, "role": "implementation", "excerpt": "notification、dynamic injection、history normalization。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1196, "endLine": 1216, "role": "implementation", "excerpt": "Kosong step 与流式 callbacks。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1274, "endLine": 1295, "role": "implementation", "excerpt": "等待工具结果并 shield context growth。" }
+      ]
+    },
+    {
+      "id": "kimi-loop-003",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "steer 与 D-Mail 提供两种中途改道机制",
+      "fact": "steer queue 会在 step 结束或相邻 step 间作为新的 user message 注入；SendDMail 可携 checkpoint id 触发 BackToTheFuture，主循环旋转并回退 context，再注入未来消息并清空重复调用状态。",
+      "plainLanguage": "用户插话是在当前路线后追加新指令；D-Mail 则像读档，把对话回到旧存档再塞入一张“未来经验”纸条。",
+      "implication": "适合长程纠偏和探索回溯，但文件系统副作用不会随 context 自动回滚。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 622, "endLine": 653, "role": "implementation", "excerpt": "steer queue 和 user message 注入。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1099, "endLine": 1109, "role": "implementation", "excerpt": "D-Mail revert 后重建 checkpoint。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1312, "endLine": 1336, "role": "implementation", "excerpt": "pending D-Mail 变成 BackToTheFuture signal。" }
+      ],
+      "caveats": ["回滚的是对话 JSONL，不是 git/worktree 或外部服务事务。"]
+    },
+    {
+      "id": "kimi-loop-004",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "错误恢复分 OAuth、连接、空响应和 HTTP 状态码",
+      "fact": "step/compaction 使用指数抖动重试；401 仅对 OAuth provider 强制刷新一次；连接/超时可调用 RetryableChatProvider.on_retryable_error 并只恢复一次；空响应和 429/500/502/503/504 进入 tenacity。",
+      "plainLanguage": "不是遇错一律重试：令牌过期先换令牌，连接坏了让 provider 重建连接，服务繁忙才退避。",
+      "implication": "恢复语义清楚；408/409/529 在遥测里可标 retryable，但当前 Python 重试循环并不重试它们。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1220, "endLine": 1249, "role": "implementation", "excerpt": "step retry wrapper 与 API error telemetry。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1647, "endLine": 1658, "role": "contract", "excerpt": "实际 retryable 分类。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1660, "endLine": 1743, "role": "implementation", "excerpt": "401 refresh 与连接恢复。" }
+      ]
+    },
+    {
+      "id": "kimi-provider-001",
+      "dimension": "providers-streaming",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "Kosong 把流式生成和工具调度拆成两层契约",
+      "fact": "generate 合并流式 Text/Think/ToolCall part，拒绝完全空或仅 thinking 的异常响应；step 在完整 tool call 到达时立即交 Toolset.handle，并收集异步 futures，生成失败/取消时取消所有在途工具。",
+      "plainLanguage": "底层负责把碎片拼成完整回复，上层负责一看到完整工具单就开工；若模型流中断，尚未完成的工具任务会被收拢取消。",
+      "implication": "Provider 和 Harness 解耦，同时避免中断后悬挂任务。",
+      "citations": [
+        { "path": "packages/kosong/src/kosong/_generate.py", "startLine": 52, "endLine": 103, "role": "implementation", "excerpt": "stream merge、empty/think-only validation。" },
+        { "path": "packages/kosong/src/kosong/__init__.py", "startLine": 104, "endLine": 174, "role": "contract", "excerpt": "step、tool future dispatch 与 cancellation。" }
+      ]
+    },
+    {
+      "id": "kimi-provider-002",
+      "dimension": "providers-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "同一 LLM 层支持 Kimi、OpenAI、Anthropic、Gemini 与 Vertex",
+      "fact": "create_llm 按 provider type 构造 Kimi、OpenAI legacy/Responses、Anthropic、GoogleGenAI/Vertex，以及测试 Echo/Chaos；模型 capability 决定 thinking/image 等能力，thinking 可按配置开启或关闭。",
+      "plainLanguage": "主循环不绑某一家 API，同一套工具和上下文可换不同模型协议。",
+      "implication": "可移植性好，但 Kimi 专属 generation override、prompt cache key 与 preserved thinking 只在 Kimi provider 生效。",
+      "citations": [
+        { "path": "src/kimi_cli/llm.py", "startLine": 326, "endLine": 470, "role": "implementation", "excerpt": "provider factory。" },
+        { "path": "src/kimi_cli/llm.py", "startLine": 472, "endLine": 501, "role": "implementation", "excerpt": "capabilities、thinking 与 LLM assembly。" }
+      ]
+    },
+    {
+      "id": "kimi-provider-003",
+      "dimension": "providers-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "completion 上限按真实请求估算并留安全边际",
+      "fact": "请求估算包含 system prompt、工具 schema、role/metadata、tool calls、media 与历史；Kimi completion cap 取配置预算和剩余 context 的较小值，主 step 还把 pending token floor 与 safety margin 算入。",
+      "plainLanguage": "不只数聊天正文，还把工具说明书和图片等隐藏成本算进去，再决定模型最多还能写多少。",
+      "implication": "减少输出顶破窗口；估算仍非 provider tokenizer 的精确值。",
+      "citations": [
+        { "path": "src/kimi_cli/llm.py", "startLine": 181, "endLine": 263, "role": "implementation", "excerpt": "completion cap 与 request token estimator。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1365, "endLine": 1387, "role": "implementation", "excerpt": "每请求计算 Kimi generation override。" }
+      ]
+    },
+    {
+      "id": "kimi-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文是可增量恢复的 JSONL 事件账本",
+      "fact": "Context 将普通消息与 _system_prompt、_checkpoint、_usage 记录写入同一 JSONL；restore 跳过 malformed/non-object/invalid record，重建 history、checkpoint cursor、最新 token count 和 usage 之后的 pending estimate。",
+      "plainLanguage": "每条对话、存档点和 token 仪表读数都单独写一行；尾部坏一行不会让整场会话报废。",
+      "implication": "易审计、易增量追加；没有数据库事务，靠逐行容错和旋转文件恢复。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/context.py", "startLine": 20, "endLine": 65, "role": "implementation", "excerpt": "restore 与 pending estimate。" },
+        { "path": "src/kimi_cli/soul/context.py", "startLine": 232, "endLine": 248, "role": "implementation", "excerpt": "message/usage append。" },
+        { "path": "src/kimi_cli/soul/context.py", "startLine": 250, "endLine": 339, "role": "implementation", "excerpt": "record validation 与 salvage。" }
+      ]
+    },
+    {
+      "id": "kimi-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "checkpoint 回退会保留旧文件并重算状态",
+      "fact": "revert_to 先把当前 context 文件旋转为备份，再逐行复制到指定 checkpoint 之前，重新构建 history/usage/system prompt/checkpoint 与 pending estimate；clear 也先旋转而非直接覆盖。",
+      "plainLanguage": "读档时旧账本不会消失，而是改名存档；新账本只抄到目标存档点。",
+      "implication": "误回退可人工取回旋转文件；磁盘占用会随压缩/回退累计。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/context.py", "startLine": 123, "endLine": 200, "role": "implementation", "excerpt": "checkpoint 和 revert rotation/rebuild。" },
+        { "path": "src/kimi_cli/soul/context.py", "startLine": 202, "endLine": 230, "role": "implementation", "excerpt": "clear rotation。" }
+      ]
+    },
+    {
+      "id": "kimi-context-003",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩由阈值触发，摘要旧历史并保留最近轮次",
+      "fact": "should_auto_compact 同时检查 context ratio 和 reserved context；SimpleCompaction 默认保留最近两组 user/assistant，把更早历史交 EmptyToolset 摘要、去除 thinking，再用 compaction prefix + summary + preserved messages 重建 context。",
+      "plainLanguage": "箱子快满时，把旧账压成一页摘要，最近几轮原样保留；摘要过程不能再调用工具。",
+      "implication": "实现简单稳定，但摘要是有损的，字符/4 估算对 CJK 偏低，代码中也明确承认。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/compaction.py", "startLine": 37, "endLine": 82, "role": "implementation", "excerpt": "auto compact trigger 与 token estimate。" },
+        { "path": "src/kimi_cli/soul/compaction.py", "startLine": 85, "endLine": 174, "role": "implementation", "excerpt": "prepare/summary/preserve 实现。" },
+        { "path": "tests/core/test_simple_compaction.py", "startLine": 1, "endLine": 120, "role": "test", "excerpt": "压缩触发、preserve 与摘要契约。" }
+      ]
+    },
+    {
+      "id": "kimi-context-004",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩后显式恢复活动后台任务与动态约束状态",
+      "fact": "root compaction 前估算摘要后请求预算；压缩成功后 clear/重写 system prompt/checkpoint/messages，再追加 active task snapshot、重设 token count、通知 injection providers reset，并发 CompactionEnd/telemetry/PostCompact。",
+      "plainLanguage": "摘要不会让正在跑的 build/test 凭空消失；压缩后会重新贴一张活动任务清单，并让 Plan/AFK 提醒重新校准。",
+      "implication": "避免长后台任务在摘要后失联；活动任务快照本身也占上下文。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1432, "endLine": 1476, "role": "implementation", "excerpt": "post-compaction history/budget 预估。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1573, "endLine": 1606, "role": "implementation", "excerpt": "context 重建、task snapshot、provider reset。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1608, "endLine": 1644, "role": "implementation", "excerpt": "compaction telemetry 与 PostCompact hook。" }
+      ]
+    },
+    {
+      "id": "kimi-tools-001",
+      "dimension": "tools-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具表由 agent spec 动态装配，插件和 MCP 追加进入同一 Toolset",
+      "fact": "load_agent 从 YAML 选 tools/allowed_tools 并应用 exclude_tools，通过依赖注入实例化；插件冲突时跳过；MCP config 验证后可后台加载或延迟到首轮。",
+      "plainLanguage": "工具箱不是写死在循环里，而是由角色配置装配；本地插件和远程 MCP 最终都变成模型看到的同类工具。",
+      "implication": "角色最小权限容易表达；工具名称冲突按先到内建优先。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/agent.py", "startLine": 411, "endLine": 451, "role": "implementation", "excerpt": "subagent policy 与 built-in tool loading。" },
+        { "path": "src/kimi_cli/soul/agent.py", "startLine": 453, "endLine": 485, "role": "implementation", "excerpt": "plugin/MCP append 与 deferred loading。" },
+        { "path": "src/kimi_cli/agents/default/agent.yaml", "startLine": 1, "endLine": 36, "role": "config", "excerpt": "root tool/subagent inventory。" }
+      ]
+    },
+    {
+      "id": "kimi-tools-002",
+      "dimension": "tools-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "同一模型回复里的不同工具并发启动，完全重复调用共享结果",
+      "fact": "Kosong 收到完整 tool call 即调用 Toolset.handle；KimiToolset 为每个新 call 创建 asyncio task。同 step 相同 name+canonical args 不重复执行，而是等待原 task 并复制 result。",
+      "plainLanguage": "模型一口气开多张不同工单会一起跑；两张完全相同的工单只做一次，第二张拿同一结果。",
+      "implication": "吞吐高且减少重复副作用；不同工具之间没有全局串行保证。",
+      "citations": [
+        { "path": "packages/kosong/src/kosong/__init__.py", "startLine": 134, "endLine": 167, "role": "implementation", "excerpt": "tool call 到达即 handle 并登记 future。" },
+        { "path": "src/kimi_cli/soul/toolset.py", "startLine": 343, "endLine": 423, "role": "implementation", "excerpt": "same-step dedup/result sharing。" },
+        { "path": "src/kimi_cli/soul/toolset.py", "startLine": 454, "endLine": 611, "role": "implementation", "excerpt": "async tool task 与 hook/telemetry。" }
+      ]
+    },
+    {
+      "id": "kimi-tools-003",
+      "dimension": "tools-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "跨 step 重复调用按 3/5/8/12 阶梯提醒并强停",
+      "fact": "Toolset 对 canonical tool call 维护连续 streak：第 3 次开始提示换方法，第 5 次展示调用细节，第 8 次要求停止工具并总结，第 12 次设置 force_stop_turn。",
+      "plainLanguage": "不是第一次重复就封杀，而是逐级提醒；连续十二次原地打转才硬踩刹车。",
+      "implication": "降低模型卡死和费用失控，也允许合理重试；canonicalization 只比较名称和 JSON 参数，不判断外部状态是否变化。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/toolset.py", "startLine": 116, "endLine": 172, "role": "implementation", "excerpt": "repeat thresholds/reminders。" },
+        { "path": "src/kimi_cli/soul/toolset.py", "startLine": 425, "endLine": 453, "role": "implementation", "excerpt": "cross-step repeat tracking/force stop。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1338, "endLine": 1346, "role": "implementation", "excerpt": "turn force-stop resolution。" }
+      ]
+    },
+    {
+      "id": "kimi-tools-004",
+      "dimension": "tools-execution",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "前台 Shell 有 5 分钟上限，后台任务可到 24 小时并持久通知",
+      "fact": "Shell 参数限制前台 timeout <=300s、后台 <=86400s；两者都先 approval。前台通过 KAOS 流式读 stdout/stderr，取消/超时 kill 当前进程；后台交 BackgroundTaskManager 持久化，完成后自动通知，并可 TaskList/Output/Stop 管理。",
+      "plainLanguage": "短命令当场等，长 build/server 作为有编号的后台任务继续跑，不用让对话一直卡住。",
+      "implication": "长任务体验完整；前台 LocalKaos.kill 只 kill 直接子进程，后台 worker 才显式管理整个进程组。",
+      "citations": [
+        { "path": "src/kimi_cli/tools/shell/__init__.py", "startLine": 22, "endLine": 57, "role": "contract", "excerpt": "前后台 timeout validation。" },
+        { "path": "src/kimi_cli/tools/shell/__init__.py", "startLine": 81, "endLine": 142, "role": "implementation", "excerpt": "foreground approval/stream/timeout。" },
+        { "path": "src/kimi_cli/tools/shell/__init__.py", "startLine": 144, "endLine": 219, "role": "implementation", "excerpt": "background dispatch 与 task hints。" },
+        { "path": "src/kimi_cli/background/worker.py", "startLine": 87, "endLine": 169, "role": "implementation", "excerpt": "process-group termination/timeout escalation。" }
+      ]
+    },
+    {
+      "id": "kimi-security-001",
+      "dimension": "security-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "统一审批支持单次、整会话、拒绝反馈、YOLO 与 AFK",
+      "fact": "Approval 绑定当前 tool call/source；普通请求进入共享 ApprovalRuntime/wire。approve_for_session 缓存 action 并批准同 action pending requests；拒绝反馈返回模型。YOLO 自动批准，AFK 也隐含自动批准且可持久或仅本次 invocation。",
+      "plainLanguage": "每种危险动作可这次放行、整场放行或拒绝并告诉模型原因；无人值守模式等同自动批准。",
+      "implication": "root、前台和后台子 Agent 共用一个审批面；AFK 是高风险开关，不能理解为只关闭提问。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/approval.py", "startLine": 130, "endLine": 199, "role": "implementation", "excerpt": "shared state、YOLO/AFK semantics。" },
+        { "path": "src/kimi_cli/soul/approval.py", "startLine": 200, "endLine": 299, "role": "implementation", "excerpt": "tool-bound approval request。" },
+        { "path": "src/kimi_cli/soul/approval.py", "startLine": 336, "endLine": 396, "role": "implementation", "excerpt": "approve/session cache/reject。" },
+        { "path": "src/kimi_cli/approval_runtime/runtime.py", "startLine": 61, "endLine": 152, "role": "implementation", "excerpt": "request/wait/resolve runtime。" }
+      ]
+    },
+    {
+      "id": "kimi-security-002",
+      "dimension": "security-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Plan 模式不是隐藏工具，而是写工具调用时再强制拒绝",
+      "fact": "KimiSoul 把 plan-mode checker/path 绑定给 WriteFile/StrReplaceFile，并明确工具不 hide/unhide；Plan 子 Agent 的 YAML 则代码级 allowlist 不包含 Shell/写工具，测试验证。",
+      "plainLanguage": "root 的 Plan 模式仍让模型知道写工具存在，但真调用时门禁拦下；专门 plan 子 Agent 更严格，工具箱里压根没有写和 shell。",
+      "implication": "运行时 gate 能给出清楚反馈；真正最小权限应优先用 subagent allowlist。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 409, "endLine": 463, "role": "implementation", "excerpt": "plan checker/tool binding。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 519, "endLine": 526, "role": "contract", "excerpt": "工具不隐藏、call-time reject。" },
+        { "path": "src/kimi_cli/agents/default/plan.yaml", "startLine": 14, "endLine": 29, "role": "config", "excerpt": "plan agent allow/exclude tools。" },
+        { "path": "tests/core/test_subagent_builder.py", "startLine": 63, "endLine": 86, "role": "test", "excerpt": "plan agent 无 Shell/写工具。" }
+      ]
+    },
+    {
+      "id": "kimi-security-003",
+      "dimension": "security-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "默认本地 KAOS 是宿主执行抽象，不是 OS 级沙箱",
+      "fact": "默认 system prompt 明确 operating environment is not in a sandbox；LocalKaos 直接用 pathlib/aiofiles 操作宿主路径，并用 asyncio.create_subprocess_exec 启动宿主进程，没有容器、seatbelt、seccomp 或 restricted token。",
+      "plainLanguage": "KAOS 让同一套代码能接本地或 SSH，但没有把命令关进隔离房间；一旦用户批准，进程拿的是当前用户权限。",
+      "implication": "企业场景必须把 Kimi CLI 外包进容器/VM/受限账户，审批与提示词不能替代隔离。",
+      "citations": [
+        { "path": "src/kimi_cli/agents/default/system.md", "startLine": 67, "endLine": 81, "role": "prompt", "excerpt": "明确声明环境非 sandbox。" },
+        { "path": "packages/kaos/src/kaos/local.py", "startLine": 31, "endLine": 78, "role": "implementation", "excerpt": "本地 filesystem/cwd 直接映射。" },
+        { "path": "packages/kaos/src/kaos/local.py", "startLine": 139, "endLine": 176, "role": "implementation", "excerpt": "宿主文件写入与 subprocess exec。" }
+      ]
+    },
+    {
+      "id": "kimi-hooks-001",
+      "dimension": "mcp-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Hook 同时支持本地命令与客户端 wire subscription",
+      "fact": "HookEngine 按 regex 匹配并去重 server command，同时加入 wire subscriptions，并发执行；任意 result=block 即整体 block。UserPromptSubmit、Pre/PostToolUse、Stop/Failure、Compact、Notification、Subagent 等事件均接入。",
+      "plainLanguage": "组织可以在模型动作前后插入自己的门卫/审计脚本，也可以让 IDE 客户端参与判断。",
+      "implication": "扩展面完整；engine、命令错误与超时通常 fail-open，只有成功返回 block/exit 2 才阻止。",
+      "citations": [
+        { "path": "src/kimi_cli/hooks/engine.py", "startLine": 65, "endLine": 91, "role": "contract", "excerpt": "server/wire hook sources。" },
+        { "path": "src/kimi_cli/hooks/engine.py", "startLine": 205, "endLine": 256, "role": "implementation", "excerpt": "match、fail-open 与 telemetry isolation。" },
+        { "path": "src/kimi_cli/hooks/engine.py", "startLine": 287, "endLine": 319, "role": "implementation", "excerpt": "parallel execution 与 block aggregation。" },
+        { "path": "src/kimi_cli/hooks/runner.py", "startLine": 27, "endLine": 89, "role": "implementation", "excerpt": "shell hook exit/timeout semantics。" }
+      ]
+    },
+    {
+      "id": "kimi-plugin-001",
+      "dimension": "mcp-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "插件工具是经审批的本地子进程，可获得新鲜 Host 凭证",
+      "fact": "PluginTool 每次调用先请求 action=plugin:name 审批，把 JSON params 写 stdin，在插件目录执行声明 command，120 秒超时；inject mapping 可把当前 API key/base URL 注入干净环境。插件安装校验名称防 path traversal，并用同文件系统 staging swap。",
+      "plainLanguage": "插件本质是本机程序，不是受限脚本；它能按配置拿到主机凭证，所以安装来源和权限同样重要。",
+      "implication": "能力强但供应链风险高；approval 只确认“运行插件”，不审计插件内部每个文件/网络动作。",
+      "citations": [
+        { "path": "src/kimi_cli/plugin/tool.py", "startLine": 37, "endLine": 130, "role": "implementation", "excerpt": "approval、credential env、subprocess/timeout。" },
+        { "path": "src/kimi_cli/plugin/manager.py", "startLine": 54, "endLine": 108, "role": "implementation", "excerpt": "name validation、staging install/swap。" },
+        { "path": "tests/core/test_plugin_tool.py", "startLine": 49, "endLine": 153, "role": "test", "excerpt": "stdin/stdout/error/credential injection tests。" }
+      ]
+    },
+    {
+      "id": "kimi-mcp-001",
+      "dimension": "mcp-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 延迟启动、逐服务器状态化，并对富媒体共享 100K 字符预算",
+      "fact": "agent 可 defer MCP，首个 agent loop 后台启动并等待，向 UI 发 loading/status；server 状态区分 connected/unauthorized/failed。MCP 结果的文本、image/audio/video data URL 共用 100000 字符预算，超额媒体丢弃并加 truncation notice。",
+      "plainLanguage": "远程工具不必拖慢 CLI 启动，但真正开始工作前会等它们连好；一个巨型网页 DOM 或截图不能把上下文塞爆。",
+      "implication": "体验和上下文安全较好；首轮仍会被 MCP 连接完成阻塞，OAuth token 持久落在 share dir。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/agent.py", "startLine": 467, "endLine": 485, "role": "implementation", "excerpt": "MCP validation/background/defer。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 962, "endLine": 993, "role": "implementation", "excerpt": "首轮 loading/status/wait。" },
+        { "path": "src/kimi_cli/soul/toolset.py", "startLine": 1019, "endLine": 1080, "role": "implementation", "excerpt": "100K shared MCP result budget。" },
+        { "path": "tests/tools/test_mcp_tool_result.py", "startLine": 30, "endLine": 138, "role": "test", "excerpt": "text/media truncation regression tests。" }
+      ]
+    },
+    {
+      "id": "kimi-instructions-001",
+      "dimension": "instructions-skills",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "系统指令是 Jinja 模板，运行环境与项目说明在启动时冻结",
+      "fact": "load_agent 用 StrictUndefined Jinja 渲染 system.md 和 builtin/spec args；Context 首次写入 _system_prompt，子 Agent resume 时优先复用持久 prompt 而非当前模板。",
+      "plainLanguage": "系统提示词像带变量的表单，启动时填入 OS、shell、目录、文件树、AGENTS 和技能；恢复旧子 Agent 时继续沿用当时版本。",
+      "implication": "保证 resume 行为稳定；模板升级不会自动改变旧子 Agent 的规则。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/agent.py", "startLine": 494, "endLine": 517, "role": "implementation", "excerpt": "StrictUndefined Jinja render。" },
+        { "path": "src/kimi_cli/subagents/core.py", "startLine": 58, "endLine": 69, "role": "implementation", "excerpt": "resume reuse/persist system prompt。" },
+        { "path": "src/kimi_cli/agents/default/system.md", "startLine": 67, "endLine": 117, "role": "prompt", "excerpt": "environment/AGENTS prompt slots。" }
+      ]
+    },
+    {
+      "id": "kimi-instructions-002",
+      "dimension": "instructions-skills",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "AGENTS.md 按 root→cwd 合并，叶子优先分享 32KiB 总预算",
+      "fact": "load_agents_md 从 project root 走到 work dir，每层检查 .kimi/AGENTS.md、AGENTS.md、agents.md；普通大小写候选按优先级择一而 .kimi 可并存，内容预算从叶子向根分配，最后按根到叶顺序拼接并标源。",
+      "plainLanguage": "越靠近正在工作的目录越有机会完整进入上下文，但展示顺序仍是先总规则、后局部规则。",
+      "implication": "符合层级覆盖直觉；超过 32KiB 的上层说明可能被截短。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/agent.py", "startLine": 87, "endLine": 168, "role": "implementation", "excerpt": "AGENTS discovery、precedence、budget、assembly。" },
+        { "path": "src/kimi_cli/agents/default/system.md", "startLine": 99, "endLine": 123, "role": "prompt", "excerpt": "AGENTS precedence/user priority 说明。" }
+      ]
+    },
+    {
+      "id": "kimi-skills-001",
+      "dimension": "instructions-skills",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skills 跨 kimi/claude/codex 目录合并，并映射为 slash/flow 命令",
+      "fact": "Config 默认 merge_all_available_skills=true，支持 extra skill dirs；system prompt 只列摘要并要求按需读取 SKILL.md。KimiSoul 把 standard/flow skill 注册为 slash command，flow 还构造成 FlowRunner。",
+      "plainLanguage": "技能不是把全文常驻提示词，而是先给目录卡片，需要时再读；同一套 CLI 还能复用其他 Agent 生态的技能目录。",
+      "implication": "节省上下文并增强兼容；skill 发现冲突需依赖 scope precedence。",
+      "citations": [
+        { "path": "src/kimi_cli/config.py", "startLine": 242, "endLine": 259, "role": "config", "excerpt": "跨品牌 merge 与 extra dirs。" },
+        { "path": "src/kimi_cli/agents/default/system.md", "startLine": 125, "endLine": 148, "role": "prompt", "excerpt": "skill scope/on-demand instructions。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 854, "endLine": 900, "role": "implementation", "excerpt": "skill/flow slash command registration。" }
+      ]
+    },
+    {
+      "id": "kimi-subagent-001",
+      "dimension": "collaboration-subagents",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "内建 coder/explore/plan 用代码级工具白名单切分角色",
+      "fact": "root 加载 spec 时为每个 subagent 注册 AgentTypeDefinition 与 allowlist policy；coder 有 Shell/写工具但无 Agent/AskUser/Todo，explore 无写工具但仍有 Shell，plan 连 Shell 也没有。SubagentBuilder 不加载 MCP。",
+      "plainLanguage": "主 Agent 能雇三种工人：能改代码、只探索、只规划；每种工人拿到的钥匙不同，而且不能继续无限招下级。",
+      "implication": "避免递归爆炸并缩小权限；explore 的 Shell 只读要求部分依赖 prompt，不是命令级只读 parser。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/agent.py", "startLine": 411, "endLine": 431, "role": "implementation", "excerpt": "subagent type/tool policy registration。" },
+        { "path": "src/kimi_cli/subagents/builder.py", "startLine": 12, "endLine": 36, "role": "implementation", "excerpt": "subagent runtime/model/load without MCP。" },
+        { "path": "tests/core/test_subagent_builder.py", "startLine": 13, "endLine": 86, "role": "test", "excerpt": "coder/explore/plan tool contracts。" }
+      ],
+      "caveats": ["explore 虽无文件写工具，但 Shell 本身能运行任意获批命令；只读 Shell 主要由 prompt 约束。"]
+    },
+    {
+      "id": "kimi-subagent-002",
+      "dimension": "collaboration-subagents",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 是可恢复的持久实例，可前台或后台运行",
+      "fact": "Agent tool 可新建或按 agent_id resume，前台默认无 timeout、后台默认配置 timeout，均上限 1 小时；实例独立保存 context.jsonl、wire.jsonl、meta、prompt、output。resume 复用历史和原始 type，并拒绝并发 resume。",
+      "plainLanguage": "子 Agent 不是一次性函数调用，而是有身份证和独立笔记本的小会话；以后可以继续找同一个人接着做。",
+      "implication": "适合长期分工；需要清理实例磁盘，并防止后台和前台同时写同一上下文。",
+      "citations": [
+        { "path": "src/kimi_cli/tools/agent/__init__.py", "startLine": 17, "endLine": 60, "role": "contract", "excerpt": "foreground/background/resume/timeout params。" },
+        { "path": "src/kimi_cli/subagents/store.py", "startLine": 64, "endLine": 125, "role": "implementation", "excerpt": "per-agent artifacts/store。" },
+        { "path": "src/kimi_cli/subagents/runner.py", "startLine": 357, "endLine": 391, "role": "implementation", "excerpt": "resume identity/concurrency guard/new instance。" },
+        { "path": "tests/core/test_subagent_resume_e2e.py", "startLine": 76, "endLine": 148, "role": "test", "excerpt": "resume accumulates context。" }
+      ]
+    },
+    {
+      "id": "kimi-subagent-003",
+      "dimension": "collaboration-subagents",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 共享审批/任务/通知底座，但拥有独立 soul/context/模型",
+      "fact": "Runtime.copy_for_subagent 共享 session、approval state/runtime、labor market、environment、notifications、background manager、store/root wire hub，创建独立 DenwaRenji 与 role；builder 可按 tool override→type default→parent 顺序克隆模型。子 Agent wire events 包装回 parent tool call，approval request 直达 root。",
+      "plainLanguage": "工人各有自己的对话脑和可选模型，但共用老板的审批台、后台任务台和通知总线。",
+      "implication": "协作可观测且审批统一；共享 session 级资源使隔离不是进程级/租户级。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/agent.py", "startLine": 339, "endLine": 369, "role": "implementation", "excerpt": "copy_for_subagent shared/isolated fields。" },
+        { "path": "src/kimi_cli/subagents/builder.py", "startLine": 19, "endLine": 42, "role": "implementation", "excerpt": "model priority/runtime clone。" },
+        { "path": "src/kimi_cli/subagents/runner.py", "startLine": 242, "endLine": 288, "role": "implementation", "excerpt": "stable approval source/hooks/run。" },
+        { "path": "src/kimi_cli/subagents/runner.py", "startLine": 393, "endLine": 425, "role": "implementation", "excerpt": "wire routing to parent/root。" }
+      ]
+    },
+    {
+      "id": "kimi-observe-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Wire 事件与 trace id 贯穿 turn、step、tool、approval、MCP、compaction",
+      "fact": "KimiSoul 发 Turn/Step/Retry/Status/Compaction/MCP 等 wire events；provider x-trace-id 存 ContextVar 并继承到工具 task；Toolset 记录 outcome/duration/dedup/error，approval 记录 surface/mode/result。",
+      "plainLanguage": "界面看到的不是一行最终文本，而是一条可还原执行过程的事件河流，并能把 API 请求、工具和审批串起来。",
+      "implication": "适合 IDE/ACP/Wire 客户端和故障分析；不是完整 deterministic replay，外部副作用仍不可重放。",
+      "citations": [
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 1009, "endLine": 1076, "role": "implementation", "excerpt": "step lifecycle wire/error hook。" },
+        { "path": "src/kimi_cli/telemetry/__init__.py", "startLine": 52, "endLine": 71, "role": "implementation", "excerpt": "task-local trace id。" },
+        { "path": "src/kimi_cli/soul/toolset.py", "startLine": 483, "endLine": 591, "role": "implementation", "excerpt": "tool telemetry/hooks。" },
+        { "path": "src/kimi_cli/soul/approval.py", "startLine": 36, "endLine": 67, "role": "implementation", "excerpt": "permission result dimensions。" }
+      ]
+    },
+    {
+      "id": "kimi-observe-002",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "匿名遥测默认开启但可配置/环境变量关闭，代码禁止传用户内容",
+      "fact": "Config telemetry 默认 true；app 在 false 或 KIMI_DISABLE_TELEMETRY 时永久 disable。track 只接受 primitive properties，注释明确禁止 user input、file paths、code snippets；sink 30 秒或 50 条 flush，网络失败写本地 JSONL 下次重试。",
+      "plainLanguage": "默认会上报事件名、耗时、模型/平台等运行指标，但设计规则不允许把提示词、路径和代码塞进事件；用户可以关闭。",
+      "implication": "隐私边界主要靠调用方遵守字段规范与 primitive validator，不是自动内容脱敏器。",
+      "citations": [
+        { "path": "src/kimi_cli/config.py", "startLine": 261, "endLine": 264, "role": "config", "excerpt": "telemetry default/opt-out。" },
+        { "path": "src/kimi_cli/app.py", "startLine": 329, "endLine": 352, "role": "implementation", "excerpt": "config/env disable 与 sink setup。" },
+        { "path": "src/kimi_cli/telemetry/__init__.py", "startLine": 176, "endLine": 204, "role": "contract", "excerpt": "nonblocking track 和 no-content rule。" },
+        { "path": "src/kimi_cli/telemetry/sink.py", "startLine": 19, "endLine": 88, "role": "implementation", "excerpt": "buffer/threshold/periodic flush。" }
+      ]
+    },
+    {
+      "id": "kimi-maturity-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "会话、子 Agent 与遥测均有损坏/并发防护，许可证为 Apache-2.0",
+      "fact": "Session state 保存采用 fresh read-modify-write，Context 跳过坏 JSONL，SubagentStore 跳过非法 meta，approval 按 source 生命周期取消 pending；项目 LICENSE 为 Apache License 2.0。",
+      "plainLanguage": "它把“崩一次后还能继续”和“后台任务结束后别留下悬空审批”当成正式设计，而不是只做 happy path。",
+      "implication": "工程成熟度较高；跨文件 state/context/wire 并非单事务，极端断电仍可能出现局部不同步。",
+      "citations": [
+        { "path": "src/kimi_cli/session.py", "startLine": 84, "endLine": 97, "role": "implementation", "excerpt": "fresh state merge/save。" },
+        { "path": "src/kimi_cli/subagents/store.py", "startLine": 163, "endLine": 196, "role": "implementation", "excerpt": "invalid metadata skip。" },
+        { "path": "src/kimi_cli/soul/kimisoul.py", "startLine": 832, "endLine": 839, "role": "implementation", "excerpt": "turn-source approval cleanup。" },
+        { "path": "LICENSE", "startLine": 1, "endLine": 6, "role": "contract", "excerpt": "Apache License 2.0。" }
+      ]
+    }
+  ]
+}

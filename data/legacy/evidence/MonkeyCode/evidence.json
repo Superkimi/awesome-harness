@@ -1,0 +1,342 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "MonkeyCode",
+  "snapshot": {
+    "repository": "chaitin/MonkeyCode",
+    "commit": "ddc3794fc31e95b58b1493ab99e96844640bdf40",
+    "commitDate": "2026-07-27T20:39:07+08:00"
+  },
+  "method": {
+    "readmePolicy": "README 只用于识别产品定位；结论来自 Go 控制面、Taskflow 协议、CLI 配置模板、MCP Hub、网络守卫、遥测与测试。",
+    "factPolicy": "严格区分 MonkeyCode 自己实现的云控制平面、它下发给 Codex/Claude/OpenCode 的配置，以及仓库外 codingmatrix/Taskflow 实际执行器。",
+    "inferencePolicy": "外部 VM 的隔离强度、所选 CLI 的上下文压缩和子 Agent 能力不从接口名推断；无法由本仓库闭环证明的部分标为 partial 或 limitation。"
+  },
+  "coverage": [
+    { "dimension": "entry-session-loop", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "确认 MonkeyCode 编排 Codex/Claude/OpenCode，内层 Agent loop 由所选 CLI 提供。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计三类协议代理、运行时密钥、模型匹配、流式 usage 捕获与 OpenCode 切模。" },
+    { "dimension": "context-compaction-memory", "status": "partial", "evidenceLevels": ["L1", "L2"], "notes": "平台保存轮次日志并生成 UI 摘要；内层 context/compaction 由所选 CLI 负责。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 MCP Hub 工具可见性、任务绑定、幂等调用、审计和上游转发。" },
+    { "dimension": "execution-sandbox", "status": "partial", "evidenceLevels": ["L1", "L2"], "notes": "可证平台申请独立 VirtualMachine；底层 VM enforcement 不在仓库，且 Codex 内层 sandbox 被显式关闭。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 owner write gate、auto-approve、LLM proxy allowlist、SSRF guard 与资源包安全。" },
+    { "dimension": "instructions-prompts", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "已审计 system prompt hook、rules、skills、plugins 和各 CLI 模板。" },
+    { "dimension": "tools-connectors-plugins", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 builtin/platform MCP、scope 合并、OpenCode plugin 注入和 zip 资源传递。" },
+    { "dimension": "subagents-collaboration", "status": "partial", "evidenceLevels": ["L1", "L2"], "notes": "有多人只读/可写远程会话与问答；平台没有可见的独立子 Agent 调度控制面。" },
+    { "dimension": "observability-persistence", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 WebSocket replay、Loki/ClickHouse 轮次、usage、OTLP 与字段消毒。" },
+    { "dimension": "tests-evals-maturity", "status": "partial", "evidenceLevels": ["L2", "L3"], "notes": "安全和数据路径测试较多；未发现针对 Coding Agent 成功率的端到端 eval harness。" }
+  ],
+  "findings": [
+    {
+      "id": "monkey-architecture-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "它是多 CLI 的任务控制平面，不是第四套 Agent loop",
+      "fact": "Taskflow 协议把 CodingAgent 枚举为 Codex、Claude、MCAIReview、OpenCode；任务请求携带 system prompt、模型、配置文件、MCP 与资源，真正的推理—工具循环交给所选 CLI。",
+      "plainLanguage": "MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。",
+      "implication": "比较 Harness 时，应把平台编排能力与各 CLI 内核能力拆开计分。",
+      "citations": [
+        { "path": "backend/pkg/taskflow/types.go", "startLine": 554, "endLine": 587, "role": "contract", "excerpt": "CodingAgent 枚举和执行配置。" },
+        { "path": "backend/pkg/taskflow/types.go", "startLine": 626, "endLine": 640, "role": "contract", "excerpt": "完整任务下发协议。" },
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 875, "endLine": 928, "role": "implementation", "excerpt": "按 CLI 渲染 Claude/Codex/OpenCode 配置。" }
+      ]
+    },
+    {
+      "id": "monkey-lifecycle-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "任务创建拆成数据库预登记、VM 创建、Redis 交接、运行态启动",
+      "fact": "Create 先校验 host/model/concurrency 并预创建任务记录，再请求 2 核 8GiB VM，将完整 CreateTaskReq 以 TTL 写入 Redis，最后切到 pending；VM ready hook 取出请求并调用 TaskManager.Create。",
+      "plainLanguage": "先把工单和工作间登记好，再等工作间真的上线，最后才把任务交给里面的 Agent。",
+      "implication": "分阶段便于恢复和审计，但 Redis 交接键成为启动链路的关键依赖。",
+      "citations": [
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 556, "endLine": 617, "role": "implementation", "excerpt": "并发门、预登记与 VM 请求。" },
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 622, "endLine": 687, "role": "implementation", "excerpt": "VM ID 校验、Redis handoff 与 pending transition。" },
+        { "path": "backend/pkg/lifecycle/taskhook.go", "startLine": 92, "endLine": 130, "role": "implementation", "excerpt": "VM ready 后消费 CreateTaskReq。" }
+      ]
+    },
+    {
+      "id": "monkey-lifecycle-002",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "Taskflow Create 失败被记录但吞掉，任务可能滞留 processing",
+      "fact": "handleProcessing 在先写入 processing 后调用 TaskManager.Create；若调用失败只写 error log，不 return err，外层 withError 无法把任务转入 error。",
+      "plainLanguage": "工单已经盖了“处理中”，但真正开工失败后只记了一条日志，状态机可能还以为工作在继续。",
+      "implication": "应把 Create 错误返回给生命周期管理器，并为 processing-without-session 增加 watchdog。",
+      "citations": [
+        { "path": "backend/pkg/lifecycle/taskhook.go", "startLine": 104, "endLine": 123, "role": "implementation", "excerpt": "读取请求并先更新 processing。" },
+        { "path": "backend/pkg/lifecycle/taskhook.go", "startLine": 129, "endLine": 136, "role": "implementation", "excerpt": "Create 错误仅日志化后返回 nil。" }
+      ]
+    },
+    {
+      "id": "monkey-sandbox-001",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "隔离边界主要依赖仓库外 VM，Codex 内层 sandbox 明确关闭",
+      "fact": "平台协议申请带 host、image、CPU、memory、git 和 TTL 的 VirtualMachine；但 Codex 模板设置 sandbox_mode=danger-full-access，并将 /workspace 标为 trusted。仓库内只有 VM API 合同，没有底层 namespace/hypervisor enforcement。",
+      "plainLanguage": "Codex 在房间里面拿的是万能钥匙；安全取决于这个“房间”到底是不是一间真正隔离的 VM，而造房间的代码不在本仓库。",
+      "implication": "部署评审必须联审 codingmatrix/Taskflow 执行器，不能因类型名叫 VirtualMachine 就自动认定强隔离。",
+      "citations": [
+        { "path": "backend/pkg/taskflow/types.go", "startLine": 72, "endLine": 92, "role": "contract", "excerpt": "VirtualMachine 对外状态和资源合同。" },
+        { "path": "backend/pkg/taskflow/types.go", "startLine": 122, "endLine": 139, "role": "contract", "excerpt": "VM 创建请求中的镜像、资源和环境。" },
+        { "path": "backend/templates/codex.tmpl", "startLine": 1, "endLine": 13, "role": "config", "excerpt": "Codex danger-full-access 与 trusted workspace。" }
+      ]
+    },
+    {
+      "id": "monkey-remote-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "远程协作以 owner write gate、历史回放和实时流为核心",
+      "fact": "WebSocket stream 根据任务 owner 决定 writable；非 owner 的上行消息被丢弃。attach 模式先订阅并回放历史，再消费实时事件；用户可继续输入、停止、取消当前操作、切 auto-approve 和回答 Agent 问题。",
+      "plainLanguage": "旁观者能看直播，任务主人才能按按钮和继续对话；掉线重连后还能从历史接上。",
+      "implication": "它实现了人—Agent 远程接管，而不是多 Agent 共享计划或黑板。",
+      "citations": [
+        { "path": "backend/biz/task/handler/v1/task.go", "startLine": 323, "endLine": 384, "role": "contract", "excerpt": "流事件、权限与模式协议。" },
+        { "path": "backend/biz/task/handler/v1/task.go", "startLine": 387, "endLine": 423, "role": "implementation", "excerpt": "owner writable 与 attach 流程。" },
+        { "path": "backend/biz/task/handler/v1/task.go", "startLine": 640, "endLine": 721, "role": "implementation", "excerpt": "只读 gate 与用户控制路由。" }
+      ]
+    },
+    {
+      "id": "monkey-permission-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "平台只转发 auto-approve，具体权限语义继承所选 CLI",
+      "fact": "AutoApprove API 只把 task ID 和布尔值传给 Taskflow；Codex 模板使用 approval_policy=untrusted，OpenCode 模板却允许 doom_loop、外部目录和 .env 读取。",
+      "plainLanguage": "平台提供“自动点同意”的总开关，但什么动作需要同意、允许后能做多大，仍由里面那套 CLI 决定。",
+      "implication": "统一 UI 不等于统一安全语义，需要为每个 runtime 建立可比较的 capability policy。",
+      "citations": [
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 157, "endLine": 163, "role": "implementation", "excerpt": "auto-approve 纯转发。" },
+        { "path": "backend/templates/codex.tmpl", "startLine": 1, "endLine": 6, "role": "config", "excerpt": "Codex approval 与 sandbox 配置。" },
+        { "path": "backend/templates/opencode.tmpl", "startLine": 40, "endLine": 50, "role": "config", "excerpt": "OpenCode 指令、权限和技能路径。" }
+      ]
+    },
+    {
+      "id": "monkey-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "LLM proxy 用 VM 绑定临时密钥隐藏真实上游凭据",
+      "fact": "任务拿到 ModelApiKey/runtime token 和平台 proxy URL；proxy 再从数据库解析 user、VM、provider、真实 BaseURL/API key，重写 Authorization/X-Api-Key 后访问上游。",
+      "plainLanguage": "工作 VM 拿的是代金券，不是模型厂商的保险柜钥匙；平台看到券后再替它换成真正凭据。",
+      "implication": "可撤销密钥、统一用量和上游切换都集中在控制面。",
+      "citations": [
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 585, "endLine": 590, "role": "implementation", "excerpt": "运行时使用 proxy URL 与临时 key。" },
+        { "path": "backend/biz/llmproxy/proxy.go", "startLine": 160, "endLine": 185, "role": "implementation", "excerpt": "token 解析为真实模型上下文。" },
+        { "path": "backend/biz/llmproxy/proxy.go", "startLine": 203, "endLine": 236, "role": "implementation", "excerpt": "上游地址和凭据重写。" }
+      ]
+    },
+    {
+      "id": "monkey-provider-002",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "代理只放行三种 LLM 协议，并阻止任务偷换模型",
+      "fact": "入口只接受 chat/completions、responses、messages；请求必须有 bearer 或 X-api-key，body 中 model 若与 token 绑定模型不一致直接 403。",
+      "plainLanguage": "这不是任意 HTTP 隧道；票上写的是哪个模型，就只能点那个模型。",
+      "implication": "减小了凭据代理被滥用成通用外网代理或越权消费的空间。",
+      "citations": [
+        { "path": "backend/biz/llmproxy/proxy.go", "startLine": 28, "endLine": 34, "role": "contract", "excerpt": "三条允许路径。" },
+        { "path": "backend/biz/llmproxy/proxy.go", "startLine": 116, "endLine": 150, "role": "implementation", "excerpt": "路径、认证、请求解析与模型匹配。" }
+      ]
+    },
+    {
+      "id": "monkey-observe-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "模型流被旁路解析，用量归因到 task/user/VM",
+      "fact": "成功响应 body 被 UsageCapture 包装，兼容流式与非流式；token 结果被组装为含 task、user、provider、model、input/output/cache/total、request ID 的 usage event。",
+      "plainLanguage": "回答照常流给 Agent，同时平台在旁边读水表，不必让每个 CLI 各写一套计费代码。",
+      "implication": "统一代理是跨 Harness 成本观测的高价值控制点。",
+      "citations": [
+        { "path": "backend/biz/llmproxy/proxy.go", "startLine": 246, "endLine": 264, "role": "implementation", "excerpt": "成功响应挂载 usage capture。" },
+        { "path": "backend/biz/llmproxy/proxy.go", "startLine": 280, "endLine": 317, "role": "implementation", "excerpt": "usage 事件归因字段。" }
+      ]
+    },
+    {
+      "id": "monkey-provider-003",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "运行中切模仅支持 OpenCode，并通过 restart 恢复 session",
+      "fact": "SwitchModel 要求 processing、owner/privileged、模型授权；重建配置后若 runtime 不是 OpenCode 就报错，随后调用 TaskManager.Restart 并可选择 LoadSession。",
+      "plainLanguage": "换发动机不是所有车都支持：目前只有 OpenCode 能中途换模型，且本质是重启运行时再接回会话。",
+      "implication": "Codex/Claude 的长任务无法享受平台级模型升降档。",
+      "citations": [
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 165, "endLine": 218, "role": "implementation", "excerpt": "切模授权、配置重建和 OpenCode 限制。" },
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 253, "endLine": 299, "role": "implementation", "excerpt": "restart 与切模结果持久化。" }
+      ]
+    },
+    {
+      "id": "monkey-context-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "平台知道模型窗口上限，但不管理内层 compaction",
+      "fact": "OpenCode 配置缺省 context=200000、output=32000；Taskflow 请求只下发 prompt/config/session，MonkeyCode 仓库没有在推理循环中计算 live context 或触发 compaction 的代码。",
+      "plainLanguage": "平台知道油箱标称多大，却不看里面还剩多少油；何时压缩历史由 OpenCode/Codex/Claude 自己决定。",
+      "implication": "跨 runtime 的长任务可靠性会随各 CLI 内核不同而波动。",
+      "citations": [
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 788, "endLine": 792, "role": "implementation", "excerpt": "模型窗口和输出缺省值。" },
+        { "path": "backend/templates/opencode.tmpl", "startLine": 27, "endLine": 40, "role": "config", "excerpt": "窗口下发给 OpenCode provider。" },
+        { "path": "backend/pkg/taskflow/types.go", "startLine": 626, "endLine": 640, "role": "contract", "excerpt": "平台任务合同中无 compaction control。" }
+      ]
+    },
+    {
+      "id": "monkey-context-002",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "任务摘要是异步 UI 元数据，不是 Agent 记忆回写",
+      "fact": "TaskSummaryService 从持久化 task log 取 conversation，用独立 LLM 延迟生成 summary 并写入 Task.summary；任务 Create/Continue 协议未读取该字段回灌内层会话。",
+      "plainLanguage": "它会给长对话写一段“给人看的剧情简介”，但这段简介不会自动塞回 Agent 的脑子里。",
+      "implication": "摘要改善列表浏览和通知，不应被误计为上下文压缩或长期记忆。",
+      "citations": [
+        { "path": "backend/biz/task/service/tasksummary.go", "startLine": 32, "endLine": 92, "role": "implementation", "excerpt": "独立 summary LLM 与 tasklog reader。" },
+        { "path": "backend/biz/task/service/tasksummary.go", "startLine": 121, "endLine": 145, "role": "implementation", "excerpt": "延迟队列。" },
+        { "path": "backend/biz/task/service/tasksummary.go", "startLine": 148, "endLine": 186, "role": "implementation", "excerpt": "摘要写入数据库字段。" }
+      ]
+    },
+    {
+      "id": "monkey-resource-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "rules、skills、plugins 是三条不同投放链",
+      "fact": "rules 以内联 ConfigFile 写入 .ai-ready/rules；skills 对三种 CLI 都以 24h presigned zip URL 下发；plugins 只给 OpenCode，并将 entry 变成 file:// URL 注入 opencode.json。",
+      "plainLanguage": "规则是小纸条直接塞进去，技能是压缩包让 VM 自己下载，插件还要告诉 OpenCode 从哪个入口文件启动。",
+      "implication": "资源协议兼顾小文本与大包，但各 runtime 的插件能力并不对齐。",
+      "citations": [
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 795, "endLine": 803, "role": "contract", "excerpt": ".ai-ready 路径和 CLI 差异。" },
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 955, "endLine": 1002, "role": "implementation", "excerpt": "rules inline 与 skills URL。" },
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 1004, "endLine": 1041, "role": "implementation", "excerpt": "OpenCode-only plugins 与 file URL 注入。" },
+        { "path": "backend/biz/agentresource/resolver.go", "startLine": 13, "endLine": 29, "role": "contract", "excerpt": "24h presigned URL 交接。" }
+      ]
+    },
+    {
+      "id": "monkey-resource-002",
+      "dimension": "tools-connectors-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "资源按 global/team/user 合并，同名 user 覆盖 team 覆盖 global",
+      "fact": "ScopeFilter 可同时包含三个层级，调用方按 user>team>global 做 name override；dispatch 选择用户勾选项与 force-delivery，并过滤 disabled。",
+      "plainLanguage": "公司给默认技能，团队可换一版，个人还能再覆盖同名版本；被禁用的资源不会因强制投放而复活。",
+      "implication": "这已经接近企业 Agent 的策略分层，而不是单用户插件目录。",
+      "citations": [
+        { "path": "backend/biz/agentresource/types.go", "startLine": 99, "endLine": 126, "role": "contract", "excerpt": "三层 scope 与覆盖语义。" },
+        { "path": "backend/biz/agentresource/resolver.go", "startLine": 49, "endLine": 54, "role": "contract", "excerpt": "scoped resolver 与 disabled 过滤。" },
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 982, "endLine": 1010, "role": "implementation", "excerpt": "技能/插件 scoped selection。" }
+      ]
+    },
+    {
+      "id": "monkey-resource-003",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "zip 资源有文件数、单文件、总量和 zip-slip 双重校验",
+      "fact": "默认限制 1000 文件、单文件 32MiB、总解压 256MiB；先查声明尺寸，再用 LimitReader 验证实际尺寸，并拒绝绝对路径、反斜线和 .. 逃逸。",
+      "plainLanguage": "插件压缩包不能假装很小再突然炸开，也不能用 ../../ 偷写 VM 里的其他路径。",
+      "implication": "插件供应链仍需签名/哈希治理，但基础解包攻击面处理得较完整。",
+      "citations": [
+        { "path": "backend/biz/agentresource/unpack.go", "startLine": 12, "endLine": 31, "role": "contract", "excerpt": "默认解包限额和策略。" },
+        { "path": "backend/biz/agentresource/unpack.go", "startLine": 38, "endLine": 98, "role": "implementation", "excerpt": "声明与实际尺寸双检。" },
+        { "path": "backend/biz/agentresource/unpack.go", "startLine": 101, "endLine": 126, "role": "implementation", "excerpt": "zip-slip 与路径校验。" }
+      ]
+    },
+    {
+      "id": "monkey-mcp-001",
+      "dimension": "tools-connectors-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP Hub 把工具身份绑定到具体 user、task 和 VM",
+      "fact": "任务拿到本地 builtin MCP 和带 runtime token 的平台 MCP；Hub 认证先由 ModelApiKey 找到 VirtualMachineID，再查唯一 TaskVirtualMachine，形成 user/task/model subject。",
+      "plainLanguage": "工具调用不是“拿到平台 token 就随便用”，而是能追到哪台 VM、哪个人、哪个任务。",
+      "implication": "为审计、限额和撤销提供了细粒度主体。",
+      "citations": [
+        { "path": "backend/biz/task/usecase/task.go", "startLine": 741, "endLine": 767, "role": "implementation", "excerpt": "builtin 与平台 MCP 下发。" },
+        { "path": "backend/biz/mcphub/auth/service.go", "startLine": 45, "endLine": 80, "role": "implementation", "excerpt": "token→VM→task subject 绑定。" }
+      ]
+    },
+    {
+      "id": "monkey-mcp-002",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具调用具备有效集过滤、幂等 replay 和状态审计",
+      "fact": "Hub 合并 platform/user/team 工具和用户开关，过滤 disabled/deleted/missing upstream；调用 ID 由 task、JSON-RPC ID、tool、canonical args 哈希，重复请求复用结果；首次调用写 pending，再标 success/failed/unknown。",
+      "plainLanguage": "同一个任务重试同一张工具工单不会重复扣动外部系统；每次调用都有完整状态轨迹。",
+      "implication": "这是比把 MCP URL 直接交给 Agent 更成熟的连接器治理层。",
+      "citations": [
+        { "path": "backend/biz/mcphub/runtime/registry/service.go", "startLine": 56, "endLine": 80, "role": "implementation", "excerpt": "三类工具与用户开关合并。" },
+        { "path": "backend/biz/mcphub/runtime/gateway/handler.go", "startLine": 144, "endLine": 185, "role": "implementation", "excerpt": "有效工具与 upstream 可达性过滤。" },
+        { "path": "backend/biz/mcphub/runtime/gateway/handler.go", "startLine": 187, "endLine": 260, "role": "implementation", "excerpt": "幂等 replay、pending 与终态审计。" },
+        { "path": "backend/biz/mcphub/runtime/gateway/handler.go", "startLine": 263, "endLine": 267, "role": "implementation", "excerpt": "确定性 request ID。" }
+      ]
+    },
+    {
+      "id": "monkey-mcp-003",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "MCP 计费接口已预留，但当前实现是 Noop",
+      "fact": "gateway 在调用前后执行 CanConsume/Consume，但默认 billing.Noop 两个方法都直接返回 nil。",
+      "plainLanguage": "水表接口和插座都装好了，但现在里面还没有真正的计费表芯。",
+      "implication": "不能仅凭调用链存在就宣称已实现工具预算或付费配额。",
+      "citations": [
+        { "path": "backend/biz/mcphub/runtime/gateway/handler.go", "startLine": 228, "endLine": 251, "role": "implementation", "excerpt": "计费前检与消费调用点。" },
+        { "path": "backend/biz/mcphub/billing/noop.go", "startLine": 9, "endLine": 20, "role": "implementation", "excerpt": "当前 Noop 计费实现。" }
+      ]
+    },
+    {
+      "id": "monkey-security-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "SSRF guard 能防 DNS rebinding，但私有化示例默认关闭",
+      "fact": "netguard 校验 http/https、特殊 IPv4 写法、localhost/private/metadata IP，并在 dial 时使用已验证 IP；测试覆盖十进制、八进制、十六进制、IPv6 和私有代理。然而示例配置明确为 SaaS 开启、私有化默认 false。",
+      "plainLanguage": "防护能力本身很认真，但自建用户照示例部署时默认不会打开这扇防火门。",
+      "implication": "需要按部署信任边界决定默认值，并在关闭时明确告警。",
+      "citations": [
+        { "path": "backend/pkg/netguard/guard.go", "startLine": 53, "endLine": 69, "role": "implementation", "excerpt": "URL 与启用门。" },
+        { "path": "backend/pkg/netguard/guard.go", "startLine": 143, "endLine": 179, "role": "implementation", "excerpt": "请求和 dial 阶段防重绑定。" },
+        { "path": "backend/pkg/netguard/guard_test.go", "startLine": 22, "endLine": 59, "role": "test", "excerpt": "私网和特殊 IP 测试。" },
+        { "path": "backend/config/server/config.yaml.example", "startLine": 7, "endLine": 10, "role": "config", "excerpt": "私有化默认关闭。" }
+      ]
+    },
+    {
+      "id": "monkey-observe-002",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "遥测采用 OTLP，但输出前做严格 allowlist 消毒",
+      "fact": "OTLP exporter 用 batch processor；导出前过滤 span attributes、events、links 和 status，仅保留 task/session/request/VM、HTTP/RPC/DB 等允许字段，exception 只留类型并清空 status 描述。",
+      "plainLanguage": "它不是把请求体、URL 和异常详情整包发给观测平台，而是先过一遍“只准这些字段出门”的白名单。",
+      "implication": "降低 prompt、token、密钥进入第三方 trace backend 的风险，但也牺牲部分排障细节。",
+      "citations": [
+        { "path": "backend/pkg/telemetry/telemetry.go", "startLine": 29, "endLine": 65, "role": "implementation", "excerpt": "OTLP batch exporter。" },
+        { "path": "backend/pkg/telemetry/telemetry.go", "startLine": 95, "endLine": 107, "role": "implementation", "excerpt": "导出前消毒包装。" },
+        { "path": "backend/pkg/telemetry/sanitize.go", "startLine": 10, "endLine": 78, "role": "implementation", "excerpt": "属性 allowlist。" },
+        { "path": "backend/pkg/telemetry/sanitize.go", "startLine": 102, "endLine": 127, "role": "implementation", "excerpt": "事件、links 和 status 消毒。" }
+      ]
+    },
+    {
+      "id": "monkey-subagent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L2",
+      "claimType": "limitation",
+      "title": "平台层没有可见的子 Agent 调度与独立治理实体",
+      "fact": "Taskflow CreateTaskReq 只有单一 CodingAgent、单 VM、单 task/session；WebSocket 和 MCP 审计也都按同一 task/VM 归因。仓库未定义 child task、parent task、handoff 或 child capability 合同。",
+      "plainLanguage": "如果 Codex/OpenCode 内部自己再派子 Agent，MonkeyCode 目前只会把它们看成同一间 VM 里的同一项任务，无法逐个授权、暂停和计费。",
+      "implication": "多 Agent 能力最多继承 runtime，本平台尚未形成可观测、可治理的协作控制面。",
+      "citations": [
+        { "path": "backend/pkg/taskflow/types.go", "startLine": 626, "endLine": 640, "role": "contract", "excerpt": "单 Agent/VM 任务合同。" },
+        { "path": "backend/biz/mcphub/auth/service.go", "startLine": 22, "endLine": 28, "role": "contract", "excerpt": "工具主体只有 user/task/model。" },
+        { "path": "backend/biz/task/handler/v1/task.go", "startLine": 585, "endLine": 610, "role": "implementation", "excerpt": "实时事件按单 task stream 归因。" }
+      ]
+    }
+  ]
+}
