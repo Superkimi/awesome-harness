@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="哪些内容进入上下文，哪些内容被压缩或恢复？"><title>Oh My Pi · M06 · 上下文：长任务怎样不丢重点</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Oh My Pi · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch06-context.html">中</a><a href="../../en/tutorial/ch06-context.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Oh My Pi</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="active" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>ed4c78bc0faa</div></aside><main><section class="chapter-hero"><p class="eyebrow">M06 · Oh My Pi · ed4c78bc0faa</p><h1>上下文：长任务怎样不丢重点</h1><p class="lede">哪些内容进入上下文，哪些内容被压缩或恢复？</p><div class="chapter-meta"><span>第 6 / 10 章</span><span>TypeScript / Markdown / Rust</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M06</span><b>Oh My Pi · M06 · 上下文：长任务怎样不丢重点</b></div><div class="video-links"><a href="../../../../videos/oh-my-pi/ch06-context.mp4" data-video-status="planned">待发布 MP4</a><a href="../../../../videos/oh-my-pi/ch06-context.srt" data-video-status="planned">SRT</a><em>ed4c78bc0faa</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>源码</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>上下文像一张会整理的工作台：眼前材料放桌上，旧材料进档案盒，关键索引要能重新找回。</p></div><h2>先回答本章问题</h2><p>哪些内容进入上下文，哪些内容被压缩或恢复？ 内层发动机负责每一步，外层管家负责一步结束后判断要不要重试、压缩、换模型、继续目标或等待后台工作。</p><h2>再看这段源码</h2><div class="source-card"><div><span>packages/agent/src/compaction/compaction.ts · L148–189</span><a href="https://github.com/can1357/oh-my-pi/blob/ed4c78bc0faafcc79f61cfd0baca7a8413ba74bf/packages/agent/src/compaction/compaction.ts#L148-L189" target="_blank" rel="noreferrer">打开固定提交 ↗</a></div><pre><code>  148  	summary: string;
+  149  	/** Short PR-style summary for display purposes. */
+  150  	shortSummary?: string;
+  151  	firstKeptEntryId: string;
+  152  	tokensBefore: number;
+  153  	/** Hook-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
+  154  	details?: T;
+  155  	/** Hook-provided data to persist alongside compaction entry. */
+  156  	preserveData?: Record&lt;string, unknown&gt;;
+  157  }
+  158  
+  159  // ============================================================================
+  160  // Types
+  161  // ============================================================================
+  162  
+  163  export interface CompactionSettings {
+  164  	enabled: boolean;
+  165  	strategy?: &quot;context-full&quot; | &quot;handoff&quot; | &quot;shake&quot; | &quot;snapcompact&quot; | &quot;off&quot;;
+  166  	thresholdPercent?: number;
+  167  	thresholdTokens?: number;
+  168  	midTurnEnabled?: boolean;
+  169  	/**
+  170  	 * Tokens reserved below the context window for the next prompt + response.
+  171  	 *
+  172  	 * Leave unset to use {@link DEFAULT_RESERVE_TOKENS}; the unset state is the
+  173  	 * provenance signal that lets small-window recovery replace the default with
+  174  	 * a proportional reserve (see {@link resolveBudgetReserveTokens}). An
+  175  	 * explicit value — even one equal to the default — is always honored.
+  176  	 */
+  177  	reserveTokens?: number;</code></pre></div><h2>翻译成小白能懂的话</h2><p>这段代码不是“顺便做了点事”，它在本章控制面上承担一个明确职责。阅读时先找输入、状态变化、外部副作用和错误出口，再把它放回 Oh My Pi 的完整任务链。</p><div class="flow-strip"><span>输入</span><i>→</i><span>规则 / 状态</span><i>→</i><span>动作</span><i>→</i><span>回执</span></div><h2>把它放进图里</h2><iframe class="diagram-frame" src="../diagrams/capability.html" title="Oh My Pi capability" loading="lazy"></iframe><h2>小练习：不要只会复述</h2><div class="exercise"><p>打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。</p><details><summary>查看提示</summary><p>提示：如果源码里只有 prompt 或 UI 文案，没有状态、权限或执行代码，不要把它写成强保证。</p></details></div></section><footer class="chapter-footer"><a href="ch05-tools.html">← 工具：Agent 的手脚怎样被注册</a><a href="ch07-security.html">安全：审批、权限和边界 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

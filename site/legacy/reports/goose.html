@@ -1,0 +1,1532 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Goose Coding Agent Harness 固定提交源码审计">
+  <title>Goose Harness 源码原理报告</title>
+  <link rel="stylesheet" href="../assets/report.css">
+</head>
+<body class="">
+  <div class="reading-progress" aria-hidden="true"></div>
+  
+  <aside class="rail">
+    <a class="brand" href="../index.html"><span class="brand-mark">H</span><span>HARNESS<br><small>源码研究院</small></span></a>
+    <nav aria-label="报告导航">
+      <a class="" href="../index.html">横向总览</a>
+      <a class="active" href="../reports/goose.html"><span>01</span>Goose</a><a class="" href="../reports/aider.html"><span>02</span>Aider</a><a class="" href="../reports/grok-build.html"><span>03</span>Grok Build</a><a class="" href="../reports/openinterpreter.html"><span>04</span>Open Interpreter</a><a class="" href="../reports/little-coder.html"><span>05</span>Little Coder</a><a class="" href="../reports/monkeycode.html"><span>06</span>MonkeyCode</a><a class="" href="../reports/opencode.html"><span>07</span>OpenCode</a><a class="" href="../reports/oh-my-pi.html"><span>08</span>Oh My Pi</a><a class="" href="../reports/claude-code.html"><span>09</span>Claude Code（复原）</a><a class="" href="../reports/pi.html"><span>10</span>Pi</a><a class="" href="../reports/codex.html"><span>11</span>OpenAI Codex</a><a class="" href="../reports/gemini-cli.html"><span>12</span>Gemini CLI</a><a class="" href="../reports/jcode.html"><span>13</span>JCode</a><a class="" href="../reports/kimi-cli.html"><span>14</span>Kimi CLI</a><a class="" href="../reports/deepseek-reasonix.html"><span>15</span>DeepSeek-Reasonix</a><a class="" href="../reports/codewhale.html"><span>16</span>CodeWhale</a><a class="" href="../reports/prime-agent.html"><span>17</span>Prime Agent</a><a class="" href="../reports/deepagents.html"><span>18</span>DeepAgents</a>
+    </nav>
+    <div class="rail-foot">SOURCE-LOCKED<br>2026 EDITION</div>
+  </aside>
+  <main class="page">
+    
+  <header class="report-hero">
+    <div class="hero-topline"><span>CODING AGENT HARNESS · SOURCE AUDIT</span><span>REPORT 01 / 18</span></div>
+    <div class="hero-grid">
+      <div>
+        <div class="hero-index">01</div>
+        <h1>Goose</h1>
+        <p class="hero-thesis">MCP 原生、扩展友好、单循环清楚；安全边界更依赖工具检查而非 OS 沙箱。</p>
+        <div class="hero-tags"><span>Rust · MCP-first 通用 Agent</span><span>Apache-2.0</span><span>main</span></div>
+      </div>
+      <div class="snapshot-card">
+        <div class="seal">SOURCE<br>VERIFIED</div>
+        <dl>
+          <div><dt>Repository</dt><dd>aaif-goose/goose</dd></div>
+          <div><dt>Commit</dt><dd><code>021b0db8dbee8d6c7e9ffbab580a4143598a3560</code></dd></div>
+          <div><dt>Commit date</dt><dd>2026-07-27T16:41:11-04:00</dd></div>
+          <div><dt>Findings</dt><dd>18</dd></div>
+          <div><dt>Citations</dt><dd>43</dd></div>
+          <div><dt>Tracked files</dt><dd>2,422</dd></div>
+        </dl>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <a href="https://github.com/aaif-goose/goose/tree/021b0db8dbee8d6c7e9ffbab580a4143598a3560">固定源码快照 ↗</a>
+      <a href="../tutorials/goose.html">进入小白教程 →</a>
+      <a href="../index.html#matrix">查看横向矩阵</a>
+      <label class="search-box"><span>⌕</span><input type="search" placeholder="搜索本报告结论与源码…" data-report-search></label>
+    </div>
+  </header>
+
+  <section class="executive chapter" id="executive">
+    <div class="chapter-kicker">EXECUTIVE READING</div>
+    <h2>先给结论，再进入源码</h2>
+    <div class="executive-grid">
+      <div class="thesis-card"><span>核心机制</span><p>单一流式循环；完整 tool call 后并发；防失控上限</p></div>
+      <div class="thesis-card"><span>上下文</span><p>80% 结构化压缩；超窗逐级剥离工具结果</p></div>
+      <div class="thesis-card risk-tone"><span>安全边界</span><p>无强制工作区边界；Auto / Approve / SmartApprove</p></div>
+      <div class="thesis-card"><span>适用建设</span><p>重连接器、桌面交互、企业工具集成</p></div>
+    </div>
+    <div class="pros-cons">
+      <div><h3>值得借鉴</h3><ul><li>MCP 生命周期完整</li><li>权限检查顺序明确</li><li>扩展与 Skills 生态兼容</li></ul></div>
+      <div><h3>需要警惕</h3><ul><li>内置开发工具缺 OS 级强制边界</li><li>SmartApprove 仍依赖模型判断</li><li>单循环对复杂调度的表达有限</li></ul></div>
+      <div><h3>直接带走</h3><ul><li>统一 MCP 工具命名空间</li><li>危险优先的检查流水线</li><li>结构化压缩指标</li></ul></div>
+    </div>
+  </section>
+
+  
+  <section class="chapter methodology" id="method">
+    <div class="chapter-kicker">00 · METHOD</div>
+    <h2>研究口径：先锁提交，再沿运行链读代码</h2>
+    <div class="method-grid">
+      <div><span>README POLICY</span><p>README 只用于定位入口、产品命名与作者自述；本账本的核心结论不得只引用 README。</p></div>
+      <div><span>FACT POLICY</span><p>实现事实优先引用运行时代码（L1）与类型/协议/配置契约（L2），并尽量用测试（L3）交叉验证。</p></div>
+      <div><span>INFERENCE POLICY</span><p>由多处代码综合得出的判断必须标为 inference、limitation 或 risk，不伪装为作者原话。</p></div>
+    </div>
+    <div class="evidence-scale">
+      <div><b>L1</b><span>运行实现</span></div>
+      <div><b>L2</b><span>接口契约</span></div>
+      <div><b>L3</b><span>测试证明</span></div>
+      <div><b>L4</b><span>文档佐证</span></div>
+      <div><b>L5</b><span>明确推断</span></div>
+    </div>
+    <p class="method-note">本页引用 16 个不同源码/测试文件；证据角色分布：实现 32 · 契约 7 · 测试 2 · Prompt 1 · 迁移 1。代码块是固定提交中的原文截取，长区间仅在中部折叠，首尾行号保持真实。</p>
+  </section>
+
+  <section class="chapter diagrams" id="diagrams">
+    <div class="chapter-kicker">01 · TECHNICAL MAPS</div>
+    <h2>架构总图与单轮执行链路</h2>
+    <p class="chapter-deck">两张图均由本页证据账本生成，并通过 Archify showcase 9 项校验（0 error / 0 warning）。图可单独打开、搜索、缩放和追踪关系。</p>
+    <div class="diagram-stack">
+      <figure>
+        <figcaption><span>FIGURE 01</span><b>Goose Harness 架构图</b><a href="../diagrams/goose-architecture.html">全屏打开 ↗</a></figcaption>
+        <iframe src="../diagrams/goose-architecture.html" title="Goose 架构图" loading="lazy"></iframe>
+      </figure>
+      <figure>
+        <figcaption><span>FIGURE 02</span><b>用户输入到工具回写的技术链路</b><a href="../diagrams/goose-sequence.html">全屏打开 ↗</a></figcaption>
+        <iframe src="../diagrams/goose-sequence.html" title="Goose 技术链路图" loading="lazy"></iframe>
+      </figure>
+    </div>
+  </section>
+
+  <section class="chapter coverage" id="coverage">
+    <div class="chapter-kicker">02 · COVERAGE MAP</div>
+    <h2>审计维度与证据等级</h2>
+    <div class="coverage-table">
+    <div class="coverage-row">
+      <span>入口、会话与主循环</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>已逐段审计 Agent.reply/reply_internal 与 SessionManager。</p>
+    </div>
+    <div class="coverage-row">
+      <span>Provider、流式与重试</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>已审计 Provider trait、流合并和 Agent 消费逻辑。</p>
+    </div>
+    <div class="coverage-row">
+      <span>上下文、压缩与恢复</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>已审计阈值判定、工具结果裁剪、结构化摘要和溢出恢复。</p>
+    </div>
+    <div class="coverage-row">
+      <span>工具分发与结果治理</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>已审计分类、检查、审批、并发汇流、结果配对。</p>
+    </div>
+    <div class="coverage-row">
+      <span>执行环境与沙箱</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>已核对 shell/edit 的实际系统调用与路径解析；策略门不等于 OS 隔离。</p>
+    </div>
+    <div class="coverage-row">
+      <span>权限与安全</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>已审计安全、外连、对抗、权限、重复五级 inspector 顺序。</p>
+    </div>
+    <div class="coverage-row">
+      <span>指令与 Prompt</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>已审计系统提示构建、项目指令、子目录 hints 与 Unicode 标签清洗。</p>
+    </div>
+    <div class="coverage-row">
+      <span>MCP 与扩展</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>已审计工具发现缓存、命名空间、HTTP/OAuth、调用分发与元数据净化。</p>
+    </div>
+    <div class="coverage-row">
+      <span>Skills、插件与 Hooks</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>已审计技能目录优先级、文件逃逸防护、插件 hooks 与 MCP 注入。</p>
+    </div>
+    <div class="coverage-row">
+      <span>子 Agent 与协作</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>已审计子 Agent 的独立 Agent/Session 构造、工具选择和禁止递归委派。</p>
+    </div>
+    <div class="coverage-row">
+      <span>持久化与观测</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>已审计 SQLite/WAL、usage ledger、tracing span 与可选遥测。</p>
+    </div>
+    <div class="coverage-row">
+      <span>测试、评测与成熟度</span>
+      <b>partial</b>
+      <em>L2 / L3</em>
+      <p>关键路径测试已定位；全仓测试与 benchmark 数量统计待补。</p>
+    </div></div>
+  </section>
+
+  <div class="evidence-root">
+    
+    <section class="chapter evidence-chapter" id="dim-1">
+      <div class="chapter-rule"><span>01</span></div>
+      <div class="chapter-kicker">DIMENSION · ENTRY-SESSION-LOOP</div>
+      <h2>入口、会话与主循环</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-loop-001" data-search="单一流式 agent 循环驱动推理、工具和持久化 reply_internal 在一个有界 loop 中调用 provider stream，消费增量消息，执行工具，把结果加入会话，再决定继续、重试、压缩或结束。 它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。 entry-session-loop">
+    <header class="finding-head">
+      <div class="finding-no">01</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-loop-001</span></div>
+        <h3>单一流式 Agent 循环驱动推理、工具和持久化</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>reply_internal 在一个有界 loop 中调用 provider stream，消费增量消息，执行工具，把结果加入会话，再决定继续、重试、压缩或结束。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>Harness 的真正核心是状态机而不是提示词；重试、转向、停止钩子和上下文恢复都进入同一控制环。</p></div>
+        <div class="caveat"><span>边界</span><ul><li>默认最大 turn 是 1000，不代表每次任务都会接近该值；会话配置和环境参数可覆盖。</li></ul></div>
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/agent.rs · L1930–L2043</div>
+        <pre><code> 1930          let inner = Box::pin(async_stream::try_stream! {
+ 1931              let mut turns_taken = 0u32;
+ 1932              let max_turns = session_config.max_turns.unwrap_or_else(|| {
+ 1933                  Config::global()
+ 1934                      .get_param::&lt;u32&gt;(&quot;GOOSE_MAX_TURNS&quot;)
+ 1935                      .unwrap_or(DEFAULT_MAX_TURNS)
+ 1936              });
+ 1937              let mut compaction_attempts = 0;
+ 1938              let mut empty_turn_retries = 0u32;
+ 1939              let mut retrying_after_empty_turn = false;
+ 1940              let mut last_assistant_text = String::new();
+ 1941              let mut goal_check_pending = false;
+ 1942              let mut tool_pair_summarization_done = false;
+ 1943              let mut stop_hook_handled_for_exit = false;
+ 1944              let mut retrying_after_stop_hook_denial = false;
+ 1945              let mut consecutive_stop_hook_blocks = 0u32;
+ 1946              let stop_hook_block_cap = self.stop_hook_block_cap();
+ 1947              let mut can_drain_pending_steers = false;
+ 1948  
+ 1949              loop {
+ 1950                  if is_token_cancelled(&amp;cancel_token) {
+ 1951                      break;
+ 1952                  }
+ 1953  
+      … 80 lines omitted; exact range 1930–2043 …
+ 2034  
+ 2035                  let mut stream = Self::stream_response_from_provider(
+ 2036                      self.provider().await?,
+ 2037                      model_config.clone(),
+ 2038                      &amp;session_config.id,
+ 2039                      &amp;system_prompt,
+ 2040                      conversation_with_moim.messages(),
+ 2041                      &amp;tools,
+ 2042                      &amp;toolshim_tools,
+ 2043                  ).await?;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:1930–2043</code>
+      <span>loop { ... stream_response_from_provider(...).await?; }</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:2883–2929</code>
+      <span>逐条持久化消息，处理 pending steers 与 stop hook 后退出。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="goose-loop-002" data-search="结束条件有防失控上限 空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。 即使模型什么都不返回，或插件一直说“还不能停”，goose 也不会永远卡住。 entry-session-loop">
+    <header class="finding-head">
+      <div class="finding-no">02</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-loop-002</span></div>
+        <h3>结束条件有防失控上限</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>即使模型什么都不返回，或插件一直说“还不能停”，Goose 也不会永远卡住。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>所有“让 Agent 继续”的机制都需要配额和最终逃生门。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/agent.rs · L67–L79</div>
+        <pre><code>   67  use tracing::{debug, error, info, instrument, warn};
+   68  
+   69  const DEFAULT_MAX_TURNS: u32 = 1000;
+   70  const DEFAULT_STOP_HOOK_BLOCK_CAP: u32 = 8;
+   71  const COMPACTION_PROGRESS_TEXT: &amp;str = &quot;goose is compacting the conversation...&quot;;
+   72  const MAX_TURNS_MESSAGE: &amp;str = &quot;I&#39;ve reached the maximum number of actions I can do without user input. Would you like me to continue?&quot;;
+   73  const MAX_EMPTY_TURN_RETRIES: u32 = 3;
+   74  const EMPTY_TURN_MESSAGE: &amp;str =
+   75      &quot;The model returned an empty response. Please resend your message to continue.&quot;;
+   76  const DEFAULT_FRONTEND_INSTRUCTIONS: &amp;str = &quot;The following tools are provided directly by the frontend and will be executed by the frontend when called.&quot;;
+   77  
+   78  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   79  enum ToolCategory {</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>crates/goose/src/agents/agent.rs:67–79</code>
+      <span>DEFAULT_MAX_TURNS、DEFAULT_STOP_HOOK_BLOCK_CAP、MAX_EMPTY_TURN_RETRIES。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:2773–2793</code>
+      <span>空响应有界重试，耗尽后产生可见消息并结束。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:2892–2915</code>
+      <span>stop hook 连续阻塞超过上限后强制结束。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-2">
+      <div class="chapter-rule"><span>02</span></div>
+      <div class="chapter-kicker">DIMENSION · PROVIDER-STREAMING</div>
+      <h2>Provider、流式与重试</h2>
+      <p class="chapter-deck">本章共 1 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-provider-001" data-search="provider 以流式协议统一，工具调用必须完整再上送 provider trait 只要求实现 stream(model, system, messages, tools)；messagestream 可以增量返回文本，但工具调用以完整对象返回。 不同模型厂商先被翻译成同一种“消息水管”。普通文字可以一个词一个词流出，但工具参数不能半截就执行。 provider-streaming">
+    <header class="finding-head">
+      <div class="finding-no">03</div>
+      <div>
+        <div class="eyebrow"><span class="level">L2</span><span>事实</span><span>goose-provider-001</span></div>
+        <h3>Provider 以流式协议统一，工具调用必须完整再上送</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>Provider trait 只要求实现 stream(model, system, messages, tools)；MessageStream 可以增量返回文本，但工具调用以完整对象返回。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>不同模型厂商先被翻译成同一种“消息水管”。普通文字可以一个词一个词流出，但工具参数不能半截就执行。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>Provider 适配层承担格式差异，Agent 主循环不需要为每家 API 复制控制逻辑。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose-provider-types/src/base.rs · L281–L286</div>
+        <pre><code>  281  /// A message stream yields partial text content but complete tool calls, all within the Message object
+  282  /// So a message with text will contain potentially just a word of a longer response, but tool calls
+  283  /// messages will only be yielded once concatenated.
+  284  pub type MessageStream = Pin&lt;
+  285      Box&lt;dyn Stream&lt;Item = Result&lt;(Option&lt;Message&gt;, Option&lt;ProviderUsage&gt;), ProviderError&gt;&gt; + Send&gt;,
+  286  &gt;;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>crates/goose-provider-types/src/base.rs:281–286</code>
+      <span>partial text content but complete tool calls</span>
+    </li>
+    <li>
+      <span class="role">契约</span>
+      <code>crates/goose-provider-types/src/base.rs:394–427</code>
+      <span>Provider::stream 与可覆盖 get_context_limit。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-3">
+      <div class="chapter-rule"><span>03</span></div>
+      <div class="chapter-kicker">DIMENSION · CONTEXT-COMPACTION</div>
+      <h2>上下文、压缩与恢复</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-context-001" data-search="80% 阈值触发结构化压缩 当 agent 自管上下文且估算 token/上下文上限大于阈值（默认 0.8）时触发压缩；压缩保留最新用户文本，并插入结构化摘要与继续指令。 快塞满模型记忆时，它不会粗暴删掉全部历史，而是把旧进展整理成一张交接单，再把用户最新要求放回去。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">04</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-context-001</span></div>
+        <h3>80% 阈值触发结构化压缩</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>当 Agent 自管上下文且估算 token/上下文上限大于阈值（默认 0.8）时触发压缩；压缩保留最新用户文本，并插入结构化摘要与继续指令。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>快塞满模型记忆时，它不会粗暴删掉全部历史，而是把旧进展整理成一张交接单，再把用户最新要求放回去。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>压缩的目标不是“越短越好”，而是保留任务状态、文件改动、错误、待办和下一步。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/context_mgmt/mod.rs · L26–L49</div>
+        <pre><code>   26  pub const DEFAULT_COMPACTION_THRESHOLD: f64 = 0.8;
+   27  
+   28  const TOOLCALL_SUMMARIZATION_BATCH_SIZE: usize = 10;
+   29  
+   30  fn tool_pair_summarization_enabled() -&gt; bool {
+   31      Config::global()
+   32          .get_param::&lt;bool&gt;(&quot;GOOSE_TOOL_PAIR_SUMMARIZATION&quot;)
+   33          .unwrap_or(true)
+   34  }
+   35  
+   36  const CONVERSATION_CONTINUATION_TEXT: &amp;str =
+   37      &quot;Your context was compacted. The previous message contains a summary of the conversation so far.
+   38  Do not mention that you read a summary or that conversation summarization occurred.
+   39  Just continue the conversation naturally based on the summarized context.&quot;;
+   40  
+   41  const TOOL_LOOP_CONTINUATION_TEXT: &amp;str =
+   42      &quot;Your context was compacted. The previous message contains a summary of the conversation so far.
+   43  Do not mention that you read a summary or that conversation summarization occurred.
+   44  Continue calling tools as necessary to complete the task.&quot;;
+   45  
+   46  const MANUAL_COMPACT_CONTINUATION_TEXT: &amp;str =
+   47      &quot;Your context was compacted at the user&#39;s request. The previous message contains a summary of the conversation so far.
+   48  Do not mention that you read a summary or that conversation summarization occurred.
+   49  Just continue the conversation naturally based on the summarized context.&quot;;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>crates/goose/src/context_mgmt/mod.rs:26–49</code>
+      <span>默认 compaction threshold 为 0.8，并定义 Agent 可见但用户隐藏的继续消息。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/context_mgmt/mod.rs:78–188</code>
+      <span>旧消息改可见性，插入摘要和 continuation，再恢复最新用户消息。</span>
+    </li>
+    <li>
+      <span class="role">契约</span>
+      <code>crates/goose/src/context_mgmt/structured.rs:13–38</code>
+      <span>摘要字段覆盖意图、概念、文件、错误、待办、当前工作与下一步。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="goose-context-002" data-search="上下文超限采用渐进式工具结果剥离和一次恢复重试 压缩会依次尝试移除 0%、10%、20%、50%、100% 的中间工具响应；provider 明确报上下文超限时执行恢复压缩，第二次仍超限则终止。 先保留尽可能多的工具证据，实在放不下才逐级清掉旧工具输出；不能靠无限压缩掩盖超限。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">05</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-context-002</span></div>
+        <h3>上下文超限采用渐进式工具结果剥离和一次恢复重试</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>压缩会依次尝试移除 0%、10%、20%、50%、100% 的中间工具响应；Provider 明确报上下文超限时执行恢复压缩，第二次仍超限则终止。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>先保留尽可能多的工具证据，实在放不下才逐级清掉旧工具输出；不能靠无限压缩掩盖超限。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>Harness 应区分账单 token、保留 token 和可牺牲的工具噪声，并给恢复动作设次数上限。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/context_mgmt/mod.rs · L319–L398</div>
+        <pre><code>  319  async fn do_compact(
+  320      provider: &amp;dyn Provider,
+  321      model_config: &amp;ModelConfig,
+  322      session_id: &amp;str,
+  323      messages: &amp;[Message],
+  324  ) -&gt; Result&lt;(Message, ProviderUsage), anyhow::Error&gt; {
+  325      let agent_visible_messages =
+  326          Conversation::new_unvalidated(messages.iter().cloned()).agent_visible_messages();
+  327  
+  328      // Try progressively removing more tool response messages from the middle to reduce context length
+  329      let removal_percentages = [0, 10, 20, 50, 100];
+  330  
+  331      for (attempt, &amp;remove_percent) in removal_percentages.iter().enumerate() {
+  332          let filtered_messages = filter_tool_responses(&amp;agent_visible_messages, remove_percent);
+  333  
+  334          let messages_text = filtered_messages
+  335              .iter()
+  336              .map(|&amp;msg| format_message_for_compacting(msg))
+  337              .collect::&lt;Vec&lt;_&gt;&gt;()
+  338              .join(&quot;\n&quot;);
+  339  
+  340          let context = SummarizeContext {
+  341              messages: messages_text,
+  342          };
+      … 46 lines omitted; exact range 319–398 …
+  389                  }
+  390                  return Err(e.into());
+  391              }
+  392          }
+  393      }
+  394  
+  395      Err(anyhow::anyhow!(
+  396          &quot;Unexpected: exhausted all attempts without returning&quot;
+  397      ))
+  398  }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/context_mgmt/mod.rs:319–398</code>
+      <span>按多个比例过滤工具响应并重试快速摘要。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:2533–2591</code>
+      <span>ContextLengthExceeded 后恢复压缩；第二次仍失败就给出终止通知。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-4">
+      <div class="chapter-rule"><span>04</span></div>
+      <div class="chapter-kicker">DIMENSION · TOOL-DISPATCH</div>
+      <h2>工具分发与结果治理</h2>
+      <p class="chapter-deck">本章共 1 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-tools-001" data-search="同一模型 turn 的多个工具经检查后并发执行 工具请求先统一通过 inspector 和许可分组；已批准及用户批准的工具流随后用 stream::select_all 合并，结果按 request_id 配回各自响应。 模型一次要读三个文件时，不必傻等第一个完成再做第二个；但每个调用先过安全和审批门。 tool-dispatch">
+    <header class="finding-head">
+      <div class="finding-no">06</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-tools-001</span></div>
+        <h3>同一模型 turn 的多个工具经检查后并发执行</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>工具请求先统一通过 inspector 和许可分组；已批准及用户批准的工具流随后用 stream::select_all 合并，结果按 request_id 配回各自响应。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>模型一次要读三个文件时，不必傻等第一个完成再做第二个；但每个调用先过安全和审批门。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>并发提高吞吐，但必须用稳定 ID 做结果配对，并允许单个工具发通知、请求交互或取消。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/agent.rs · L2210–L2265</div>
+        <pre><code> 2210                                      // Run all tool inspectors
+ 2211                                      let inspection_results = self.tool_inspection_manager
+ 2212                                          .inspect_tools(
+ 2213                                              &amp;session_config.id,
+ 2214                                              &amp;remaining_requests,
+ 2215                                              conversation.messages(),
+ 2216                                              goose_mode,
+ 2217                                          )
+ 2218                                          .await?;
+ 2219  
+ 2220                                      let permission_check_result = self.tool_inspection_manager
+ 2221                                          .process_inspection_results_with_permission_inspector(
+ 2222                                              &amp;remaining_requests,
+ 2223                                              &amp;inspection_results,
+ 2224                                          )
+ 2225                                          .unwrap_or_else(|| {
+ 2226                                              let mut result = PermissionCheckResult {
+ 2227                                                  approved: vec![],
+ 2228                                                  needs_approval: vec![],
+ 2229                                                  denied: vec![],
+ 2230                                              };
+ 2231                                              result.needs_approval.extend(remaining_requests.iter().cloned());
+ 2232                                              result
+ 2233                                          });
+      … 22 lines omitted; exact range 2210–2265 …
+ 2256                                              &amp;mut request_to_response_map,
+ 2257                                              cancel_token.clone(),
+ 2258                                              &amp;session,
+ 2259                                              &amp;inspection_results,
+ 2260                                          );
+ 2261  
+ 2262                                          while let Some(msg) = tool_approval_stream.try_next().await? {
+ 2263                                              yield AgentEvent::Message(msg);
+ 2264                                          }
+ 2265                                      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:2210–2265</code>
+      <span>inspect_tools 后分为 approved、needs_approval、denied。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:2267–2337</code>
+      <span>用 stream::select_all 汇流工具结果，并按 request_id 处理。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-5">
+      <div class="chapter-rule"><span>05</span></div>
+      <div class="chapter-kicker">DIMENSION · PERMISSIONS-SECURITY</div>
+      <h2>权限与安全</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-security-001" data-search="工具检查顺序体现“危险优先” 检查器固定按 security、egress、adversary、permission、repetition 顺序注册。 先看是否像恶意命令和数据外传，再做额外对抗审查，然后才判断用户是否需要点批准，最后检查重复循环。 permissions-security">
+    <header class="finding-head">
+      <div class="finding-no">07</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-security-001</span></div>
+        <h3>工具检查顺序体现“危险优先”</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>检查器固定按 Security、Egress、Adversary、Permission、Repetition 顺序注册。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>先看是否像恶意命令和数据外传，再做额外对抗审查，然后才判断用户是否需要点批准，最后检查重复循环。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>审批不是唯一防线；危险检测应在便利性策略之前执行。</p></div>
+        <div class="caveat"><span>边界</span><ul><li>具体 inspector 是否生效还受配置控制；例如模式扫描可被关闭。</li></ul></div>
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/agent.rs · L659–L688</div>
+        <pre><code>  659      /// Create a tool inspection manager with default inspectors
+  660      fn create_tool_inspection_manager(
+  661          permission_manager: Arc&lt;PermissionManager&gt;,
+  662          provider: SharedProvider,
+  663          session_manager: Arc&lt;SessionManager&gt;,
+  664      ) -&gt; ToolInspectionManager {
+  665          let mut tool_inspection_manager = ToolInspectionManager::new();
+  666  
+  667          // Add security inspector (highest priority - runs first)
+  668          tool_inspection_manager.add_inspector(Box::new(SecurityInspector::new()));
+  669          tool_inspection_manager.add_inspector(Box::new(EgressInspector::new()));
+  670  
+  671          // Add adversary inspector (LLM-based review, enabled by ~/.config/goose/adversary.md)
+  672          tool_inspection_manager.add_inspector(Box::new(AdversaryInspector::new(
+  673              provider.clone(),
+  674              session_manager.clone(),
+  675          )));
+  676  
+  677          // Add permission inspector (medium-high priority)
+  678          tool_inspection_manager.add_inspector(Box::new(PermissionInspector::new(
+  679              permission_manager,
+  680              provider,
+  681              session_manager,
+  682          )));
+  683  
+  684          // Add repetition inspector (lower priority - basic repetition checking)
+  685          tool_inspection_manager.add_inspector(Box::new(RepetitionInspector::new(None)));
+  686  
+  687          tool_inspection_manager
+  688      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 1 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:659–688</code>
+      <span>五类 inspector 的固定注册顺序。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="goose-permission-001" data-search="auto、approve、smartapprove 是不同权限语义 auto 模式允许所有调用；approve/smartapprove 尊重显式许可，smartapprove 还会依据工具注解或 llm 判断只读调用是否可自动放行，未知调用默认要求审批。 “智能批准”不是无条件执行：读文件一类操作可能自动过，写文件或判断不清的操作仍会问人。 permissions-security">
+    <header class="finding-head">
+      <div class="finding-no">08</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-permission-001</span></div>
+        <h3>Auto、Approve、SmartApprove 是不同权限语义</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>Auto 模式允许所有调用；Approve/SmartApprove 尊重显式许可，SmartApprove 还会依据工具注解或 LLM 判断只读调用是否可自动放行，未知调用默认要求审批。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>“智能批准”不是无条件执行：读文件一类操作可能自动过，写文件或判断不清的操作仍会问人。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>权限模式必须在 UI 和审计记录中显式呈现，不能用一个笼统的“安全模式”标签。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/permission/permission_inspector.rs · L159–L268</div>
+        <pre><code>  159                  let action = match goose_mode {
+  160                      GooseMode::Chat =&gt; continue,
+  161                      GooseMode::Auto =&gt; InspectionAction::Allow,
+  162                      GooseMode::Approve | GooseMode::SmartApprove =&gt; {
+  163                          // 1. Check user-defined permission first
+  164                          if let Some(level) = permission_manager.get_user_permission(tool_name) {
+  165                              match level {
+  166                                  PermissionLevel::AlwaysAllow =&gt; InspectionAction::Allow,
+  167                                  PermissionLevel::NeverAllow =&gt; InspectionAction::Deny,
+  168                                  PermissionLevel::AskBefore =&gt; {
+  169                                      InspectionAction::RequireApproval(None)
+  170                                  }
+  171                              }
+  172                          // 2. Check for a read-only annotation in SmartApprove mode
+  173                          } else if goose_mode == GooseMode::SmartApprove
+  174                              &amp;&amp; self.is_readonly_annotated_tool(tool_name)
+  175                          {
+  176                              InspectionAction::Allow
+  177                          // 3. Special case for extension management
+  178                          } else if tool_name == MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE {
+  179                              InspectionAction::RequireApproval(Some(
+  180                                  &quot;Extension management requires approval for security&quot;.to_string(),
+  181                              ))
+  182                          // 4. Defer to LLM detection (SmartApprove, uncached or legacy cached allow)
+      … 76 lines omitted; exact range 159–268 …
+  259                          &quot;Tool requires user approval&quot;.to_string()
+  260                      },
+  261                      confidence: 1.0, // Permission decisions are definitive
+  262                      inspector_name: self.name().to_string(),
+  263                      finding_id: None,
+  264                  });
+  265              }
+  266          }
+  267  
+  268          Ok(results)</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 1 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/permission/permission_inspector.rs:159–268</code>
+      <span>按 GooseMode 分支，结合显式许可、工具注解与只读判断返回 inspection result。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-6">
+      <div class="chapter-rule"><span>06</span></div>
+      <div class="chapter-kicker">DIMENSION · EXECUTION-SANDBOX</div>
+      <h2>执行环境与沙箱</h2>
+      <p class="chapter-deck">本章共 1 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-sandbox-001" data-search="内置开发者工具没有强制工作区边界 shell 工具最终启动系统 bash/sh/powershell；flatpak 下使用 flatpak-spawn --host。edit 工具解析并接受绝对路径，随后直接 fs::write。 goose 会先决定“该不该执行”，但一旦放行，命令通常是在真实电脑环境里跑，不是在一个只能碰项目目录的小盒子里。 execution-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">09</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>限制</span><span>goose-sandbox-001</span></div>
+        <h3>内置开发者工具没有强制工作区边界</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>shell 工具最终启动系统 bash/sh/PowerShell；Flatpak 下使用 flatpak-spawn --host。edit 工具解析并接受绝对路径，随后直接 fs::write。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>Goose 会先决定“该不该执行”，但一旦放行，命令通常是在真实电脑环境里跑，不是在一个只能碰项目目录的小盒子里。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>Goose 的默认安全核心是策略检查与人类审批，不是内核级隔离；部署到高风险环境应再叠加容器、VM 或受限执行器。</p></div>
+        <div class="caveat"><span>边界</span><ul><li>外层桌面打包、企业运行平台或用户自行容器化可能增加隔离；本结论针对仓库内置 developer shell/edit 的实现。</li></ul></div>
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/platform_extensions/developer/shell.rs · L25–L49</div>
+        <pre><code>   25  /// Check if the current process is running inside a Flatpak sandbox.
+   26  ///
+   27  /// When inside Flatpak, shell commands must be wrapped with `flatpak-spawn --host`
+   28  /// to execute on the host system rather than inside the sandbox.
+   29  #[cfg(not(windows))]
+   30  pub(crate) fn is_flatpak() -&gt; bool {
+   31      std::path::Path::new(&quot;/.flatpak-info&quot;).exists()
+   32  }
+   33  
+   34  #[cfg(not(windows))]
+   35  const FLATPAK_HOST_ARGS: [&amp;str; 2] = [&quot;--host&quot;, &quot;--watch-bus&quot;];
+   36  
+   37  #[cfg(not(windows))]
+   38  pub(crate) fn flatpak_spawn_command() -&gt; tokio::process::Command {
+   39      let mut command = tokio::process::Command::new(&quot;flatpak-spawn&quot;);
+   40      command.args(FLATPAK_HOST_ARGS);
+   41      command
+   42  }
+   43  
+   44  #[cfg(not(windows))]
+   45  fn flatpak_spawn_process() -&gt; std::process::Command {
+   46      let mut command = std::process::Command::new(&quot;flatpak-spawn&quot;);
+   47      command.args(FLATPAK_HOST_ARGS);
+   48      command
+   49  }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/platform_extensions/developer/shell.rs:25–49</code>
+      <span>Flatpak 环境配置 flatpak-spawn --host --watch-bus。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/platform_extensions/developer/shell.rs:633–700</code>
+      <span>构造系统 shell，设置 cwd/PATH/会话环境后执行。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/platform_extensions/developer/edit.rs:47–105</code>
+      <span>解析路径、创建父目录、直接 fs::write。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-7">
+      <div class="chapter-rule"><span>07</span></div>
+      <div class="chapter-kicker">DIMENSION · EXTENSIONS-MCP</div>
+      <h2>MCP 与扩展</h2>
+      <p class="chapter-deck">本章共 3 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-mcp-001" data-search="mcp 工具被统一命名空间化、缓存和动态刷新 extensionmanager 从所有客户端分页拉取工具，按 extension__tool 前缀公开（特殊配置可不加前缀），缓存聚合结果；扩展增删会提升版本并失效缓存。 各插件都可能有一个叫 search 的工具，所以 goose 默认把它们改成“插件名__search”，避免撞名，并缓存工具清单减少重复查询。 extensions-mcp">
+    <header class="finding-head">
+      <div class="finding-no">10</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-mcp-001</span></div>
+        <h3>MCP 工具被统一命名空间化、缓存和动态刷新</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ExtensionManager 从所有客户端分页拉取工具，按 extension__tool 前缀公开（特殊配置可不加前缀），缓存聚合结果；扩展增删会提升版本并失效缓存。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>各插件都可能有一个叫 search 的工具，所以 Goose 默认把它们改成“插件名__search”，避免撞名，并缓存工具清单减少重复查询。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>工具注册表既是性能组件也是一致性组件；热插拔后必须原子失效。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/extension_manager.rs · L1271–L1342</div>
+        <pre><code> 1271      /// Get all tools from all clients with proper prefixing
+ 1272      pub async fn get_prefixed_tools(
+ 1273          &amp;self,
+ 1274          session_id: &amp;str,
+ 1275          extension_name: Option&lt;String&gt;,
+ 1276      ) -&gt; ExtensionResult&lt;Vec&lt;Tool&gt;&gt; {
+ 1277          let all_tools = self.get_all_tools_cached(session_id).await?;
+ 1278          Ok(self.filter_tools(&amp;all_tools, extension_name.as_deref(), None))
+ 1279      }
+ 1280  
+ 1281      pub async fn get_prefixed_tools_excluding(
+ 1282          &amp;self,
+ 1283          session_id: &amp;str,
+ 1284          exclude: &amp;str,
+ 1285      ) -&gt; ExtensionResult&lt;Vec&lt;Tool&gt;&gt; {
+ 1286          let all_tools = self.get_all_tools_cached(session_id).await?;
+ 1287          Ok(self.filter_tools(&amp;all_tools, None, Some(exclude)))
+ 1288      }
+ 1289  
+ 1290      fn filter_tools(
+ 1291          &amp;self,
+ 1292          tools: &amp;[Tool],
+ 1293          extension_name: Option&lt;&amp;str&gt;,
+ 1294          exclude: Option&lt;&amp;str&gt;,
+      … 38 lines omitted; exact range 1271–1342 …
+ 1333          {
+ 1334              let mut cache = self.tools_cache.lock().await;
+ 1335              let version_after = self.tools_cache_version.load(Ordering::SeqCst);
+ 1336              if version_after == version_before &amp;&amp; cache.is_none() {
+ 1337                  *cache = Some(Arc::clone(&amp;tools));
+ 1338              }
+ 1339          }
+ 1340  
+ 1341          Ok(tools)
+ 1342      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/extension_manager.rs:1271–1342</code>
+      <span>过滤、缓存和版本校验。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/extension_manager.rs:1391–1455</code>
+      <span>分页列举客户端工具并添加扩展命名空间。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="goose-mcp-002" data-search="远端 mcp 支持 http、oauth 和交互通知 扩展可通过 streamable http（unix 上还可走 socket）连接，复用凭证存储和 oauth；工具执行可同时返回通知流、actionrequired 流与最终结果。 插件不一定是本机子进程，也可以是要登录的远程服务；执行过程中还能弹出“需要用户操作”的中间事件。 extensions-mcp">
+    <header class="finding-head">
+      <div class="finding-no">11</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-mcp-002</span></div>
+        <h3>远端 MCP 支持 HTTP、OAuth 和交互通知</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>扩展可通过 streamable HTTP（Unix 上还可走 socket）连接，复用凭证存储和 OAuth；工具执行可同时返回通知流、ActionRequired 流与最终结果。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>插件不一定是本机子进程，也可以是要登录的远程服务；执行过程中还能弹出“需要用户操作”的中间事件。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>Connector 模型必须同时处理认证生命周期、取消、通知和最终值，不能只把工具当普通函数。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/extension_manager.rs · L612–L730</div>
+        <pre><code>  612  async fn connect_with_auth(
+  613      auth_manager: rmcp::transport::AuthorizationManager,
+  614      uri: &amp;str,
+  615      timeout: Duration,
+  616      headers: &amp;HashMap&lt;String, String&gt;,
+  617      provider: SharedProvider,
+  618      client_name: String,
+  619      capabilities: GooseMcpClientCapabilities,
+  620      roots_dir: &amp;std::path::Path,
+  621  ) -&gt; ExtensionResult&lt;Box&lt;dyn McpClientTrait&gt;&gt; {
+  622      let mut auth_headers = HeaderMap::new();
+  623      auth_headers.insert(reqwest::header::USER_AGENT, GOOSE_USER_AGENT);
+  624      for (key, value) in headers {
+  625          auth_headers.insert(
+  626              HeaderName::try_from(key)
+  627                  .map_err(|_| ExtensionError::ConfigError(format!(&quot;invalid header: {}&quot;, key)))?,
+  628              value.parse().map_err(|_| {
+  629                  ExtensionError::ConfigError(format!(&quot;invalid header value: {}&quot;, key))
+  630              })?,
+  631          );
+  632      }
+  633      #[allow(unused_mut)]
+  634      let mut auth_client_builder = reqwest::Client::builder().default_headers(auth_headers);
+  635      #[cfg(target_os = &quot;linux&quot;)]
+      … 85 lines omitted; exact range 612–730 …
+  721      let transport = StreamableHttpClientTransport::with_client(
+  722          http_client,
+  723          StreamableHttpClientTransportConfig::with_uri(uri),
+  724      );
+  725  
+  726      // If we have stored OAuth credentials, try refreshing and connecting directly.
+  727      // This avoids the unnecessary 401 → browser re-auth cycle on every new session.
+  728      if credential_store.load().await.is_ok_and(|c| c.is_some()) {
+  729          match oauth_flow(&amp;uri.to_string(), &amp;name.to_string()).await {
+  730              Ok(auth_manager) =&gt; {</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/extension_manager.rs:612–730</code>
+      <span>构建带请求头的 Streamable HTTP transport，并复用 OAuth 凭证。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/extension_manager.rs:1786–1895</code>
+      <span>解析工具归属，调用 MCP client，暴露通知与 ActionRequired stream。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="goose-mcp-003" data-search="mcp ui 元数据采用“先剥离、再可信补写” 客户端返回的 goose.mcpapp 和内部工具更新元数据会先被删除；只有宿主主动读取关联资源后才插入可信附件。 插件不能只靠自己声称“这是可信 ui”就让前端照单全收，goose 会清掉敏感标记并由宿主重新验证、重新封装。 extensions-mcp">
+    <header class="finding-head">
+      <div class="finding-no">12</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-mcp-003</span></div>
+        <h3>MCP UI 元数据采用“先剥离、再可信补写”</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>客户端返回的 goose.mcpApp 和内部工具更新元数据会先被删除；只有宿主主动读取关联资源后才插入可信附件。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>插件不能只靠自己声称“这是可信 UI”就让前端照单全收，Goose 会清掉敏感标记并由宿主重新验证、重新封装。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>所有能改变宿主 UI/行为的扩展元数据都应有信任边界。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/extension_manager.rs · L322–L346</div>
+        <pre><code>  322  fn remove_untrusted_mcp_app_meta(result: &amp;mut CallToolResult) {
+  323      let Some(meta) = result.meta.as_mut() else {
+  324          return;
+  325      };
+  326  
+  327      meta.0.remove(TRUSTED_TOOL_UPDATE_META_KEY);
+  328  
+  329      let remove_goose = meta
+  330          .0
+  331          .get_mut(&quot;goose&quot;)
+  332          .and_then(Value::as_object_mut)
+  333          .map(|goose_meta| {
+  334              goose_meta.remove(&quot;mcpApp&quot;);
+  335              goose_meta.is_empty()
+  336          })
+  337          .unwrap_or(false);
+  338  
+  339      if remove_goose {
+  340          meta.0.remove(&quot;goose&quot;);
+  341      }
+  342  
+  343      if meta.0.is_empty() {
+  344          result.meta = None;
+  345      }
+  346  }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/extension_manager.rs:322–346</code>
+      <span>remove_untrusted_mcp_app_meta 清理保留键。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/extension_manager.rs:1866–1880</code>
+      <span>调用后先清理，再由宿主 hydrate 资源并写回可信 metadata。</span>
+    </li>
+    <li>
+      <span class="role">测试</span>
+      <code>crates/goose/src/agents/extension_manager.rs:2881–2904</code>
+      <span>测试伪造 payload 会被剥离。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-8">
+      <div class="chapter-rule"><span>08</span></div>
+      <div class="chapter-kicker">DIMENSION · INSTRUCTIONS-PROMPTS</div>
+      <h2>指令与 Prompt</h2>
+      <p class="chapter-deck">本章共 1 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-prompt-001" data-search="系统提示由稳定骨架、扩展说明和路径 hints 组合 promptbuilder 聚合时间、工作目录、扩展说明、可用工具、模式、系统 extras 与 hints；工具排序稳定以利提示缓存，并清洗扩展提供的 unicode 标签。 提示词不是一整块写死文本，而是像模板一样拼装；插件能加说明，但会先清理可能伪装成系统标签的字符。 instructions-prompts">
+    <header class="finding-head">
+      <div class="finding-no">13</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-prompt-001</span></div>
+        <h3>系统提示由稳定骨架、扩展说明和路径 hints 组合</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>PromptBuilder 聚合时间、工作目录、扩展说明、可用工具、模式、系统 extras 与 hints；工具排序稳定以利提示缓存，并清洗扩展提供的 Unicode 标签。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>提示词不是一整块写死文本，而是像模板一样拼装；插件能加说明，但会先清理可能伪装成系统标签的字符。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>指令装配应有稳定顺序、来源边界和可测试的净化规则，否则缓存命中与安全都会漂移。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/prompt_manager.rs · L95–L165</div>
+        <pre><code>   95      pub fn with_hints(mut self, working_dir: &amp;Path) -&gt; Self {
+   96          let hints_filenames = get_context_filenames();
+   97          let ignore_patterns = build_gitignore(working_dir);
+   98  
+   99          let hints = load_hint_files(working_dir, &amp;hints_filenames, &amp;ignore_patterns);
+  100  
+  101          if !hints.is_empty() {
+  102              self.hints = Some(hints);
+  103          }
+  104          self
+  105      }
+  106  
+  107      pub fn with_enable_subagents(mut self, subagents_enabled: bool) -&gt; Self {
+  108          self.subagents_enabled = subagents_enabled;
+  109          self
+  110      }
+  111  
+  112      pub fn with_goose_mode(mut self, mode: GooseMode) -&gt; Self {
+  113          self.goose_mode = Some(mode);
+  114          self
+  115      }
+  116  
+  117      pub fn build(self) -&gt; String {
+  118          let mut extensions_info = self.extensions_info;
+      … 37 lines omitted; exact range 95–165 …
+  156              code_execution_mode: self.code_execution_mode,
+  157              moim_system_prompt_block: moim::system_prompt_block(),
+  158          };
+  159  
+  160          let base_prompt = if let Some(override_prompt) = &amp;self.manager.system_prompt_override {
+  161              let sanitized_override_prompt = sanitize_unicode_tags(override_prompt);
+  162              prompt_template::render_string(&amp;sanitized_override_prompt, &amp;context)
+  163          } else {
+  164              prompt_template::render_template(&quot;system.md&quot;, &amp;context)
+  165          }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/prompt_manager.rs:95–165</code>
+      <span>读取 hints、稳定排序工具、清洗标签并渲染系统模板。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/prompt_manager.rs:170–273</code>
+      <span>追加 extras 与 hints，固定小时级时间用于缓存。</span>
+    </li>
+    <li>
+      <span class="role">测试</span>
+      <code>crates/goose/src/agents/prompt_manager.rs:289–360</code>
+      <span>覆盖 Unicode 标签清洗和提示构建。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-9">
+      <div class="chapter-rule"><span>09</span></div>
+      <div class="chapter-kicker">DIMENSION · SKILLS-PLUGINS-HOOKS</div>
+      <h2>Skills、插件与 Hooks</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-skills-001" data-search="skills 采用渐进加载和多生态目录兼容 项目级 .agents/.goose/.claude 目录先于全局目录发现；系统提示只列技能名与描述，真正调用时才载入 skill.md 或支持文件，并校验支持文件解析后仍位于技能目录内。 模型一开始只拿到“技能目录”，需要时再打开说明书和附件，既省上下文，也防止通过 ../ 偷读技能目录外文件。 skills-plugins-hooks">
+    <header class="finding-head">
+      <div class="finding-no">14</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-skills-001</span></div>
+        <h3>Skills 采用渐进加载和多生态目录兼容</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>项目级 .agents/.goose/.claude 目录先于全局目录发现；系统提示只列技能名与描述，真正调用时才载入 SKILL.md 或支持文件，并校验支持文件解析后仍位于技能目录内。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>模型一开始只拿到“技能目录”，需要时再打开说明书和附件，既省上下文，也防止通过 ../ 偷读技能目录外文件。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>技能系统应把发现、选择、加载分开，并对支持文件做 canonical path 校验。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/skills/mod.rs · L313–L341</div>
+        <pre><code>  313  /// Every directory the agent reads skills from, paired with whether each is a
+  314  /// global (home-rooted) location. Order matches discovery precedence: project
+  315  /// dirs first, then global dirs.
+  316  pub fn all_skill_dirs(working_dir: Option&lt;&amp;Path&gt;) -&gt; Vec&lt;(PathBuf, bool)&gt; {
+  317      let mut dirs: Vec&lt;(PathBuf, bool)&gt; = Vec::new();
+  318  
+  319      if let Some(wd) = working_dir {
+  320          dirs.push((wd.join(&quot;.agents&quot;).join(&quot;skills&quot;), false));
+  321          dirs.push((wd.join(&quot;.goose&quot;).join(&quot;skills&quot;), false));
+  322          dirs.push((wd.join(&quot;.claude&quot;).join(&quot;skills&quot;), false));
+  323      }
+  324  
+  325      let home = dirs::home_dir();
+  326      if let Some(h) = home.as_ref() {
+  327          dirs.push((h.join(&quot;.agents&quot;).join(&quot;skills&quot;), true));
+  328      }
+  329      dirs.push((Paths::config_dir().join(&quot;skills&quot;), true));
+  330      if let Some(h) = home.as_ref() {
+  331          dirs.push((h.join(&quot;.claude&quot;).join(&quot;skills&quot;), true));
+  332          dirs.push((h.join(&quot;.config&quot;).join(&quot;agents&quot;).join(&quot;skills&quot;), true));
+  333      }
+  334  
+  335      dirs.extend(
+  336          installed_plugin_skill_dirs()
+  337              .into_iter()
+  338              .map(|dir| (dir, true)),
+  339      );
+  340  
+  341      dirs</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/skills/mod.rs:313–341</code>
+      <span>项目与全局技能目录及其发现优先级。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/skills/client.rs:132–187</code>
+      <span>按名称加载技能或支持文件，并拒绝解析到目录外。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/skills/client.rs:245–266</code>
+      <span>系统指令只列出技能名和描述。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="goose-hooks-001" data-search="插件 hooks 覆盖工具、文件、shell、会话和停止事件 hookmanager 从启用插件的 hooks/hooks.json 加载命令动作；pretooluse 和 stop 可阻塞，其他 hook 失败默认放行；stop 阻塞另有连续次数上限。 组织可以在“运行命令前”“改文件后”“会话开始”“agent 想结束”等时点执行自己的脚本，但普通通知脚本坏掉不会让整个 agent 瘫痪。 skills-plugins-hooks">
+    <header class="finding-head">
+      <div class="finding-no">15</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-hooks-001</span></div>
+        <h3>插件 Hooks 覆盖工具、文件、Shell、会话和停止事件</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>HookManager 从启用插件的 hooks/hooks.json 加载命令动作；PreToolUse 和 Stop 可阻塞，其他 hook 失败默认放行；Stop 阻塞另有连续次数上限。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>组织可以在“运行命令前”“改文件后”“会话开始”“Agent 想结束”等时点执行自己的脚本，但普通通知脚本坏掉不会让整个 Agent 瘫痪。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>Hook 的失败语义必须逐事件定义；治理门可以 fail-closed，旁路观测更适合 fail-open。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/hooks/mod.rs · L64–L95</div>
+        <pre><code>   64  impl HookEvent {
+   65      fn name(&amp;self) -&gt; &amp;&#39;static str {
+   66          match self {
+   67              HookEvent::PreToolUse =&gt; &quot;PreToolUse&quot;,
+   68              HookEvent::PostToolUse =&gt; &quot;PostToolUse&quot;,
+   69              HookEvent::PostToolUseFailure =&gt; &quot;PostToolUseFailure&quot;,
+   70              HookEvent::SessionStart =&gt; &quot;SessionStart&quot;,
+   71              HookEvent::SessionEnd =&gt; &quot;SessionEnd&quot;,
+   72              HookEvent::UserPromptSubmit =&gt; &quot;UserPromptSubmit&quot;,
+   73              HookEvent::BeforeReadFile =&gt; &quot;BeforeReadFile&quot;,
+   74              HookEvent::AfterFileEdit =&gt; &quot;AfterFileEdit&quot;,
+   75              HookEvent::BeforeShellExecution =&gt; &quot;BeforeShellExecution&quot;,
+   76              HookEvent::AfterShellExecution =&gt; &quot;AfterShellExecution&quot;,
+   77              HookEvent::Stop =&gt; &quot;Stop&quot;,
+   78          }
+   79      }
+   80  
+   81      fn from_name(name: &amp;str) -&gt; Option&lt;Self&gt; {
+   82          Some(match name {
+   83              &quot;PreToolUse&quot; =&gt; HookEvent::PreToolUse,
+   84              &quot;PostToolUse&quot; =&gt; HookEvent::PostToolUse,
+   85              &quot;PostToolUseFailure&quot; =&gt; HookEvent::PostToolUseFailure,
+   86              &quot;SessionStart&quot; =&gt; HookEvent::SessionStart,
+   87              &quot;SessionEnd&quot; =&gt; HookEvent::SessionEnd,
+   88              &quot;UserPromptSubmit&quot; =&gt; HookEvent::UserPromptSubmit,
+   89              &quot;BeforeReadFile&quot; =&gt; HookEvent::BeforeReadFile,
+   90              &quot;AfterFileEdit&quot; =&gt; HookEvent::AfterFileEdit,
+   91              &quot;BeforeShellExecution&quot; =&gt; HookEvent::BeforeShellExecution,
+   92              &quot;AfterShellExecution&quot; =&gt; HookEvent::AfterShellExecution,
+   93              &quot;Stop&quot; =&gt; HookEvent::Stop,
+   94              _ =&gt; return None,
+   95          })</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>crates/goose/src/hooks/mod.rs:64–95</code>
+      <span>HookEvent 枚举覆盖 Pre/PostTool、Session、Read/Edit、Shell、Stop。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/hooks/mod.rs:237–284</code>
+      <span>从启用插件加载 hooks.json。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/hooks/mod.rs:292–425</code>
+      <span>普通 emit 失败放行；blocking emit 解释阻塞退出码或 JSON。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-10">
+      <div class="chapter-rule"><span>10</span></div>
+      <div class="chapter-kicker">DIMENSION · SUBAGENTS-COLLABORATION</div>
+      <h2>子 Agent 与协作</h2>
+      <p class="chapter-deck">本章共 1 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-subagent-001" data-search="子 agent 是独立 agent 与子会话，不是主提示词里的角色扮演 subagenthandler 新建 agent，继承/覆盖 provider 与 model，按配置装载扩展和响应 schema，创建 subagent 类型会话，并运行标准 agent.reply；子 agent 系统提示明确禁止继续创建子 agent。 主 agent 真正启动了另一个有独立历史和工具集的执行循环，而不是在同一段对话里假装分身；但只允许一层委派。 subagents-collaboration">
+    <header class="finding-head">
+      <div class="finding-no">16</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-subagent-001</span></div>
+        <h3>子 Agent 是独立 Agent 与子会话，不是主提示词里的角色扮演</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>SubagentHandler 新建 Agent，继承/覆盖 provider 与 model，按配置装载扩展和响应 schema，创建 SubAgent 类型会话，并运行标准 Agent.reply；子 Agent 系统提示明确禁止继续创建子 Agent。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>主 Agent 真正启动了另一个有独立历史和工具集的执行循环，而不是在同一段对话里假装分身；但只允许一层委派。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>独立会话便于隔离上下文、统计成本和回传结果；禁止递归可控制爆炸式 fan-out。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/agents/subagent_handler.rs · L121–L230</div>
+        <pre><code>  121  fn get_agent_messages(params: SubagentRunParams) -&gt; AgentMessagesFuture {
+  122      Box::pin(async move {
+  123          let SubagentRunParams {
+  124              config,
+  125              recipe,
+  126              task_config,
+  127              session_id,
+  128              cancellation_token,
+  129              on_message,
+  130              notification_tx,
+  131              ..
+  132          } = params;
+  133  
+  134          let system_instructions = recipe.instructions.clone().unwrap_or_default();
+  135          let user_task = recipe
+  136              .prompt
+  137              .clone()
+  138              .unwrap_or_else(|| &quot;Begin.&quot;.to_string());
+  139  
+  140          let agent = Arc::new(Agent::with_config(config));
+  141  
+  142          agent
+  143              .update_provider(
+  144                  task_config.provider.clone(),
+      … 76 lines omitted; exact range 121–230 …
+  221                      tracing::error!(&quot;Error receiving message from subagent: {}&quot;, e);
+  222                      break;
+  223                  }
+  224              }
+  225          }
+  226  
+  227          let final_output = get_final_output(&amp;agent, has_response_schema).await;
+  228  
+  229          Ok((conversation, final_output))
+  230      })</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/subagent_handler.rs:121–230</code>
+      <span>构造独立 Agent、扩展、响应 schema、会话配置并运行 reply。</span>
+    </li>
+    <li>
+      <span class="role">Prompt</span>
+      <code>crates/goose/src/prompts/subagent_system.md:1–38</code>
+      <span>子 Agent 有边界任务、最大 turns，并被禁止再生成 subagents。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-11">
+      <div class="chapter-rule"><span>11</span></div>
+      <div class="chapter-kicker">DIMENSION · OBSERVABILITY-PERSISTENCE</div>
+      <h2>持久化与观测</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="goose-session-001" data-search="会话、消息、成本与压缩指标落到 sqlite/wal sessionmanager 使用 sqlite、wal 和迁移管理持久化 sessions、messages、usage_ledger；会话记录 provider/model/mode/project/parent，usage ledger 区分输入输出、缓存、总成本与压缩后保留 token。 对话不只是屏幕上的临时文本：每条消息、用的模型、父子会话、花费和压缩前后 token 都能落盘追踪。 observability-persistence">
+    <header class="finding-head">
+      <div class="finding-no">17</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-session-001</span></div>
+        <h3>会话、消息、成本与压缩指标落到 SQLite/WAL</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>SessionManager 使用 SQLite、WAL 和迁移管理持久化 sessions、messages、usage_ledger；会话记录 provider/model/mode/project/parent，usage ledger 区分输入输出、缓存、总成本与压缩后保留 token。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>对话不只是屏幕上的临时文本：每条消息、用的模型、父子会话、花费和压缩前后 token 都能落盘追踪。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>成本与上下文恢复应成为一等数据模型，而不是散落在日志字符串里。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/session/session_manager.rs · L45–L96</div>
+        <pre><code>   45  pub enum SessionType {
+   46      #[default]
+   47      User,
+   48      Scheduled,
+   49      SubAgent,
+   50      Hidden,
+   51      Terminal,
+   52      Gateway,
+   53      Acp,
+   54  }
+   55  
+   56  static SESSION_STORAGE: LazyLock&lt;Arc&lt;SessionStorage&gt;&gt; =
+   57      LazyLock::new(|| Arc::new(SessionStorage::new(Paths::data_dir())));
+   58  
+   59  #[derive(Debug, Clone, Serialize, Deserialize)]
+   60  pub struct Session {
+   61      pub id: String,
+   62      pub working_dir: PathBuf,
+   63      #[serde(alias = &quot;description&quot;)]
+   64      pub name: String,
+   65      #[serde(default)]
+   66      pub user_set_name: bool,
+   67      #[serde(default)]
+   68      pub session_type: SessionType,
+      … 18 lines omitted; exact range 45–96 …
+   87      pub goose_mode: GooseMode,
+   88      #[serde(default)]
+   89      pub archived_at: Option&lt;DateTime&lt;Utc&gt;&gt;,
+   90      #[serde(default)]
+   91      pub project_id: Option&lt;String&gt;,
+   92      #[serde(default)]
+   93      pub parent_session_id: Option&lt;String&gt;,
+   94      #[serde(default)]
+   95      pub last_message_snippet: Option&lt;String&gt;,
+   96  }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>crates/goose/src/session/session_manager.rs:45–96</code>
+      <span>SessionType 与 Session 持久字段。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/session/session_manager.rs:843–890</code>
+      <span>SQLite 路径、WAL、foreign keys 与 migrations。</span>
+    </li>
+    <li>
+      <span class="role">迁移</span>
+      <code>crates/goose/src/session/session_manager.rs:893–1031</code>
+      <span>sessions/messages/usage_ledger 表和 parent_session 索引。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="goose-observe-001" data-search="tracing 以 goose:: span 生成 trace/span 观测事件 observationlayer 仅处理 target 以 goose:: 开头的 tracing 事件，跟踪 span 层级、输入输出和批次，并可把 reply 最终文本记录为 trace_output。 内部关键步骤会形成一棵调用轨迹，不是只打一长串平面日志；同时避免把所有依赖库噪声都收进来。 observability-persistence">
+    <header class="finding-head">
+      <div class="finding-no">18</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>goose-observe-001</span></div>
+        <h3>Tracing 以 goose:: span 生成 trace/span 观测事件</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ObservationLayer 仅处理 target 以 goose:: 开头的 tracing 事件，跟踪 span 层级、输入输出和批次，并可把 reply 最终文本记录为 trace_output。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>内部关键步骤会形成一棵调用轨迹，不是只打一长串平面日志；同时避免把所有依赖库噪声都收进来。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>观测层和业务层通过结构化 span 字段连接，适合接入 Langfuse 等后端，但敏感输出治理仍需部署方关注。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">crates/goose/src/tracing/observation_layer.rs · L103–L184</div>
+        <pre><code>  103  impl ObservationLayer {
+  104      pub async fn handle_span(&amp;self, span_id: u64, span_data: SpanData) {
+  105          let observation_id = span_data.observation_id.clone();
+  106  
+  107          {
+  108              let mut spans = self.span_tracker.lock().await;
+  109              spans.add_span(span_id, observation_id.clone());
+  110          }
+  111  
+  112          // Get parent ID if it exists
+  113          let parent_id = if let Some(parent_span_id) = span_data.parent_span_id {
+  114              let spans = self.span_tracker.lock().await;
+  115              spans.get_span(parent_span_id).cloned()
+  116          } else {
+  117              None
+  118          };
+  119  
+  120          let trace_id = self.ensure_trace_id().await;
+  121  
+  122          // Create the span observation
+  123          let mut batch = self.batch_manager.lock().await;
+  124          batch.add_event(
+  125              &quot;observation-create&quot;,
+  126              json!({
+      … 48 lines omitted; exact range 103–184 …
+  175                  &quot;timestamp&quot;: Utc::now().to_rfc3339(),
+  176                  &quot;input&quot;: {},
+  177                  &quot;metadata&quot;: {},
+  178                  &quot;tags&quot;: [],
+  179                  &quot;public&quot;: false
+  180              }),
+  181          );
+  182  
+  183          trace_id
+  184      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/tracing/observation_layer.rs:103–184</code>
+      <span>创建与更新 trace/span 事件。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/tracing/observation_layer.rs:196–336</code>
+      <span>记录输入输出，仅过滤 goose:: targets。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>crates/goose/src/agents/agent.rs:2922–2924</code>
+      <span>把最终助手文本记录到当前 span 的 trace_output。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+  </div>
+
+  <section class="chapter source-index" id="sources">
+    <div class="chapter-kicker">APPENDIX · SOURCE INDEX</div>
+    <h2>本报告引用过的实现文件</h2>
+    <p class="chapter-deck">这是一份代码阅读索引，不是仓库文件总表。机器候选扫描覆盖整个仓库；进入结论的文件必须经人工沿调用链复核。</p>
+    <ol><li><span>01</span><code>crates/goose/src/agents/agent.rs</code><small>L1930–2043, 2883–2929, 67–79, 2773–2793, 2892–2915, 2533–2591, 2210–2265, 2267–2337, 659–688, 2922–2924</small></li><li><span>02</span><code>crates/goose-provider-types/src/base.rs</code><small>L281–286, 394–427</small></li><li><span>03</span><code>crates/goose/src/context_mgmt/mod.rs</code><small>L26–49, 78–188, 319–398</small></li><li><span>04</span><code>crates/goose/src/context_mgmt/structured.rs</code><small>L13–38</small></li><li><span>05</span><code>crates/goose/src/permission/permission_inspector.rs</code><small>L159–268</small></li><li><span>06</span><code>crates/goose/src/agents/platform_extensions/developer/shell.rs</code><small>L25–49, 633–700</small></li><li><span>07</span><code>crates/goose/src/agents/platform_extensions/developer/edit.rs</code><small>L47–105</small></li><li><span>08</span><code>crates/goose/src/agents/extension_manager.rs</code><small>L1271–1342, 1391–1455, 612–730, 1786–1895, 322–346, 1866–1880, 2881–2904</small></li><li><span>09</span><code>crates/goose/src/agents/prompt_manager.rs</code><small>L95–165, 170–273, 289–360</small></li><li><span>10</span><code>crates/goose/src/skills/mod.rs</code><small>L313–341</small></li><li><span>11</span><code>crates/goose/src/skills/client.rs</code><small>L132–187, 245–266</small></li><li><span>12</span><code>crates/goose/src/hooks/mod.rs</code><small>L64–95, 237–284, 292–425</small></li><li><span>13</span><code>crates/goose/src/agents/subagent_handler.rs</code><small>L121–230</small></li><li><span>14</span><code>crates/goose/src/prompts/subagent_system.md</code><small>L1–38</small></li><li><span>15</span><code>crates/goose/src/session/session_manager.rs</code><small>L45–96, 843–890, 893–1031</small></li><li><span>16</span><code>crates/goose/src/tracing/observation_layer.rs</code><small>L103–184, 196–336</small></li></ol>
+  </section>
+
+  <footer class="report-footer">
+    <div><span>SNAPSHOT</span><code>021b0db8dbee8d6c7e9ffbab580a4143598a3560</code></div>
+    <nav>
+      <a href="../index.html">← 横向总览</a>
+      <a href="aider.html">Aider →</a>
+    </nav>
+  </footer>
+  </main>
+  <script src="../assets/report.js"></script>
+</body>
+</html>

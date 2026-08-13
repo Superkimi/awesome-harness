@@ -1,0 +1,1191 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Gemini CLI 的固定提交源码教程：主循环、上下文、工具、安全、扩展、协作与观测"><title>Gemini CLI · Coding Agent 源码教程</title><link rel="stylesheet" href="../assets/tutorial.css"></head><body><div class="progress-rail" id="progress-rail"></div><header class="tutorial-topbar"><button class="hamburger" type="button" aria-label="打开目录" data-menu>☰</button><a href="index.html" class="top-brand">Harness <em>·</em> Coding Agent Book</a><span class="top-crumb">12 / Gemini CLI</span><div class="top-actions"><a href="../index.html">研究总览</a><button type="button" data-immersive>沉浸式</button><button type="button" data-theme>☼ / ☾</button></div></header><div class="tutorial-layout"><aside class="tutorial-toc"><a class="tutorial-brand" href="index.html"><span class="tutorial-mark">H</span><span>HARNESS<br><small>CODING AGENT BOOK</small></span></a><button class="toc-toggle" type="button" data-toc-toggle>章节目录</button><nav><a class="" href="goose.html"><span>M01</span>Goose</a><a class="" href="aider.html"><span>M02</span>Aider</a><a class="" href="grok-build.html"><span>M03</span>Grok Build</a><a class="" href="openinterpreter.html"><span>M04</span>Open Interpreter</a><a class="" href="little-coder.html"><span>M05</span>Little Coder</a><a class="" href="monkeycode.html"><span>M06</span>MonkeyCode</a><a class="" href="opencode.html"><span>M07</span>OpenCode</a><a class="" href="oh-my-pi.html"><span>M08</span>Oh My Pi</a><a class="" href="claude-code.html"><span>M09</span>Claude Code（复原）</a><a class="" href="pi.html"><span>M10</span>Pi</a><a class="" href="codex.html"><span>M11</span>OpenAI Codex</a><a class="active" href="gemini-cli.html"><span>M12</span>Gemini CLI</a><a class="" href="jcode.html"><span>M13</span>JCode</a><a class="" href="kimi-cli.html"><span>M14</span>Kimi CLI</a><a class="" href="deepseek-reasonix.html"><span>M15</span>DeepSeek-Reasonix</a><a class="" href="codewhale.html"><span>M16</span>CodeWhale</a><a class="" href="prime-agent.html"><span>M17</span>Prime Agent</a><a class="" href="deepagents.html"><span>M18</span>DeepAgents</a></nav><div class="toc-foot">SOURCE-LOCKED<br>固定提交 · 可回放</div></aside><main class="tutorial-main"><section class="module-hero"><div class="module-eyebrow">M12 · SOURCE-GROUNDED TUTORIAL</div><h1>Gemini CLI<br><em>从源码学会它怎么工作</em></h1><p class="module-thesis">工具调度、PolicyEngine、扩展热装卸和新图式上下文系统都很有研究价值；默认 sandbox 仍关闭。 我们不把 README 当结论，而是沿主循环、工具、上下文、权限、扩展、协作和状态一路读到实现。</p><div class="module-meta"><span>TypeScript · Scheduler + Context Pipeline</span><span>Apache-2.0</span><span>bef6119500b0</span><span>28 个结论 · 67 处引用</span></div><div class="module-actions"><a href="../reports/gemini-cli.html">回到源码审计报告 ↗</a><a href="https://github.com/google-gemini/gemini-cli/tree/bef6119500b0238ad84f6396d2a6cabda9991554">打开固定源码 ↗</a><label><span>⌕</span><input type="search" placeholder="搜索本章源码与概念…" data-lesson-search></label></div></section>
+  <section class="module-intro"><div class="intro-copy"><div class="module-kicker">这门课怎么读</div><h2>先建立直觉，再沿一条任务链钻进代码</h2><p>参考教程的做法不是把 API 名称罗列出来，而是从一个小白能理解的问题开始，先解释“为什么需要这个机制”，再用概念对比、执行链路和固定提交的源码回答“它究竟怎么做”。本页把 Gemini CLI 的 28 个源码结论重新编排成十节课；每个结论都保留证据等级、文件路径、行号和可点击源码。</p><div class="learning-contract"><div><b>你会得到</b><span>一张可复述的架构地图</span><span>一次完整任务的链路追踪</span><span>能迁移到自研 Harness 的设计判断</span></div><div><b>你不会得到</b><span>把 README 功能当成已验证事实</span><span>把 prompt 约束说成 OS 沙箱</span><span>把一次双模型调用夸成多 Agent 平台</span></div></div></div><aside class="intro-stats"><div><b>10</b><span>学习章节</span></div><div><b>28</b><span>源码结论</span></div><div><b>25</b><span>被引文件</span></div><div><b>67</b><span>精确引用</span></div></aside></section>
+  <section class="module-section map-section" id="map"><div class="module-kicker">M00 · MAP</div><h2>先看全景：这个 Agent 的控制面在哪里</h2><p class="section-question">下面的图不是产品宣传图，而是把固定提交里最关键的入口、循环、模型、工具、安全、状态和协作节点放在一张地图上。</p><div class="diagram-pair"><figure><figcaption><b>架构图</b><a href="../diagrams/gemini-cli-architecture.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/gemini-cli-architecture.html" title="Gemini CLI 架构图" loading="lazy"></iframe></figure><figure><figcaption><b>一轮执行链路</b><a href="../diagrams/gemini-cli-sequence.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/gemini-cli-sequence.html" title="Gemini CLI 执行链路" loading="lazy"></iframe></figure></div><div class="route-cards"><div><b>核心机制</b><p>递归 sendMessageStream；100 turn 上限；loop 恢复一次</p></div><div><b>上下文</b><p>Legacy 摘要 + 新图/流水线/GC/蒸馏/真实 token 校准</p></div><div><b>适用建设</b><p>Google 生态、大型扩展平台、上下文工程研究</p></div></div></section>
+  <section class="module-section trace-section" id="trace"><div class="module-kicker">M00.5 · TRACE</div><h2>跟踪一个任务：从输入到交付</h2><p class="section-question">把下面九步当成你读源码时的“地图坐标”。每到一个节点，都能回到后面的章节查具体实现。</p><div class="trace-board" role="img" aria-label="Gemini CLI 一次任务的执行链路"><div class="trace-step"><span>01</span><b>提交请求并配对 IDE</b><small>任务进入</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>02</span><b>上下文/溢出/loop 预检</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>03</span><b>锁定模型与工具</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>04</span><b>ContentGenerator 流式响应</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>05</span><b>Turn 只解析 tool calls</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>06</span><b>Scheduler + PolicyEngine</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>07</span><b>OS sandbox 执行并回合法 response</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>08</span><b>checkpoint / GC / compact</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>09</span><b>继续递归或终止</b><small>交付/续跑</small></div></div><div class="trace-note"><b>读图提醒</b><p>箭头只表示控制面之间的关系，不代表每个实现都同步、串行或拥有 OS 隔离；真正的边界要以对应章节的源码摘录和 caveat 为准。</p></div></section>
+  <section class="module-section" id="orientation" data-chapter><div class="module-kicker">M01 · ORIENTATION</div><h2>先把 Agent 看成一台会交付的机器</h2><p class="section-question">如果只看 README，你知道它能做什么；钻进源码后，我们要知道它为什么能做、什么时候会停、失败后谁负责收拾。</p><div class="analogy"><b>先用一个生活比喻</b><p>把 Agent 想成一间带传送带的工作室：入口收任务，主循环决定下一步，模型负责提出动作，工具负责动手，状态账本负责让下一班人接着干。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 1</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="loop" data-chapter><div class="module-kicker">M02 · LOOP</div><h2>主循环：模型为什么会继续动</h2><p class="section-question">一次模型调用为什么会变成十几步？循环靠什么继续，靠什么停止？</p><div class="analogy"><b>先用一个生活比喻</b><p>像一个会看回执的快递员：模型先写行动单，工具返回回执，主循环把回执放回桌面，再让模型决定下一张行动单。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100</td><td><code>packages/core/src/core/client.ts:79</code></td><td>一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</td></tr><tr><td>每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具</td><td><code>packages/core/src/core/client.ts:614</code></td><td>开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。</td></tr><tr><td>循环检测能先恢复一次，再判定硬循环</td><td><code>packages/core/src/core/client.ts:744</code></td><td>第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-loop-001" data-search="主 harness 用递归 sendmessagestream 驱动多 turn，硬上限为 100 geminiclient 将单次 turn 交给 processturn；若 next-speaker 判定模型应继续，或 afteragent hook 返回继续原因，就递归调用 sendmessagestream 并递减 boundedturns，入口始终 clamp 到 max_turns=100。 一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。 architecture-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">01</span><div><div class="lesson-eyebrow">L1 · fact · gemini-loop-001</div><h3>主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>控制流直观，递归路径共享 prompt_id 和 hook state，需要严格做 activeCalls 记账。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111">packages/core/src/core/client.ts · L79–L111 ↗</a></div><pre><code>   79  const MAX_TURNS = 100;
+   80  
+   81  type BeforeAgentHookReturn =
+   82    | {
+   83        type: GeminiEventType.AgentExecutionStopped;
+   84        value: { reason: string; systemMessage?: string };
+   85      }
+   86    | {
+   87        type: GeminiEventType.AgentExecutionBlocked;
+   88        value: { reason: string; systemMessage?: string };
+   89      }
+   90    | { additionalContext: string | undefined }
+   91    | undefined;
+   92  
+   93  export class GeminiClient {
+   94    private chat?: GeminiChat;
+   95    private sessionTurnCount = 0;
+   96  
+   97    private readonly loopDetector: LoopDetectionService;
+   98    private readonly compressionService: ChatCompressionService;
+   99    private readonly agentHistoryProvider: AgentHistoryProvider;
+  100    private readonly toolOutputMaskingService: ToolOutputMaskingService;
+  101    private contextManager?: ContextManager;
+  102    private lastPromptId: string;
+  103    private currentSequenceModel: string | null = null;
+  104    private lastSentIdeContext: IdeContext | undefined;
+  105    private forceFullIdeContext = true;
+  106  
+  107    /**
+  108     * At any point in this conversation, was compression triggered without
+  109     * being forced and did it fail?
+  110     */
+  111    private hasFailedCompressionAttempt = false;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111"><code>packages/core/src/core/client.ts:79–111</code></a><small>MAX_TURNS 和 loop/compression/hook 状态。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L875-L907"><code>packages/core/src/core/client.ts:875–907</code></a><small>next-speaker 继续模型。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L910-L1060"><code>packages/core/src/core/client.ts:910–1060</code></a><small>bounded recursion 与 hook continuation。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-loop-002" data-search="每轮先做上下文、溢出、ide 配对和 loop 检测，再锁定模型与工具 processturn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functioncall→functionresponse 紧邻，会延迟 ide context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 turn.run。 开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。 architecture-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">02</span><div><div class="lesson-eyebrow">L1 · fact · gemini-loop-002</div><h3>每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>上下文与模型选择顺序清楚，工具描述可随模型变化且同一 sequence 保持模型粘性。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715">packages/core/src/core/client.ts · L614–L715 ↗</a></div><pre><code>  614    private async *processTurn(
+  615      request: PartListUnion,
+  616      signal: AbortSignal,
+  617      prompt_id: string,
+  618      boundedTurns: number,
+  619      displayContent?: PartListUnion,
+  620    ): AsyncGenerator&lt;ServerGeminiStreamEvent, Turn&gt; {
+  621      // Re-initialize turn (it was empty before if in loop, or new instance)
+  622      let turn = new Turn(this.getChat(), prompt_id);
+  623  
+  624      this.sessionTurnCount++;
+  625      if (
+  626        this.config.getMaxSessionTurns() &gt; 0 &amp;&amp;
+  627        this.sessionTurnCount &gt; this.config.getMaxSessionTurns()
+  628      ) {
+  629        yield { type: GeminiEventType.MaxSessionTurns };
+  630        return turn;
+  631      }
+  632  
+  633      if (!boundedTurns) {
+  634        return turn;
+  635      }
+  636  
+  637      // Check for context window overflow
+  638      const modelForLimitCheck = this._getActiveModelForCurrentTurn();
+      … 66 lines omitted; exact range 614–715 …
+  705        this.getContentGeneratorOrFail(),
+  706        modelForLimitCheck,
+  707      );
+  708  
+  709      if (estimatedRequestTokenCount &gt; remainingTokenCount) {
+  710        yield {
+  711          type: GeminiEventType.ContextWindowWillOverflow,
+  712          value: { estimatedRequestTokenCount, remainingTokenCount },
+  713        };
+  714        return turn;
+  715      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715"><code>packages/core/src/core/client.ts:614–715</code></a><small>context、masking 和 token overflow。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L717-L807"><code>packages/core/src/core/client.ts:717–807</code></a><small>IDE 配对、loop、router 和 tools。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-loop-003" data-search="循环检测能先恢复一次，再判定硬循环 turnstarted 和每个流事件都送入 loopdetectionservice；count=1 进入 _recoverfromloop，count&gt;1 发 loopdetected 并终止，剩余 turn 不足时转 maxsessionturns。 第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。 architecture-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">03</span><div><div class="lesson-eyebrow">L1 · fact · gemini-loop-003</div><h3>循环检测能先恢复一次，再判定硬循环</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>比仅靠 turn 上限更早止损，并保留一次自恢复空间。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763">packages/core/src/core/client.ts · L744–L763 ↗</a></div><pre><code>  744      // Re-initialize turn with fresh history
+  745      turn = new Turn(this.getChat(), prompt_id);
+  746  
+  747      const loopResult = await this.loopDetector.turnStarted(signal);
+  748      if (loopResult.count &gt; 1) {
+  749        yield { type: GeminiEventType.LoopDetected };
+  750        return turn;
+  751      } else if (loopResult.count === 1) {
+  752        if (boundedTurns &lt;= 1) {
+  753          yield { type: GeminiEventType.MaxSessionTurns };
+  754          return turn;
+  755        }
+  756        return yield* this._recoverFromLoop(
+  757          loopResult,
+  758          signal,
+  759          prompt_id,
+  760          boundedTurns,
+  761          displayContent,
+  762        );
+  763      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763"><code>packages/core/src/core/client.ts:744–763</code></a><small>turn-start loop detection。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L810-L855"><code>packages/core/src/core/client.ts:810–855</code></a><small>stream-event loop detection 与恢复。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 2</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="model" data-chapter><div class="module-kicker">M03 · MODEL</div><h2>模型调用：流式输出如何变成可执行步骤</h2><p class="section-question">模型输出的文字、思考、工具调用和错误，经过哪些转换才进入 Agent 状态？</p><div class="analogy"><b>先用一个生活比喻</b><p>模型像电话另一端的同事：你听到的不是一整段录音，而是一串实时片段；Harness 要边听边拼装，还要能在电话断线时留下可恢复的记录。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>上层只认一套生成接口，底下可换个人 Google 登录、API key、企业 Vertex 或网关。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>统一 ContentGenerator 契约覆盖流式、非流式、计数与 embedding</td><td><code>packages/core/src/core/contentGenerator.ts:35</code></td><td>上层只认一套生成接口，底下可换个人 Google 登录、API key、企业 Vertex 或网关。</td></tr><tr><td>个人/ADC 走 Code Assist，API key/Vertex/Gateway 走 Google GenAI SDK</td><td><code>packages/core/src/core/contentGenerator.ts:285</code></td><td>登录方式不仅换凭证，也可能换后端客户端；企业 Vertex 还能指定共享/专用路由。</td></tr><tr><td>连接阶段与中途流错误分开重试，中途流最多四次尝试</td><td><code>packages/core/src/core/geminiChat.ts:517</code></td><td>连不上和连上后半路断掉是两类事故，分别计数；不会因为全局重试设得很大就反复重播半截响应。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-provider-001" data-search="统一 contentgenerator 契约覆盖流式、非流式、计数与 embedding contentgenerator 抽象 generatecontent、generatecontentstream、counttokens 和 embedcontent；authtype 覆盖 google oauth、gemini api key、vertex ai、adc 与 gateway。 上层只认一套生成接口，底下可换个人 google 登录、api key、企业 vertex 或网关。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">04</span><div><div class="lesson-eyebrow">L2 · fact · gemini-provider-001</div><h3>统一 ContentGenerator 契约覆盖流式、非流式、计数与 embedding</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ContentGenerator 抽象 generateContent、generateContentStream、countTokens 和 embedContent；AuthType 覆盖 Google OAuth、Gemini API key、Vertex AI、ADC 与 Gateway。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>上层只认一套生成接口，底下可换个人 Google 登录、API key、企业 Vertex 或网关。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>Provider 切换不改主循环，但 thought signature 兼容性仍需在切换认证后处理。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/contentGenerator.ts#L35-L70">packages/core/src/core/contentGenerator.ts · L35–L70 ↗</a></div><pre><code>   35  
+   36  /**
+   37   * Interface abstracting the core functionalities for generating content and counting tokens.
+   38   */
+   39  export interface ContentGenerator {
+   40    generateContent(
+   41      request: GenerateContentParameters,
+   42      userPromptId: string,
+   43      role: LlmRole,
+   44    ): Promise&lt;GenerateContentResponse&gt;;
+   45  
+   46    generateContentStream(
+   47      request: GenerateContentParameters,
+   48      userPromptId: string,
+   49      role: LlmRole,
+   50    ): Promise&lt;AsyncGenerator&lt;GenerateContentResponse&gt;&gt;;
+   51  
+   52    countTokens(request: CountTokensParameters): Promise&lt;CountTokensResponse&gt;;
+   53  
+   54    embedContent(request: EmbedContentParameters): Promise&lt;EmbedContentResponse&gt;;
+   55  
+   56    userTier?: UserTierId;
+   57  
+   58    userTierName?: string;
+   59  
+   60    paidTier?: GeminiUserTier;
+   61  }
+   62  
+   63  export enum AuthType {
+   64    LOGIN_WITH_GOOGLE = &#39;oauth-personal&#39;,
+   65    USE_GEMINI = &#39;gemini-api-key&#39;,
+   66    USE_VERTEX_AI = &#39;vertex-ai&#39;,
+   67    LEGACY_CLOUD_SHELL = &#39;cloud-shell&#39;,
+   68    COMPUTE_ADC = &#39;compute-default-credentials&#39;,
+   69    GATEWAY = &#39;gateway&#39;,
+   70  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/contentGenerator.ts#L35-L70"><code>packages/core/src/core/contentGenerator.ts:35–70</code></a><small>ContentGenerator 与 AuthType。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/contentGenerator.ts#L72-L110"><code>packages/core/src/core/contentGenerator.ts:72–110</code></a><small>环境自动检测和配置。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-provider-002" data-search="个人/adc 走 code assist，api key/vertex/gateway 走 google genai sdk createcontentgenerator 对 login_with_google/compute_adc 创建 codeassistserver 并加模型映射；gemini/vertex/gateway 构造 googlegenai，支持自定义 base url、headers、proxy 和 vertex routing headers。 登录方式不仅换凭证，也可能换后端客户端；企业 vertex 还能指定共享/专用路由。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">05</span><div><div class="lesson-eyebrow">L1 · fact · gemini-provider-002</div><h3>个人/ADC 走 Code Assist，API key/Vertex/Gateway 走 Google GenAI SDK</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>createContentGenerator 对 LOGIN_WITH_GOOGLE/COMPUTE_ADC 创建 CodeAssistServer 并加模型映射；Gemini/Vertex/Gateway 构造 GoogleGenAI，支持自定义 base URL、headers、proxy 和 Vertex routing headers。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>登录方式不仅换凭证，也可能换后端客户端；企业 Vertex 还能指定共享/专用路由。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>同一主循环有多条传输实现，认证切换测试必须覆盖历史 thoughtSignature 清理。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/contentGenerator.ts#L285-L310">packages/core/src/core/contentGenerator.ts · L285–L310 ↗</a></div><pre><code>  285      if (
+  286        apiKeyAuthMechanism === &#39;bearer&#39; &amp;&amp;
+  287        (config.authType === AuthType.USE_GEMINI ||
+  288          config.authType === AuthType.USE_VERTEX_AI) &amp;&amp;
+  289        config.apiKey
+  290      ) {
+  291        baseHeaders[&#39;Authorization&#39;] = `Bearer ${config.apiKey}`;
+  292      }
+  293      if (
+  294        config.authType === AuthType.LOGIN_WITH_GOOGLE ||
+  295        config.authType === AuthType.COMPUTE_ADC
+  296      ) {
+  297        const httpOptions = { headers: baseHeaders };
+  298        return new LoggingContentGenerator(
+  299          new ModelMappingContentGenerator(
+  300            await createCodeAssistContentGenerator(
+  301              httpOptions,
+  302              config.authType,
+  303              gcConfig,
+  304              sessionId,
+  305            ),
+  306            CCPA_AI_MODEL_MAPPINGS,
+  307          ),
+  308          gcConfig,
+  309        );
+  310      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/contentGenerator.ts#L285-L310"><code>packages/core/src/core/contentGenerator.ts:285–310</code></a><small>Code Assist 路径。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/contentGenerator.ts#L312-L410"><code>packages/core/src/core/contentGenerator.ts:312–410</code></a><small>GenAI/Vertex/Gateway、headers、proxy 与 endpoint。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-provider-003" data-search="连接阶段与中途流错误分开重试，中途流最多四次尝试 geminichat 的 streamwithretries 把连接阶段错误交给底层 retrywithbackoff；流迭代中的可重试网络/内容错误使用独立指数退避，并限制到 mid_stream_retry_options 的四次总尝试。 连不上和连上后半路断掉是两类事故，分别计数；不会因为全局重试设得很大就反复重播半截响应。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">06</span><div><div class="lesson-eyebrow">L1 · fact · gemini-provider-003</div><h3>连接阶段与中途流错误分开重试，中途流最多四次尝试</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>GeminiChat 的 streamWithRetries 把连接阶段错误交给底层 retryWithBackoff；流迭代中的可重试网络/内容错误使用独立指数退避，并限制到 MID_STREAM_RETRY_OPTIONS 的四次总尝试。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>连不上和连上后半路断掉是两类事故，分别计数；不会因为全局重试设得很大就反复重播半截响应。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>降低 mid-stream 重复输出/工具调用风险。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/geminiChat.ts#L517-L578">packages/core/src/core/geminiChat.ts · L517–L578 ↗</a></div><pre><code>  517      const streamWithRetries = async function* (
+  518        this: GeminiChat,
+  519      ): AsyncGenerator&lt;StreamEvent, void, void&gt; {
+  520        try {
+  521          const maxAttempts = this.context.config.getMaxAttempts();
+  522  
+  523          for (let attempt = 0; attempt &lt; maxAttempts; attempt++) {
+  524            let isConnectionPhase = true;
+  525            try {
+  526              if (attempt &gt; 0) {
+  527                yield { type: StreamEventType.RETRY };
+  528              }
+  529  
+  530              // If this is a retry, update the key with the new context.
+  531              const currentConfigKey =
+  532                attempt &gt; 0
+  533                  ? { ...modelConfigKey, isRetry: true }
+  534                  : modelConfigKey;
+  535  
+  536              isConnectionPhase = true;
+  537              const stream = await this.makeApiCallAndProcessStream(
+  538                currentConfigKey,
+  539                requestHistory,
+  540                prompt_id,
+  541                signal,
+      … 26 lines omitted; exact range 517–578 …
+  568                    value: error.syntheticResponse,
+  569                  };
+  570                }
+  571                return; // Stop the generator
+  572              }
+  573  
+  574              if (isConnectionPhase) {
+  575                // Connection phase errors have already been retried by retryWithBackoff.
+  576                // If they bubble up here, they are exhausted or fatal.
+  577                throw error;
+  578              }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/geminiChat.ts#L517-L578"><code>packages/core/src/core/geminiChat.ts:517–578</code></a><small>连接与流迭代错误边界。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/geminiChat.ts#L580-L648"><code>packages/core/src/core/geminiChat.ts:580–648</code></a><small>mid-stream 分类、退避与上限。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 3</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="tools" data-chapter><div class="module-kicker">M04 · TOOLS</div><h2>工具系统：Agent 的手脚怎样被注册和调度</h2><p class="section-question">模型看见的工具说明，和真正执行工具的代码，是不是同一个东西？并发、编辑和失败结果怎么处理？</p><div class="analogy"><b>先用一个生活比喻</b><p>工具系统像机场：模型提交登机牌，注册表确认航班，权限闸机检查证件，调度器决定跑道，最后才允许真正起飞。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>Turn 只解析模型流，工具执行交给独立 event-driven Scheduler</td><td><code>packages/core/src/core/turn.ts:236</code></td><td>模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。</td></tr><tr><td>超大工具结果在调度阶段落盘，取消也返回合法 functionResponse</td><td><code>packages/core/src/scheduler/tool-executor.ts:250</code></td><td>工具被叫停也必须交一张正式回执；已经产生的大输出不会硬塞回上下文。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-tools-001" data-search="turn 只解析模型流，工具执行交给独立 event-driven scheduler turn 从 generatecontentstream 收集 text、thought、functioncall、usage 和 finish reason，将 functioncall 放进 pendingtoolcalls；主/子 agent 再以各自 registry、message bus、sandbox manager 创建 scheduler 批量执行。 模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。 tools-scheduler">
+    <div class="lesson-finding-head"><span class="lesson-number">07</span><div><div class="lesson-eyebrow">L1 · fact · gemini-tools-001</div><h3>Turn 只解析模型流，工具执行交给独立 event-driven Scheduler</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>Turn 从 generateContentStream 收集 text、thought、functionCall、usage 和 finish reason，将 functionCall 放进 pendingToolCalls；主/子 Agent 再以各自 registry、message bus、sandbox manager 创建 Scheduler 批量执行。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>主 Agent 和子 Agent 能复用同一工具治理链，同时各自限定工具集。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/turn.ts#L236-L320">packages/core/src/core/turn.ts · L236–L320 ↗</a></div><pre><code>  236    | ServerGeminiModelInfoEvent
+  237    | ServerGeminiAgentExecutionStoppedEvent
+  238    | ServerGeminiAgentExecutionBlockedEvent;
+  239  
+  240  // A turn manages the agentic loop turn within the server context.
+  241  export class Turn {
+  242    private callCounter = 0;
+  243  
+  244    readonly pendingToolCalls: ToolCallRequestInfo[] = [];
+  245    private debugResponses: GenerateContentResponse[] = [];
+  246    private pendingCitations = new Set&lt;string&gt;();
+  247    private cachedResponseText: string | undefined = undefined;
+  248    finishReason: FinishReason | undefined = undefined;
+  249    private hasLoggedRagTrace = false;
+  250  
+  251    constructor(
+  252      private readonly chat: GeminiChat,
+  253      private readonly prompt_id: string,
+  254    ) {}
+  255  
+  256    // The run method yields simpler events suitable for server logic
+  257    async *run(
+  258      modelConfigKey: ModelConfigKey,
+  259      req: PartListUnion,
+  260      signal: AbortSignal,
+      … 49 lines omitted; exact range 236–320 …
+  310          const resp = streamEvent.value;
+  311          if (!resp) continue; // Skip if there&#39;s no response body
+  312  
+  313          // Log RAG trace if enabled (only once per turn to avoid log bloat on streams)
+  314          if (
+  315            !this.hasLoggedRagTrace &amp;&amp;
+  316            this.chat.context.config.getLogRagSnippets?.()
+  317          ) {
+  318            let ragStatus: string | undefined;
+  319            let snippets: RagSnippet[] | undefined;
+  320  </code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/turn.ts#L236-L320"><code>packages/core/src/core/turn.ts:236–320</code></a><small>Turn 流解析与 pending tool calls。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agents/agent-scheduler.ts#L42-L92"><code>packages/core/src/agents/agent-scheduler.ts:42–92</code></a><small>子 Agent Scheduler context 与生命周期。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-tools-002" data-search="超大工具结果在调度阶段落盘，取消也返回合法 functionresponse toolexecutor 对超过阈值的文本写入项目临时目录并替换为截断文本；取消时若已有部分输出仍先截断/保存，再构造带 error 的 functionresponse，保持 gemini 协议配对。 工具被叫停也必须交一张正式回执；已经产生的大输出不会硬塞回上下文。 tools-scheduler">
+    <div class="lesson-finding-head"><span class="lesson-number">08</span><div><div class="lesson-eyebrow">L1 · fact · gemini-tools-002</div><h3>超大工具结果在调度阶段落盘，取消也返回合法 functionResponse</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ToolExecutor 对超过阈值的文本写入项目临时目录并替换为截断文本；取消时若已有部分输出仍先截断/保存，再构造带 error 的 functionResponse，保持 Gemini 协议配对。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>工具被叫停也必须交一张正式回执；已经产生的大输出不会硬塞回上下文。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>失败/取消不会破坏下一轮历史，且原始输出可从文件追查。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/scheduler/tool-executor.ts#L250-L297">packages/core/src/scheduler/tool-executor.ts · L250–L297 ↗</a></div><pre><code>  250        content.length === 1 &amp;&amp;
+  251        &#39;tool&#39; in call &amp;&amp;
+  252        call.tool instanceof DiscoveredMCPTool
+  253      ) {
+  254        const firstPart = content[0];
+  255        if (typeof firstPart === &#39;object&#39; &amp;&amp; typeof firstPart.text === &#39;string&#39;) {
+  256          const textContent = firstPart.text;
+  257          const threshold = this.config.getTruncateToolOutputThreshold();
+  258  
+  259          if (threshold &gt; 0 &amp;&amp; textContent.length &gt; threshold) {
+  260            const originalContentLength = textContent.length;
+  261            const { outputFile: savedPath } = await saveTruncatedToolOutput(
+  262              textContent,
+  263              toolName,
+  264              callId,
+  265              this.config.storage.getProjectTempDir(),
+  266              this.context.promptId,
+  267            );
+  268            outputFile = savedPath;
+  269            const truncatedText = formatTruncatedToolOutput(
+  270              textContent,
+  271              outputFile,
+  272              threshold,
+  273            );
+  274  
+      … 12 lines omitted; exact range 250–297 …
+  287                threshold,
+  288              }),
+  289            );
+  290  
+  291            return { truncatedContent, outputFile };
+  292          }
+  293        }
+  294      }
+  295  
+  296      return { truncatedContent: content, outputFile };
+  297    }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/scheduler/tool-executor.ts#L250-L297"><code>packages/core/src/scheduler/tool-executor.ts:250–297</code></a><small>输出阈值、保存与截断。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/scheduler/tool-executor.ts#L299-L368"><code>packages/core/src/scheduler/tool-executor.ts:299–368</code></a><small>取消结果与 functionResponse 配对。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 4</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="context" data-chapter><div class="module-kicker">M05 · CONTEXT</div><h2>上下文：有限窗口怎样装下长任务</h2><p class="section-question">当对话、工具输出、计划和记忆越来越多，系统怎样决定留下什么、折叠什么、放到哪里？</p><div class="analogy"><b>先用一个生活比喻</b><p>上下文不是聊天记录，而是一张会整理的工作台：常用零件放桌面，旧材料装进档案盒，必要时只留下索引卡。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>箱子装到一半就提前整理，最近三成原文留下，旧七成写成摘要；切口只选完整对话边界。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>Legacy 压缩默认在 50% 窗口触发，并保留最近约 30%</td><td><code>packages/core/src/context/chatCompressionService.ts:37</code></td><td>箱子装到一半就提前整理，最近三成原文留下，旧七成写成摘要；切口只选完整对话边界。</td></tr><tr><td>旧工具输出采用反向预算，超额内容落临时文件并只留尾部</td><td><code>packages/core/src/context/chatCompressionService.ts:124</code></td><td>最新日志全文留在桌面，旧日志搬进档案室，只在上下文里留末尾和取件地址。</td></tr><tr><td>摘要膨胀会触发熔断，随后只做内容截断</td><td><code>packages/core/src/core/client.ts:107</code></td><td>如果摘要反而比原文胖，就不再每轮花钱重写摘要，改用更轻的裁剪。</td></tr><tr><td>新 ContextManager 是图与流水线系统，带 preview late-bind、压力屏障、GC/蒸馏和结构校验</td><td><code>packages/core/src/context/contextManager.ts:26</code></td><td>新系统不再把历史当一长串消息，而是当可追溯的节点图；当前问题先在草稿区处理，确认后才影响长期账本。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-context-001" data-search="legacy 压缩默认在 50% 窗口触发，并保留最近约 30% chatcompressionservice 默认阈值为模型 token limit 的 0.5，压缩切点按序列化字符量寻找安全 user turn，目标保留最近 30%，且不会拆断 function call/response 边界。 箱子装到一半就提前整理，最近三成原文留下，旧七成写成摘要；切口只选完整对话边界。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">09</span><div><div class="lesson-eyebrow">L1 · fact · gemini-context-001</div><h3>Legacy 压缩默认在 50% 窗口触发，并保留最近约 30%</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ChatCompressionService 默认阈值为模型 token limit 的 0.5，压缩切点按序列化字符量寻找安全 user turn，目标保留最近 30%，且不会拆断 function call/response 边界。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>箱子装到一半就提前整理，最近三成原文留下，旧七成写成摘要；切口只选完整对话边界。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>为长回复和工具调用预留较大余量，代价是较早产生摘要成本。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/chatCompressionService.ts#L37-L52">packages/core/src/context/chatCompressionService.ts · L37–L52 ↗</a></div><pre><code>   37  /**
+   38   * Default threshold for compression token count as a fraction of the model&#39;s
+   39   * token limit. If the chat history exceeds this threshold, it will be compressed.
+   40   */
+   41  const DEFAULT_COMPRESSION_TOKEN_THRESHOLD = 0.5;
+   42  
+   43  /**
+   44   * The fraction of the latest chat history to keep. A value of 0.3
+   45   * means that only the last 30% of the chat history will be kept after compression.
+   46   */
+   47  const COMPRESSION_PRESERVE_THRESHOLD = 0.3;
+   48  
+   49  /**
+   50   * The budget for function response tokens in the preserved history.
+   51   */
+   52  const COMPRESSION_FUNCTION_RESPONSE_TOKEN_BUDGET = 50_000;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>config</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/chatCompressionService.ts#L37-L52"><code>packages/core/src/context/chatCompressionService.ts:37–52</code></a><small>50% trigger、30% preserve 与工具预算。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/chatCompressionService.ts#L54-L100"><code>packages/core/src/context/chatCompressionService.ts:54–100</code></a><small>安全 split point。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-context-002" data-search="旧工具输出采用反向预算，超额内容落临时文件并只留尾部 压缩前从最新向最旧累计 function response token，优先保留近端；超过 50k 工具响应预算后，将较老大输出保存到文件并替换为最后 30 行和路径提示。 最新日志全文留在桌面，旧日志搬进档案室，只在上下文里留末尾和取件地址。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">10</span><div><div class="lesson-eyebrow">L1 · fact · gemini-context-002</div><h3>旧工具输出采用反向预算，超额内容落临时文件并只留尾部</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>压缩前从最新向最旧累计 function response token，优先保留近端；超过 50k 工具响应预算后，将较老大输出保存到文件并替换为最后 30 行和路径提示。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>最新日志全文留在桌面，旧日志搬进档案室，只在上下文里留末尾和取件地址。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>既省 token 又保留可恢复原文，比不可逆截断更适合调试。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/chatCompressionService.ts#L124-L142">packages/core/src/context/chatCompressionService.ts · L124–L142 ↗</a></div><pre><code>  124  /**
+  125   * Processes the chat history to ensure function responses don&#39;t exceed a specific token budget.
+  126   *
+  127   * This function implements a &quot;Reverse Token Budget&quot; strategy:
+  128   * 1. It iterates through the history from the most recent turn to the oldest.
+  129   * 2. It keeps a running tally of tokens used by function responses.
+  130   * 3. Recent tool outputs are preserved in full to maintain high-fidelity context for the current turn.
+  131   * 4. Once the budget (COMPRESSION_FUNCTION_RESPONSE_TOKEN_BUDGET) is exceeded, any older large
+  132   *    tool responses are truncated to their last 30 lines and saved to a temporary file.
+  133   *
+  134   * This ensures that compression effectively reduces context size even when recent turns
+  135   * contain massive tool outputs (like large grep results or logs).
+  136   */
+  137  async function truncateHistoryToBudget(
+  138    history: readonly Content[],
+  139    config: Config,
+  140  ): Promise&lt;Content[]&gt; {
+  141    let functionResponseTokenCounter = 0;
+  142    const truncatedHistory: Content[] = [];</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/chatCompressionService.ts#L124-L142"><code>packages/core/src/context/chatCompressionService.ts:124–142</code></a><small>reverse token budget 设计。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/chatCompressionService.ts#L144-L215"><code>packages/core/src/context/chatCompressionService.ts:144–215</code></a><small>工具结果计数、保存与替换。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-context-003" data-search="摘要膨胀会触发熔断，随后只做内容截断 trycompresschat 记录 compression_failed_inflated_token_count；非强制压缩一旦失败即保持 hasfailedcompressionattempt，后续服务可返回 content_truncated 并直接更新 history，不重建 chat。 如果摘要反而比原文胖，就不再每轮花钱重写摘要，改用更轻的裁剪。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">11</span><div><div class="lesson-eyebrow">L1 · fact · gemini-context-003</div><h3>摘要膨胀会触发熔断，随后只做内容截断</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>tryCompressChat 记录 COMPRESSION_FAILED_INFLATED_TOKEN_COUNT；非强制压缩一旦失败即保持 hasFailedCompressionAttempt，后续服务可返回 CONTENT_TRUNCATED 并直接更新 history，不重建 chat。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>如果摘要反而比原文胖，就不再每轮花钱重写摘要，改用更轻的裁剪。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>避免压缩风暴，但本会话之后的语义保真会更多依赖工具输出 masking。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L107-L120">packages/core/src/core/client.ts · L107–L120 ↗</a></div><pre><code>  107    /**
+  108     * At any point in this conversation, was compression triggered without
+  109     * being forced and did it fail?
+  110     */
+  111    private hasFailedCompressionAttempt = false;
+  112  
+  113    constructor(private readonly context: AgentLoopContext) {
+  114      this.loopDetector = new LoopDetectionService(this.config);
+  115      this.compressionService = new ChatCompressionService();
+  116      this.agentHistoryProvider = new AgentHistoryProvider(
+  117        this.config.agentHistoryProviderConfig,
+  118        this.config,
+  119      );
+  120      this.toolOutputMaskingService = new ToolOutputMaskingService();</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L107-L120"><code>packages/core/src/core/client.ts:107–120</code></a><small>压缩失败状态。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L1196-L1248"><code>packages/core/src/core/client.ts:1196–1248</code></a><small>失败熔断、重建 chat 与轻量截断。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-context-004" data-search="新 contextmanager 是图与流水线系统，带 preview late-bind、压力屏障、gc/蒸馏和结构校验 contextmanager 从 durable agentchathistory 同步 pristine graph，对 pending request 建 ephemeral preview，等待 pipeline/hot-start barrier，执行 triggers，再带保护节点渲染、harden 与 invariant check；相同 node hash 可复用 render cache。 新系统不再把历史当一长串消息，而是当可追溯的节点图；当前问题先在草稿区处理，确认后才影响长期账本。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">12</span><div><div class="lesson-eyebrow">L1 · fact · gemini-context-004</div><h3>新 ContextManager 是图与流水线系统，带 preview late-bind、压力屏障、GC/蒸馏和结构校验</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ContextManager 从 durable AgentChatHistory 同步 pristine graph，对 pending request 建 ephemeral preview，等待 pipeline/hot-start barrier，执行 triggers，再带保护节点渲染、harden 与 invariant check；相同 node hash 可复用 render cache。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>新系统不再把历史当一长串消息，而是当可追溯的节点图；当前问题先在草稿区处理，确认后才影响长期账本。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>能做精细蒸馏和增量管理，但复杂度显著高于 legacy summary，必须明确 feature gate 与回退路径。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/contextManager.ts#L26-L88">packages/core/src/context/contextManager.ts · L26–L88 ↗</a></div><pre><code>   26  export class ContextManager {
+   27    // Master state containing the pristine graph and current active graph.
+   28    private buffer: ContextWorkingBufferImpl =
+   29      ContextWorkingBufferImpl.initialize([]);
+   30  
+   31    private readonly eventBus: ContextEventBus;
+   32    private readonly orchestrator: PipelineOrchestrator;
+   33  
+   34    // Track what IDs have been evaluated for triggers to prevent redundant processing
+   35    private readonly evaluatedNodeIds = new Set&lt;string&gt;();
+   36  
+   37    // Hysteresis tracking to prevent utility call churn
+   38    private lastTriggeredDeficit = 0;
+   39    private lastTriggeredNormalizeDeficit = 0;
+   40  
+   41    // Cache for Anomaly 3 (Redundant Renders)
+   42    private lastRenderCache?: {
+   43      nodesHash: string;
+   44      result: {
+   45        history: HistoryTurn[];
+   46        apiHistory: Content[];
+   47        pendingApiHistory: Content[];
+   48        didApplyManagement: boolean;
+   49        baseUnits: number;
+   50        processedNodes: readonly ConcreteNode[];
+      … 27 lines omitted; exact range 26–88 …
+   78          );
+   79          return;
+   80        }
+   81  
+   82        this.buffer = this.buffer.applyProcessorResult(
+   83          event.processorId,
+   84          event.targets,
+   85          event.returnedNodes,
+   86        );
+   87      });
+   88    }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/contextManager.ts#L26-L88"><code>packages/core/src/context/contextManager.ts:26–88</code></a><small>master buffer、事件应用和 render cache。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/contextManager.ts#L90-L195"><code>packages/core/src/context/contextManager.ts:90–195</code></a><small>sync、preview、barrier、triggers 与 render。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/contextManager.ts#L197-L275"><code>packages/core/src/context/contextManager.ts:197–275</code></a><small>commit backstop、invariants、harden 和 late-bind 分割。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-context-005" data-search="新上下文系统用真实 api token 反校准本地估算 processturn 把 contextmanager 渲染得到的 baseunits 带入请求；finished 事件若包含 prompttokencount，则通过 eventbus 发 actualtokens 与 promptbaseunits ground truth。 先用本地尺子估，再用模型 api 的过磅结果校准尺子。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">13</span><div><div class="lesson-eyebrow">L1 · fact · gemini-context-005</div><h3>新上下文系统用真实 API token 反校准本地估算</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>processTurn 把 ContextManager 渲染得到的 baseUnits 带入请求；Finished 事件若包含 promptTokenCount，则通过 eventBus 发 actualTokens 与 promptBaseUnits ground truth。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>先用本地尺子估，再用模型 API 的过磅结果校准尺子。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>长期预算判断可适应多模态与不同模型 tokenizer 偏差。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L640-L678">packages/core/src/core/client.ts · L640–L678 ↗</a></div><pre><code>  640      let currentBaseUnits = 0;
+  641      let apiHistoryOverride: Content[] | undefined = undefined;
+  642  
+  643      if (this.config.getContextManagementConfig().enabled) {
+  644        if (this.contextManager) {
+  645          const rawPendingRequest = createUserContent(request);
+  646          const pendingRequest = {
+  647            id: randomUUID(),
+  648            content: rawPendingRequest,
+  649          };
+  650          const {
+  651            history: newHistory,
+  652            apiHistory,
+  653            pendingApiHistory,
+  654            baseUnits,
+  655          } = await this.contextManager.renderHistory(
+  656            pendingRequest,
+  657            undefined,
+  658            signal,
+  659          );
+  660  
+  661          currentBaseUnits = baseUnits;
+  662  
+  663          // Use the PROCESSED pending content if available (e.g. if cleaned or distilled)
+  664          const finalPendingContent =
+      … 3 lines omitted; exact range 640–678 …
+  668  
+  669          // Late-bind the prompt: Append the active request to the managed history
+  670          // only for the purpose of the upcoming API call.
+  671          apiHistoryOverride = [...apiHistory, finalPendingContent];
+  672  
+  673          this.getChat().setHistory(newHistory);
+  674  
+  675          // Use the original request for display/recording,
+  676          // but the processed one for the API and durable history.
+  677          displayContent = rawPendingRequest.parts || [];
+  678          request = finalPendingContent.parts || [];</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L640-L678"><code>packages/core/src/core/client.ts:640–678</code></a><small>ContextManager render 与 baseUnits。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L829-L838"><code>packages/core/src/core/client.ts:829–838</code></a><small>token ground truth 回灌。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 5</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="security" data-chapter><div class="module-kicker">M06 · SECURITY</div><h2>权限与沙箱：能做什么，在哪里做</h2><p class="section-question">审批按钮、规则引擎、容器和操作系统沙箱分别解决什么问题？为什么“问过用户”不等于“隔离了风险”？</p><div class="analogy"><b>先用一个生活比喻</b><p>审批像门卫问你有没有预约，沙箱像把访客关在指定房间；前者决定是否放行，后者限制放行后能摸到什么。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>政策可以精确到“哪个子 Agent 在非交互模式调用哪个 MCP 的哪个参数”，不只是允许/禁止 Bash。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>PolicyEngine 按优先级匹配工具、参数、MCP 身份、annotations、模式、交互状态和 subagent</td><td><code>packages/core/src/policy/policy-engine.ts:49</code></td><td>政策可以精确到“哪个子 Agent 在非交互模式调用哪个 MCP 的哪个参数”，不只是允许/禁止 Bash。</td></tr><tr><td>非交互默认拒绝，交互默认询问；危险命令强制 ASK，YOLO 例外</td><td><code>packages/core/src/policy/policy-engine.ts:253</code></td><td>没人看屏幕时不赌；有人在时先问。只有明确 YOLO 才允许危险命令绕过这层强制提问。</td></tr><tr><td>Sandbox 默认不开启，但即使关闭仍净化环境变量</td><td><code>packages/core/src/services/sandboxManagerFactory.ts:19</code></td><td>防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。</td></tr><tr><td>三平台使用真实 OS 隔离，并保护治理文件与 .env 类秘密</td><td><code>packages/core/src/services/sandboxManager.ts:194</code></td><td>开罩后不是靠模型自觉：Linux、macOS、Windows 各用系统级限制器，仓库规则和秘密文件另加保护。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-policy-001" data-search="policyengine 按优先级匹配工具、参数、mcp 身份、annotations、模式、交互状态和 subagent rulematches 对稳定序列化参数、mcp 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。 政策可以精确到“哪个子 agent 在非交互模式调用哪个 mcp 的哪个参数”，不只是允许/禁止 bash。 policy-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">14</span><div><div class="lesson-eyebrow">L1 · fact · gemini-policy-001</div><h3>PolicyEngine 按优先级匹配工具、参数、MCP 身份、annotations、模式、交互状态和 subagent</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ruleMatches 对稳定序列化参数、MCP 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>政策可以精确到“哪个子 Agent 在非交互模式调用哪个 MCP 的哪个参数”，不只是允许/禁止 Bash。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>企业控制力强，但规则冲突需要良好解释器和测试。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L49-L195">packages/core/src/policy/policy-engine.ts · L49–L195 ↗</a></div><pre><code>   49  function isWildcardPattern(name: string): boolean {
+   50    return name === &#39;*&#39; || name.includes(&#39;*&#39;);
+   51  }
+   52  
+   53  /**
+   54   * Checks if a tool call matches a wildcard pattern.
+   55   * Supports global (*) and the explicit MCP (*mcp_serverName_**) format.
+   56   */
+   57  function matchesWildcard(
+   58    pattern: string,
+   59    toolName: string,
+   60    serverName: string | undefined,
+   61  ): boolean {
+   62    if (pattern === &#39;*&#39;) {
+   63      return true;
+   64    }
+   65  
+   66    if (pattern === `${MCP_TOOL_PREFIX}*`) {
+   67      return serverName !== undefined;
+   68    }
+   69  
+   70    if (pattern.startsWith(MCP_TOOL_PREFIX) &amp;&amp; pattern.endsWith(&#39;_*&#39;)) {
+   71      const expectedServerName = pattern.slice(MCP_TOOL_PREFIX.length, -2);
+   72      // 1. Must be an MCP tool call (has serverName)
+   73      // 2. Server name must match
+      … 111 lines omitted; exact range 49–195 …
+  185    // Check interactive if specified
+  186    if (&#39;interactive&#39; in rule &amp;&amp; rule.interactive !== undefined) {
+  187      if (rule.interactive &amp;&amp; nonInteractive) {
+  188        return false;
+  189      }
+  190      if (!rule.interactive &amp;&amp; !nonInteractive) {
+  191        return false;
+  192      }
+  193    }
+  194  
+  195    return true;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L49-L195"><code>packages/core/src/policy/policy-engine.ts:49–195</code></a><small>完整规则匹配维度。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L198-L260"><code>packages/core/src/policy/policy-engine.ts:198–260</code></a><small>优先级、校验和默认决策。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-policy-002" data-search="非交互默认拒绝，交互默认询问；危险命令强制 ask，yolo 例外 policyengine 未配置 defaultdecision 时，noninteractive 为 deny、交互为 ask_user；shell heuristic 将危险命令改为 ask_user，yolo 保留原决定，已知安全命令可把 ask 降为 allow。 没人看屏幕时不赌；有人在时先问。只有明确 yolo 才允许危险命令绕过这层强制提问。 policy-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">15</span><div><div class="lesson-eyebrow">L1 · fact · gemini-policy-002</div><h3>非交互默认拒绝，交互默认询问；危险命令强制 ASK，YOLO 例外</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>PolicyEngine 未配置 defaultDecision 时，nonInteractive 为 DENY、交互为 ASK_USER；shell heuristic 将危险命令改为 ASK_USER，YOLO 保留原决定，已知安全命令可把 ASK 降为 ALLOW。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>没人看屏幕时不赌；有人在时先问。只有明确 YOLO 才允许危险命令绕过这层强制提问。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>无头执行失败关闭，YOLO 是明确的高风险模式。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L253-L260">packages/core/src/policy/policy-engine.ts · L253–L260 ↗</a></div><pre><code>  253      this.nonInteractive = config.nonInteractive ?? false;
+  254      this.defaultDecision =
+  255        config.defaultDecision ??
+  256        (this.nonInteractive ? PolicyDecision.DENY : PolicyDecision.ASK_USER);
+  257      this.disableAlwaysAllow = config.disableAlwaysAllow ?? false;
+  258      this.checkerRunner = checkerRunner;
+  259      this.approvalMode = config.approvalMode ?? ApprovalMode.DEFAULT;
+  260      this.sandboxManager = config.sandboxManager ?? new NoopSandboxManager();</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>config</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L253-L260"><code>packages/core/src/policy/policy-engine.ts:253–260</code></a><small>交互/非交互默认决策。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L284-L341"><code>packages/core/src/policy/policy-engine.ts:284–341</code></a><small>重定向与命令安全启发式。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-sandbox-001" data-search="sandbox 默认不开启，但即使关闭仍净化环境变量 factory 只有 sandbox.enabled 才按平台选择 linux/mac/windows manager，否则用 noopsandboxmanager；noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。 防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。 policy-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">16</span><div><div class="lesson-eyebrow">L1 · fact · gemini-sandbox-001</div><h3>Sandbox 默认不开启，但即使关闭仍净化环境变量</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>factory 只有 sandbox.enabled 才按平台选择 Linux/Mac/Windows manager，否则用 NoopSandboxManager；Noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>必须评价为“可选强隔离”，不能写成“默认在沙箱中执行”。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManagerFactory.ts#L19-L43">packages/core/src/services/sandboxManagerFactory.ts · L19–L43 ↗</a></div><pre><code>   19  /**
+   20   * Creates a sandbox manager based on the provided settings.
+   21   */
+   22  export function createSandboxManager(
+   23    sandbox: SandboxConfig | undefined,
+   24    options: GlobalSandboxOptions,
+   25    approvalMode?: string,
+   26  ): SandboxManager {
+   27    if (!options.modeConfig &amp;&amp; options.policyManager &amp;&amp; approvalMode) {
+   28      options.modeConfig = options.policyManager.getModeConfig(approvalMode);
+   29    }
+   30  
+   31    if (sandbox?.enabled) {
+   32      if (os.platform() === &#39;win32&#39;) {
+   33        return new WindowsSandboxManager(options);
+   34      } else if (os.platform() === &#39;linux&#39;) {
+   35        return new LinuxSandboxManager(options);
+   36      } else if (os.platform() === &#39;darwin&#39;) {
+   37        return new MacOsSandboxManager(options);
+   38      }
+   39      return new LocalSandboxManager(options);
+   40    }
+   41  
+   42    return new NoopSandboxManager(options);
+   43  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManagerFactory.ts#L19-L43"><code>packages/core/src/services/sandboxManagerFactory.ts:19–43</code></a><small>enabled gate 与平台选择。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L285-L333"><code>packages/core/src/services/sandboxManager.ts:285–333</code></a><small>Noop 环境净化与无隔离透传。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-sandbox-002" data-search="三平台使用真实 os 隔离，并保护治理文件与 .env 类秘密 linux 使用 bubblewrap 并生成 seccomp bpf 禁 ptrace；macos 用 sandbox-exec/seatbelt profile；windows 用 restricted token、job object、low integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。 开罩后不是靠模型自觉：linux、macos、windows 各用系统级限制器，仓库规则和秘密文件另加保护。 policy-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">17</span><div><div class="lesson-eyebrow">L1 · fact · gemini-sandbox-002</div><h3>三平台使用真实 OS 隔离，并保护治理文件与 .env 类秘密</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>Linux 使用 bubblewrap 并生成 seccomp BPF 禁 ptrace；macOS 用 sandbox-exec/Seatbelt profile；Windows 用 restricted token、Job Object、Low Integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>开罩后不是靠模型自觉：Linux、macOS、Windows 各用系统级限制器，仓库规则和秘密文件另加保护。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>跨平台安全面完整，但每个后端差异大，需各自做 denial 与路径逃逸回归。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L194-L223">packages/core/src/services/sandboxManager.ts · L194–L223 ↗</a></div><pre><code>  194  /**
+  195   * Files that represent the governance or &quot;constitution&quot; of the repository
+  196   * and should be write-protected in any sandbox.
+  197   */
+  198  export const GOVERNANCE_FILES = [
+  199    { path: &#39;.gitignore&#39;, isDirectory: false },
+  200    { path: &#39;.geminiignore&#39;, isDirectory: false },
+  201    { path: &#39;.git&#39;, isDirectory: true },
+  202  ] as const;
+  203  
+  204  /**
+  205   * Files that contain sensitive secrets or credentials and should be
+  206   * completely hidden (deny read/write) in any sandbox.
+  207   */
+  208  export const SECRET_FILES = [
+  209    { pattern: &#39;.env&#39; },
+  210    { pattern: &#39;.env.*&#39; },
+  211  ] as const;
+  212  
+  213  /**
+  214   * Checks if a given file name matches any of the secret file patterns.
+  215   */
+  216  export function isSecretFile(fileName: string): boolean {
+  217    return SECRET_FILES.some((s) =&gt; {
+  218      if (s.pattern.endsWith(&#39;*&#39;)) {
+  219        const prefix = s.pattern.slice(0, -1);
+  220        return fileName.startsWith(prefix);
+  221      }
+  222      return fileName === s.pattern;
+  223    });</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L194-L223"><code>packages/core/src/services/sandboxManager.ts:194–223</code></a><small>治理文件与秘密文件清单。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/sandbox/linux/LinuxSandboxManager.ts#L48-L114"><code>packages/core/src/sandbox/linux/LinuxSandboxManager.ts:48–114</code></a><small>seccomp BPF 与 ptrace 拒绝。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/sandbox/windows/WindowsSandboxManager.ts#L56-L72"><code>packages/core/src/sandbox/windows/WindowsSandboxManager.ts:56–72</code></a><small>Windows isolation 后端。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-sandbox-003" data-search="默认 sandbox mode 的 default 是可写 workspace，plan 才只读 sandboxpolicymanager 内建 fallback 中 plan 为 readonly/network off，default 和 accepting_edits 为 writable/network off；yolo 明确打开网络、写权限和 yolo 标志。 即使开启沙箱，普通默认模式也允许改工作区；“开沙箱”不等于“只读”。 policy-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">18</span><div><div class="lesson-eyebrow">L1 · risk · gemini-sandbox-003</div><h3>默认 sandbox mode 的 default 是可写 workspace，plan 才只读</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>SandboxPolicyManager 内建 fallback 中 plan 为 readonly/network off，default 和 accepting_edits 为 writable/network off；YOLO 明确打开网络、写权限和 yolo 标志。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>即使开启沙箱，普通默认模式也允许改工作区；“开沙箱”不等于“只读”。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>产品 UI 必须同时展示 sandbox enabled 与当前 mode，避免用户产生错误安全感。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/sandboxPolicyManager.ts#L49-L94">packages/core/src/policy/sandboxPolicyManager.ts · L49–L94 ↗</a></div><pre><code>   49    private static get DEFAULT_CONFIG(): SandboxTomlSchemaType {
+   50      if (!SandboxPolicyManager._DEFAULT_CONFIG) {
+   51        const __filename = fileURLToPath(import.meta.url);
+   52        const __dirname = path.dirname(__filename);
+   53        const defaultPath = path.join(
+   54          __dirname,
+   55          &#39;policies&#39;,
+   56          &#39;sandbox-default.toml&#39;,
+   57        );
+   58        try {
+   59          const content = fs.readFileSync(defaultPath, &#39;utf8&#39;);
+   60          if (typeof content !== &#39;string&#39;) {
+   61            SandboxPolicyManager._DEFAULT_CONFIG = {
+   62              modes: {
+   63                plan: {
+   64                  network: false,
+   65                  readonly: true,
+   66                  approvedTools: [],
+   67                  allowOverrides: true,
+   68                },
+   69                default: {
+   70                  network: false,
+   71                  readonly: false,
+   72                  approvedTools: [],
+   73                  allowOverrides: true,
+      … 10 lines omitted; exact range 49–94 …
+   84            return SandboxPolicyManager._DEFAULT_CONFIG;
+   85          }
+   86          SandboxPolicyManager._DEFAULT_CONFIG = SandboxTomlSchema.parse(
+   87            toml.parse(content),
+   88          );
+   89        } catch (e) {
+   90          debugLogger.error(`Failed to parse default sandbox policy: ${e}`);
+   91          throw new Error(`Failed to parse default sandbox policy: ${e}`);
+   92        }
+   93      }
+   94      return SandboxPolicyManager._DEFAULT_CONFIG;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>config</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/sandboxPolicyManager.ts#L49-L94"><code>packages/core/src/policy/sandboxPolicyManager.ts:49–94</code></a><small>plan/default/accepting_edits 默认能力。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/sandboxPolicyManager.ts#L140-L158"><code>packages/core/src/policy/sandboxPolicyManager.ts:140–158</code></a><small>YOLO 和 mode 映射。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 6</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="ecosystem" data-chapter><div class="module-kicker">M07 · ECOSYSTEM</div><h2>指令、MCP、Skills 与插件：能力如何接进来</h2><p class="section-question">一条系统指令、一个 Skill、一个 MCP server 和一个插件，分别在什么时候进入上下文和执行路径？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像给工作室接设备：说明书不是设备，设备也不等于电源；成熟 Harness 会分别治理发现、信任、加载、调用和卸载。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 OAuth。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>MCP 支持 stdio、Streamable HTTP、SSE fallback、OAuth、动态目录刷新和 progress</td><td><code>packages/core/src/tools/mcp-client.ts:188</code></td><td>本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 OAuth。</td></tr><tr><td>扩展是能力包：MCP、policy/checker、context、commands、hooks、agents 与 skills 可成组热装卸</td><td><code>packages/core/src/utils/extensionLoader.ts:31</code></td><td>扩展不是单个脚本，而是一箱可协同变化的工具、规则、记忆、钩子和 Agent。</td></tr><tr><td>GEMINI.md/Memory 分 global、user-project、extension、project，并支持受信目录 JIT 加载</td><td><code>packages/core/src/utils/memoryDiscovery.ts:383</code></td><td>常驻规章分层保存，走进更深目录时才加载当地规则；不受信目录不会因为读一个文件就注入它的说明。</td></tr><tr><td>Skills 有明确覆盖顺序，workspace skills 受 folder trust 保护</td><td><code>packages/core/src/skills/skillManager.ts:17</code></td><td>越靠近项目的技能优先级越高，但项目没被信任前不会让它改 Agent 的做事方式。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-mcp-001" data-search="mcp 支持 stdio、streamable http、sse fallback、oauth、动态目录刷新和 progress mcpclient 连接后发现 tools/prompts/resources 并注册，监听 listchanged；网络 transport 首选 http，失败可回退 sse，401 仅在显式 oauth.enabled 时发现/认证并重试；调用有 timeout、abort 与 progress token 路由。 本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 oauth。 mcp-extensions-skills-memory-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">19</span><div><div class="lesson-eyebrow">L1 · fact · gemini-mcp-001</div><h3>MCP 支持 stdio、Streamable HTTP、SSE fallback、OAuth、动态目录刷新和 progress</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>McpClient 连接后发现 tools/prompts/resources 并注册，监听 listChanged；网络 transport 首选 HTTP，失败可回退 SSE，401 仅在显式 oauth.enabled 时发现/认证并重试；调用有 timeout、abort 与 progress token 路由。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 OAuth。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>连接器成熟，且认证意图边界清楚；热刷新仍需依赖 registry sort 与 policy validation。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/tools/mcp-client.ts#L188-L292">packages/core/src/tools/mcp-client.ts · L188–L292 ↗</a></div><pre><code>  188    async connect(): Promise&lt;void&gt; {
+  189      if (this.status !== MCPServerStatus.DISCONNECTED) {
+  190        throw new Error(
+  191          `Can only connect when the client is disconnected, current state is ${this.status}`,
+  192        );
+  193      }
+  194      this.updateStatus(MCPServerStatus.CONNECTING);
+  195      try {
+  196        this.client = await connectToMcpServer(
+  197          this.clientVersion,
+  198          this.serverName,
+  199          this.serverConfig,
+  200          this.debugMode,
+  201          this.workspaceContext,
+  202          this.cliConfig,
+  203        );
+  204  
+  205        this.registerNotificationHandlers();
+  206  
+  207        const originalOnError = this.client.onerror;
+  208        this.client.onerror = (error) =&gt; {
+  209          if (this.status !== MCPServerStatus.CONNECTED) {
+  210            return;
+  211          }
+  212          if (originalOnError) originalOnError(error);
+      … 69 lines omitted; exact range 188–292 …
+  282    }
+  283  
+  284    /**
+  285     * Disconnects from the MCP server.
+  286     */
+  287    async disconnect(): Promise&lt;void&gt; {
+  288      if (this.status !== MCPServerStatus.CONNECTED) {
+  289        return;
+  290      }
+  291      for (const registries of this.registeredRegistries) {
+  292        registries.toolRegistry.removeMcpToolsByServer(this.serverName);</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/tools/mcp-client.ts#L188-L292"><code>packages/core/src/tools/mcp-client.ts:188–292</code></a><small>连接、发现、注册与断开。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/tools/mcp-client.ts#L390-L430"><code>packages/core/src/tools/mcp-client.ts:390–430</code></a><small>listChanged 动态刷新。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/tools/mcp-client.ts#L1829-L1916"><code>packages/core/src/tools/mcp-client.ts:1829–1916</code></a><small>transport 选择与连接。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/tools/mcp-client.ts#L1927-L2059"><code>packages/core/src/tools/mcp-client.ts:1927–2059</code></a><small>SSE fallback 和显式 OAuth gate。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-extension-001" data-search="扩展是能力包：mcp、policy/checker、context、commands、hooks、agents 与 skills 可成组热装卸 extensionloader 启动扩展时连接 mcp、刷新工具、注册 rules/checkers；批次完成后统一 refresh memory/system prompt/hooks/agent registry/skills。停止时按 source 移除政策并做同样刷新。 扩展不是单个脚本，而是一箱可协同变化的工具、规则、记忆、钩子和 agent。 mcp-extensions-skills-memory-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">20</span><div><div class="lesson-eyebrow">L1 · fact · gemini-extension-001</div><h3>扩展是能力包：MCP、policy/checker、context、commands、hooks、agents 与 skills 可成组热装卸</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ExtensionLoader 启动扩展时连接 MCP、刷新工具、注册 rules/checkers；批次完成后统一 refresh memory/system prompt/hooks/agent registry/skills。停止时按 source 移除政策并做同样刷新。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>扩展不是单个脚本，而是一箱可协同变化的工具、规则、记忆、钩子和 Agent。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>扩展卸载能回收治理状态；批量刷新减少 prompt cache 抖动。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/extensionLoader.ts#L31-L110">packages/core/src/utils/extensionLoader.ts · L31–L110 ↗</a></div><pre><code>   31    /**
+   32     * Fully initializes all active extensions.
+   33     *
+   34     * Called within `Config.initialize`, which must already have an
+   35     * McpClientManager, PromptRegistry, and GeminiChat set up.
+   36     */
+   37    async start(config: Config): Promise&lt;void&gt; {
+   38      this.isStarting = true;
+   39      try {
+   40        if (!this.config) {
+   41          this.config = config;
+   42        } else {
+   43          throw new Error(&#39;Already started, you may only call `start` once.&#39;);
+   44        }
+   45        await Promise.all(
+   46          this.getExtensions()
+   47            .filter((e) =&gt; e.isActive)
+   48            .map(this.startExtension.bind(this)),
+   49        );
+   50      } finally {
+   51        this.isStarting = false;
+   52      }
+   53    }
+   54  
+   55    /**
+      … 44 lines omitted; exact range 31–110 …
+  100        this.startCompletedCount++;
+  101        this.eventEmitter?.emit(&#39;extensionsStarting&#39;, {
+  102          total: this.startingCount,
+  103          completed: this.startCompletedCount,
+  104        });
+  105        if (this.startingCount === this.startCompletedCount) {
+  106          this.startingCount = 0;
+  107          this.startCompletedCount = 0;
+  108        }
+  109        await this.maybeRefreshMemories();
+  110      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/extensionLoader.ts#L31-L110"><code>packages/core/src/utils/extensionLoader.ts:31–110</code></a><small>启动、MCP、policy 和批次刷新。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/extensionLoader.ts#L113-L132"><code>packages/core/src/utils/extensionLoader.ts:113–132</code></a><small>统一刷新上下文、hooks、agents、skills。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/extensionLoader.ts#L172-L225"><code>packages/core/src/utils/extensionLoader.ts:172–225</code></a><small>停止与按来源移除政策。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-memory-001" data-search="gemini.md/memory 分 global、user-project、extension、project，并支持受信目录 jit 加载 memory discovery 分类别收集并串联；环境 memory 从 trusted root 向上到 git root；工具触达子目录时，只有目标处于 trusted root 才 jit 搜索并按 inode/device 去重。 常驻规章分层保存，走进更深目录时才加载当地规则；不受信目录不会因为读一个文件就注入它的说明。 mcp-extensions-skills-memory-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">21</span><div><div class="lesson-eyebrow">L1 · fact · gemini-memory-001</div><h3>GEMINI.md/Memory 分 global、user-project、extension、project，并支持受信目录 JIT 加载</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>memory discovery 分类别收集并串联；环境 memory 从 trusted root 向上到 git root；工具触达子目录时，只有目标处于 trusted root 才 JIT 搜索并按 inode/device 去重。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>常驻规章分层保存，走进更深目录时才加载当地规则；不受信目录不会因为读一个文件就注入它的说明。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>兼顾大仓库按需上下文与 prompt injection 边界。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/memoryDiscovery.ts#L383-L454">packages/core/src/utils/memoryDiscovery.ts · L383–L454 ↗</a></div><pre><code>  383  export function getExtensionMemoryPaths(
+  384    extensionLoader: ExtensionLoader,
+  385  ): string[] {
+  386    const extensionPaths = extensionLoader
+  387      .getExtensions()
+  388      .filter((ext) =&gt; ext.isActive)
+  389      .flatMap((ext) =&gt; ext.contextFiles)
+  390      .map((p) =&gt; toAbsolutePath(p));
+  391  
+  392    // Deduplicate case-insensitively (so macOS/Windows don&#39;t keep two casings of
+  393    // the same file) while preserving the first encountered casing for display.
+  394    const seenKeys = new Set&lt;string&gt;();
+  395    const unique: string[] = [];
+  396    for (const p of extensionPaths) {
+  397      const key = normalizePath(p);
+  398      if (seenKeys.has(key)) continue;
+  399      seenKeys.add(key);
+  400      unique.push(p);
+  401    }
+  402    return unique.sort();
+  403  }
+  404  
+  405  export async function getEnvironmentMemoryPaths(
+  406    trustedRoots: string[],
+  407    boundaryMarkers: readonly string[] = [&#39;.git&#39;],
+      … 36 lines omitted; exact range 383–454 …
+  444        pList
+  445          .map((p) =&gt; contentsMap.get(p))
+  446          .filter((c): c is GeminiFileContent =&gt; !!c),
+  447      );
+  448  
+  449    return {
+  450      global: getConcatenated(paths.global),
+  451      extension: getConcatenated(paths.extension),
+  452      project: getConcatenated(paths.project),
+  453      userProjectMemory: getConcatenated(paths.userProjectMemory ?? []),
+  454    };</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/memoryDiscovery.ts#L383-L454"><code>packages/core/src/utils/memoryDiscovery.ts:383–454</code></a><small>extension/environment 分层与分类。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/memoryDiscovery.ts#L512-L572"><code>packages/core/src/utils/memoryDiscovery.ts:512–572</code></a><small>JIT trusted-root gate 与 traversal ceiling。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/memoryDiscovery.ts#L578-L639"><code>packages/core/src/utils/memoryDiscovery.ts:578–639</code></a><small>文件身份去重与并发上限。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-skills-001" data-search="skills 有明确覆盖顺序，workspace skills 受 folder trust 保护 skillmanager 依次加载 builtin、extension、user、.agents alias、workspace，后者同名覆盖前者；未信任 workspace 时直接跳过项目 skills，并可由管理员全局禁用或按名禁用。 越靠近项目的技能优先级越高，但项目没被信任前不会让它改 agent 的做事方式。 mcp-extensions-skills-memory-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">22</span><div><div class="lesson-eyebrow">L1 · fact · gemini-skills-001</div><h3>Skills 有明确覆盖顺序，workspace skills 受 folder trust 保护</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>SkillManager 依次加载 builtin、extension、user、.agents alias、workspace，后者同名覆盖前者；未信任 workspace 时直接跳过项目 skills，并可由管理员全局禁用或按名禁用。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>越靠近项目的技能优先级越高，但项目没被信任前不会让它改 Agent 的做事方式。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>skills 被正确视为可执行影响，而非普通文档。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/skills/skillManager.ts#L17-L99">packages/core/src/skills/skillManager.ts · L17–L99 ↗</a></div><pre><code>   17  export class SkillManager {
+   18    private skills: SkillDefinition[] = [];
+   19    private activeSkillNames: Set&lt;string&gt; = new Set();
+   20    private adminSkillsEnabled = true;
+   21  
+   22    /**
+   23     * Clears all discovered skills.
+   24     */
+   25    clearSkills(): void {
+   26      this.skills = [];
+   27    }
+   28  
+   29    /**
+   30     * Resets session-scoped state (active skill names).
+   31     */
+   32    reset(): void {
+   33      this.activeSkillNames.clear();
+   34    }
+   35  
+   36    /**
+   37     * Sets administrative settings for skills.
+   38     */
+   39    setAdminSettings(enabled: boolean): void {
+   40      this.adminSkillsEnabled = enabled;
+   41    }
+      … 47 lines omitted; exact range 17–99 …
+   89      const projectSkills = await loadSkillsFromDir(
+   90        storage.getProjectSkillsDir(),
+   91      );
+   92      this.addSkillsWithPrecedence(projectSkills);
+   93  
+   94      // 4.1 Workspace agent skills alias (.agents/skills)
+   95      const projectAgentSkills = await loadSkillsFromDir(
+   96        storage.getProjectAgentSkillsDir(),
+   97      );
+   98      this.addSkillsWithPrecedence(projectAgentSkills);
+   99    }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/skills/skillManager.ts#L17-L99"><code>packages/core/src/skills/skillManager.ts:17–99</code></a><small>来源、优先级与 trust gate。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/skills/skillManager.ts#L124-L188"><code>packages/core/src/skills/skillManager.ts:124–188</code></a><small>冲突覆盖、禁用与展示。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-hooks-001" data-search="before/afteragent hooks 可停止、阻断、注入上下文或要求清空后继续 beforeagent 对每个 prompt_id 去重并可 stop/block/additionalcontext；afteragent 只在最外层且没有 pending tools 时运行，可 stop、block、clearcontext，并将 continue reason 作为新请求递归运行。 钩子既能在开工前加背景/拦截，也能在收工时验收，不合格可清空现场后让 agent 按理由重做。 mcp-extensions-skills-memory-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">23</span><div><div class="lesson-eyebrow">L1 · fact · gemini-hooks-001</div><h3>Before/AfterAgent hooks 可停止、阻断、注入上下文或要求清空后继续</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>BeforeAgent 对每个 prompt_id 去重并可 stop/block/additionalContext；AfterAgent 只在最外层且没有 pending tools 时运行，可 stop、block、clearContext，并将 continue reason 作为新请求递归运行。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>钩子既能在开工前加背景/拦截，也能在收工时验收，不合格可清空现场后让 Agent 按理由重做。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>适合策略与质量门，但递归 continuation 要有 turn 上限和 hook state 防重。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L153-L252">packages/core/src/core/client.ts · L153–L252 ↗</a></div><pre><code>  153    // Hook state to deduplicate BeforeAgent calls and track response for
+  154    // AfterAgent
+  155    private hookStateMap = new Map&lt;
+  156      string,
+  157      {
+  158        hasFiredBeforeAgent: boolean;
+  159        cumulativeResponse: string;
+  160        activeCalls: number;
+  161        originalRequest: PartListUnion;
+  162      }
+  163    &gt;();
+  164  
+  165    private async fireBeforeAgentHookSafe(
+  166      request: PartListUnion,
+  167      prompt_id: string,
+  168    ): Promise&lt;BeforeAgentHookReturn&gt; {
+  169      let hookState = this.hookStateMap.get(prompt_id);
+  170      if (!hookState) {
+  171        hookState = {
+  172          hasFiredBeforeAgent: false,
+  173          cumulativeResponse: &#39;&#39;,
+  174          activeCalls: 0,
+  175          originalRequest: request,
+  176        };
+  177        this.hookStateMap.set(prompt_id, hookState);
+      … 64 lines omitted; exact range 153–252 …
+  242      const finalRequest = hookState.originalRequest || currentRequest;
+  243  
+  244      const hookOutput = await this.config
+  245        .getHookSystem()
+  246        ?.fireAfterAgentEvent(
+  247          partToString(finalRequest),
+  248          finalResponseText,
+  249          stopHookActive,
+  250        );
+  251  
+  252      return hookOutput;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L153-L252"><code>packages/core/src/core/client.ts:153–252</code></a><small>Before/AfterAgent 安全包装与去重。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L930-L1034"><code>packages/core/src/core/client.ts:930–1034</code></a><small>stop/block/context/continuation 行为。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 7</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="collaboration" data-chapter><div class="module-kicker">M08 · COLLABORATION</div><h2>子 Agent：把一个大任务拆成可治理的协作</h2><p class="section-question">什么时候是普通工具调用，什么时候才算子 Agent？子 Agent 的上下文、预算、取消和结果怎样回到父 Agent？</p><div class="analogy"><b>先用一个生活比喻</b><p>不是把同事叫来聊天就叫协作；真正的协作要有工单、权限、截止时间、交付物和回收机制。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>无论子 Agent 在本机还是远程，上层看到的都是一条带编号、能续看的事件流。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>子 Agent 统一为可订阅、可重放、可中止的 AgentProtocol</td><td><code>packages/core/src/agent/agent-session.ts:14</code></td><td>无论子 Agent 在本机还是远程，上层看到的都是一条带编号、能续看的事件流。</td></tr><tr><td>Local 子 Agent 支持后台执行和取消，但同一 protocol 实例不允许并发 stream</td><td><code>packages/core/src/agents/local-subagent-protocol.ts:69</code></td><td>一个子 Agent 会话一次只接一单；主线程能先拿到 streamId，不必等它做完，但不能同时塞第二单。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-agent-001" data-search="子 agent 统一为可订阅、可重放、可中止的 agentprotocol agentsession 包装 send/subscribe/abort/events，并把一次 stream 限定在 agent_start→agent_end；它先订阅再回放历史，处理 setup 期间 early events，支持按 eventid 或 streamid 重接。 无论子 agent 在本机还是远程，上层看到的都是一条带编号、能续看的事件流。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">24</span><div><div class="lesson-eyebrow">L1 · fact · gemini-agent-001</div><h3>子 Agent 统一为可订阅、可重放、可中止的 AgentProtocol</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>AgentSession 包装 send/subscribe/abort/events，并把一次 stream 限定在 agent_start→agent_end；它先订阅再回放历史，处理 setup 期间 early events，支持按 eventId 或 streamId 重接。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>无论子 Agent 在本机还是远程，上层看到的都是一条带编号、能续看的事件流。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>UI、SDK 与 A2A server 可共享协议，断线恢复不必理解每种 executor。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agent/agent-session.ts#L14-L69">packages/core/src/agent/agent-session.ts · L14–L69 ↗</a></div><pre><code>   14  /**
+   15   * AgentSession is a wrapper around AgentProtocol that provides a more
+   16   * convenient API for consuming agent activity as an AsyncIterable.
+   17   */
+   18  export class AgentSession implements AgentProtocol {
+   19    private _protocol: AgentProtocol;
+   20  
+   21    constructor(protocol: AgentProtocol) {
+   22      this._protocol = protocol;
+   23    }
+   24  
+   25    async send(payload: AgentSend): Promise&lt;{ streamId: string | null }&gt; {
+   26      return this._protocol.send(payload);
+   27    }
+   28  
+   29    subscribe(callback: (event: AgentEvent) =&gt; void): Unsubscribe {
+   30      return this._protocol.subscribe(callback);
+   31    }
+   32  
+   33    async abort(): Promise&lt;void&gt; {
+   34      return this._protocol.abort();
+   35    }
+   36  
+   37    get events(): readonly AgentEvent[] {
+   38      return this._protocol.events;
+      … 20 lines omitted; exact range 14–69 …
+   59     * Returns an AsyncIterable that yields events from the agent session,
+   60     * optionally replaying events from history or reattaching to an existing stream.
+   61     *
+   62     * @param options Options for replaying or reattaching to the event stream.
+   63     */
+   64    async *stream(
+   65      options: {
+   66        eventId?: string;
+   67        streamId?: string;
+   68      } = {},
+   69    ): AsyncIterable&lt;AgentEvent&gt; {</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agent/agent-session.ts#L14-L69"><code>packages/core/src/agent/agent-session.ts:14–69</code></a><small>AgentProtocol wrapper 与 AsyncIterable。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agent/agent-session.ts#L70-L165"><code>packages/core/src/agent/agent-session.ts:70–165</code></a><small>订阅优先、eventId resume 和生命周期过滤。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agent/agent-session.ts#L166-L223"><code>packages/core/src/agent/agent-session.ts:166–223</code></a><small>streamId replay、early events 和清理。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-agent-002" data-search="local 子 agent 支持后台执行和取消，但同一 protocol 实例不允许并发 stream localsubagentprotocol 在 send(message) 时若已有 activestreamid 直接报错；它用 settimeout 后台启动，独立 abortcontroller，取消时丢弃 partial output 并返回空 aborted result。 一个子 agent 会话一次只接一单；主线程能先拿到 streamid，不必等它做完，但不能同时塞第二单。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">25</span><div><div class="lesson-eyebrow">L1 · limitation · gemini-agent-002</div><h3>Local 子 Agent 支持后台执行和取消，但同一 protocol 实例不允许并发 stream</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>LocalSubagentProtocol 在 send(message) 时若已有 activeStreamId 直接报错；它用 setTimeout 后台启动，独立 AbortController，取消时丢弃 partial output 并返回空 aborted result。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>一个子 Agent 会话一次只接一单；主线程能先拿到 streamId，不必等它做完，但不能同时塞第二单。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>并发应通过多个 Agent 实例而非重入同一实例，取消的部分成果不会自动保留。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agents/local-subagent-protocol.ts#L69-L95">packages/core/src/agents/local-subagent-protocol.ts · L69–L95 ↗</a></div><pre><code>   69  class LocalSubagentProtocol implements AgentProtocol {
+   70    private _events: AgentEvent[] = [];
+   71    private _subscribers = new Set&lt;(event: AgentEvent) =&gt; void&gt;();
+   72    private _streamId: string = randomUUID();
+   73    private _eventCounter = 0;
+   74    private _agentStartEmitted = false;
+   75    private _agentEndEmitted = false;
+   76    private _activeStreamId: string | undefined;
+   77    private _abortController = new AbortController();
+   78  
+   79    // Result promise wiring — re-created per stream in _beginNewStream()
+   80    private _resultResolve!: (output: OutputObject) =&gt; void;
+   81    private _resultReject!: (err: unknown) =&gt; void;
+   82    private _resultPromise: Promise&lt;OutputObject&gt; | undefined;
+   83  
+   84    // Buffered config from send({update})
+   85    private _bufferedConfig: Record&lt;string, unknown&gt; = {};
+   86  
+   87    constructor(
+   88      private readonly definition: LocalAgentDefinition,
+   89      private readonly context: AgentLoopContext,
+   90      // Required for API parity across protocol constructors (local, remote, legacy)
+   91      _messageBus: MessageBus,
+   92      private readonly _rawActivityCallback?: (
+   93        activity: SubagentActivityEvent,
+   94      ) =&gt; void,
+   95    ) {}</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agents/local-subagent-protocol.ts#L69-L95"><code>packages/core/src/agents/local-subagent-protocol.ts:69–95</code></a><small>事件、stream 与 abort 状态。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agents/local-subagent-protocol.ts#L112-L162"><code>packages/core/src/agents/local-subagent-protocol.ts:112–162</code></a><small>单 active stream、后台启动与取消。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/agents/local-subagent-protocol.ts#L183-L215"><code>packages/core/src/agents/local-subagent-protocol.ts:183–215</code></a><small>stream 重置和 abort 结果。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 8</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="state" data-chapter><div class="module-kicker">M09 · STATE</div><h2>会话、持久化与观测：让一次运行变成可追溯事实</h2><p class="section-question">如果进程崩了、用户刷新了、任务跑了一夜，系统凭什么恢复并解释“刚才究竟发生了什么”？</p><div class="analogy"><b>先用一个生活比喻</b><p>内存像白板，数据库像目录，append-only journal 像监控录像；可靠 Harness 不只保存最后答案，还保存每次转弯。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>对话文件像事件日志：可以写“回到某一步”、只改元数据，也能偶尔写一张完整快照；一行坏了不拖垮整份会话。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>会话记录是增量 JSONL，支持 rewind、metadata patch 和完整 checkpoint</td><td><code>packages/core/src/services/chatRecordingService.ts:150</code></td><td>对话文件像事件日志：可以写“回到某一步”、只改元数据，也能偶尔写一张完整快照；一行坏了不拖垮整份会话。</td></tr><tr><td>OpenTelemetry 可导出到 GCP、OTLP HTTP/gRPC、文件或控制台</td><td><code>packages/core/src/telemetry/sdk.ts:240</code></td><td>既能接企业观测平台，也能只落本地文件；模型调用之外还能看到进程内存和事件循环卡顿。</td></tr><tr><td>大型 TypeScript monorepo，测试面广，Apache-2.0</td><td><code>LICENSE:1</code></td><td>这是一套带 CLI、core、SDK、ACP/A2A、策略和平台沙箱的系统，不是单文件 demo。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-gemini-persistence-001" data-search="会话记录是增量 jsonl，支持 rewind、metadata patch 和完整 checkpoint chatrecordingservice 逐行解析；$rewindto 删除目标及以后消息，$set 可增量更新 metadata 或用 messages 数组重建 checkpoint，坏行被隔离忽略，缺关键 metadata 时回退 legacy parser。 对话文件像事件日志：可以写“回到某一步”、只改元数据，也能偶尔写一张完整快照；一行坏了不拖垮整份会话。 persistence-observability-maturity">
+    <div class="lesson-finding-head"><span class="lesson-number">26</span><div><div class="lesson-eyebrow">L1 · fact · gemini-persistence-001</div><h3>会话记录是增量 JSONL，支持 rewind、metadata patch 和完整 checkpoint</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ChatRecordingService 逐行解析；$rewindTo 删除目标及以后消息，$set 可增量更新 metadata 或用 messages 数组重建 checkpoint，坏行被隔离忽略，缺关键 metadata 时回退 legacy parser。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>对话文件像事件日志：可以写“回到某一步”、只改元数据，也能偶尔写一张完整快照；一行坏了不拖垮整份会话。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>支持 resume/rewind 与格式迁移，需持续测试 checkpoint 和增量事件的一致性。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/chatRecordingService.ts#L150-L203">packages/core/src/services/chatRecordingService.ts · L150–L203 ↗</a></div><pre><code>  150    try {
+  151      const fileStream = fs.createReadStream(filePath);
+  152      const rl = readline.createInterface({
+  153        input: fileStream,
+  154        crlfDelay: Infinity,
+  155      });
+  156  
+  157      let metadata: Partial&lt;ConversationRecord&gt; = {};
+  158      const messagesMap = new Map&lt;string, MessageRecord&gt;();
+  159      const messageIds: string[] = [];
+  160      const messageKinds = new Map&lt;
+  161        string,
+  162        { isUser: boolean; isResumable: boolean }
+  163      &gt;();
+  164      let isTrackingMemoryScratchpadFreshness = false;
+  165      let memoryScratchpadIsStale = false;
+  166      let firstUserMessageStr: string | undefined;
+  167  
+  168      for await (const line of rl) {
+  169        if (!line.trim()) continue;
+  170        try {
+  171          const record = JSON.parse(line) as unknown;
+  172          if (isRewindRecord(record)) {
+  173            if (isTrackingMemoryScratchpadFreshness) {
+  174              memoryScratchpadIsStale = true;
+      … 18 lines omitted; exact range 150–203 …
+  193                if (found) idsToDelete.push(id);
+  194              }
+  195              if (found) {
+  196                for (const id of idsToDelete) {
+  197                  messagesMap.delete(id);
+  198                }
+  199              } else {
+  200                messagesMap.clear();
+  201              }
+  202            }
+  203          } else if (isMessageRecord(record)) {</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/chatRecordingService.ts#L150-L203"><code>packages/core/src/services/chatRecordingService.ts:150–203</code></a><small>JSONL、rewind 和错误隔离。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/chatRecordingService.ts#L203-L300"><code>packages/core/src/services/chatRecordingService.ts:203–300</code></a><small>message 与 metadata checkpoint。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/chatRecordingService.ts#L300-L350"><code>packages/core/src/services/chatRecordingService.ts:300–350</code></a><small>initial/legacy record 和 fallback。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-observe-001" data-search="opentelemetry 可导出到 gcp、otlp http/grpc、文件或控制台 telemetry sdk 同时构造 trace/log/metric exporter，支持 gcp 直出、otlp http/grpc+gzip、单文件和 console；nodesdk 加载 http instrumentation，并可周期监控内存和 event loop。 既能接企业观测平台，也能只落本地文件；模型调用之外还能看到进程内存和事件循环卡顿。 persistence-observability-maturity">
+    <div class="lesson-finding-head"><span class="lesson-number">27</span><div><div class="lesson-eyebrow">L1 · fact · gemini-observe-001</div><h3>OpenTelemetry 可导出到 GCP、OTLP HTTP/gRPC、文件或控制台</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>telemetry SDK 同时构造 trace/log/metric exporter，支持 GCP 直出、OTLP HTTP/grpc+gzip、单文件和 console；NodeSDK 加载 HTTP instrumentation，并可周期监控内存和 event loop。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>既能接企业观测平台，也能只落本地文件；模型调用之外还能看到进程内存和事件循环卡顿。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>生产可观测性完整，但凭据、提示内容与遥测开关需纳入隐私治理。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/telemetry/sdk.ts#L240-L318">packages/core/src/telemetry/sdk.ts · L240–L318 ↗</a></div><pre><code>  240    const otlpEndpoint = config.getTelemetryOtlpEndpoint();
+  241    const otlpProtocol = config.getTelemetryOtlpProtocol();
+  242    const telemetryTarget = config.getTelemetryTarget();
+  243    const useCollector = config.getTelemetryUseCollector();
+  244  
+  245    const parsedEndpoint = parseOtlpEndpoint(otlpEndpoint, otlpProtocol);
+  246    const telemetryOutfile = config.getTelemetryOutfile();
+  247    const useOtlp = !!parsedEndpoint &amp;&amp; !telemetryOutfile;
+  248  
+  249    const gcpProjectId =
+  250      process.env[&#39;OTLP_GOOGLE_CLOUD_PROJECT&#39;] ||
+  251      process.env[&#39;GOOGLE_CLOUD_PROJECT&#39;];
+  252    const useDirectGcpExport =
+  253      telemetryTarget === TelemetryTarget.GCP &amp;&amp; !useCollector;
+  254  
+  255    let spanExporter:
+  256      | OTLPTraceExporter
+  257      | OTLPTraceExporterHttp
+  258      | GcpTraceExporter
+  259      | FileSpanExporter
+  260      | ConsoleSpanExporter;
+  261    let logExporter:
+  262      | OTLPLogExporter
+  263      | OTLPLogExporterHttp
+  264      | GcpLogExporter
+      … 43 lines omitted; exact range 240–318 …
+  308          url: parsedEndpoint,
+  309          compression: CompressionAlgorithm.GZIP,
+  310        });
+  311        metricReader = new PeriodicExportingMetricReader({
+  312          exporter: new OTLPMetricExporter({
+  313            url: parsedEndpoint,
+  314            compression: CompressionAlgorithm.GZIP,
+  315          }),
+  316          exportIntervalMillis: 10000,
+  317        });
+  318      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/telemetry/sdk.ts#L240-L318"><code>packages/core/src/telemetry/sdk.ts:240–318</code></a><small>GCP 与 OTLP exporters。</small></li><li><span>implementation</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/telemetry/sdk.ts#L319-L375"><code>packages/core/src/telemetry/sdk.ts:319–375</code></a><small>file/console、NodeSDK 和运行时监控。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-gemini-maturity-001" data-search="大型 typescript monorepo，测试面广，apache-2.0 固定提交约 2,144 个 typescript 文件，机械统计 892 个 *.test.ts/tsx；根许可证是 apache license 2.0。 这是一套带 cli、core、sdk、acp/a2a、策略和平台沙箱的系统，不是单文件 demo。 persistence-observability-maturity">
+    <div class="lesson-finding-head"><span class="lesson-number">28</span><div><div class="lesson-eyebrow">L3 · fact · gemini-maturity-001</div><h3>大型 TypeScript monorepo，测试面广，Apache-2.0</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>固定提交约 2,144 个 TypeScript 文件，机械统计 892 个 *.test.ts/tsx；根许可证是 Apache License 2.0。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>这是一套带 CLI、core、SDK、ACP/A2A、策略和平台沙箱的系统，不是单文件 demo。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>架构可借鉴性高，但新旧上下文路径和多前端会扩大回归矩阵。</p></div>
+        <div class="lesson-boundary"><b>边界与风险</b><ul><li>文件数是固定 checkout 的机械统计，不等于测试覆盖率。</li></ul></div>
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/LICENSE#L1-L28">LICENSE · L1–L28 ↗</a></div><pre><code>    1  
+    2                                   Apache License
+    3                             Version 2.0, January 2004
+    4                          http://www.apache.org/licenses/
+    5  
+    6     TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+    7  
+    8     1. Definitions.
+    9  
+   10        &quot;License&quot; shall mean the terms and conditions for use, reproduction,
+   11        and distribution as defined by Sections 1 through 9 of this document.
+   12  
+   13        &quot;Licensor&quot; shall mean the copyright owner or entity authorized by
+   14        the copyright owner that is granting the License.
+   15  
+   16        &quot;Legal Entity&quot; shall mean the union of the acting entity and all
+   17        other entities that control, are controlled by, or are under common
+   18        control with that entity. For the purposes of this definition,
+   19        &quot;control&quot; means (i) the power, direct or indirect, to cause the
+   20        direction or management of such entity, whether by contract or
+   21        otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   22        outstanding shares, or (iii) beneficial ownership of such entity.
+   23  
+   24        &quot;You&quot; (or &quot;Your&quot;) shall mean an individual or Legal Entity
+   25        exercising permissions granted by this License.
+   26  
+   27        &quot;Source&quot; form shall mean the preferred form for making modifications,
+   28        including but not limited to software source code, documentation</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/LICENSE#L1-L28"><code>LICENSE:1–28</code></a><small>Apache License 2.0。</small></li><li><span>test</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/context/contextManager.test.ts#L1-L40"><code>packages/core/src/context/contextManager.test.ts:1–40</code></a><small>ContextManager 专项测试入口。</small></li><li><span>test</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.integration.test.ts#L1-L40"><code>packages/core/src/services/sandboxManager.integration.test.ts:1–40</code></a><small>sandbox 集成测试入口。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 9</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="maturity" data-chapter><div class="module-kicker">M10 · ENGINEERING</div><h2>测试、恢复与工程取舍：把漂亮机制变成可靠产品</h2><p class="section-question">哪些行为有测试证明？哪些只是配置或 prompt 约定？当安全、性能、可恢复性冲突时，源码选择了什么？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像验收一座桥：图纸说明结构，测试证明承重，故障演练证明断电后还能不能让人安全回来。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 10</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section>
+  <section class="module-section practice" id="practice"><div class="module-kicker">M11 · PRACTICE</div><h2>把读懂变成会判断</h2><p class="section-question">下面的练习不要求你先写一个完整 Agent，而是训练你检查设计边界：事实是什么、推断是什么、如果换成自研产品要补哪一层。</p><div class="practice-grid"><article><span>Q1</span><h3>主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>控制流直观，递归路径共享 prompt_id 和 hook state，需要严格做 activeCalls 记账。</p><small>证据：packages/core/src/core/client.ts:79</small></details></article><article><span>Q2</span><h3>每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>上下文与模型选择顺序清楚，工具描述可随模型变化且同一 sequence 保持模型粘性。</p><small>证据：packages/core/src/core/client.ts:614</small></details></article><article><span>Q3</span><h3>循环检测能先恢复一次，再判定硬循环</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>比仅靠 turn 上限更早止损，并保留一次自恢复空间。</p><small>证据：packages/core/src/core/client.ts:744</small></details></article><article><span>Q4</span><h3>统一 ContentGenerator 契约覆盖流式、非流式、计数与 embedding</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>Provider 切换不改主循环，但 thought signature 兼容性仍需在切换认证后处理。</p><small>证据：packages/core/src/core/contentGenerator.ts:35</small></details></article><article><span>Q5</span><h3>个人/ADC 走 Code Assist，API key/Vertex/Gateway 走 Google GenAI SDK</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>同一主循环有多条传输实现，认证切换测试必须覆盖历史 thoughtSignature 清理。</p><small>证据：packages/core/src/core/contentGenerator.ts:285</small></details></article></div></section>
+  <section class="module-section source-index" id="sources"><div class="module-kicker">APPENDIX · SOURCE INDEX</div><h2>本课读过的实现文件</h2><p class="section-question">文件索引帮助你在课程外继续追踪调用链；每一条路径来自固定提交的证据账本。</p><ol><li><span>01</span><code>packages/core/src/core/client.ts</code><small>L79–111, L875–907, L910–1060, L614–715, L717–807, L744–763, L810–855, L107–120, L1196–1248, L640–678, L829–838, L153–252, L930–1034</small></li><li><span>02</span><code>packages/core/src/core/contentGenerator.ts</code><small>L35–70, L72–110, L285–310, L312–410</small></li><li><span>03</span><code>packages/core/src/core/geminiChat.ts</code><small>L517–578, L580–648</small></li><li><span>04</span><code>packages/core/src/context/chatCompressionService.ts</code><small>L37–52, L54–100, L124–142, L144–215</small></li><li><span>05</span><code>packages/core/src/context/contextManager.ts</code><small>L26–88, L90–195, L197–275</small></li><li><span>06</span><code>packages/core/src/core/turn.ts</code><small>L236–320</small></li><li><span>07</span><code>packages/core/src/agents/agent-scheduler.ts</code><small>L42–92</small></li><li><span>08</span><code>packages/core/src/scheduler/tool-executor.ts</code><small>L250–297, L299–368</small></li><li><span>09</span><code>packages/core/src/policy/policy-engine.ts</code><small>L49–195, L198–260, L253–260, L284–341</small></li><li><span>10</span><code>packages/core/src/services/sandboxManagerFactory.ts</code><small>L19–43</small></li><li><span>11</span><code>packages/core/src/services/sandboxManager.ts</code><small>L285–333, L194–223</small></li><li><span>12</span><code>packages/core/src/sandbox/linux/LinuxSandboxManager.ts</code><small>L48–114</small></li><li><span>13</span><code>packages/core/src/sandbox/windows/WindowsSandboxManager.ts</code><small>L56–72</small></li><li><span>14</span><code>packages/core/src/policy/sandboxPolicyManager.ts</code><small>L49–94, L140–158</small></li><li><span>15</span><code>packages/core/src/tools/mcp-client.ts</code><small>L188–292, L390–430, L1829–1916, L1927–2059</small></li><li><span>16</span><code>packages/core/src/utils/extensionLoader.ts</code><small>L31–110, L113–132, L172–225</small></li><li><span>17</span><code>packages/core/src/utils/memoryDiscovery.ts</code><small>L383–454, L512–572, L578–639</small></li><li><span>18</span><code>packages/core/src/skills/skillManager.ts</code><small>L17–99, L124–188</small></li><li><span>19</span><code>packages/core/src/agent/agent-session.ts</code><small>L14–69, L70–165, L166–223</small></li><li><span>20</span><code>packages/core/src/agents/local-subagent-protocol.ts</code><small>L69–95, L112–162, L183–215</small></li><li><span>21</span><code>packages/core/src/services/chatRecordingService.ts</code><small>L150–203, L203–300, L300–350</small></li><li><span>22</span><code>packages/core/src/telemetry/sdk.ts</code><small>L240–318, L319–375</small></li><li><span>23</span><code>LICENSE</code><small>L1–28</small></li><li><span>24</span><code>packages/core/src/context/contextManager.test.ts</code><small>L1–40</small></li><li><span>25</span><code>packages/core/src/services/sandboxManager.integration.test.ts</code><small>L1–40</small></li></ol></section>
+  <section class="module-section next-section"><div class="next-lesson"><div><span>下一步</span><h2>从课程回到报告，做一次反向核验</h2><p>教程负责让你读懂，报告负责让你查证。打开报告页，任选一个章节，尝试只靠源码摘录复述它的边界。</p></div><a href="../reports/gemini-cli.html">查看 Gemini CLI 报告 ↗</a></div></section>
+  <footer class="tutorial-footer"><div><span>FIXED SNAPSHOT</span><code>bef6119500b0238ad84f6396d2a6cabda9991554</code></div><nav><a href="codex.html">← OpenAI Codex</a><a href="jcode.html">JCode →</a></nav></footer></main></div><script src="../assets/tutorial.js"></script></body></html>

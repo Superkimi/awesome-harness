@@ -1,0 +1,717 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Grok Build 的固定提交源码教程：主循环、上下文、工具、安全、扩展、协作与观测"><title>Grok Build · Coding Agent 源码教程</title><link rel="stylesheet" href="../assets/tutorial.css"></head><body><div class="progress-rail" id="progress-rail"></div><header class="tutorial-topbar"><button class="hamburger" type="button" aria-label="打开目录" data-menu>☰</button><a href="index.html" class="top-brand">Harness <em>·</em> Coding Agent Book</a><span class="top-crumb">03 / Grok Build</span><div class="top-actions"><a href="../index.html">研究总览</a><button type="button" data-immersive>沉浸式</button><button type="button" data-theme>☼ / ☾</button></div></header><div class="tutorial-layout"><aside class="tutorial-toc"><a class="tutorial-brand" href="index.html"><span class="tutorial-mark">H</span><span>HARNESS<br><small>CODING AGENT BOOK</small></span></a><button class="toc-toggle" type="button" data-toc-toggle>章节目录</button><nav><a class="" href="goose.html"><span>M01</span>Goose</a><a class="" href="aider.html"><span>M02</span>Aider</a><a class="active" href="grok-build.html"><span>M03</span>Grok Build</a><a class="" href="openinterpreter.html"><span>M04</span>Open Interpreter</a><a class="" href="little-coder.html"><span>M05</span>Little Coder</a><a class="" href="monkeycode.html"><span>M06</span>MonkeyCode</a><a class="" href="opencode.html"><span>M07</span>OpenCode</a><a class="" href="oh-my-pi.html"><span>M08</span>Oh My Pi</a><a class="" href="claude-code.html"><span>M09</span>Claude Code（复原）</a><a class="" href="pi.html"><span>M10</span>Pi</a><a class="" href="codex.html"><span>M11</span>OpenAI Codex</a><a class="" href="gemini-cli.html"><span>M12</span>Gemini CLI</a><a class="" href="jcode.html"><span>M13</span>JCode</a><a class="" href="kimi-cli.html"><span>M14</span>Kimi CLI</a><a class="" href="deepseek-reasonix.html"><span>M15</span>DeepSeek-Reasonix</a><a class="" href="codewhale.html"><span>M16</span>CodeWhale</a><a class="" href="prime-agent.html"><span>M17</span>Prime Agent</a><a class="" href="deepagents.html"><span>M18</span>DeepAgents</a></nav><div class="toc-foot">SOURCE-LOCKED<br>固定提交 · 可回放</div></aside><main class="tutorial-main"><section class="module-hero"><div class="module-eyebrow">M03 · SOURCE-GROUNDED TUTORIAL</div><h1>Grok Build<br><em>从源码学会它怎么工作</em></h1><p class="module-thesis">Actor 化运行时、内核沙箱和插件能力包组合先进，但沙箱失败时会降级继续。 我们不把 README 当结论，而是沿主循环、工具、上下文、权限、扩展、协作和状态一路读到实现。</p><div class="module-meta"><span>Rust · Actor + Secure Worktree Agent</span><span>Apache-2.0</span><span>02d9359435d0</span><span>17 个结论 · 42 处引用</span></div><div class="module-actions"><a href="../reports/grok-build.html">回到源码审计报告 ↗</a><a href="https://github.com/xai-org/grok-build/tree/02d9359435d0e9c20a20945679389cdce441e431">打开固定源码 ↗</a><label><span>⌕</span><input type="search" placeholder="搜索本章源码与概念…" data-lesson-search></label></div></section>
+  <section class="module-intro"><div class="intro-copy"><div class="module-kicker">这门课怎么读</div><h2>先建立直觉，再沿一条任务链钻进代码</h2><p>参考教程的做法不是把 API 名称罗列出来，而是从一个小白能理解的问题开始，先解释“为什么需要这个机制”，再用概念对比、执行链路和固定提交的源码回答“它究竟怎么做”。本页把 Grok Build 的 17 个源码结论重新编排成十节课；每个结论都保留证据等级、文件路径、行号和可点击源码。</p><div class="learning-contract"><div><b>你会得到</b><span>一张可复述的架构地图</span><span>一次完整任务的链路追踪</span><span>能迁移到自研 Harness 的设计判断</span></div><div><b>你不会得到</b><span>把 README 功能当成已验证事实</span><span>把 prompt 约束说成 OS 沙箱</span><span>把一次双模型调用夸成多 Agent 平台</span></div></div></div><aside class="intro-stats"><div><b>10</b><span>学习章节</span></div><div><b>17</b><span>源码结论</span></div><div><b>12</b><span>被引文件</span></div><div><b>42</b><span>精确引用</span></div></aside></section>
+  <section class="module-section map-section" id="map"><div class="module-kicker">M00 · MAP</div><h2>先看全景：这个 Agent 的控制面在哪里</h2><p class="section-question">下面的图不是产品宣传图，而是把固定提交里最关键的入口、循环、模型、工具、安全、状态和协作节点放在一张地图上。</p><div class="diagram-pair"><figure><figcaption><b>架构图</b><a href="../diagrams/grok-build-architecture.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/grok-build-architecture.html" title="Grok Build 架构图" loading="lazy"></iframe></figure><figure><figcaption><b>一轮执行链路</b><a href="../diagrams/grok-build-sequence.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/grok-build-sequence.html" title="Grok Build 执行链路" loading="lazy"></iframe></figure></div><div class="route-cards"><div><b>核心机制</b><p>长期 SessionActor；prepare → parallel dispatch → post-flight</p></div><div><b>上下文</b><p>预热、两阶段压缩、任务状态重建与恢复梯子</p></div><div><b>适用建设</b><p>长任务、工作树隔离、可组合研发插件</p></div></div></section>
+  <section class="module-section trace-section" id="trace"><div class="module-kicker">M00.5 · TRACE</div><h2>跟踪一个任务：从输入到交付</h2><p class="section-question">把下面九步当成你读源码时的“地图坐标”。每到一个节点，都能回到后面的章节查具体实现。</p><div class="trace-board" role="img" aria-label="Grok Build 一次任务的执行链路"><div class="trace-step"><span>01</span><b>发送任务事件</b><small>任务进入</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>02</span><b>冻结 PromptContext</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>03</span><b>流式采样</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>04</span><b>解析并修复工具参数</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>05</span><b>PreToolUse 与权限判定</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>06</span><b>沙箱内/降级后执行</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>07</span><b>post-flight 归并结果</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>08</span><b>两阶段压缩任务状态</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>09</span><b>输出结构化事件</b><small>交付/续跑</small></div></div><div class="trace-note"><b>读图提醒</b><p>箭头只表示控制面之间的关系，不代表每个实现都同步、串行或拥有 OS 隔离；真正的边界要以对应章节的源码摘录和 caveat 为准。</p></div></section>
+  <section class="module-section" id="orientation" data-chapter><div class="module-kicker">M01 · ORIENTATION</div><h2>先把 Agent 看成一台会交付的机器</h2><p class="section-question">如果只看 README，你知道它能做什么；钻进源码后，我们要知道它为什么能做、什么时候会停、失败后谁负责收拾。</p><div class="analogy"><b>先用一个生活比喻</b><p>把 Agent 想成一间带传送带的工作室：入口收任务，主循环决定下一步，模型负责提出动作，工具负责动手，状态账本负责让下一班人接着干。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 1</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="loop" data-chapter><div class="module-kicker">M02 · LOOP</div><h2>主循环：模型为什么会继续动</h2><p class="section-question">一次模型调用为什么会变成十几步？循环靠什么继续，靠什么停止？</p><div class="analogy"><b>先用一个生活比喻</b><p>像一个会看回执的快递员：模型先写行动单，工具返回回执，主循环把回执放回桌面，再让模型决定下一张行动单。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>它不像一个简单 while 循环，更像一间控制室：用户输入、工具结果、文件变化、后台任务、模型切换都从不同通道进来，由同一个会话 Actor 排队处理。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>SessionActor 是事件驱动的长期存活 Actor</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs:120</code></td><td>它不像一个简单 while 循环，更像一间控制室：用户输入、工具结果、文件变化、后台任务、模型切换都从不同通道进来，由同一个会话 Actor 排队处理。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-grok-loop-001" data-search="sessionactor 是事件驱动的长期存活 actor run_session 同时监听命令、chat-state 事件、内部事件、模型切换、任务完成和多个定时器；启动时还建立文件监听、mcp liveness dispatcher 与 replay buffer。 它不像一个简单 while 循环，更像一间控制室：用户输入、工具结果、文件变化、后台任务、模型切换都从不同通道进来，由同一个会话 actor 排队处理。 entry-session-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">01</span><div><div class="lesson-eyebrow">L1 · fact · grok-loop-001</div><h3>SessionActor 是事件驱动的长期存活 Actor</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>run_session 同时监听命令、chat-state 事件、内部事件、模型切换、任务完成和多个定时器；启动时还建立文件监听、MCP liveness dispatcher 与 replay buffer。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它不像一个简单 while 循环，更像一间控制室：用户输入、工具结果、文件变化、后台任务、模型切换都从不同通道进来，由同一个会话 Actor 排队处理。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>这套 Harness 面向长会话、后台工作和 IDE/ACP 集成，控制面复杂度显著高于纯 CLI Agent。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs#L120-L183">crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs · L120–L183 ↗</a></div><pre><code>  120  pub(super) async fn run_session(
+  121      session: Arc&lt;SessionActor&gt;,
+  122      mut cmd_rx: mpsc::UnboundedReceiver&lt;SessionCommand&gt;,
+  123      mut chat_state_event_rx: mpsc::UnboundedReceiver&lt;xai_chat_state::ChatStateEvent&gt;,
+  124      mut event_rx: mpsc::UnboundedReceiver&lt;SessionEvent&gt;,
+  125      fs_notify_config: Option&lt;ClientFsConfig&gt;,
+  126      codebase_indexes: std::sync::Arc&lt;parking_lot::Mutex&lt;CodebaseIndexManager&gt;&gt;,
+  127      index_root: std::path::PathBuf,
+  128      fs_watch_caps: fs_watch::FsWatchCapabilities,
+  129  ) {
+  130      let (completion_tx, mut completion_rx) =
+  131          mpsc::unbounded_channel::&lt;(String, PromptTurnResult)&gt;();
+  132      tracing::debug!(&quot;fs_notify_config: {:?}&quot;, fs_notify_config);
+  133      let mut replay_buffer = ReplayBuffer::new(session.buffering_settings.clone());
+  134      let event_tx_for_flush_timer = session.event_tx.clone();
+  135      let buffering_flush_interval = replay_buffer.max_wait_duration_ms();
+  136      if let Some(buffering_flush_interval) = buffering_flush_interval {
+  137          tokio::task::spawn_local(async move {
+  138              let mut interval = tokio::time::interval(Duration::from_millis(std::cmp::max(
+  139                  20,
+  140                  buffering_flush_interval * 2,
+  141              )));
+  142              loop {
+  143                  interval.tick().await;
+  144                  let _ =
+      … 28 lines omitted; exact range 120–183 …
+  173              index_root.clone(),
+  174          );
+  175          tracing::debug!(?fs_watch_caps, &quot;fs-notify: spawning&quot;);
+  176          Some(fs_watch::spawn(fs_watch::FsWatchPlan::build(
+  177              fs_watch_caps,
+  178              deps,
+  179          )))
+  180      } else {
+  181          tracing::debug!(&quot;fs-notify: skipped (no consumers)&quot;);
+  182          None
+  183      };</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs#L120-L183"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs:120–183</code></a><small>创建 replay buffer、技能/工作流与文件 watcher。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs#L188-L246"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs:188–246</code></a><small>启动 MCP liveness/auto-restart dispatcher 和初始化任务。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs#L247-L280"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs:247–280</code></a><small>select loop 同时处理模型切换与定时 memory flush。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 2</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="model" data-chapter><div class="module-kicker">M03 · MODEL</div><h2>模型调用：流式输出如何变成可执行步骤</h2><p class="section-question">模型输出的文字、思考、工具调用和错误，经过哪些转换才进入 Agent 状态？</p><div class="analogy"><b>先用一个生活比喻</b><p>模型像电话另一端的同事：你听到的不是一整段录音，而是一串实时片段；Harness 要边听边拼装，还要能在电话断线时留下可恢复的记录。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 3</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="tools" data-chapter><div class="module-kicker">M04 · TOOLS</div><h2>工具系统：Agent 的手脚怎样被注册和调度</h2><p class="section-question">模型看见的工具说明，和真正执行工具的代码，是不是同一个东西？并发、编辑和失败结果怎么处理？</p><div class="analogy"><b>先用一个生活比喻</b><p>工具系统像机场：模型提交登机牌，注册表确认航班，权限闸机检查证件，调度器决定跑道，最后才允许真正起飞。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>能并行的尽量并行，但两个工具若同时写同一个文件会排队，避免互相覆盖。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>工具执行明确拆成 prepare、并发 dispatch、post-flight</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:355</code></td><td>能并行的尽量并行，但两个工具若同时写同一个文件会排队，避免互相覆盖。</td></tr><tr><td>工具参数对模型瑕疵有恢复层</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878</code></td><td>模型偶尔把两个 JSON 粘在一起，Grok Build 会先抢救，不是一看到格式错就整轮失败。</td></tr><tr><td>一个插件可同时交付 Skills、Commands、Agents、Hooks、MCP、LSP</td><td><code>crates/codegen/xai-grok-agent/src/plugins/manifest.rs:103</code></td><td>插件不是只加一个工具，而是可以连同说明书、快捷命令、子 Agent 角色、策略 hook、远程工具和语言服务一起打包。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-grok-tools-001" data-search="工具执行明确拆成 prepare、并发 dispatch、post-flight execute_tool_calls_batch 先逐个解析、运行 plan gate、hooks 和权限；批准后用 futuresunordered 并发执行，写同一路径的工具共享 mutex 串行；完成后按原 slot 做事件和结果处理。 能并行的尽量并行，但两个工具若同时写同一个文件会排队，避免互相覆盖。 tool-dispatch">
+    <div class="lesson-finding-head"><span class="lesson-number">02</span><div><div class="lesson-eyebrow">L1 · fact · grok-tools-001</div><h3>工具执行明确拆成 prepare、并发 dispatch、post-flight</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>execute_tool_calls_batch 先逐个解析、运行 Plan gate、hooks 和权限；批准后用 FuturesUnordered 并发执行，写同一路径的工具共享 Mutex 串行；完成后按原 slot 做事件和结果处理。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>能并行的尽量并行，但两个工具若同时写同一个文件会排队，避免互相覆盖。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>并发策略不是简单 all-at-once，而是带资源锁的调度。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L355–L449 ↗</a></div><pre><code>  355      /// Prepare → dispatch → post-flight. Caller owns the outer tail flush.
+  356      async fn execute_tool_calls_batch(
+  357          &amp;self,
+  358          tool_calls: Vec&lt;crate::sampling::types::ToolCallResponse&gt;,
+  359          deferred_followups: &amp;mut Vec&lt;ConversationItem&gt;,
+  360          final_result: &amp;mut Option&lt;ToolLoop&gt;,
+  361      ) -&gt; Result&lt;(), acp::Error&gt; {
+  362          let mut approved: Vec&lt;PreparedToolCall&gt; = Vec::new();
+  363          for call in tool_calls.into_iter() {
+  364              if final_result.is_some() {
+  365                  let message = match &amp;*final_result {
+  366                      Some(ToolLoop::PermissionReject { .. }) =&gt; {
+  367                          format!(
+  368                              &quot;Tool execution cancelled due to earlier permission rejection for tool `{}`&quot;,
+  369                              call.function.name
+  370                          )
+  371                      }
+  372                      Some(ToolLoop::Cancelled) =&gt; {
+  373                          format!(
+  374                              &quot;Tool execution cancelled due to earlier user cancellation for tool `{}`&quot;,
+  375                              call.function.name
+  376                          )
+  377                      }
+  378                      Some(ToolLoop::FollowupMessage(_)) =&gt; {
+  379                          format!(
+      … 59 lines omitted; exact range 355–449 …
+  439                          tool_loop,
+  440                          ToolLoop::PermissionReject { .. }
+  441                              | ToolLoop::Cancelled
+  442                              | ToolLoop::FollowupMessage(_)
+  443                      ) &amp;&amp; final_result.is_none()
+  444                      {
+  445                          *final_result = Some(tool_loop);
+  446                      }
+  447                  }
+  448              }
+  449          }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:355–449</code></a><small>preflight 阶段逐项准备，拒绝可终止后续项。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L453-L565"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:453–565</code></a><small>为写路径建锁并以 FuturesUnordered 并发 dispatch。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-tools-002" data-search="工具参数对模型瑕疵有恢复层 prepare_tool_call 会规范空参数、尝试解析 json；遇到拼接的多个 json 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 toolparsingerror。 模型偶尔把两个 json 粘在一起，grok build 会先抢救，不是一看到格式错就整轮失败。 tool-dispatch">
+    <div class="lesson-finding-head"><span class="lesson-number">03</span><div><div class="lesson-eyebrow">L1 · fact · grok-tools-002</div><h3>工具参数对模型瑕疵有恢复层</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>prepare_tool_call 会规范空参数、尝试解析 JSON；遇到拼接的多个 JSON 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 ToolParsingError。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>模型偶尔把两个 JSON 粘在一起，Grok Build 会先抢救，不是一看到格式错就整轮失败。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>对模型输出做保守修复能提高成功率，但必须记录恢复行为，避免悄悄改变语义。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L878–L950 ↗</a></div><pre><code>  878          let args_str = crate::session::helpers::tool_input_parsing::normalize_empty_arguments(
+  879              &amp;call.function.arguments,
+  880          );
+  881          let parse_result = serde_json::from_str::&lt;serde_json::Value&gt;(args_str);
+  882          let mut concatenated_json_count: usize = 0;
+  883          let raw_input = match &amp;parse_result {
+  884              Ok(value) =&gt; value.clone(),
+  885              Err(e) =&gt; {
+  886                  if let Some(objects) = crate::session::helpers::tool_input_parsing::try_extract_concatenated_json_objects(
+  887                      &amp;call.function.arguments,
+  888                  ) {
+  889                      let total_count = objects.len();
+  890                      if objects.is_empty() {
+  891                          json!({ &quot;raw&quot;: call.function.arguments.clone() })
+  892                      } else {
+  893                          let best_match = objects[0].clone();
+  894                          let mut selected_index = 0;
+  895                          let mut matched_tool = false;
+  896                          let bridge = self.agent.borrow().tool_bridge().clone();
+  897                          for (idx, obj) in objects.iter().enumerate() {
+  898                              if bridge
+  899                                  .try_parse(&amp;call.function.name, obj.clone())
+  900                                  .await
+  901                                  .is_ok()
+  902                              {
+      … 37 lines omitted; exact range 878–950 …
+  940                  self.handle_tool_parse_error(
+  941                      &amp;tool_call_id,
+  942                      &amp;call.id,
+  943                      &amp;call.function.name,
+  944                      err,
+  945                      &amp;call.function.arguments,
+  946                      &amp;model_id_str,
+  947                  )
+  948                  .await?;
+  949                  return Ok(Err(ToolLoop::ToolParsingError));
+  950              }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 1 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878–950</code></a><small>空参数规范、拼接 JSON 抽取、schema 试配和解析失败处理。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-plugin-001" data-search="一个插件可同时交付 skills、commands、agents、hooks、mcp、lsp pluginmanifest 明确定义六类组件；所有路径必须位于 canonical plugin root。pluginregistry 只把 enabled 且 trusted 的插件作为 active，项目插件需要显式信任，disabled 冲突优先。 插件不是只加一个工具，而是可以连同说明书、快捷命令、子 agent 角色、策略 hook、远程工具和语言服务一起打包。 tools-connectors-plugins">
+    <div class="lesson-finding-head"><span class="lesson-number">04</span><div><div class="lesson-eyebrow">L2 · fact · grok-plugin-001</div><h3>一个插件可同时交付 Skills、Commands、Agents、Hooks、MCP、LSP</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>PluginManifest 明确定义六类组件；所有路径必须位于 canonical plugin root。PluginRegistry 只把 enabled 且 trusted 的插件作为 active，项目插件需要显式信任，disabled 冲突优先。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>插件不是只加一个工具，而是可以连同说明书、快捷命令、子 Agent 角色、策略 hook、远程工具和语言服务一起打包。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>生态能力完整，但插件供应链和信任 UI 变成核心安全面。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/plugins/manifest.rs#L103-L170">crates/codegen/xai-grok-agent/src/plugins/manifest.rs · L103–L170 ↗</a></div><pre><code>  103      match field {
+  104          Some(PathOrInline::Path(p)) =&gt; {
+  105              let resolved = plugin_root.join(p);
+  106              if !is_path_contained(&amp;resolved, plugin_root) {
+  107                  tracing::warn!(
+  108                      path = %resolved.display(),
+  109                      plugin_root = %plugin_root.display(),
+  110                      &quot;{label} path escapes plugin root; skipping&quot;
+  111                  );
+  112                  return None;
+  113              }
+  114              resolved.is_file().then_some(resolved)
+  115          }
+  116          Some(PathOrInline::Inline(_)) =&gt; None,
+  117          None =&gt; {
+  118              let default = plugin_root.join(default_file);
+  119              default.is_file().then_some(default)
+  120          }
+  121      }
+  122  }
+  123  
+  124  /// A value that can be either a file path (string) or an inline JSON object.
+  125  #[derive(Debug, Clone, Deserialize)]
+  126  #[serde(untagged)]
+  127  pub enum PathOrInline {
+      … 32 lines omitted; exact range 103–170 …
+  160      #[serde(default)]
+  161      pub commands: Option&lt;PathOrPaths&gt;,
+  162      #[serde(default)]
+  163      pub agents: Option&lt;PathOrPaths&gt;,
+  164      #[serde(default)]
+  165      pub hooks: Option&lt;PathOrInline&gt;,
+  166      #[serde(default)]
+  167      pub mcp_servers: Option&lt;PathOrInline&gt;,
+  168      #[serde(default)]
+  169      pub lsp_servers: Option&lt;PathOrInline&gt;,
+  170  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/plugins/manifest.rs#L103-L170"><code>crates/codegen/xai-grok-agent/src/plugins/manifest.rs:103–170</code></a><small>路径逃逸拒绝与六类组件字段。</small></li><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/plugins/registry.rs#L12-L78"><code>crates/codegen/xai-grok-agent/src/plugins/registry.rs:12–78</code></a><small>LoadedPlugin 信任、启用和各组件清单。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/plugins/registry.rs#L114-L184"><code>crates/codegen/xai-grok-agent/src/plugins/registry.rs:114–184</code></a><small>显式 enabled/disabled，disabled 优先，未列出默认禁用。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/plugins/registry.rs#L274-L279"><code>crates/codegen/xai-grok-agent/src/plugins/registry.rs:274–279</code></a><small>active_plugins 仅 enabled &amp;&amp; trusted。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 4</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="context" data-chapter><div class="module-kicker">M05 · CONTEXT</div><h2>上下文：有限窗口怎样装下长任务</h2><p class="section-question">当对话、工具输出、计划和记忆越来越多，系统怎样决定留下什么、折叠什么、放到哪里？</p><div class="analogy"><b>先用一个生活比喻</b><p>上下文不是聊天记录，而是一张会整理的工作台：常用零件放桌面，旧材料装进档案盒，必要时只留下索引卡。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>不是等窗口爆了才临时总结：它会提前准备摘要草稿，到红线时再完成第二遍；若摘要输入也太大，就逐级减料。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>压缩是一条带预热、两阶段和恢复梯子的子系统</td><td><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:3</code></td><td>不是等窗口爆了才临时总结：它会提前准备摘要草稿，到红线时再完成第二遍；若摘要输入也太大，就逐级减料。</td></tr><tr><td>压缩后重建的是“任务状态”，不是纯聊天摘要</td><td><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:1282</code></td><td>总结完以后还会把“哪些子任务在跑、待办是什么、插件有哪些、当前计划阶段”重新装回去，避免只剩一段模糊回忆。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-grok-context-001" data-search="压缩是一条带预热、两阶段和恢复梯子的子系统 会话在阈值前若干百分点预先生成 pass-1；真正压缩支持 two-pass/full-replace，输入溢出时逐级缩小 verbatim/normal conversation，记录多类拒绝原因，并在完成后自动继续。 不是等窗口爆了才临时总结：它会提前准备摘要草稿，到红线时再完成第二遍；若摘要输入也太大，就逐级减料。 context-compaction-memory">
+    <div class="lesson-finding-head"><span class="lesson-number">05</span><div><div class="lesson-eyebrow">L1 · fact · grok-context-001</div><h3>压缩是一条带预热、两阶段和恢复梯子的子系统</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>会话在阈值前若干百分点预先生成 pass-1；真正压缩支持 two-pass/full-replace，输入溢出时逐级缩小 verbatim/normal conversation，记录多类拒绝原因，并在完成后自动继续。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>不是等窗口爆了才临时总结：它会提前准备摘要草稿，到红线时再完成第二遍；若摘要输入也太大，就逐级减料。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>长任务连续性被当作独立可靠性系统，而非一个 prompt helper。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L3-L35">crates/codegen/xai-grok-shell/src/session/compaction.rs · L3–L35 ↗</a></div><pre><code>    3  //! This module contains all compaction-related methods: manual `/compact`,
+    4  //! auto-compact threshold checks, inline auto-compact with auto-continue,
+    5  //! error-recovery compaction, preflight overflow detection, and checkpoint
+    6  //! persistence. These methods form a second `impl SessionActor` block that
+    7  //! lives alongside the primary one in `acp_session.rs`.
+    8  use super::SessionActor;
+    9  use super::is_project_instructions;
+   10  use crate::remote::DEFAULT_CONTEXT_WINDOW;
+   11  use crate::session::compaction_config::{
+   12      AsyncCompactionCache, SUPPRESS_AUTH, SUPPRESS_NONE, SUPPRESS_STICKY, SUPPRESS_TURN,
+   13      SUPPRESS_UNTIL_SUCCESS,
+   14  };
+   15  use crate::session::helpers::CompactionStateContext;
+   16  use crate::session::helpers::compaction_context::CompactionInputs;
+   17  use crate::session::helpers::compaction_context::to_system_reminder;
+   18  use crate::session::helpers::session_compact::{
+   19      CompactOutput, CompactionOutcome, build_compaction_chat_history,
+   20      build_two_pass_compaction_prompt, generate_session_compact, is_context_length_error,
+   21  };
+   22  use crate::session::persistence::PersistenceMsg;
+   23  use crate::session::two_pass::{
+   24      TWO_PASS_DEFAULT_SPLIT_FRACTION, build_two_pass_pass1_history, build_two_pass_pass2_history,
+   25      note_for_two_pass_pass2, split_conversation_for_two_pass,
+   26  };
+   27  use agent_client_protocol as acp;
+   28  use std::sync::Arc;
+   29  use xai_chat_state::compaction_utils::{
+   30      CompactedHistoryInput, CompactionAttempt, build_compacted_history, is_degenerate_summary,
+   31      prepare_conversation_for_verbatim_summarization, sanitize_compacted_history,
+   32      validate_compacted_history,
+   33  };
+   34  use xai_grok_sampling_types::{ApiBackend, ConversationItem};
+   35  /// Default percentage points below the auto-compact threshold at which prefire</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L3-L35"><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:3–35</code></a><small>模块覆盖手动、自动、inline continue、恢复、preflight 与 checkpoint。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L212-L262"><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:212–262</code></a><small>prefire 在 threshold-lead 启动并记录 pass-1 指标。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L1098-L1197"><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:1098–1197</code></a><small>full-replace 循环与输入溢出 ladder。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-context-002" data-search="压缩后重建的是“任务状态”，不是纯聊天摘要 压缩会把 agents.md、skills、编辑路径、运行中子 agent、mcp server、todo、plan mode 和 memory 状态重新注入；清理孤儿 toolresult，验证失败则退到无 recent_messages 的最小历史，并持久化 segment/checkpoint。 总结完以后还会把“哪些子任务在跑、待办是什么、插件有哪些、当前计划阶段”重新装回去，避免只剩一段模糊回忆。 context-compaction-memory">
+    <div class="lesson-finding-head"><span class="lesson-number">06</span><div><div class="lesson-eyebrow">L1 · fact · grok-context-002</div><h3>压缩后重建的是“任务状态”，不是纯聊天摘要</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>压缩会把 AGENTS.md、skills、编辑路径、运行中子 Agent、MCP server、Todo、Plan mode 和 memory 状态重新注入；清理孤儿 ToolResult，验证失败则退到无 recent_messages 的最小历史，并持久化 segment/checkpoint。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>总结完以后还会把“哪些子任务在跑、待办是什么、插件有哪些、当前计划阶段”重新装回去，避免只剩一段模糊回忆。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>可靠 compaction 必须有结构化状态源，不能只依赖模型自由文本。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L1282-L1460">crates/codegen/xai-grok-shell/src/session/compaction.rs · L1282–L1460 ↗</a></div><pre><code> 1282          let generate_session_compact = compact_output.content.clone();
+ 1283          let user_message_prefix = self.build_user_message_prefix().await;
+ 1284          let conversation = self.chat_state_handle.get_conversation().await;
+ 1285          let (discovered_agents_md, all_skills_for_compaction, _agent_edited_paths, state_context) =
+ 1286              if use_short_prompt {
+ 1287                  let empty_edited: std::collections::BTreeSet&lt;String&gt; = Default::default();
+ 1288                  let ctx =
+ 1289                      CompactionStateContext::build(&amp;conversation, CompactionInputs::default()).await;
+ 1290                  (Vec::&lt;std::path::PathBuf&gt;::new(), vec![], empty_edited, ctx)
+ 1291              } else {
+ 1292                  let agents_md: Vec&lt;std::path::PathBuf&gt; = self
+ 1293                      .agent
+ 1294                      .borrow()
+ 1295                      .tool_bridge()
+ 1296                      .agents_md_reminded_paths()
+ 1297                      .await
+ 1298                      .into_iter()
+ 1299                      .collect();
+ 1300                  let bridge_for_skills = self.agent.borrow().tool_bridge().clone();
+ 1301                  let skills = bridge_for_skills.slash_skills().await;
+ 1302                  let edited_paths = self.chat_state_handle.get_agent_edited_paths().await;
+ 1303                  let ctx = {
+ 1304                      let bridge_tasks = self
+ 1305                          .agent
+ 1306                          .borrow()
+      … 143 lines omitted; exact range 1282–1460 …
+ 1450                              session_id = %self.session_info.id.0,
+ 1451                              poll_resolved = poll.is_some(),
+ 1452                              cancel_resolved = cancel.is_some(),
+ 1453                              &quot;could not resolve subagent tool names, \
+ 1454                               omitting subagent reminder from compacted conversation&quot;
+ 1455                          );
+ 1456                          None
+ 1457                      }
+ 1458                  }
+ 1459              };
+ 1460          use crate::session::helpers::compaction_context::McpToolNames;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L1282-L1460"><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:1282–1460</code></a><small>收集 instructions、skills、subagents、MCP、Todo 与 plan 状态。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L1577-L1655"><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:1577–1655</code></a><small>构造、净化、验证 compacted history 并持久化 segment/checkpoint。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 5</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="security" data-chapter><div class="module-kicker">M06 · SECURITY</div><h2>权限与沙箱：能做什么，在哪里做</h2><p class="section-question">审批按钮、规则引擎、容器和操作系统沙箱分别解决什么问题？为什么“问过用户”不等于“隔离了风险”？</p><div class="analogy"><b>先用一个生活比喻</b><p>审批像门卫问你有没有预约，沙箱像把访客关在指定房间；前者决定是否放行，后者限制放行后能摸到什么。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>“全部自动批准”也不等于“计划阶段可以乱改代码”。计划模式另有一把更早、更硬的锁。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>Plan Mode 的只读约束独立于 Always Approve</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157</code></td><td>“全部自动批准”也不等于“计划阶段可以乱改代码”。计划模式另有一把更早、更硬的锁。</td></tr><tr><td>权限判断理解访问类型和会话上下文</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1035</code></td><td>它不是只看工具名，而是知道“这是读哪个路径、改哪个文件、跑什么命令、访问哪个网站”，自动模式还会参考最近几轮对话。</td></tr><tr><td>PreToolUse Hook 可在权限前阻断</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:977</code></td><td>企业策略脚本可以比用户批准更早说“不”，避免用户误点同意覆盖组织规则。</td></tr><tr><td>提供真正的内核级文件系统沙箱</td><td><code>crates/codegen/xai-grok-sandbox/src/lib.rs:8</code></td><td>这不只是“执行前问一下”，操作系统内核会真的挡住不允许的文件访问。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-grok-plan-001" data-search="plan mode 的只读约束独立于 always approve plan_mode_edit_gate 在权限管理器之前执行，即使 yolo/always-approve 也不能绕过；普通编辑只允许计划文件，apply_patch 因无法预知目标而保守拒绝，未知退出结果默认取消。 “全部自动批准”也不等于“计划阶段可以乱改代码”。计划模式另有一把更早、更硬的锁。 permissions-security">
+    <div class="lesson-finding-head"><span class="lesson-number">07</span><div><div class="lesson-eyebrow">L1 · fact · grok-plan-001</div><h3>Plan Mode 的只读约束独立于 Always Approve</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>plan_mode_edit_gate 在权限管理器之前执行，即使 YOLO/always-approve 也不能绕过；普通编辑只允许计划文件，apply_patch 因无法预知目标而保守拒绝，未知退出结果默认取消。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>“全部自动批准”也不等于“计划阶段可以乱改代码”。计划模式另有一把更早、更硬的锁。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>工作流阶段约束不能依赖通用权限模式，否则高权限模式会破坏阶段不变量。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L157–L205 ↗</a></div><pre><code>  157  /// Verdict for a tool call evaluated against the plan-mode edit gate.
+  158  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  159  pub(super) enum PlanEditGate {
+  160      /// Execute normally (plan mode inactive, not an edit, or allowed target).
+  161      Allow,
+  162      /// Grok-toolset edit outside the plan file (plan-file-only rule).
+  163      RejectNonPlanFile,
+  164  }
+  165  /// Gate edit-class tool calls while plan mode is active.
+  166  ///
+  167  /// Plan mode is read-only **in every permission mode, including
+  168  /// always-approve**: the permission manager&#39;s YOLO fast path deliberately
+  169  /// knows nothing about plan mode, so this gate — not the permission system —
+  170  /// is what enforces it. Two rules, matching the two toolsets&#39; contracts:
+  171  ///
+  172  /// - **Compat-toolset `Write`/`StrReplace`**: any markdown
+  173  ///   file is editable in plan mode (plan docs are written with these
+  174  ///   same tools); everything else is rejected. Pre-existing behavior.
+  175  /// - **Compat-toolset `Delete`** is **not** on the markdown carve-out: it maps to
+  176  ///   `AccessKind::Edit` and is plan-file-only (same as grok edits). Deleting
+  177  ///   an arbitrary `.md` in plan mode must not pass.
+  178  /// - **Every other edit tool** (`AccessKind::Edit`) is restricted to the plan
+  179  ///   file itself, via the same predicate that auto-approves plan-file edits
+  180  ///   ([`PlanModeTracker::should_auto_approve_edit`]) so the gate and the
+  181  ///   permission bypass can never disagree.
+      … 13 lines omitted; exact range 157–205 …
+  195      if !tracker.is_active() {
+  196          return PlanEditGate::Allow;
+  197      }
+  198      let _ = tool_input;
+  199      match access_kind {
+  200          AccessKind::Edit(path) if !tracker.should_auto_approve_edit(Path::new(path)) =&gt; {
+  201              PlanEditGate::RejectNonPlanFile
+  202          }
+  203          _ =&gt; PlanEditGate::Allow,
+  204      }
+  205  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157–205</code></a><small>Plan gate 规则、apply_patch 保守拒绝与独立于 YOLO 的原因。</small></li><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L206-L215"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:206–215</code></a><small>未知 PlanApprovalOutcome 映射为 Cancelled，保持 fail-closed。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-permission-001" data-search="权限判断理解访问类型和会话上下文 工具被分类为 read、edit、bash、grep、mcp、web；ask/auto/always approve 三种模式分别走交互、带最近对话的分类器或快速放行，决定来源与等待时间进入 trace 和 telemetry。 它不是只看工具名，而是知道“这是读哪个路径、改哪个文件、跑什么命令、访问哪个网站”，自动模式还会参考最近几轮对话。 permissions-security">
+    <div class="lesson-finding-head"><span class="lesson-number">08</span><div><div class="lesson-eyebrow">L1 · fact · grok-permission-001</div><h3>权限判断理解访问类型和会话上下文</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>工具被分类为 Read、Edit、Bash、Grep、MCP、Web；Ask/Auto/Always Approve 三种模式分别走交互、带最近对话的分类器或快速放行，决定来源与等待时间进入 trace 和 telemetry。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它不是只看工具名，而是知道“这是读哪个路径、改哪个文件、跑什么命令、访问哪个网站”，自动模式还会参考最近几轮对话。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>权限系统既是策略引擎，也是可观测的决策服务。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L1035–L1102 ↗</a></div><pre><code> 1035          let plan_file_auto_approve = if let AccessKind::Edit(ref path) = access_kind {
+ 1036              self.plan_mode
+ 1037                  .lock()
+ 1038                  .should_auto_approve_edit(std::path::Path::new(path))
+ 1039          } else {
+ 1040              false
+ 1041          };
+ 1042          if plan_file_auto_approve {
+ 1043              tracing::info_span!(
+ 1044                  &quot;tool.decision&quot;,
+ 1045                  tool_name = %call.function.name,
+ 1046                  tool_use_id = %call.id,
+ 1047                  decision = &quot;allow&quot;,
+ 1048                  source = &quot;config&quot;,
+ 1049                  wait_ms = 0_i64,
+ 1050              )
+ 1051              .in_scope(|| {});
+ 1052          }
+ 1053          if !plan_file_auto_approve {
+ 1054              let (perm_title, perm_kind, perm_raw_input) = tool_call_display
+ 1055                  .as_ref()
+ 1056                  .map(|(t, k, r)| (Some(t.clone()), Some(*k), Some(r.clone())))
+ 1057                  .unwrap_or((None, None, None));
+ 1058              let tool_call_update = acp::ToolCallUpdate::new(
+ 1059                  tool_call_id.clone(),
+      … 32 lines omitted; exact range 1035–1102 …
+ 1092                  Some(self.session_id_string())
+ 1093              } else {
+ 1094                  None
+ 1095              };
+ 1096              let perm_mode = if self.permissions.is_yolo_mode() {
+ 1097                  xai_grok_telemetry::enums::PermissionMode::AlwaysApprove
+ 1098              } else if self.permissions.is_auto_mode() {
+ 1099                  xai_grok_telemetry::enums::PermissionMode::Auto
+ 1100              } else {
+ 1101                  xai_grok_telemetry::enums::PermissionMode::Ask
+ 1102              };</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1035–1102</code></a><small>访问类型映射和三种 permission mode。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1112-L1227"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1112–1227</code></a><small>Auto 分类上下文、反向请求、决策 trace 与 telemetry。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-hooks-001" data-search="pretooluse hook 可在权限前阻断 工具解析和 plan gate 后，运行服务端/客户端 pretooluse hooks；任一 hook 的 deny 会产生 hookdenied，不再进入权限请求和 dispatch。 企业策略脚本可以比用户批准更早说“不”，避免用户误点同意覆盖组织规则。 permissions-security">
+    <div class="lesson-finding-head"><span class="lesson-number">09</span><div><div class="lesson-eyebrow">L1 · fact · grok-hooks-001</div><h3>PreToolUse Hook 可在权限前阻断</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>工具解析和 Plan gate 后，运行服务端/客户端 PreToolUse hooks；任一 hook 的 Deny 会产生 HookDenied，不再进入权限请求和 dispatch。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>企业策略脚本可以比用户批准更早说“不”，避免用户误点同意覆盖组织规则。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>Hook 是治理层而不仅是通知回调。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L977–L1034 ↗</a></div><pre><code>  977          let dispatch_target_name = tool_input.dispatch_target_name();
+  978          let resolved_tool_name = dispatch_target_name
+  979              .clone()
+  980              .unwrap_or_else(|| call.function.name.clone());
+  981          if self.hook_event_active(xai_grok_hooks::event::HookEventName::PreToolUse) {
+  982              let (hook_tool_input, hook_tool_input_truncated) =
+  983                  xai_grok_hooks::event::truncate_payload(raw_input.clone());
+  984              let envelope = self.make_hook_envelope(
+  985                  xai_grok_hooks::event::HookEventName::PreToolUse,
+  986                  None,
+  987                  xai_grok_hooks::event::HookPayload::PreToolUse {
+  988                      tool_name: resolved_tool_name.clone(),
+  989                      tool_use_id: call.id.clone(),
+  990                      tool_input: hook_tool_input,
+  991                      tool_input_truncated: hook_tool_input_truncated,
+  992                      subagent_type: self.subagent_type_label(),
+  993                  },
+  994              );
+  995              let hook_registry_snapshot = self.hook_registry.borrow().clone();
+  996              if let Some(registry) = hook_registry_snapshot {
+  997                  let ctx = self.hook_run_ctx();
+  998                  let pre_result =
+  999                      xai_grok_hooks::dispatcher::dispatch_pre_tool_use(&amp;registry, &amp;envelope, &amp;ctx)
+ 1000                          .await;
+ 1001                  self.send_hook_execution(
+      … 22 lines omitted; exact range 977–1034 …
+ 1024                          )
+ 1025                          .await?));
+ 1026                  }
+ 1027              }
+ 1028              if let Some(denied) = self
+ 1029                  .run_pre_tool_use_client_hook(&amp;call, &amp;tool_call_id, &amp;envelope)
+ 1030                  .await?
+ 1031              {
+ 1032                  return Ok(Err(denied));
+ 1033              }
+ 1034          }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 1 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:977–1034</code></a><small>构造截断 payload，派发 PreToolUse，Deny 立即返回。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-sandbox-001" data-search="提供真正的内核级文件系统沙箱 默认 enforce feature 在 unix 使用 nono，映射到 landlock/seatbelt；profile capability set 控制全盘读、显式只读/读写、deny，应用后不可逆并覆盖进程内文件 api 与子进程。 这不只是“执行前问一下”，操作系统内核会真的挡住不允许的文件访问。 execution-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">10</span><div><div class="lesson-eyebrow">L1 · fact · grok-sandbox-001</div><h3>提供真正的内核级文件系统沙箱</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>默认 enforce feature 在 Unix 使用 nono，映射到 Landlock/Seatbelt；Profile capability set 控制全盘读、显式只读/读写、deny，应用后不可逆并覆盖进程内文件 API 与子进程。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>这不只是“执行前问一下”，操作系统内核会真的挡住不允许的文件访问。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>在这 14 个项目里，Grok Build 的安全边界属于更强的系统级设计。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18">crates/codegen/xai-grok-sandbox/src/lib.rs · L8–L18 ↗</a></div><pre><code>    8  //! OS-level sandboxing for Grok Build via [nono](https://crates.io/crates/nono).
+    9  //!
+   10  //! Applied once at process startup. Covers in-process `tokio::fs` calls
+   11  //! and child processes. Network is left open at the process level (agent
+   12  //! needs LLM API); child network is blocked per-subprocess via seccomp.
+   13  //!
+   14  //! The `enforce` feature (on by default) pulls in `nono` for
+   15  //! kernel-enforced sandboxing (Landlock/Seatbelt). When disabled, the
+   16  //! crate still provides lightweight helpers (`log_violation`,
+   17  //! `should_restrict_child_network`, `child_net`) that compile on all
+   18  //! targets including musl.</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18"><code>crates/codegen/xai-grok-sandbox/src/lib.rs:8–18</code></a><small>nono、Landlock/Seatbelt、进程内与子进程覆盖范围。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L173-L219"><code>crates/codegen/xai-grok-sandbox/src/lib.rs:173–219</code></a><small>解析 profile、构建 CapabilitySet、不可逆应用。</small></li><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/profiles.rs#L24-L41"><code>crates/codegen/xai-grok-sandbox/src/profiles.rs:24–41</code></a><small>SandboxProfile 的 read_only/read_write/deny/default_read/network 字段。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-sandbox-002" data-search="沙箱不支持或应用失败时会降级继续 若平台不支持、apply 失败或构建关闭 enforce feature，sandboxmanager 记录警告和 apply_failed 事件后返回 ok，进程继续运行；is_active 可用于区分实际生效与仅请求。 配置了沙箱不等于一定锁住；系统不支持时默认是“报警后继续”，不是整个 agent 拒绝启动。 execution-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">11</span><div><div class="lesson-eyebrow">L1 · limitation · grok-sandbox-002</div><h3>沙箱不支持或应用失败时会降级继续</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>若平台不支持、apply 失败或构建关闭 enforce feature，SandboxManager 记录警告和 apply_failed 事件后返回 Ok，进程继续运行；is_active 可用于区分实际生效与仅请求。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>配置了沙箱不等于一定锁住；系统不支持时默认是“报警后继续”，不是整个 Agent 拒绝启动。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>企业部署必须把“sandbox requested”和“sandbox active”分开做启动门禁；需要 fail-closed 时应由外层策略强制。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L107-L129">crates/codegen/xai-grok-sandbox/src/lib.rs · L107–L129 ↗</a></div><pre><code>  107  /// The non-`off` sandbox profile this process was **requested** with, if any.
+  108  ///
+  109  /// This is the configured request, not a report that enforcement succeeded —
+  110  /// `is_active()` can be false while the process is still confined (e.g. some
+  111  /// Linux bwrap paths), and a requested-but-unapplied profile already warns the
+  112  /// user. Keying on the request is the fail-closed choice.
+  113  pub fn requested_confinement_profile() -&gt; Option&lt;&amp;&#39;static str&gt; {
+  114      configured_profile_name().filter(|name| profile_confines(name))
+  115  }
+  116  fn profile_confines(name: &amp;str) -&gt; bool {
+  117      name.parse::&lt;ProfileName&gt;()
+  118          .is_ok_and(|profile| profile != ProfileName::Off)
+  119  }
+  120  /// Whether the sandbox was successfully applied to this process.
+  121  pub fn is_active() -&gt; bool {
+  122      SANDBOX.get().is_some_and(|s| s.applied)
+  123  }
+  124  /// The active sandbox profile name, or `None` if sandbox is not applied.
+  125  pub fn profile_name() -&gt; Option&lt;&amp;&#39;static str&gt; {
+  126      SANDBOX
+  127          .get()
+  128          .filter(|s| s.applied)
+  129          .map(|s| s.profile.as_str())</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L107-L129"><code>crates/codegen/xai-grok-sandbox/src/lib.rs:107–129</code></a><small>requested_confinement_profile 与 is_active 的差异。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L190-L243"><code>crates/codegen/xai-grok-sandbox/src/lib.rs:190–243</code></a><small>不支持、应用失败、无 enforce feature 时继续运行。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-sandbox-003" data-search="子进程网络隔离与主进程网络分离 主进程保留网络供 llm api；readonly/strict profile 在已生效的 linux 沙箱中，对已知子进程启动路径安装 seccomp 网络过滤，并额外锁定 namespace 逃逸 syscall。 agent 自己可以连模型服务，但它启动的 bash 不一定能上网，减少 curl 下载执行或数据外传风险。 execution-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">12</span><div><div class="lesson-eyebrow">L1 · fact · grok-sandbox-003</div><h3>子进程网络隔离与主进程网络分离</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>主进程保留网络供 LLM API；ReadOnly/Strict profile 在已生效的 Linux 沙箱中，对已知子进程启动路径安装 seccomp 网络过滤，并额外锁定 namespace 逃逸 syscall。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>Agent 自己可以连模型服务，但它启动的 bash 不一定能上网，减少 curl 下载执行或数据外传风险。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>网络隔离需要按进程角色拆分；完全断主进程网络会破坏云模型调用。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18">crates/codegen/xai-grok-sandbox/src/lib.rs · L8–L18 ↗</a></div><pre><code>    8  //! OS-level sandboxing for Grok Build via [nono](https://crates.io/crates/nono).
+    9  //!
+   10  //! Applied once at process startup. Covers in-process `tokio::fs` calls
+   11  //! and child processes. Network is left open at the process level (agent
+   12  //! needs LLM API); child network is blocked per-subprocess via seccomp.
+   13  //!
+   14  //! The `enforce` feature (on by default) pulls in `nono` for
+   15  //! kernel-enforced sandboxing (Landlock/Seatbelt). When disabled, the
+   16  //! crate still provides lightweight helpers (`log_violation`,
+   17  //! `should_restrict_child_network`, `child_net`) that compile on all
+   18  //! targets including musl.</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18"><code>crates/codegen/xai-grok-sandbox/src/lib.rs:8–18</code></a><small>主进程网络开放，子进程网络用 seccomp 阻断。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L83-L95"><code>crates/codegen/xai-grok-sandbox/src/lib.rs:83–95</code></a><small>仅在 Linux 且实际 applied/configured 时限制已知子进程。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/child_net.rs#L62-L144"><code>crates/codegen/xai-grok-sandbox/src/child_net.rs:62–144</code></a><small>构造 namespace lockdown BPF 并以 NO_NEW_PRIVS/TSYNC 安装。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-sandbox-004" data-search="项目不能覆写同名全局安全 profile 全局 ~/.grok/sandbox.toml 先加载；项目 .grok/sandbox.toml 只能新增自定义 profile，若名称已存在则忽略项目定义。 恶意仓库不能悄悄做一个同名“strict”配置，把你信任的全局规则掏空。 execution-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">13</span><div><div class="lesson-eyebrow">L1 · fact · grok-sandbox-004</div><h3>项目不能覆写同名全局安全 Profile</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>全局 ~/.grok/sandbox.toml 先加载；项目 .grok/sandbox.toml 只能新增自定义 profile，若名称已存在则忽略项目定义。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>恶意仓库不能悄悄做一个同名“strict”配置，把你信任的全局规则掏空。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>配置合并本身也是信任边界，不能简单 last-write-wins。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/profiles.rs#L113-L167">crates/codegen/xai-grok-sandbox/src/profiles.rs · L113–L167 ↗</a></div><pre><code>  113  /// Load sandbox config from `~/.grok/sandbox.toml` and `.grok/sandbox.toml`.
+  114  ///
+  115  /// Project config may **add** new profile names only. It cannot redefine a
+  116  /// name already present in the global config — last-write-wins would let a
+  117  /// malicious workspace hollow out a user/enterprise custom profile (e.g.
+  118  /// empty `deny` / broad `read_write`) while keeping the trusted name.
+  119  pub fn load_sandbox_config(workspace: &amp;Path) -&gt; SandboxConfig {
+  120      let mut config = SandboxConfig::default();
+  121  
+  122      // Global config: ~/.grok/sandbox.toml
+  123      let global_path = grok_home().join(&quot;sandbox.toml&quot;);
+  124      if let Some(global) = load_config_file(&amp;global_path) {
+  125          config = global;
+  126      }
+  127  
+  128      // Project config: &lt;workspace&gt;/.grok/sandbox.toml (additive only)
+  129      let project_path = workspace.join(&quot;.grok&quot;).join(&quot;sandbox.toml&quot;);
+  130      if let Some(project) = load_config_file(&amp;project_path) {
+  131          merge_project_profiles(&amp;mut config, project);
+  132      }
+  133  
+  134      config
+  135  }
+  136  
+  137  pub fn sandbox_profile_conflicts(workspace: &amp;Path) -&gt; Vec&lt;String&gt; {
+      … 19 lines omitted; exact range 113–167 …
+  157      names.sort_unstable();
+  158      names
+  159  }
+  160  
+  161  /// Merge project profiles into `config`. Names already defined globally are
+  162  /// ignored so a workspace cannot replace a global custom profile&#39;s policy.
+  163  fn merge_project_profiles(config: &amp;mut SandboxConfig, project: SandboxConfig) {
+  164      for (name, profile) in project.profiles {
+  165          config.profiles.entry(name).or_insert(profile);
+  166      }
+  167  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 1 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/profiles.rs#L113-L167"><code>crates/codegen/xai-grok-sandbox/src/profiles.rs:113–167</code></a><small>全局先加载，项目 profile additive-only，同名不覆盖。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 6</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="ecosystem" data-chapter><div class="module-kicker">M07 · ECOSYSTEM</div><h2>指令、MCP、Skills 与插件：能力如何接进来</h2><p class="section-question">一条系统指令、一个 Skill、一个 MCP server 和一个插件，分别在什么时候进入上下文和执行路径？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像给工作室接设备：说明书不是设备，设备也不等于电源；成熟 Harness 会分别治理发现、信任、加载、调用和卸载。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>它能读懂多个编辑器生态留下的项目规则，并按“越靠近当前目录越具体”叠加。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>项目指令跨 Grok、Claude、Cursor 生态发现</td><td><code>crates/codegen/xai-grok-agent/src/prompt/agents_md.rs:1</code></td><td>它能读懂多个编辑器生态留下的项目规则，并按“越靠近当前目录越具体”叠加。</td></tr><tr><td>PromptContext 是可序列化、可检查的一等契约</td><td><code>crates/codegen/xai-grok-agent/src/prompt/context.rs:80</code></td><td>系统提示词的输入不是散落变量，而是一张可以导出检查的配置表。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-grok-instructions-001" data-search="项目指令跨 grok、claude、cursor 生态发现 从 home、仓库根到 cwd 分层发现 agents/claude 指令与 .grok/.claude/.cursor rules，按兼容开关和 gitignore 过滤、canonical path 去重；更深目录排在后面。 它能读懂多个编辑器生态留下的项目规则，并按“越靠近当前目录越具体”叠加。 instructions-prompts">
+    <div class="lesson-finding-head"><span class="lesson-number">14</span><div><div class="lesson-eyebrow">L1 · fact · grok-instructions-001</div><h3>项目指令跨 Grok、Claude、Cursor 生态发现</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>从 home、仓库根到 cwd 分层发现 AGENTS/Claude 指令与 .grok/.claude/.cursor rules，按兼容开关和 gitignore 过滤、canonical path 去重；更深目录排在后面。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它能读懂多个编辑器生态留下的项目规则，并按“越靠近当前目录越具体”叠加。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>兼容性高，但必须在报告中展示来源和优先级，避免用户不知道哪条规则生效。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/prompt/agents_md.rs#L1-L7">crates/codegen/xai-grok-agent/src/prompt/agents_md.rs · L1–L7 ↗</a></div><pre><code>    1  //! AGENTS.md / Claude.md / rules directory discovery and loading.
+    2  //!
+    3  //! Searches from cwd to repo root, plus `~/.grok/`. Also discovers
+    4  //! `*.md` files in rules directories: vendor-prefixed `.grok/rules/`,
+    5  //! `.claude/rules/`, and `.cursor/rules/` in project directories, and a
+    6  //! plain `rules/` directly under the vendor-qualified home-scope roots
+    7  //! (`~/.grok/rules/`, `~/.claude/rules/`, `~/.cursor/rules/`).</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/prompt/agents_md.rs#L1-L7"><code>crates/codegen/xai-grok-agent/src/prompt/agents_md.rs:1–7</code></a><small>发现范围和规则目录。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/prompt/agents_md.rs#L177-L307"><code>crates/codegen/xai-grok-agent/src/prompt/agents_md.rs:177–307</code></a><small>home/project roots、root→cwd 链、ignore、去重与读取。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-grok-prompt-001" data-search="promptcontext 是可序列化、可检查的一等契约 promptcontext 保存版本、模式、受众、模板、指令文件、memory、角色、os/shell/cwd/date 与交互模式；primary/subagent 选择不同基础模板，但子 agent 仍拿到完整 agents.md。 系统提示词的输入不是散落变量，而是一张可以导出检查的配置表。 instructions-prompts">
+    <div class="lesson-finding-head"><span class="lesson-number">15</span><div><div class="lesson-eyebrow">L2 · fact · grok-prompt-001</div><h3>PromptContext 是可序列化、可检查的一等契约</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>PromptContext 保存版本、模式、受众、模板、指令文件、memory、角色、OS/shell/cwd/date 与交互模式；Primary/Subagent 选择不同基础模板，但子 Agent 仍拿到完整 AGENTS.md。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>系统提示词的输入不是散落变量，而是一张可以导出检查的配置表。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>Prompt provenance 和可重放性明显优于只在运行时拼字符串。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/prompt/context.rs#L80-L152">crates/codegen/xai-grok-agent/src/prompt/context.rs · L80–L152 ↗</a></div><pre><code>   80  /// Agent-specific inputs for system prompt rendering.
+   81  ///
+   82  /// Serializable (JSON/YAML) so users can dump it and inspect fields.
+   83  /// Rendering goes through `ToolBridge::render_prompt()`.
+   84  #[derive(Debug, Clone, Serialize, Deserialize)]
+   85  pub struct PromptContext {
+   86      /// Schema version for forward-compatible persistence.
+   87      pub version: u32,
+   88      /// Which prompt mode produced this context.
+   89      pub prompt_mode: PromptMode,
+   90      /// Whether this is a primary (parent) or subagent (child) session.
+   91      /// Controls base template choice and catalog section rendering.
+   92      #[serde(default)]
+   93      pub audience: PromptAudience,
+   94      /// Custom body: appended after base template (Extend) or the entire
+   95      /// prompt (Full). `None` = base template only.
+   96      #[serde(skip_serializing_if = &quot;Option::is_none&quot;)]
+   97      pub prompt_body: Option&lt;String&gt;,
+   98      /// Which base template to use for `Extend` mode.
+   99      /// `TemplateOverride::None` = standard base/subagent template.
+  100      /// `TemplateOverride::Codex` = apply-patch profile template (decrypted on demand).
+  101      /// `TemplateOverride::Custom` = caller-provided template string.
+  102      #[serde(default, skip_serializing_if = &quot;is_template_override_none&quot;)]
+  103      pub system_prompt: TemplateOverride,
+  104      /// AGENTS.md files discovered during build, in precedence order
+      … 37 lines omitted; exact range 80–152 …
+  142      #[serde(default, skip_serializing_if = &quot;Option::is_none&quot;)]
+  143      pub current_date: Option&lt;String&gt;,
+  144      /// Whether the agent is running in a non-interactive (headless / SDK /
+  145      /// stdio / generic-ACP).
+  146      #[serde(default)]
+  147      pub is_non_interactive: bool,
+  148      /// Identity in the primary grok-build system prompt (`You are &lt;label&gt;…`).
+  149      /// Not the UI picker name. Defaults to [`DEFAULT_SYSTEM_PROMPT_LABEL`].
+  150      #[serde(default = &quot;default_system_prompt_label&quot;)]
+  151      pub system_prompt_label: String,
+  152  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/prompt/context.rs#L80-L152"><code>crates/codegen/xai-grok-agent/src/prompt/context.rs:80–152</code></a><small>PromptContext 的可序列化字段。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/prompt/context.rs#L199-L232"><code>crates/codegen/xai-grok-agent/src/prompt/context.rs:199–232</code></a><small>主/子受众的 AGENTS 与 persona 注入差异。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-agent/src/prompt/context.rs#L253-L301"><code>crates/codegen/xai-grok-agent/src/prompt/context.rs:253–301</code></a><small>Extend/Full 与标准/Codex/custom 模板渲染。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 7</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="collaboration" data-chapter><div class="module-kicker">M08 · COLLABORATION</div><h2>子 Agent：把一个大任务拆成可治理的协作</h2><p class="section-question">什么时候是普通工具调用，什么时候才算子 Agent？子 Agent 的上下文、预算、取消和结果怎样回到父 Agent？</p><div class="analogy"><b>先用一个生活比喻</b><p>不是把同事叫来聊天就叫协作；真正的协作要有工单、权限、截止时间、交付物和回收机制。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>它是真正的多 Agent 调度：子任务可以后台跑、以后接着跑、在独立分支目录里改代码，但不能无限生孩子。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>子 Agent 支持后台执行、恢复、深度限制与 worktree 隔离</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:811</code></td><td>它是真正的多 Agent 调度：子任务可以后台跑、以后接着跑、在独立分支目录里改代码，但不能无限生孩子。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-grok-subagent-001" data-search="子 agent 支持后台执行、恢复、深度限制与 worktree 隔离 task/spawn_subagent 默认后台运行；启动前校验类型白名单和 toggle，能力取父子交集；可选创建独立 git worktree，持久化子会话并从 snapshot 恢复；达到 max depth 后移除子 agent 的 task 工具。 它是真正的多 agent 调度：子任务可以后台跑、以后接着跑、在独立分支目录里改代码，但不能无限生孩子。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">16</span><div><div class="lesson-eyebrow">L1 · fact · grok-subagent-001</div><h3>子 Agent 支持后台执行、恢复、深度限制与 worktree 隔离</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>task/spawn_subagent 默认后台运行；启动前校验类型白名单和 toggle，能力取父子交集；可选创建独立 Git worktree，持久化子会话并从 snapshot 恢复；达到 max depth 后移除子 Agent 的 task 工具。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它是真正的多 Agent 调度：子任务可以后台跑、以后接着跑、在独立分支目录里改代码，但不能无限生孩子。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>并行协作能力强，同时引入 worktree 生命周期、结果合并、成本与递归治理的高复杂度。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L811-L839">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L811–L839 ↗</a></div><pre><code>  811          {
+  812              let _span = tracing::info_span!(&quot;tool.register&quot;).entered();
+  813              let early_raw_input =
+  814                  serde_json::from_str::&lt;serde_json::Value&gt;(&amp;call.function.arguments).ok();
+  815              let subagent_background = matches!(
+  816                  call.function.name.as_str(),
+  817                  &quot;task&quot; | &quot;Task&quot; | &quot;spawn_subagent&quot;
+  818              )
+  819              .then(|| {
+  820                  early_raw_input
+  821                      .as_ref()
+  822                      .and_then(|v| v.get(&quot;run_in_background&quot;).or_else(|| v.get(&quot;background&quot;)))
+  823                      .and_then(serde_json::Value::as_bool)
+  824                      .unwrap_or(true)
+  825              });
+  826              let mut meta = self.stamp_tool_meta(None, &amp;call.function.name, None);
+  827              if let Some(bg) = subagent_background {
+  828                  meta.get_or_insert_with(serde_json::Map::new).insert(
+  829                      &quot;subagentBackground&quot;.to_string(),
+  830                      serde_json::Value::Bool(bg),
+  831                  );
+  832              }
+  833              self.send_update(
+  834                  acp::SessionUpdate::ToolCall(
+  835                      acp::ToolCall::new(tool_call_id.clone(), call.function.name.clone())
+  836                          .kind(acp::ToolKind::Other)
+  837                          .status(acp::ToolCallStatus::Pending)
+  838                          .raw_input(early_raw_input)
+  839                          .meta(meta),</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L811-L839"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:811–839</code></a><small>task/spawn_subagent 默认 background=true 并写入 ACP meta。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs#L84-L140"><code>crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs:84–140</code></a><small>解析定义、toggle/allowlist gate、runtime/persona resolution。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs#L149-L343"><code>crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs:149–343</code></a><small>恢复来源、snapshot/worktree rehydrate 与新 worktree 创建。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs#L375-L423"><code>crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs:375–423</code></a><small>能力交集、深度计算、到顶移除 task、max turns。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 8</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="state" data-chapter><div class="module-kicker">M09 · STATE</div><h2>会话、持久化与观测：让一次运行变成可追溯事实</h2><p class="section-question">如果进程崩了、用户刷新了、任务跑了一夜，系统凭什么恢复并解释“刚才究竟发生了什么”？</p><div class="analogy"><b>先用一个生活比喻</b><p>内存像白板，数据库像目录，append-only journal 像监控录像；可靠 Harness 不只保存最后答案，还保存每次转弯。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>不仅能看到“失败了”，还能回答失败在哪个关、谁批准的、等了多久、压缩试了几次、沙箱挡了什么。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>工具、权限、压缩和沙箱均产出结构化事件</td><td><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:392</code></td><td>不仅能看到“失败了”，还能回答失败在哪个关、谁批准的、等了多久、压缩试了几次、沙箱挡了什么。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-grok-observe-001" data-search="工具、权限、压缩和沙箱均产出结构化事件 工具开始/完成进入 acp 与统一 sessionevent，权限记录模式、来源、等待时间，压缩 span 记录 token/尝试/拒绝/ttft，沙箱事件立即追加 ~/.grok/sandbox-events.jsonl。 不仅能看到“失败了”，还能回答失败在哪个关、谁批准的、等了多久、压缩试了几次、沙箱挡了什么。 observability-persistence">
+    <div class="lesson-finding-head"><span class="lesson-number">17</span><div><div class="lesson-eyebrow">L1 · fact · grok-observe-001</div><h3>工具、权限、压缩和沙箱均产出结构化事件</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>工具开始/完成进入 ACP 与统一 SessionEvent，权限记录模式、来源、等待时间，压缩 span 记录 token/尝试/拒绝/TTFT，沙箱事件立即追加 ~/.grok/sandbox-events.jsonl。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>不仅能看到“失败了”，还能回答失败在哪个关、谁批准的、等了多久、压缩试了几次、沙箱挡了什么。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>具备平台级诊断基础，但事件面很大，需要统一 trace/session/tool/subagent ID 规范。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L392-L436">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L392–L436 ↗</a></div><pre><code>  392              self.emit_event(crate::session::events::Event::ToolStarted {
+  393                  tool_name: call.function.name.clone(),
+  394              });
+  395              self.observability_bridge
+  396                  .emit(
+  397                      xai_tool_protocol::session_event::SessionEvent::ToolCallStarted {
+  398                          tool_call_id: call.id.clone(),
+  399                          tool_name: call.function.name.clone(),
+  400                          turn_number: self.current_turn_number.get(),
+  401                      },
+  402                  )
+  403                  .await;
+  404              let call_name = call.function.name.clone();
+  405              match self.prepare_tool_call(call, deferred_followups).await? {
+  406                  Ok(prepared) =&gt; approved.push(prepared),
+  407                  Err(tool_loop) =&gt; {
+  408                      self.events.tool_finished();
+  409                      if let Some((server, tool)) =
+  410                          crate::session::mcp_servers::parse_mcp_tool_name(&amp;call_name)
+  411                      {
+  412                          let error_reason = match &amp;tool_loop {
+  413                              ToolLoop::PermissionReject { reason, .. } =&gt; reason.clone(),
+  414                              ToolLoop::Cancelled =&gt; &quot;cancelled&quot;.to_string(),
+  415                              ToolLoop::FollowupMessage(_) =&gt; &quot;followup&quot;.to_string(),
+  416                              ToolLoop::HookDenied { hook_name, .. } =&gt; {
+      … 9 lines omitted; exact range 392–436 …
+  426                                  server,
+  427                                  crate::session::mcp_servers::MCP_TOOL_NAME_DELIMITER,
+  428                                  tool
+  429                              ),
+  430                              duration_ms: 0,
+  431                              success: false,
+  432                              is_timeout: false,
+  433                              error: Some(error_reason),
+  434                              reconnect_attempted: false,
+  435                              auth_retry_attempted: false,
+  436                          });</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L392-L436"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:392–436</code></a><small>工具开始与 MCP 失败事件。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1198-L1227"><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1198–1227</code></a><small>权限 decision/source/wait_ms 的 span 与 telemetry。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/compaction.rs#L859-L895"><code>crates/codegen/xai-grok-shell/src/session/compaction.rs:859–895</code></a><small>压缩 span 的 token、拒绝、延迟与结果字段。</small></li><li><span>implementation</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/logging.rs#L3-L97"><code>crates/codegen/xai-grok-sandbox/src/logging.rs:3–97</code></a><small>sandbox 事件、指标和 JSONL flush。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 9</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="maturity" data-chapter><div class="module-kicker">M10 · ENGINEERING</div><h2>测试、恢复与工程取舍：把漂亮机制变成可靠产品</h2><p class="section-question">哪些行为有测试证明？哪些只是配置或 prompt 约定？当安全、性能、可恢复性冲突时，源码选择了什么？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像验收一座桥：图纸说明结构，测试证明承重，故障演练证明断电后还能不能让人安全回来。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 10</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section>
+  <section class="module-section practice" id="practice"><div class="module-kicker">M11 · PRACTICE</div><h2>把读懂变成会判断</h2><p class="section-question">下面的练习不要求你先写一个完整 Agent，而是训练你检查设计边界：事实是什么、推断是什么、如果换成自研产品要补哪一层。</p><div class="practice-grid"><article><span>Q1</span><h3>SessionActor 是事件驱动的长期存活 Actor</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>这套 Harness 面向长会话、后台工作和 IDE/ACP 集成，控制面复杂度显著高于纯 CLI Agent。</p><small>证据：crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs:120</small></details></article><article><span>Q2</span><h3>工具执行明确拆成 prepare、并发 dispatch、post-flight</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>并发策略不是简单 all-at-once，而是带资源锁的调度。</p><small>证据：crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:355</small></details></article><article><span>Q3</span><h3>工具参数对模型瑕疵有恢复层</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>对模型输出做保守修复能提高成功率，但必须记录恢复行为，避免悄悄改变语义。</p><small>证据：crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878</small></details></article><article><span>Q4</span><h3>Plan Mode 的只读约束独立于 Always Approve</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>工作流阶段约束不能依赖通用权限模式，否则高权限模式会破坏阶段不变量。</p><small>证据：crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157</small></details></article><article><span>Q5</span><h3>权限判断理解访问类型和会话上下文</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>权限系统既是策略引擎，也是可观测的决策服务。</p><small>证据：crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1035</small></details></article></div></section>
+  <section class="module-section source-index" id="sources"><div class="module-kicker">APPENDIX · SOURCE INDEX</div><h2>本课读过的实现文件</h2><p class="section-question">文件索引帮助你在课程外继续追踪调用链；每一条路径来自固定提交的证据账本。</p><ol><li><span>01</span><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs</code><small>L120–183, L188–246, L247–280</small></li><li><span>02</span><code>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs</code><small>L355–449, L453–565, L878–950, L157–205, L206–215, L1035–1102, L1112–1227, L977–1034, L811–839, L392–436, L1198–1227</small></li><li><span>03</span><code>crates/codegen/xai-grok-sandbox/src/lib.rs</code><small>L8–18, L173–219, L107–129, L190–243, L8–18, L83–95</small></li><li><span>04</span><code>crates/codegen/xai-grok-sandbox/src/profiles.rs</code><small>L24–41, L113–167</small></li><li><span>05</span><code>crates/codegen/xai-grok-sandbox/src/child_net.rs</code><small>L62–144</small></li><li><span>06</span><code>crates/codegen/xai-grok-shell/src/session/compaction.rs</code><small>L3–35, L212–262, L1098–1197, L1282–1460, L1577–1655, L859–895</small></li><li><span>07</span><code>crates/codegen/xai-grok-agent/src/prompt/agents_md.rs</code><small>L1–7, L177–307</small></li><li><span>08</span><code>crates/codegen/xai-grok-agent/src/prompt/context.rs</code><small>L80–152, L199–232, L253–301</small></li><li><span>09</span><code>crates/codegen/xai-grok-agent/src/plugins/manifest.rs</code><small>L103–170</small></li><li><span>10</span><code>crates/codegen/xai-grok-agent/src/plugins/registry.rs</code><small>L12–78, L114–184, L274–279</small></li><li><span>11</span><code>crates/codegen/xai-grok-shell/src/agent/subagent/handle_request.rs</code><small>L84–140, L149–343, L375–423</small></li><li><span>12</span><code>crates/codegen/xai-grok-sandbox/src/logging.rs</code><small>L3–97</small></li></ol></section>
+  <section class="module-section next-section"><div class="next-lesson"><div><span>下一步</span><h2>从课程回到报告，做一次反向核验</h2><p>教程负责让你读懂，报告负责让你查证。打开报告页，任选一个章节，尝试只靠源码摘录复述它的边界。</p></div><a href="../reports/grok-build.html">查看 Grok Build 报告 ↗</a></div></section>
+  <footer class="tutorial-footer"><div><span>FIXED SNAPSHOT</span><code>02d9359435d0e9c20a20945679389cdce441e431</code></div><nav><a href="aider.html">← Aider</a><a href="openinterpreter.html">Open Interpreter →</a></nav></footer></main></div><script src="../assets/tutorial.js"></script></body></html>

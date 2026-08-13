@@ -13,6 +13,7 @@ const assert = (condition, message) => { if (!condition) failures.push(message);
 const htmlFiles = [];
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (dir === site && entry.name === "legacy") continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full);
     else if (entry.name.endsWith(".html")) htmlFiles.push(full);

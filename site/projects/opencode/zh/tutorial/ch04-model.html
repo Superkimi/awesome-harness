@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>OpenCode · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">dev<br>284e97068c98</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · OpenCode · 284e97068c98</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>TypeScript / Markdown / JavaScript</span><span>dev</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>OpenCode · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/opencode/ch04-model.mp4" data-video-status="planned">待发布 MP4</a><a href="../../../../videos/opencode/ch04-model.srt" data-video-status="planned">SRT</a><em>284e97068c98</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>源码</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 它每一轮都重新看账本决定“接下来做什么”，所以进程中断、工具异步完成和压缩都能落在统一状态机里。</p><h2>再看这段源码</h2><div class="source-card"><div><span>packages/opencode/src/session/processor.ts · L315–413</span><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/processor.ts#L315-L413" target="_blank" rel="noreferrer">打开固定提交 ↗</a></div><pre><code>  315            case &quot;tool-input-start&quot;:
+  316              if (ctx.assistantMessage.summary) {
+  317                throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
+  318              }
+  319              yield* ensureToolCall(value)
+  320              return
+  321  
+  322            case &quot;tool-input-delta&quot;:
+  323              yield* ensureToolCall(value)
+  324              return
+  325  
+  326            case &quot;tool-input-end&quot;: {
+  327              yield* ensureToolCall(value)
+  328              return
+  329            }
+  330  
+  331            case &quot;tool-call&quot;: {
+  332              if (ctx.assistantMessage.summary) {
+  333                throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
+  334              }
+  335              yield* ensureToolCall(value)
+  336              const input = isRecord(value.input) ? value.input : { value: value.input }
+  337              yield* updateToolCall(value.id, (match) =&gt; ({
+  338                ...match,
+  339                tool: value.name,
+  340                state:
+  341                  match.state.status === &quot;running&quot;
+  342                    ? { ...match.state, input }
+  343                    : {
+  344                        status: &quot;running&quot;,</code></pre></div><h2>翻译成小白能懂的话</h2><p>这段代码不是“顺便做了点事”，它在本章控制面上承担一个明确职责。阅读时先找输入、状态变化、外部副作用和错误出口，再把它放回 OpenCode 的完整任务链。</p><div class="flow-strip"><span>输入</span><i>→</i><span>规则 / 状态</span><i>→</i><span>动作</span><i>→</i><span>回执</span></div><h2>把它放进图里</h2><iframe class="diagram-frame" src="../diagrams/architecture.html" title="OpenCode architecture" loading="lazy"></iframe><h2>小练习：不要只会复述</h2><div class="exercise"><p>打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。</p><details><summary>查看提示</summary><p>提示：如果源码里只有 prompt 或 UI 文案，没有状态、权限或执行代码，不要把它写成强保证。</p></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

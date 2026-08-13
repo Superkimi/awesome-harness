@@ -1,0 +1,430 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "gemini-cli",
+  "snapshot": {
+    "repository": "google-gemini/gemini-cli",
+    "commit": "bef6119500b0238ad84f6396d2a6cabda9991554",
+    "commitDate": "2026-07-27T17:36:48Z"
+  },
+  "method": {
+    "readmePolicy": "README/GEMINI.md 只作入口导航；结论来自 GeminiClient、GeminiChat、Turn、ContextManager、Scheduler、PolicyEngine、平台 sandbox、MCP、skills/extensions、recording 和测试。",
+    "factPolicy": "区分稳定 legacy 路径、新 context-management gate、sandbox enabled 状态、交互/非交互默认与 Provider 认证类型。",
+    "inferencePolicy": "Google 服务端路由、模型内部 next-speaker 与 safety checker 只描述本地调用契约，不推断服务端实现。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "主递归 turn、模型路由、next-speaker、loop recovery、hook 与上限。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "ContentGenerator、Google OAuth/API key/Vertex/Gateway、流式重试。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "legacy compression 与 graph/pipeline context-management 两条路径。" },
+    { "dimension": "tools-scheduler", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "Turn 工具提取、event-driven Scheduler、输出落盘/截断和取消。" },
+    { "dimension": "policy-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "规则/安全检查/审批模式、环境净化和三平台真实沙箱。" },
+    { "dimension": "mcp-extensions-skills-memory-hooks", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "MCP transports/OAuth/refresh/admin policy，扩展热装卸，GEMINI.md/JIT memory，skills 和 hooks。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "local/remote protocol、AgentSession event replay、子 Agent 独立 registry/scheduler。" },
+    { "dimension": "persistence-observability-maturity", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "增量 JSONL、rewind/checkpoint、OTEL/GCP/file/console、规模与许可证。" }
+  ],
+  "findings": [
+    {
+      "id": "gemini-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100",
+      "fact": "GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。",
+      "plainLanguage": "一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。",
+      "implication": "控制流直观，递归路径共享 prompt_id 和 hook state，需要严格做 activeCalls 记账。",
+      "citations": [
+        { "path": "packages/core/src/core/client.ts", "startLine": 79, "endLine": 111, "role": "implementation", "excerpt": "MAX_TURNS 和 loop/compression/hook 状态。" },
+        { "path": "packages/core/src/core/client.ts", "startLine": 875, "endLine": 907, "role": "implementation", "excerpt": "next-speaker 继续模型。" },
+        { "path": "packages/core/src/core/client.ts", "startLine": 910, "endLine": 1060, "role": "implementation", "excerpt": "bounded recursion 与 hook continuation。" }
+      ]
+    },
+    {
+      "id": "gemini-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具",
+      "fact": "processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。",
+      "plainLanguage": "开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。",
+      "implication": "上下文与模型选择顺序清楚，工具描述可随模型变化且同一 sequence 保持模型粘性。",
+      "citations": [
+        { "path": "packages/core/src/core/client.ts", "startLine": 614, "endLine": 715, "role": "implementation", "excerpt": "context、masking 和 token overflow。" },
+        { "path": "packages/core/src/core/client.ts", "startLine": 717, "endLine": 807, "role": "implementation", "excerpt": "IDE 配对、loop、router 和 tools。" }
+      ]
+    },
+    {
+      "id": "gemini-loop-003",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "循环检测能先恢复一次，再判定硬循环",
+      "fact": "turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count>1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。",
+      "plainLanguage": "第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。",
+      "implication": "比仅靠 turn 上限更早止损，并保留一次自恢复空间。",
+      "citations": [
+        { "path": "packages/core/src/core/client.ts", "startLine": 744, "endLine": 763, "role": "implementation", "excerpt": "turn-start loop detection。" },
+        { "path": "packages/core/src/core/client.ts", "startLine": 810, "endLine": 855, "role": "implementation", "excerpt": "stream-event loop detection 与恢复。" }
+      ]
+    },
+    {
+      "id": "gemini-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "统一 ContentGenerator 契约覆盖流式、非流式、计数与 embedding",
+      "fact": "ContentGenerator 抽象 generateContent、generateContentStream、countTokens 和 embedContent；AuthType 覆盖 Google OAuth、Gemini API key、Vertex AI、ADC 与 Gateway。",
+      "plainLanguage": "上层只认一套生成接口，底下可换个人 Google 登录、API key、企业 Vertex 或网关。",
+      "implication": "Provider 切换不改主循环，但 thought signature 兼容性仍需在切换认证后处理。",
+      "citations": [
+        { "path": "packages/core/src/core/contentGenerator.ts", "startLine": 35, "endLine": 70, "role": "contract", "excerpt": "ContentGenerator 与 AuthType。" },
+        { "path": "packages/core/src/core/contentGenerator.ts", "startLine": 72, "endLine": 110, "role": "implementation", "excerpt": "环境自动检测和配置。" }
+      ]
+    },
+    {
+      "id": "gemini-provider-002",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "个人/ADC 走 Code Assist，API key/Vertex/Gateway 走 Google GenAI SDK",
+      "fact": "createContentGenerator 对 LOGIN_WITH_GOOGLE/COMPUTE_ADC 创建 CodeAssistServer 并加模型映射；Gemini/Vertex/Gateway 构造 GoogleGenAI，支持自定义 base URL、headers、proxy 和 Vertex routing headers。",
+      "plainLanguage": "登录方式不仅换凭证，也可能换后端客户端；企业 Vertex 还能指定共享/专用路由。",
+      "implication": "同一主循环有多条传输实现，认证切换测试必须覆盖历史 thoughtSignature 清理。",
+      "citations": [
+        { "path": "packages/core/src/core/contentGenerator.ts", "startLine": 285, "endLine": 310, "role": "implementation", "excerpt": "Code Assist 路径。" },
+        { "path": "packages/core/src/core/contentGenerator.ts", "startLine": 312, "endLine": 410, "role": "implementation", "excerpt": "GenAI/Vertex/Gateway、headers、proxy 与 endpoint。" }
+      ]
+    },
+    {
+      "id": "gemini-provider-003",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "连接阶段与中途流错误分开重试，中途流最多四次尝试",
+      "fact": "GeminiChat 的 streamWithRetries 把连接阶段错误交给底层 retryWithBackoff；流迭代中的可重试网络/内容错误使用独立指数退避，并限制到 MID_STREAM_RETRY_OPTIONS 的四次总尝试。",
+      "plainLanguage": "连不上和连上后半路断掉是两类事故，分别计数；不会因为全局重试设得很大就反复重播半截响应。",
+      "implication": "降低 mid-stream 重复输出/工具调用风险。",
+      "citations": [
+        { "path": "packages/core/src/core/geminiChat.ts", "startLine": 517, "endLine": 578, "role": "implementation", "excerpt": "连接与流迭代错误边界。" },
+        { "path": "packages/core/src/core/geminiChat.ts", "startLine": 580, "endLine": 648, "role": "implementation", "excerpt": "mid-stream 分类、退避与上限。" }
+      ]
+    },
+    {
+      "id": "gemini-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Legacy 压缩默认在 50% 窗口触发，并保留最近约 30%",
+      "fact": "ChatCompressionService 默认阈值为模型 token limit 的 0.5，压缩切点按序列化字符量寻找安全 user turn，目标保留最近 30%，且不会拆断 function call/response 边界。",
+      "plainLanguage": "箱子装到一半就提前整理，最近三成原文留下，旧七成写成摘要；切口只选完整对话边界。",
+      "implication": "为长回复和工具调用预留较大余量，代价是较早产生摘要成本。",
+      "citations": [
+        { "path": "packages/core/src/context/chatCompressionService.ts", "startLine": 37, "endLine": 52, "role": "config", "excerpt": "50% trigger、30% preserve 与工具预算。" },
+        { "path": "packages/core/src/context/chatCompressionService.ts", "startLine": 54, "endLine": 100, "role": "implementation", "excerpt": "安全 split point。" }
+      ]
+    },
+    {
+      "id": "gemini-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "旧工具输出采用反向预算，超额内容落临时文件并只留尾部",
+      "fact": "压缩前从最新向最旧累计 function response token，优先保留近端；超过 50k 工具响应预算后，将较老大输出保存到文件并替换为最后 30 行和路径提示。",
+      "plainLanguage": "最新日志全文留在桌面，旧日志搬进档案室，只在上下文里留末尾和取件地址。",
+      "implication": "既省 token 又保留可恢复原文，比不可逆截断更适合调试。",
+      "citations": [
+        { "path": "packages/core/src/context/chatCompressionService.ts", "startLine": 124, "endLine": 142, "role": "implementation", "excerpt": "reverse token budget 设计。" },
+        { "path": "packages/core/src/context/chatCompressionService.ts", "startLine": 144, "endLine": 215, "role": "implementation", "excerpt": "工具结果计数、保存与替换。" }
+      ]
+    },
+    {
+      "id": "gemini-context-003",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "摘要膨胀会触发熔断，随后只做内容截断",
+      "fact": "tryCompressChat 记录 COMPRESSION_FAILED_INFLATED_TOKEN_COUNT；非强制压缩一旦失败即保持 hasFailedCompressionAttempt，后续服务可返回 CONTENT_TRUNCATED 并直接更新 history，不重建 chat。",
+      "plainLanguage": "如果摘要反而比原文胖，就不再每轮花钱重写摘要，改用更轻的裁剪。",
+      "implication": "避免压缩风暴，但本会话之后的语义保真会更多依赖工具输出 masking。",
+      "citations": [
+        { "path": "packages/core/src/core/client.ts", "startLine": 107, "endLine": 120, "role": "implementation", "excerpt": "压缩失败状态。" },
+        { "path": "packages/core/src/core/client.ts", "startLine": 1196, "endLine": 1248, "role": "implementation", "excerpt": "失败熔断、重建 chat 与轻量截断。" }
+      ]
+    },
+    {
+      "id": "gemini-context-004",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "新 ContextManager 是图与流水线系统，带 preview late-bind、压力屏障、GC/蒸馏和结构校验",
+      "fact": "ContextManager 从 durable AgentChatHistory 同步 pristine graph，对 pending request 建 ephemeral preview，等待 pipeline/hot-start barrier，执行 triggers，再带保护节点渲染、harden 与 invariant check；相同 node hash 可复用 render cache。",
+      "plainLanguage": "新系统不再把历史当一长串消息，而是当可追溯的节点图；当前问题先在草稿区处理，确认后才影响长期账本。",
+      "implication": "能做精细蒸馏和增量管理，但复杂度显著高于 legacy summary，必须明确 feature gate 与回退路径。",
+      "citations": [
+        { "path": "packages/core/src/context/contextManager.ts", "startLine": 26, "endLine": 88, "role": "implementation", "excerpt": "master buffer、事件应用和 render cache。" },
+        { "path": "packages/core/src/context/contextManager.ts", "startLine": 90, "endLine": 195, "role": "implementation", "excerpt": "sync、preview、barrier、triggers 与 render。" },
+        { "path": "packages/core/src/context/contextManager.ts", "startLine": 197, "endLine": 275, "role": "implementation", "excerpt": "commit backstop、invariants、harden 和 late-bind 分割。" }
+      ]
+    },
+    {
+      "id": "gemini-context-005",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "新上下文系统用真实 API token 反校准本地估算",
+      "fact": "processTurn 把 ContextManager 渲染得到的 baseUnits 带入请求；Finished 事件若包含 promptTokenCount，则通过 eventBus 发 actualTokens 与 promptBaseUnits ground truth。",
+      "plainLanguage": "先用本地尺子估，再用模型 API 的过磅结果校准尺子。",
+      "implication": "长期预算判断可适应多模态与不同模型 tokenizer 偏差。",
+      "citations": [
+        { "path": "packages/core/src/core/client.ts", "startLine": 640, "endLine": 678, "role": "implementation", "excerpt": "ContextManager render 与 baseUnits。" },
+        { "path": "packages/core/src/core/client.ts", "startLine": 829, "endLine": 838, "role": "implementation", "excerpt": "token ground truth 回灌。" }
+      ]
+    },
+    {
+      "id": "gemini-tools-001",
+      "dimension": "tools-scheduler",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Turn 只解析模型流，工具执行交给独立 event-driven Scheduler",
+      "fact": "Turn 从 generateContentStream 收集 text、thought、functionCall、usage 和 finish reason，将 functionCall 放进 pendingToolCalls；主/子 Agent 再以各自 registry、message bus、sandbox manager 创建 Scheduler 批量执行。",
+      "plainLanguage": "模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。",
+      "implication": "主 Agent 和子 Agent 能复用同一工具治理链，同时各自限定工具集。",
+      "citations": [
+        { "path": "packages/core/src/core/turn.ts", "startLine": 236, "endLine": 320, "role": "implementation", "excerpt": "Turn 流解析与 pending tool calls。" },
+        { "path": "packages/core/src/agents/agent-scheduler.ts", "startLine": 42, "endLine": 92, "role": "implementation", "excerpt": "子 Agent Scheduler context 与生命周期。" }
+      ]
+    },
+    {
+      "id": "gemini-tools-002",
+      "dimension": "tools-scheduler",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "超大工具结果在调度阶段落盘，取消也返回合法 functionResponse",
+      "fact": "ToolExecutor 对超过阈值的文本写入项目临时目录并替换为截断文本；取消时若已有部分输出仍先截断/保存，再构造带 error 的 functionResponse，保持 Gemini 协议配对。",
+      "plainLanguage": "工具被叫停也必须交一张正式回执；已经产生的大输出不会硬塞回上下文。",
+      "implication": "失败/取消不会破坏下一轮历史，且原始输出可从文件追查。",
+      "citations": [
+        { "path": "packages/core/src/scheduler/tool-executor.ts", "startLine": 250, "endLine": 297, "role": "implementation", "excerpt": "输出阈值、保存与截断。" },
+        { "path": "packages/core/src/scheduler/tool-executor.ts", "startLine": 299, "endLine": 368, "role": "implementation", "excerpt": "取消结果与 functionResponse 配对。" }
+      ]
+    },
+    {
+      "id": "gemini-policy-001",
+      "dimension": "policy-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "PolicyEngine 按优先级匹配工具、参数、MCP 身份、annotations、模式、交互状态和 subagent",
+      "fact": "ruleMatches 对稳定序列化参数、MCP 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。",
+      "plainLanguage": "政策可以精确到“哪个子 Agent 在非交互模式调用哪个 MCP 的哪个参数”，不只是允许/禁止 Bash。",
+      "implication": "企业控制力强，但规则冲突需要良好解释器和测试。",
+      "citations": [
+        { "path": "packages/core/src/policy/policy-engine.ts", "startLine": 49, "endLine": 195, "role": "implementation", "excerpt": "完整规则匹配维度。" },
+        { "path": "packages/core/src/policy/policy-engine.ts", "startLine": 198, "endLine": 260, "role": "implementation", "excerpt": "优先级、校验和默认决策。" }
+      ]
+    },
+    {
+      "id": "gemini-policy-002",
+      "dimension": "policy-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "非交互默认拒绝，交互默认询问；危险命令强制 ASK，YOLO 例外",
+      "fact": "PolicyEngine 未配置 defaultDecision 时，nonInteractive 为 DENY、交互为 ASK_USER；shell heuristic 将危险命令改为 ASK_USER，YOLO 保留原决定，已知安全命令可把 ASK 降为 ALLOW。",
+      "plainLanguage": "没人看屏幕时不赌；有人在时先问。只有明确 YOLO 才允许危险命令绕过这层强制提问。",
+      "implication": "无头执行失败关闭，YOLO 是明确的高风险模式。",
+      "citations": [
+        { "path": "packages/core/src/policy/policy-engine.ts", "startLine": 253, "endLine": 260, "role": "config", "excerpt": "交互/非交互默认决策。" },
+        { "path": "packages/core/src/policy/policy-engine.ts", "startLine": 284, "endLine": 341, "role": "implementation", "excerpt": "重定向与命令安全启发式。" }
+      ]
+    },
+    {
+      "id": "gemini-sandbox-001",
+      "dimension": "policy-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Sandbox 默认不开启，但即使关闭仍净化环境变量",
+      "fact": "factory 只有 sandbox.enabled 才按平台选择 Linux/Mac/Windows manager，否则用 NoopSandboxManager；Noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。",
+      "plainLanguage": "防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。",
+      "implication": "必须评价为“可选强隔离”，不能写成“默认在沙箱中执行”。",
+      "citations": [
+        { "path": "packages/core/src/services/sandboxManagerFactory.ts", "startLine": 19, "endLine": 43, "role": "implementation", "excerpt": "enabled gate 与平台选择。" },
+        { "path": "packages/core/src/services/sandboxManager.ts", "startLine": 285, "endLine": 333, "role": "implementation", "excerpt": "Noop 环境净化与无隔离透传。" }
+      ]
+    },
+    {
+      "id": "gemini-sandbox-002",
+      "dimension": "policy-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "三平台使用真实 OS 隔离，并保护治理文件与 .env 类秘密",
+      "fact": "Linux 使用 bubblewrap 并生成 seccomp BPF 禁 ptrace；macOS 用 sandbox-exec/Seatbelt profile；Windows 用 restricted token、Job Object、Low Integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。",
+      "plainLanguage": "开罩后不是靠模型自觉：Linux、macOS、Windows 各用系统级限制器，仓库规则和秘密文件另加保护。",
+      "implication": "跨平台安全面完整，但每个后端差异大，需各自做 denial 与路径逃逸回归。",
+      "citations": [
+        { "path": "packages/core/src/services/sandboxManager.ts", "startLine": 194, "endLine": 223, "role": "contract", "excerpt": "治理文件与秘密文件清单。" },
+        { "path": "packages/core/src/sandbox/linux/LinuxSandboxManager.ts", "startLine": 48, "endLine": 114, "role": "implementation", "excerpt": "seccomp BPF 与 ptrace 拒绝。" },
+        { "path": "packages/core/src/sandbox/windows/WindowsSandboxManager.ts", "startLine": 56, "endLine": 72, "role": "implementation", "excerpt": "Windows isolation 后端。" }
+      ]
+    },
+    {
+      "id": "gemini-sandbox-003",
+      "dimension": "policy-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "默认 sandbox mode 的 default 是可写 workspace，plan 才只读",
+      "fact": "SandboxPolicyManager 内建 fallback 中 plan 为 readonly/network off，default 和 accepting_edits 为 writable/network off；YOLO 明确打开网络、写权限和 yolo 标志。",
+      "plainLanguage": "即使开启沙箱，普通默认模式也允许改工作区；“开沙箱”不等于“只读”。",
+      "implication": "产品 UI 必须同时展示 sandbox enabled 与当前 mode，避免用户产生错误安全感。",
+      "citations": [
+        { "path": "packages/core/src/policy/sandboxPolicyManager.ts", "startLine": 49, "endLine": 94, "role": "config", "excerpt": "plan/default/accepting_edits 默认能力。" },
+        { "path": "packages/core/src/policy/sandboxPolicyManager.ts", "startLine": 140, "endLine": 158, "role": "implementation", "excerpt": "YOLO 和 mode 映射。" }
+      ]
+    },
+    {
+      "id": "gemini-mcp-001",
+      "dimension": "mcp-extensions-skills-memory-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 支持 stdio、Streamable HTTP、SSE fallback、OAuth、动态目录刷新和 progress",
+      "fact": "McpClient 连接后发现 tools/prompts/resources 并注册，监听 listChanged；网络 transport 首选 HTTP，失败可回退 SSE，401 仅在显式 oauth.enabled 时发现/认证并重试；调用有 timeout、abort 与 progress token 路由。",
+      "plainLanguage": "本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 OAuth。",
+      "implication": "连接器成熟，且认证意图边界清楚；热刷新仍需依赖 registry sort 与 policy validation。",
+      "citations": [
+        { "path": "packages/core/src/tools/mcp-client.ts", "startLine": 188, "endLine": 292, "role": "implementation", "excerpt": "连接、发现、注册与断开。" },
+        { "path": "packages/core/src/tools/mcp-client.ts", "startLine": 390, "endLine": 430, "role": "implementation", "excerpt": "listChanged 动态刷新。" },
+        { "path": "packages/core/src/tools/mcp-client.ts", "startLine": 1829, "endLine": 1916, "role": "implementation", "excerpt": "transport 选择与连接。" },
+        { "path": "packages/core/src/tools/mcp-client.ts", "startLine": 1927, "endLine": 2059, "role": "implementation", "excerpt": "SSE fallback 和显式 OAuth gate。" }
+      ]
+    },
+    {
+      "id": "gemini-extension-001",
+      "dimension": "mcp-extensions-skills-memory-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "扩展是能力包：MCP、policy/checker、context、commands、hooks、agents 与 skills 可成组热装卸",
+      "fact": "ExtensionLoader 启动扩展时连接 MCP、刷新工具、注册 rules/checkers；批次完成后统一 refresh memory/system prompt/hooks/agent registry/skills。停止时按 source 移除政策并做同样刷新。",
+      "plainLanguage": "扩展不是单个脚本，而是一箱可协同变化的工具、规则、记忆、钩子和 Agent。",
+      "implication": "扩展卸载能回收治理状态；批量刷新减少 prompt cache 抖动。",
+      "citations": [
+        { "path": "packages/core/src/utils/extensionLoader.ts", "startLine": 31, "endLine": 110, "role": "implementation", "excerpt": "启动、MCP、policy 和批次刷新。" },
+        { "path": "packages/core/src/utils/extensionLoader.ts", "startLine": 113, "endLine": 132, "role": "implementation", "excerpt": "统一刷新上下文、hooks、agents、skills。" },
+        { "path": "packages/core/src/utils/extensionLoader.ts", "startLine": 172, "endLine": 225, "role": "implementation", "excerpt": "停止与按来源移除政策。" }
+      ]
+    },
+    {
+      "id": "gemini-memory-001",
+      "dimension": "mcp-extensions-skills-memory-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "GEMINI.md/Memory 分 global、user-project、extension、project，并支持受信目录 JIT 加载",
+      "fact": "memory discovery 分类别收集并串联；环境 memory 从 trusted root 向上到 git root；工具触达子目录时，只有目标处于 trusted root 才 JIT 搜索并按 inode/device 去重。",
+      "plainLanguage": "常驻规章分层保存，走进更深目录时才加载当地规则；不受信目录不会因为读一个文件就注入它的说明。",
+      "implication": "兼顾大仓库按需上下文与 prompt injection 边界。",
+      "citations": [
+        { "path": "packages/core/src/utils/memoryDiscovery.ts", "startLine": 383, "endLine": 454, "role": "implementation", "excerpt": "extension/environment 分层与分类。" },
+        { "path": "packages/core/src/utils/memoryDiscovery.ts", "startLine": 512, "endLine": 572, "role": "implementation", "excerpt": "JIT trusted-root gate 与 traversal ceiling。" },
+        { "path": "packages/core/src/utils/memoryDiscovery.ts", "startLine": 578, "endLine": 639, "role": "implementation", "excerpt": "文件身份去重与并发上限。" }
+      ]
+    },
+    {
+      "id": "gemini-skills-001",
+      "dimension": "mcp-extensions-skills-memory-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skills 有明确覆盖顺序，workspace skills 受 folder trust 保护",
+      "fact": "SkillManager 依次加载 builtin、extension、user、.agents alias、workspace，后者同名覆盖前者；未信任 workspace 时直接跳过项目 skills，并可由管理员全局禁用或按名禁用。",
+      "plainLanguage": "越靠近项目的技能优先级越高，但项目没被信任前不会让它改 Agent 的做事方式。",
+      "implication": "skills 被正确视为可执行影响，而非普通文档。",
+      "citations": [
+        { "path": "packages/core/src/skills/skillManager.ts", "startLine": 17, "endLine": 99, "role": "implementation", "excerpt": "来源、优先级与 trust gate。" },
+        { "path": "packages/core/src/skills/skillManager.ts", "startLine": 124, "endLine": 188, "role": "implementation", "excerpt": "冲突覆盖、禁用与展示。" }
+      ]
+    },
+    {
+      "id": "gemini-hooks-001",
+      "dimension": "mcp-extensions-skills-memory-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Before/AfterAgent hooks 可停止、阻断、注入上下文或要求清空后继续",
+      "fact": "BeforeAgent 对每个 prompt_id 去重并可 stop/block/additionalContext；AfterAgent 只在最外层且没有 pending tools 时运行，可 stop、block、clearContext，并将 continue reason 作为新请求递归运行。",
+      "plainLanguage": "钩子既能在开工前加背景/拦截，也能在收工时验收，不合格可清空现场后让 Agent 按理由重做。",
+      "implication": "适合策略与质量门，但递归 continuation 要有 turn 上限和 hook state 防重。",
+      "citations": [
+        { "path": "packages/core/src/core/client.ts", "startLine": 153, "endLine": 252, "role": "implementation", "excerpt": "Before/AfterAgent 安全包装与去重。" },
+        { "path": "packages/core/src/core/client.ts", "startLine": 930, "endLine": 1034, "role": "implementation", "excerpt": "stop/block/context/continuation 行为。" }
+      ]
+    },
+    {
+      "id": "gemini-agent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 统一为可订阅、可重放、可中止的 AgentProtocol",
+      "fact": "AgentSession 包装 send/subscribe/abort/events，并把一次 stream 限定在 agent_start→agent_end；它先订阅再回放历史，处理 setup 期间 early events，支持按 eventId 或 streamId 重接。",
+      "plainLanguage": "无论子 Agent 在本机还是远程，上层看到的都是一条带编号、能续看的事件流。",
+      "implication": "UI、SDK 与 A2A server 可共享协议，断线恢复不必理解每种 executor。",
+      "citations": [
+        { "path": "packages/core/src/agent/agent-session.ts", "startLine": 14, "endLine": 69, "role": "contract", "excerpt": "AgentProtocol wrapper 与 AsyncIterable。" },
+        { "path": "packages/core/src/agent/agent-session.ts", "startLine": 70, "endLine": 165, "role": "implementation", "excerpt": "订阅优先、eventId resume 和生命周期过滤。" },
+        { "path": "packages/core/src/agent/agent-session.ts", "startLine": 166, "endLine": 223, "role": "implementation", "excerpt": "streamId replay、early events 和清理。" }
+      ]
+    },
+    {
+      "id": "gemini-agent-002",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "Local 子 Agent 支持后台执行和取消，但同一 protocol 实例不允许并发 stream",
+      "fact": "LocalSubagentProtocol 在 send(message) 时若已有 activeStreamId 直接报错；它用 setTimeout 后台启动，独立 AbortController，取消时丢弃 partial output 并返回空 aborted result。",
+      "plainLanguage": "一个子 Agent 会话一次只接一单；主线程能先拿到 streamId，不必等它做完，但不能同时塞第二单。",
+      "implication": "并发应通过多个 Agent 实例而非重入同一实例，取消的部分成果不会自动保留。",
+      "citations": [
+        { "path": "packages/core/src/agents/local-subagent-protocol.ts", "startLine": 69, "endLine": 95, "role": "implementation", "excerpt": "事件、stream 与 abort 状态。" },
+        { "path": "packages/core/src/agents/local-subagent-protocol.ts", "startLine": 112, "endLine": 162, "role": "implementation", "excerpt": "单 active stream、后台启动与取消。" },
+        { "path": "packages/core/src/agents/local-subagent-protocol.ts", "startLine": 183, "endLine": 215, "role": "implementation", "excerpt": "stream 重置和 abort 结果。" }
+      ]
+    },
+    {
+      "id": "gemini-persistence-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "会话记录是增量 JSONL，支持 rewind、metadata patch 和完整 checkpoint",
+      "fact": "ChatRecordingService 逐行解析；$rewindTo 删除目标及以后消息，$set 可增量更新 metadata 或用 messages 数组重建 checkpoint，坏行被隔离忽略，缺关键 metadata 时回退 legacy parser。",
+      "plainLanguage": "对话文件像事件日志：可以写“回到某一步”、只改元数据，也能偶尔写一张完整快照；一行坏了不拖垮整份会话。",
+      "implication": "支持 resume/rewind 与格式迁移，需持续测试 checkpoint 和增量事件的一致性。",
+      "citations": [
+        { "path": "packages/core/src/services/chatRecordingService.ts", "startLine": 150, "endLine": 203, "role": "implementation", "excerpt": "JSONL、rewind 和错误隔离。" },
+        { "path": "packages/core/src/services/chatRecordingService.ts", "startLine": 203, "endLine": 300, "role": "implementation", "excerpt": "message 与 metadata checkpoint。" },
+        { "path": "packages/core/src/services/chatRecordingService.ts", "startLine": 300, "endLine": 350, "role": "implementation", "excerpt": "initial/legacy record 和 fallback。" }
+      ]
+    },
+    {
+      "id": "gemini-observe-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "OpenTelemetry 可导出到 GCP、OTLP HTTP/gRPC、文件或控制台",
+      "fact": "telemetry SDK 同时构造 trace/log/metric exporter，支持 GCP 直出、OTLP HTTP/grpc+gzip、单文件和 console；NodeSDK 加载 HTTP instrumentation，并可周期监控内存和 event loop。",
+      "plainLanguage": "既能接企业观测平台，也能只落本地文件；模型调用之外还能看到进程内存和事件循环卡顿。",
+      "implication": "生产可观测性完整，但凭据、提示内容与遥测开关需纳入隐私治理。",
+      "citations": [
+        { "path": "packages/core/src/telemetry/sdk.ts", "startLine": 240, "endLine": 318, "role": "implementation", "excerpt": "GCP 与 OTLP exporters。" },
+        { "path": "packages/core/src/telemetry/sdk.ts", "startLine": 319, "endLine": 375, "role": "implementation", "excerpt": "file/console、NodeSDK 和运行时监控。" }
+      ]
+    },
+    {
+      "id": "gemini-maturity-001",
+      "dimension": "persistence-observability-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "大型 TypeScript monorepo，测试面广，Apache-2.0",
+      "fact": "固定提交约 2,144 个 TypeScript 文件，机械统计 892 个 *.test.ts/tsx；根许可证是 Apache License 2.0。",
+      "plainLanguage": "这是一套带 CLI、core、SDK、ACP/A2A、策略和平台沙箱的系统，不是单文件 demo。",
+      "implication": "架构可借鉴性高，但新旧上下文路径和多前端会扩大回归矩阵。",
+      "citations": [
+        { "path": "LICENSE", "startLine": 1, "endLine": 28, "role": "contract", "excerpt": "Apache License 2.0。" },
+        { "path": "packages/core/src/context/contextManager.test.ts", "startLine": 1, "endLine": 40, "role": "test", "excerpt": "ContextManager 专项测试入口。" },
+        { "path": "packages/core/src/services/sandboxManager.integration.test.ts", "startLine": 1, "endLine": 40, "role": "test", "excerpt": "sandbox 集成测试入口。" }
+      ],
+      "caveats": ["文件数是固定 checkout 的机械统计，不等于测试覆盖率。"]
+    }
+  ]
+}

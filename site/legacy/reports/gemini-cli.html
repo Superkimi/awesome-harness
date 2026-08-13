@@ -1,0 +1,2194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Gemini CLI Coding Agent Harness 固定提交源码审计">
+  <title>Gemini CLI Harness 源码原理报告</title>
+  <link rel="stylesheet" href="../assets/report.css">
+</head>
+<body class="">
+  <div class="reading-progress" aria-hidden="true"></div>
+  
+  <aside class="rail">
+    <a class="brand" href="../index.html"><span class="brand-mark">H</span><span>HARNESS<br><small>源码研究院</small></span></a>
+    <nav aria-label="报告导航">
+      <a class="" href="../index.html">横向总览</a>
+      <a class="" href="../reports/goose.html"><span>01</span>Goose</a><a class="" href="../reports/aider.html"><span>02</span>Aider</a><a class="" href="../reports/grok-build.html"><span>03</span>Grok Build</a><a class="" href="../reports/openinterpreter.html"><span>04</span>Open Interpreter</a><a class="" href="../reports/little-coder.html"><span>05</span>Little Coder</a><a class="" href="../reports/monkeycode.html"><span>06</span>MonkeyCode</a><a class="" href="../reports/opencode.html"><span>07</span>OpenCode</a><a class="" href="../reports/oh-my-pi.html"><span>08</span>Oh My Pi</a><a class="" href="../reports/claude-code.html"><span>09</span>Claude Code（复原）</a><a class="" href="../reports/pi.html"><span>10</span>Pi</a><a class="" href="../reports/codex.html"><span>11</span>OpenAI Codex</a><a class="active" href="../reports/gemini-cli.html"><span>12</span>Gemini CLI</a><a class="" href="../reports/jcode.html"><span>13</span>JCode</a><a class="" href="../reports/kimi-cli.html"><span>14</span>Kimi CLI</a><a class="" href="../reports/deepseek-reasonix.html"><span>15</span>DeepSeek-Reasonix</a><a class="" href="../reports/codewhale.html"><span>16</span>CodeWhale</a><a class="" href="../reports/prime-agent.html"><span>17</span>Prime Agent</a><a class="" href="../reports/deepagents.html"><span>18</span>DeepAgents</a>
+    </nav>
+    <div class="rail-foot">SOURCE-LOCKED<br>2026 EDITION</div>
+  </aside>
+  <main class="page">
+    
+  <header class="report-hero">
+    <div class="hero-topline"><span>CODING AGENT HARNESS · SOURCE AUDIT</span><span>REPORT 12 / 18</span></div>
+    <div class="hero-grid">
+      <div>
+        <div class="hero-index">12</div>
+        <h1>Gemini CLI</h1>
+        <p class="hero-thesis">工具调度、PolicyEngine、扩展热装卸和新图式上下文系统都很有研究价值；默认 sandbox 仍关闭。</p>
+        <div class="hero-tags"><span>TypeScript · Scheduler + Context Pipeline</span><span>Apache-2.0</span><span>main</span></div>
+      </div>
+      <div class="snapshot-card">
+        <div class="seal">SOURCE<br>VERIFIED</div>
+        <dl>
+          <div><dt>Repository</dt><dd>google-gemini/gemini-cli</dd></div>
+          <div><dt>Commit</dt><dd><code>bef6119500b0238ad84f6396d2a6cabda9991554</code></dd></div>
+          <div><dt>Commit date</dt><dd>2026-07-27T17:36:48Z</dd></div>
+          <div><dt>Findings</dt><dd>28</dd></div>
+          <div><dt>Citations</dt><dd>67</dd></div>
+          <div><dt>Tracked files</dt><dd>2,933</dd></div>
+        </dl>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <a href="https://github.com/google-gemini/gemini-cli/tree/bef6119500b0238ad84f6396d2a6cabda9991554">固定源码快照 ↗</a>
+      <a href="../tutorials/gemini-cli.html">进入小白教程 →</a>
+      <a href="../index.html#matrix">查看横向矩阵</a>
+      <label class="search-box"><span>⌕</span><input type="search" placeholder="搜索本报告结论与源码…" data-report-search></label>
+    </div>
+  </header>
+
+  <section class="executive chapter" id="executive">
+    <div class="chapter-kicker">EXECUTIVE READING</div>
+    <h2>先给结论，再进入源码</h2>
+    <div class="executive-grid">
+      <div class="thesis-card"><span>核心机制</span><p>递归 sendMessageStream；100 turn 上限；loop 恢复一次</p></div>
+      <div class="thesis-card"><span>上下文</span><p>Legacy 摘要 + 新图/流水线/GC/蒸馏/真实 token 校准</p></div>
+      <div class="thesis-card risk-tone"><span>安全边界</span><p>Policy 细；三平台真实隔离；默认不开启但净化 env</p></div>
+      <div class="thesis-card"><span>适用建设</span><p>Google 生态、大型扩展平台、上下文工程研究</p></div>
+    </div>
+    <div class="pros-cons">
+      <div><h3>值得借鉴</h3><ul><li>Scheduler 边界清晰</li><li>Policy 匹配维度丰富</li><li>新上下文系统前瞻</li></ul></div>
+      <div><h3>需要警惕</h3><ul><li>默认沙箱关闭</li><li>旧/新上下文并存增加复杂度</li><li>同 protocol 实例不并发 stream</li></ul></div>
+      <div><h3>直接带走</h3><ul><li>工具 scheduler 独立事件机</li><li>token API 反校准</li><li>extension capability hot reload</li></ul></div>
+    </div>
+  </section>
+
+  
+  <section class="chapter methodology" id="method">
+    <div class="chapter-kicker">00 · METHOD</div>
+    <h2>研究口径：先锁提交，再沿运行链读代码</h2>
+    <div class="method-grid">
+      <div><span>README POLICY</span><p>README/GEMINI.md 只作入口导航；结论来自 GeminiClient、GeminiChat、Turn、ContextManager、Scheduler、PolicyEngine、平台 sandbox、MCP、skills/extensions、recording 和测试。</p></div>
+      <div><span>FACT POLICY</span><p>区分稳定 legacy 路径、新 context-management gate、sandbox enabled 状态、交互/非交互默认与 Provider 认证类型。</p></div>
+      <div><span>INFERENCE POLICY</span><p>Google 服务端路由、模型内部 next-speaker 与 safety checker 只描述本地调用契约，不推断服务端实现。</p></div>
+    </div>
+    <div class="evidence-scale">
+      <div><b>L1</b><span>运行实现</span></div>
+      <div><b>L2</b><span>接口契约</span></div>
+      <div><b>L3</b><span>测试证明</span></div>
+      <div><b>L4</b><span>文档佐证</span></div>
+      <div><b>L5</b><span>明确推断</span></div>
+    </div>
+    <p class="method-note">本页引用 25 个不同源码/测试文件；证据角色分布：实现 58 · 契约 4 · 配置 3 · 测试 2。代码块是固定提交中的原文截取，长区间仅在中部折叠，首尾行号保持真实。</p>
+  </section>
+
+  <section class="chapter diagrams" id="diagrams">
+    <div class="chapter-kicker">01 · TECHNICAL MAPS</div>
+    <h2>架构总图与单轮执行链路</h2>
+    <p class="chapter-deck">两张图均由本页证据账本生成，并通过 Archify showcase 9 项校验（0 error / 0 warning）。图可单独打开、搜索、缩放和追踪关系。</p>
+    <div class="diagram-stack">
+      <figure>
+        <figcaption><span>FIGURE 01</span><b>Gemini CLI Harness 架构图</b><a href="../diagrams/gemini-cli-architecture.html">全屏打开 ↗</a></figcaption>
+        <iframe src="../diagrams/gemini-cli-architecture.html" title="Gemini CLI 架构图" loading="lazy"></iframe>
+      </figure>
+      <figure>
+        <figcaption><span>FIGURE 02</span><b>用户输入到工具回写的技术链路</b><a href="../diagrams/gemini-cli-sequence.html">全屏打开 ↗</a></figcaption>
+        <iframe src="../diagrams/gemini-cli-sequence.html" title="Gemini CLI 技术链路图" loading="lazy"></iframe>
+      </figure>
+    </div>
+  </section>
+
+  <section class="chapter coverage" id="coverage">
+    <div class="chapter-kicker">02 · COVERAGE MAP</div>
+    <h2>审计维度与证据等级</h2>
+    <div class="coverage-table">
+    <div class="coverage-row">
+      <span>架构与 Agent Loop</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>主递归 turn、模型路由、next-speaker、loop recovery、hook 与上限。</p>
+    </div>
+    <div class="coverage-row">
+      <span>Provider、流式与重试</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>ContentGenerator、Google OAuth/API key/Vertex/Gateway、流式重试。</p>
+    </div>
+    <div class="coverage-row">
+      <span>上下文、压缩与恢复</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>legacy compression 与 graph/pipeline context-management 两条路径。</p>
+    </div>
+    <div class="coverage-row">
+      <span>工具调度器</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>Turn 工具提取、event-driven Scheduler、输出落盘/截断和取消。</p>
+    </div>
+    <div class="coverage-row">
+      <span>策略、审批与沙箱</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>规则/安全检查/审批模式、环境净化和三平台真实沙箱。</p>
+    </div>
+    <div class="coverage-row">
+      <span>MCP、扩展、Skills、记忆与 Hooks</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>MCP transports/OAuth/refresh/admin policy，扩展热装卸，GEMINI.md/JIT memory，skills 和 hooks。</p>
+    </div>
+    <div class="coverage-row">
+      <span>子 Agent 与协作</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>local/remote protocol、AgentSession event replay、子 Agent 独立 registry/scheduler。</p>
+    </div>
+    <div class="coverage-row">
+      <span>持久化、观测与成熟度</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>增量 JSONL、rewind/checkpoint、OTEL/GCP/file/console、规模与许可证。</p>
+    </div></div>
+  </section>
+
+  <div class="evidence-root">
+    
+    <section class="chapter evidence-chapter" id="dim-1">
+      <div class="chapter-rule"><span>01</span></div>
+      <div class="chapter-kicker">DIMENSION · ARCHITECTURE-LOOP</div>
+      <h2>架构与 Agent Loop</h2>
+      <p class="chapter-deck">本章共 3 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-loop-001" data-search="主 harness 用递归 sendmessagestream 驱动多 turn，硬上限为 100 geminiclient 将单次 turn 交给 processturn；若 next-speaker 判定模型应继续，或 afteragent hook 返回继续原因，就递归调用 sendmessagestream 并递减 boundedturns，入口始终 clamp 到 max_turns=100。 一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。 architecture-loop">
+    <header class="finding-head">
+      <div class="finding-no">01</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-loop-001</span></div>
+        <h3>主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>控制流直观，递归路径共享 prompt_id 和 hook state，需要严格做 activeCalls 记账。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/client.ts · L79–L111</div>
+        <pre><code>   79  const MAX_TURNS = 100;
+   80  
+   81  type BeforeAgentHookReturn =
+   82    | {
+   83        type: GeminiEventType.AgentExecutionStopped;
+   84        value: { reason: string; systemMessage?: string };
+   85      }
+   86    | {
+   87        type: GeminiEventType.AgentExecutionBlocked;
+   88        value: { reason: string; systemMessage?: string };
+   89      }
+   90    | { additionalContext: string | undefined }
+   91    | undefined;
+   92  
+   93  export class GeminiClient {
+   94    private chat?: GeminiChat;
+   95    private sessionTurnCount = 0;
+   96  
+   97    private readonly loopDetector: LoopDetectionService;
+   98    private readonly compressionService: ChatCompressionService;
+   99    private readonly agentHistoryProvider: AgentHistoryProvider;
+  100    private readonly toolOutputMaskingService: ToolOutputMaskingService;
+  101    private contextManager?: ContextManager;
+  102    private lastPromptId: string;
+  103    private currentSequenceModel: string | null = null;
+  104    private lastSentIdeContext: IdeContext | undefined;
+  105    private forceFullIdeContext = true;
+  106  
+  107    /**
+  108     * At any point in this conversation, was compression triggered without
+  109     * being forced and did it fail?
+  110     */
+  111    private hasFailedCompressionAttempt = false;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:79–111</code>
+      <span>MAX_TURNS 和 loop/compression/hook 状态。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:875–907</code>
+      <span>next-speaker 继续模型。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:910–1060</code>
+      <span>bounded recursion 与 hook continuation。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-loop-002" data-search="每轮先做上下文、溢出、ide 配对和 loop 检测，再锁定模型与工具 processturn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functioncall→functionresponse 紧邻，会延迟 ide context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 turn.run。 开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。 architecture-loop">
+    <header class="finding-head">
+      <div class="finding-no">02</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-loop-002</span></div>
+        <h3>每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>上下文与模型选择顺序清楚，工具描述可随模型变化且同一 sequence 保持模型粘性。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/client.ts · L614–L715</div>
+        <pre><code>  614    private async *processTurn(
+  615      request: PartListUnion,
+  616      signal: AbortSignal,
+  617      prompt_id: string,
+  618      boundedTurns: number,
+  619      displayContent?: PartListUnion,
+  620    ): AsyncGenerator&lt;ServerGeminiStreamEvent, Turn&gt; {
+  621      // Re-initialize turn (it was empty before if in loop, or new instance)
+  622      let turn = new Turn(this.getChat(), prompt_id);
+  623  
+  624      this.sessionTurnCount++;
+  625      if (
+  626        this.config.getMaxSessionTurns() &gt; 0 &amp;&amp;
+  627        this.sessionTurnCount &gt; this.config.getMaxSessionTurns()
+  628      ) {
+  629        yield { type: GeminiEventType.MaxSessionTurns };
+  630        return turn;
+  631      }
+  632  
+  633      if (!boundedTurns) {
+  634        return turn;
+  635      }
+  636  
+  637      // Check for context window overflow
+      … 68 lines omitted; exact range 614–715 …
+  706        modelForLimitCheck,
+  707      );
+  708  
+  709      if (estimatedRequestTokenCount &gt; remainingTokenCount) {
+  710        yield {
+  711          type: GeminiEventType.ContextWindowWillOverflow,
+  712          value: { estimatedRequestTokenCount, remainingTokenCount },
+  713        };
+  714        return turn;
+  715      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:614–715</code>
+      <span>context、masking 和 token overflow。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:717–807</code>
+      <span>IDE 配对、loop、router 和 tools。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-loop-003" data-search="循环检测能先恢复一次，再判定硬循环 turnstarted 和每个流事件都送入 loopdetectionservice；count=1 进入 _recoverfromloop，count&gt;1 发 loopdetected 并终止，剩余 turn 不足时转 maxsessionturns。 第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。 architecture-loop">
+    <header class="finding-head">
+      <div class="finding-no">03</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-loop-003</span></div>
+        <h3>循环检测能先恢复一次，再判定硬循环</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>比仅靠 turn 上限更早止损，并保留一次自恢复空间。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/client.ts · L744–L763</div>
+        <pre><code>  744      // Re-initialize turn with fresh history
+  745      turn = new Turn(this.getChat(), prompt_id);
+  746  
+  747      const loopResult = await this.loopDetector.turnStarted(signal);
+  748      if (loopResult.count &gt; 1) {
+  749        yield { type: GeminiEventType.LoopDetected };
+  750        return turn;
+  751      } else if (loopResult.count === 1) {
+  752        if (boundedTurns &lt;= 1) {
+  753          yield { type: GeminiEventType.MaxSessionTurns };
+  754          return turn;
+  755        }
+  756        return yield* this._recoverFromLoop(
+  757          loopResult,
+  758          signal,
+  759          prompt_id,
+  760          boundedTurns,
+  761          displayContent,
+  762        );
+  763      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:744–763</code>
+      <span>turn-start loop detection。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:810–855</code>
+      <span>stream-event loop detection 与恢复。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-2">
+      <div class="chapter-rule"><span>02</span></div>
+      <div class="chapter-kicker">DIMENSION · PROVIDER-STREAMING</div>
+      <h2>Provider、流式与重试</h2>
+      <p class="chapter-deck">本章共 3 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-provider-001" data-search="统一 contentgenerator 契约覆盖流式、非流式、计数与 embedding contentgenerator 抽象 generatecontent、generatecontentstream、counttokens 和 embedcontent；authtype 覆盖 google oauth、gemini api key、vertex ai、adc 与 gateway。 上层只认一套生成接口，底下可换个人 google 登录、api key、企业 vertex 或网关。 provider-streaming">
+    <header class="finding-head">
+      <div class="finding-no">04</div>
+      <div>
+        <div class="eyebrow"><span class="level">L2</span><span>事实</span><span>gemini-provider-001</span></div>
+        <h3>统一 ContentGenerator 契约覆盖流式、非流式、计数与 embedding</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ContentGenerator 抽象 generateContent、generateContentStream、countTokens 和 embedContent；AuthType 覆盖 Google OAuth、Gemini API key、Vertex AI、ADC 与 Gateway。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>上层只认一套生成接口，底下可换个人 Google 登录、API key、企业 Vertex 或网关。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>Provider 切换不改主循环，但 thought signature 兼容性仍需在切换认证后处理。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/contentGenerator.ts · L35–L70</div>
+        <pre><code>   35  
+   36  /**
+   37   * Interface abstracting the core functionalities for generating content and counting tokens.
+   38   */
+   39  export interface ContentGenerator {
+   40    generateContent(
+   41      request: GenerateContentParameters,
+   42      userPromptId: string,
+   43      role: LlmRole,
+   44    ): Promise&lt;GenerateContentResponse&gt;;
+   45  
+   46    generateContentStream(
+   47      request: GenerateContentParameters,
+   48      userPromptId: string,
+   49      role: LlmRole,
+   50    ): Promise&lt;AsyncGenerator&lt;GenerateContentResponse&gt;&gt;;
+   51  
+   52    countTokens(request: CountTokensParameters): Promise&lt;CountTokensResponse&gt;;
+   53  
+   54    embedContent(request: EmbedContentParameters): Promise&lt;EmbedContentResponse&gt;;
+   55  
+   56    userTier?: UserTierId;
+   57  
+   58    userTierName?: string;
+      … 2 lines omitted; exact range 35–70 …
+   61  }
+   62  
+   63  export enum AuthType {
+   64    LOGIN_WITH_GOOGLE = &#39;oauth-personal&#39;,
+   65    USE_GEMINI = &#39;gemini-api-key&#39;,
+   66    USE_VERTEX_AI = &#39;vertex-ai&#39;,
+   67    LEGACY_CLOUD_SHELL = &#39;cloud-shell&#39;,
+   68    COMPUTE_ADC = &#39;compute-default-credentials&#39;,
+   69    GATEWAY = &#39;gateway&#39;,
+   70  }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>packages/core/src/core/contentGenerator.ts:35–70</code>
+      <span>ContentGenerator 与 AuthType。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/contentGenerator.ts:72–110</code>
+      <span>环境自动检测和配置。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-provider-002" data-search="个人/adc 走 code assist，api key/vertex/gateway 走 google genai sdk createcontentgenerator 对 login_with_google/compute_adc 创建 codeassistserver 并加模型映射；gemini/vertex/gateway 构造 googlegenai，支持自定义 base url、headers、proxy 和 vertex routing headers。 登录方式不仅换凭证，也可能换后端客户端；企业 vertex 还能指定共享/专用路由。 provider-streaming">
+    <header class="finding-head">
+      <div class="finding-no">05</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-provider-002</span></div>
+        <h3>个人/ADC 走 Code Assist，API key/Vertex/Gateway 走 Google GenAI SDK</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>createContentGenerator 对 LOGIN_WITH_GOOGLE/COMPUTE_ADC 创建 CodeAssistServer 并加模型映射；Gemini/Vertex/Gateway 构造 GoogleGenAI，支持自定义 base URL、headers、proxy 和 Vertex routing headers。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>登录方式不仅换凭证，也可能换后端客户端；企业 Vertex 还能指定共享/专用路由。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>同一主循环有多条传输实现，认证切换测试必须覆盖历史 thoughtSignature 清理。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/contentGenerator.ts · L285–L310</div>
+        <pre><code>  285      if (
+  286        apiKeyAuthMechanism === &#39;bearer&#39; &amp;&amp;
+  287        (config.authType === AuthType.USE_GEMINI ||
+  288          config.authType === AuthType.USE_VERTEX_AI) &amp;&amp;
+  289        config.apiKey
+  290      ) {
+  291        baseHeaders[&#39;Authorization&#39;] = `Bearer ${config.apiKey}`;
+  292      }
+  293      if (
+  294        config.authType === AuthType.LOGIN_WITH_GOOGLE ||
+  295        config.authType === AuthType.COMPUTE_ADC
+  296      ) {
+  297        const httpOptions = { headers: baseHeaders };
+  298        return new LoggingContentGenerator(
+  299          new ModelMappingContentGenerator(
+  300            await createCodeAssistContentGenerator(
+  301              httpOptions,
+  302              config.authType,
+  303              gcConfig,
+  304              sessionId,
+  305            ),
+  306            CCPA_AI_MODEL_MAPPINGS,
+  307          ),
+  308          gcConfig,
+  309        );
+  310      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/contentGenerator.ts:285–310</code>
+      <span>Code Assist 路径。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/contentGenerator.ts:312–410</code>
+      <span>GenAI/Vertex/Gateway、headers、proxy 与 endpoint。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-provider-003" data-search="连接阶段与中途流错误分开重试，中途流最多四次尝试 geminichat 的 streamwithretries 把连接阶段错误交给底层 retrywithbackoff；流迭代中的可重试网络/内容错误使用独立指数退避，并限制到 mid_stream_retry_options 的四次总尝试。 连不上和连上后半路断掉是两类事故，分别计数；不会因为全局重试设得很大就反复重播半截响应。 provider-streaming">
+    <header class="finding-head">
+      <div class="finding-no">06</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-provider-003</span></div>
+        <h3>连接阶段与中途流错误分开重试，中途流最多四次尝试</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>GeminiChat 的 streamWithRetries 把连接阶段错误交给底层 retryWithBackoff；流迭代中的可重试网络/内容错误使用独立指数退避，并限制到 MID_STREAM_RETRY_OPTIONS 的四次总尝试。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>连不上和连上后半路断掉是两类事故，分别计数；不会因为全局重试设得很大就反复重播半截响应。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>降低 mid-stream 重复输出/工具调用风险。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/geminiChat.ts · L517–L578</div>
+        <pre><code>  517      const streamWithRetries = async function* (
+  518        this: GeminiChat,
+  519      ): AsyncGenerator&lt;StreamEvent, void, void&gt; {
+  520        try {
+  521          const maxAttempts = this.context.config.getMaxAttempts();
+  522  
+  523          for (let attempt = 0; attempt &lt; maxAttempts; attempt++) {
+  524            let isConnectionPhase = true;
+  525            try {
+  526              if (attempt &gt; 0) {
+  527                yield { type: StreamEventType.RETRY };
+  528              }
+  529  
+  530              // If this is a retry, update the key with the new context.
+  531              const currentConfigKey =
+  532                attempt &gt; 0
+  533                  ? { ...modelConfigKey, isRetry: true }
+  534                  : modelConfigKey;
+  535  
+  536              isConnectionPhase = true;
+  537              const stream = await this.makeApiCallAndProcessStream(
+  538                currentConfigKey,
+  539                requestHistory,
+  540                prompt_id,
+      … 28 lines omitted; exact range 517–578 …
+  569                  };
+  570                }
+  571                return; // Stop the generator
+  572              }
+  573  
+  574              if (isConnectionPhase) {
+  575                // Connection phase errors have already been retried by retryWithBackoff.
+  576                // If they bubble up here, they are exhausted or fatal.
+  577                throw error;
+  578              }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/geminiChat.ts:517–578</code>
+      <span>连接与流迭代错误边界。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/geminiChat.ts:580–648</code>
+      <span>mid-stream 分类、退避与上限。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-3">
+      <div class="chapter-rule"><span>03</span></div>
+      <div class="chapter-kicker">DIMENSION · CONTEXT-COMPACTION</div>
+      <h2>上下文、压缩与恢复</h2>
+      <p class="chapter-deck">本章共 5 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-context-001" data-search="legacy 压缩默认在 50% 窗口触发，并保留最近约 30% chatcompressionservice 默认阈值为模型 token limit 的 0.5，压缩切点按序列化字符量寻找安全 user turn，目标保留最近 30%，且不会拆断 function call/response 边界。 箱子装到一半就提前整理，最近三成原文留下，旧七成写成摘要；切口只选完整对话边界。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">07</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-context-001</span></div>
+        <h3>Legacy 压缩默认在 50% 窗口触发，并保留最近约 30%</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ChatCompressionService 默认阈值为模型 token limit 的 0.5，压缩切点按序列化字符量寻找安全 user turn，目标保留最近 30%，且不会拆断 function call/response 边界。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>箱子装到一半就提前整理，最近三成原文留下，旧七成写成摘要；切口只选完整对话边界。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>为长回复和工具调用预留较大余量，代价是较早产生摘要成本。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 配置</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/context/chatCompressionService.ts · L37–L52</div>
+        <pre><code>   37  /**
+   38   * Default threshold for compression token count as a fraction of the model&#39;s
+   39   * token limit. If the chat history exceeds this threshold, it will be compressed.
+   40   */
+   41  const DEFAULT_COMPRESSION_TOKEN_THRESHOLD = 0.5;
+   42  
+   43  /**
+   44   * The fraction of the latest chat history to keep. A value of 0.3
+   45   * means that only the last 30% of the chat history will be kept after compression.
+   46   */
+   47  const COMPRESSION_PRESERVE_THRESHOLD = 0.3;
+   48  
+   49  /**
+   50   * The budget for function response tokens in the preserved history.
+   51   */
+   52  const COMPRESSION_FUNCTION_RESPONSE_TOKEN_BUDGET = 50_000;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">配置</span>
+      <code>packages/core/src/context/chatCompressionService.ts:37–52</code>
+      <span>50% trigger、30% preserve 与工具预算。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/context/chatCompressionService.ts:54–100</code>
+      <span>安全 split point。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-context-002" data-search="旧工具输出采用反向预算，超额内容落临时文件并只留尾部 压缩前从最新向最旧累计 function response token，优先保留近端；超过 50k 工具响应预算后，将较老大输出保存到文件并替换为最后 30 行和路径提示。 最新日志全文留在桌面，旧日志搬进档案室，只在上下文里留末尾和取件地址。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">08</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-context-002</span></div>
+        <h3>旧工具输出采用反向预算，超额内容落临时文件并只留尾部</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>压缩前从最新向最旧累计 function response token，优先保留近端；超过 50k 工具响应预算后，将较老大输出保存到文件并替换为最后 30 行和路径提示。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>最新日志全文留在桌面，旧日志搬进档案室，只在上下文里留末尾和取件地址。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>既省 token 又保留可恢复原文，比不可逆截断更适合调试。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/context/chatCompressionService.ts · L124–L142</div>
+        <pre><code>  124  /**
+  125   * Processes the chat history to ensure function responses don&#39;t exceed a specific token budget.
+  126   *
+  127   * This function implements a &quot;Reverse Token Budget&quot; strategy:
+  128   * 1. It iterates through the history from the most recent turn to the oldest.
+  129   * 2. It keeps a running tally of tokens used by function responses.
+  130   * 3. Recent tool outputs are preserved in full to maintain high-fidelity context for the current turn.
+  131   * 4. Once the budget (COMPRESSION_FUNCTION_RESPONSE_TOKEN_BUDGET) is exceeded, any older large
+  132   *    tool responses are truncated to their last 30 lines and saved to a temporary file.
+  133   *
+  134   * This ensures that compression effectively reduces context size even when recent turns
+  135   * contain massive tool outputs (like large grep results or logs).
+  136   */
+  137  async function truncateHistoryToBudget(
+  138    history: readonly Content[],
+  139    config: Config,
+  140  ): Promise&lt;Content[]&gt; {
+  141    let functionResponseTokenCounter = 0;
+  142    const truncatedHistory: Content[] = [];</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/context/chatCompressionService.ts:124–142</code>
+      <span>reverse token budget 设计。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/context/chatCompressionService.ts:144–215</code>
+      <span>工具结果计数、保存与替换。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-context-003" data-search="摘要膨胀会触发熔断，随后只做内容截断 trycompresschat 记录 compression_failed_inflated_token_count；非强制压缩一旦失败即保持 hasfailedcompressionattempt，后续服务可返回 content_truncated 并直接更新 history，不重建 chat。 如果摘要反而比原文胖，就不再每轮花钱重写摘要，改用更轻的裁剪。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">09</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-context-003</span></div>
+        <h3>摘要膨胀会触发熔断，随后只做内容截断</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>tryCompressChat 记录 COMPRESSION_FAILED_INFLATED_TOKEN_COUNT；非强制压缩一旦失败即保持 hasFailedCompressionAttempt，后续服务可返回 CONTENT_TRUNCATED 并直接更新 history，不重建 chat。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>如果摘要反而比原文胖，就不再每轮花钱重写摘要，改用更轻的裁剪。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>避免压缩风暴，但本会话之后的语义保真会更多依赖工具输出 masking。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/client.ts · L107–L120</div>
+        <pre><code>  107    /**
+  108     * At any point in this conversation, was compression triggered without
+  109     * being forced and did it fail?
+  110     */
+  111    private hasFailedCompressionAttempt = false;
+  112  
+  113    constructor(private readonly context: AgentLoopContext) {
+  114      this.loopDetector = new LoopDetectionService(this.config);
+  115      this.compressionService = new ChatCompressionService();
+  116      this.agentHistoryProvider = new AgentHistoryProvider(
+  117        this.config.agentHistoryProviderConfig,
+  118        this.config,
+  119      );
+  120      this.toolOutputMaskingService = new ToolOutputMaskingService();</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:107–120</code>
+      <span>压缩失败状态。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:1196–1248</code>
+      <span>失败熔断、重建 chat 与轻量截断。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-context-004" data-search="新 contextmanager 是图与流水线系统，带 preview late-bind、压力屏障、gc/蒸馏和结构校验 contextmanager 从 durable agentchathistory 同步 pristine graph，对 pending request 建 ephemeral preview，等待 pipeline/hot-start barrier，执行 triggers，再带保护节点渲染、harden 与 invariant check；相同 node hash 可复用 render cache。 新系统不再把历史当一长串消息，而是当可追溯的节点图；当前问题先在草稿区处理，确认后才影响长期账本。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">10</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-context-004</span></div>
+        <h3>新 ContextManager 是图与流水线系统，带 preview late-bind、压力屏障、GC/蒸馏和结构校验</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ContextManager 从 durable AgentChatHistory 同步 pristine graph，对 pending request 建 ephemeral preview，等待 pipeline/hot-start barrier，执行 triggers，再带保护节点渲染、harden 与 invariant check；相同 node hash 可复用 render cache。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>新系统不再把历史当一长串消息，而是当可追溯的节点图；当前问题先在草稿区处理，确认后才影响长期账本。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>能做精细蒸馏和增量管理，但复杂度显著高于 legacy summary，必须明确 feature gate 与回退路径。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/context/contextManager.ts · L26–L88</div>
+        <pre><code>   26  export class ContextManager {
+   27    // Master state containing the pristine graph and current active graph.
+   28    private buffer: ContextWorkingBufferImpl =
+   29      ContextWorkingBufferImpl.initialize([]);
+   30  
+   31    private readonly eventBus: ContextEventBus;
+   32    private readonly orchestrator: PipelineOrchestrator;
+   33  
+   34    // Track what IDs have been evaluated for triggers to prevent redundant processing
+   35    private readonly evaluatedNodeIds = new Set&lt;string&gt;();
+   36  
+   37    // Hysteresis tracking to prevent utility call churn
+   38    private lastTriggeredDeficit = 0;
+   39    private lastTriggeredNormalizeDeficit = 0;
+   40  
+   41    // Cache for Anomaly 3 (Redundant Renders)
+   42    private lastRenderCache?: {
+   43      nodesHash: string;
+   44      result: {
+   45        history: HistoryTurn[];
+   46        apiHistory: Content[];
+   47        pendingApiHistory: Content[];
+   48        didApplyManagement: boolean;
+   49        baseUnits: number;
+      … 29 lines omitted; exact range 26–88 …
+   79          return;
+   80        }
+   81  
+   82        this.buffer = this.buffer.applyProcessorResult(
+   83          event.processorId,
+   84          event.targets,
+   85          event.returnedNodes,
+   86        );
+   87      });
+   88    }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/context/contextManager.ts:26–88</code>
+      <span>master buffer、事件应用和 render cache。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/context/contextManager.ts:90–195</code>
+      <span>sync、preview、barrier、triggers 与 render。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/context/contextManager.ts:197–275</code>
+      <span>commit backstop、invariants、harden 和 late-bind 分割。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-context-005" data-search="新上下文系统用真实 api token 反校准本地估算 processturn 把 contextmanager 渲染得到的 baseunits 带入请求；finished 事件若包含 prompttokencount，则通过 eventbus 发 actualtokens 与 promptbaseunits ground truth。 先用本地尺子估，再用模型 api 的过磅结果校准尺子。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">11</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-context-005</span></div>
+        <h3>新上下文系统用真实 API token 反校准本地估算</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>processTurn 把 ContextManager 渲染得到的 baseUnits 带入请求；Finished 事件若包含 promptTokenCount，则通过 eventBus 发 actualTokens 与 promptBaseUnits ground truth。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>先用本地尺子估，再用模型 API 的过磅结果校准尺子。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>长期预算判断可适应多模态与不同模型 tokenizer 偏差。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/client.ts · L640–L678</div>
+        <pre><code>  640      let currentBaseUnits = 0;
+  641      let apiHistoryOverride: Content[] | undefined = undefined;
+  642  
+  643      if (this.config.getContextManagementConfig().enabled) {
+  644        if (this.contextManager) {
+  645          const rawPendingRequest = createUserContent(request);
+  646          const pendingRequest = {
+  647            id: randomUUID(),
+  648            content: rawPendingRequest,
+  649          };
+  650          const {
+  651            history: newHistory,
+  652            apiHistory,
+  653            pendingApiHistory,
+  654            baseUnits,
+  655          } = await this.contextManager.renderHistory(
+  656            pendingRequest,
+  657            undefined,
+  658            signal,
+  659          );
+  660  
+  661          currentBaseUnits = baseUnits;
+  662  
+  663          // Use the PROCESSED pending content if available (e.g. if cleaned or distilled)
+      … 5 lines omitted; exact range 640–678 …
+  669          // Late-bind the prompt: Append the active request to the managed history
+  670          // only for the purpose of the upcoming API call.
+  671          apiHistoryOverride = [...apiHistory, finalPendingContent];
+  672  
+  673          this.getChat().setHistory(newHistory);
+  674  
+  675          // Use the original request for display/recording,
+  676          // but the processed one for the API and durable history.
+  677          displayContent = rawPendingRequest.parts || [];
+  678          request = finalPendingContent.parts || [];</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:640–678</code>
+      <span>ContextManager render 与 baseUnits。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:829–838</code>
+      <span>token ground truth 回灌。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-4">
+      <div class="chapter-rule"><span>04</span></div>
+      <div class="chapter-kicker">DIMENSION · TOOLS-SCHEDULER</div>
+      <h2>工具调度器</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-tools-001" data-search="turn 只解析模型流，工具执行交给独立 event-driven scheduler turn 从 generatecontentstream 收集 text、thought、functioncall、usage 和 finish reason，将 functioncall 放进 pendingtoolcalls；主/子 agent 再以各自 registry、message bus、sandbox manager 创建 scheduler 批量执行。 模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。 tools-scheduler">
+    <header class="finding-head">
+      <div class="finding-no">12</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-tools-001</span></div>
+        <h3>Turn 只解析模型流，工具执行交给独立 event-driven Scheduler</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>Turn 从 generateContentStream 收集 text、thought、functionCall、usage 和 finish reason，将 functionCall 放进 pendingToolCalls；主/子 Agent 再以各自 registry、message bus、sandbox manager 创建 Scheduler 批量执行。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>主 Agent 和子 Agent 能复用同一工具治理链，同时各自限定工具集。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/turn.ts · L236–L320</div>
+        <pre><code>  236    | ServerGeminiModelInfoEvent
+  237    | ServerGeminiAgentExecutionStoppedEvent
+  238    | ServerGeminiAgentExecutionBlockedEvent;
+  239  
+  240  // A turn manages the agentic loop turn within the server context.
+  241  export class Turn {
+  242    private callCounter = 0;
+  243  
+  244    readonly pendingToolCalls: ToolCallRequestInfo[] = [];
+  245    private debugResponses: GenerateContentResponse[] = [];
+  246    private pendingCitations = new Set&lt;string&gt;();
+  247    private cachedResponseText: string | undefined = undefined;
+  248    finishReason: FinishReason | undefined = undefined;
+  249    private hasLoggedRagTrace = false;
+  250  
+  251    constructor(
+  252      private readonly chat: GeminiChat,
+  253      private readonly prompt_id: string,
+  254    ) {}
+  255  
+  256    // The run method yields simpler events suitable for server logic
+  257    async *run(
+  258      modelConfigKey: ModelConfigKey,
+  259      req: PartListUnion,
+      … 51 lines omitted; exact range 236–320 …
+  311          if (!resp) continue; // Skip if there&#39;s no response body
+  312  
+  313          // Log RAG trace if enabled (only once per turn to avoid log bloat on streams)
+  314          if (
+  315            !this.hasLoggedRagTrace &amp;&amp;
+  316            this.chat.context.config.getLogRagSnippets?.()
+  317          ) {
+  318            let ragStatus: string | undefined;
+  319            let snippets: RagSnippet[] | undefined;
+  320  </code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/turn.ts:236–320</code>
+      <span>Turn 流解析与 pending tool calls。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/agents/agent-scheduler.ts:42–92</code>
+      <span>子 Agent Scheduler context 与生命周期。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-tools-002" data-search="超大工具结果在调度阶段落盘，取消也返回合法 functionresponse toolexecutor 对超过阈值的文本写入项目临时目录并替换为截断文本；取消时若已有部分输出仍先截断/保存，再构造带 error 的 functionresponse，保持 gemini 协议配对。 工具被叫停也必须交一张正式回执；已经产生的大输出不会硬塞回上下文。 tools-scheduler">
+    <header class="finding-head">
+      <div class="finding-no">13</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-tools-002</span></div>
+        <h3>超大工具结果在调度阶段落盘，取消也返回合法 functionResponse</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ToolExecutor 对超过阈值的文本写入项目临时目录并替换为截断文本；取消时若已有部分输出仍先截断/保存，再构造带 error 的 functionResponse，保持 Gemini 协议配对。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>工具被叫停也必须交一张正式回执；已经产生的大输出不会硬塞回上下文。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>失败/取消不会破坏下一轮历史，且原始输出可从文件追查。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/scheduler/tool-executor.ts · L250–L297</div>
+        <pre><code>  250        content.length === 1 &amp;&amp;
+  251        &#39;tool&#39; in call &amp;&amp;
+  252        call.tool instanceof DiscoveredMCPTool
+  253      ) {
+  254        const firstPart = content[0];
+  255        if (typeof firstPart === &#39;object&#39; &amp;&amp; typeof firstPart.text === &#39;string&#39;) {
+  256          const textContent = firstPart.text;
+  257          const threshold = this.config.getTruncateToolOutputThreshold();
+  258  
+  259          if (threshold &gt; 0 &amp;&amp; textContent.length &gt; threshold) {
+  260            const originalContentLength = textContent.length;
+  261            const { outputFile: savedPath } = await saveTruncatedToolOutput(
+  262              textContent,
+  263              toolName,
+  264              callId,
+  265              this.config.storage.getProjectTempDir(),
+  266              this.context.promptId,
+  267            );
+  268            outputFile = savedPath;
+  269            const truncatedText = formatTruncatedToolOutput(
+  270              textContent,
+  271              outputFile,
+  272              threshold,
+  273            );
+      … 14 lines omitted; exact range 250–297 …
+  288              }),
+  289            );
+  290  
+  291            return { truncatedContent, outputFile };
+  292          }
+  293        }
+  294      }
+  295  
+  296      return { truncatedContent: content, outputFile };
+  297    }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/scheduler/tool-executor.ts:250–297</code>
+      <span>输出阈值、保存与截断。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/scheduler/tool-executor.ts:299–368</code>
+      <span>取消结果与 functionResponse 配对。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-5">
+      <div class="chapter-rule"><span>05</span></div>
+      <div class="chapter-kicker">DIMENSION · POLICY-SANDBOX</div>
+      <h2>策略、审批与沙箱</h2>
+      <p class="chapter-deck">本章共 5 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-policy-001" data-search="policyengine 按优先级匹配工具、参数、mcp 身份、annotations、模式、交互状态和 subagent rulematches 对稳定序列化参数、mcp 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。 政策可以精确到“哪个子 agent 在非交互模式调用哪个 mcp 的哪个参数”，不只是允许/禁止 bash。 policy-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">14</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-policy-001</span></div>
+        <h3>PolicyEngine 按优先级匹配工具、参数、MCP 身份、annotations、模式、交互状态和 subagent</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ruleMatches 对稳定序列化参数、MCP 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>政策可以精确到“哪个子 Agent 在非交互模式调用哪个 MCP 的哪个参数”，不只是允许/禁止 Bash。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>企业控制力强，但规则冲突需要良好解释器和测试。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/policy/policy-engine.ts · L49–L195</div>
+        <pre><code>   49  function isWildcardPattern(name: string): boolean {
+   50    return name === &#39;*&#39; || name.includes(&#39;*&#39;);
+   51  }
+   52  
+   53  /**
+   54   * Checks if a tool call matches a wildcard pattern.
+   55   * Supports global (*) and the explicit MCP (*mcp_serverName_**) format.
+   56   */
+   57  function matchesWildcard(
+   58    pattern: string,
+   59    toolName: string,
+   60    serverName: string | undefined,
+   61  ): boolean {
+   62    if (pattern === &#39;*&#39;) {
+   63      return true;
+   64    }
+   65  
+   66    if (pattern === `${MCP_TOOL_PREFIX}*`) {
+   67      return serverName !== undefined;
+   68    }
+   69  
+   70    if (pattern.startsWith(MCP_TOOL_PREFIX) &amp;&amp; pattern.endsWith(&#39;_*&#39;)) {
+   71      const expectedServerName = pattern.slice(MCP_TOOL_PREFIX.length, -2);
+   72      // 1. Must be an MCP tool call (has serverName)
+      … 113 lines omitted; exact range 49–195 …
+  186    if (&#39;interactive&#39; in rule &amp;&amp; rule.interactive !== undefined) {
+  187      if (rule.interactive &amp;&amp; nonInteractive) {
+  188        return false;
+  189      }
+  190      if (!rule.interactive &amp;&amp; !nonInteractive) {
+  191        return false;
+  192      }
+  193    }
+  194  
+  195    return true;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/policy/policy-engine.ts:49–195</code>
+      <span>完整规则匹配维度。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/policy/policy-engine.ts:198–260</code>
+      <span>优先级、校验和默认决策。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-policy-002" data-search="非交互默认拒绝，交互默认询问；危险命令强制 ask，yolo 例外 policyengine 未配置 defaultdecision 时，noninteractive 为 deny、交互为 ask_user；shell heuristic 将危险命令改为 ask_user，yolo 保留原决定，已知安全命令可把 ask 降为 allow。 没人看屏幕时不赌；有人在时先问。只有明确 yolo 才允许危险命令绕过这层强制提问。 policy-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">15</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-policy-002</span></div>
+        <h3>非交互默认拒绝，交互默认询问；危险命令强制 ASK，YOLO 例外</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>PolicyEngine 未配置 defaultDecision 时，nonInteractive 为 DENY、交互为 ASK_USER；shell heuristic 将危险命令改为 ASK_USER，YOLO 保留原决定，已知安全命令可把 ASK 降为 ALLOW。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>没人看屏幕时不赌；有人在时先问。只有明确 YOLO 才允许危险命令绕过这层强制提问。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>无头执行失败关闭，YOLO 是明确的高风险模式。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 配置</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/policy/policy-engine.ts · L253–L260</div>
+        <pre><code>  253      this.nonInteractive = config.nonInteractive ?? false;
+  254      this.defaultDecision =
+  255        config.defaultDecision ??
+  256        (this.nonInteractive ? PolicyDecision.DENY : PolicyDecision.ASK_USER);
+  257      this.disableAlwaysAllow = config.disableAlwaysAllow ?? false;
+  258      this.checkerRunner = checkerRunner;
+  259      this.approvalMode = config.approvalMode ?? ApprovalMode.DEFAULT;
+  260      this.sandboxManager = config.sandboxManager ?? new NoopSandboxManager();</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">配置</span>
+      <code>packages/core/src/policy/policy-engine.ts:253–260</code>
+      <span>交互/非交互默认决策。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/policy/policy-engine.ts:284–341</code>
+      <span>重定向与命令安全启发式。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-sandbox-001" data-search="sandbox 默认不开启，但即使关闭仍净化环境变量 factory 只有 sandbox.enabled 才按平台选择 linux/mac/windows manager，否则用 noopsandboxmanager；noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。 防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。 policy-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">16</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-sandbox-001</span></div>
+        <h3>Sandbox 默认不开启，但即使关闭仍净化环境变量</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>factory 只有 sandbox.enabled 才按平台选择 Linux/Mac/Windows manager，否则用 NoopSandboxManager；Noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>必须评价为“可选强隔离”，不能写成“默认在沙箱中执行”。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/services/sandboxManagerFactory.ts · L19–L43</div>
+        <pre><code>   19  /**
+   20   * Creates a sandbox manager based on the provided settings.
+   21   */
+   22  export function createSandboxManager(
+   23    sandbox: SandboxConfig | undefined,
+   24    options: GlobalSandboxOptions,
+   25    approvalMode?: string,
+   26  ): SandboxManager {
+   27    if (!options.modeConfig &amp;&amp; options.policyManager &amp;&amp; approvalMode) {
+   28      options.modeConfig = options.policyManager.getModeConfig(approvalMode);
+   29    }
+   30  
+   31    if (sandbox?.enabled) {
+   32      if (os.platform() === &#39;win32&#39;) {
+   33        return new WindowsSandboxManager(options);
+   34      } else if (os.platform() === &#39;linux&#39;) {
+   35        return new LinuxSandboxManager(options);
+   36      } else if (os.platform() === &#39;darwin&#39;) {
+   37        return new MacOsSandboxManager(options);
+   38      }
+   39      return new LocalSandboxManager(options);
+   40    }
+   41  
+   42    return new NoopSandboxManager(options);
+   43  }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/services/sandboxManagerFactory.ts:19–43</code>
+      <span>enabled gate 与平台选择。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/services/sandboxManager.ts:285–333</code>
+      <span>Noop 环境净化与无隔离透传。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-sandbox-002" data-search="三平台使用真实 os 隔离，并保护治理文件与 .env 类秘密 linux 使用 bubblewrap 并生成 seccomp bpf 禁 ptrace；macos 用 sandbox-exec/seatbelt profile；windows 用 restricted token、job object、low integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。 开罩后不是靠模型自觉：linux、macos、windows 各用系统级限制器，仓库规则和秘密文件另加保护。 policy-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">17</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-sandbox-002</span></div>
+        <h3>三平台使用真实 OS 隔离，并保护治理文件与 .env 类秘密</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>Linux 使用 bubblewrap 并生成 seccomp BPF 禁 ptrace；macOS 用 sandbox-exec/Seatbelt profile；Windows 用 restricted token、Job Object、Low Integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>开罩后不是靠模型自觉：Linux、macOS、Windows 各用系统级限制器，仓库规则和秘密文件另加保护。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>跨平台安全面完整，但每个后端差异大，需各自做 denial 与路径逃逸回归。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/services/sandboxManager.ts · L194–L223</div>
+        <pre><code>  194  /**
+  195   * Files that represent the governance or &quot;constitution&quot; of the repository
+  196   * and should be write-protected in any sandbox.
+  197   */
+  198  export const GOVERNANCE_FILES = [
+  199    { path: &#39;.gitignore&#39;, isDirectory: false },
+  200    { path: &#39;.geminiignore&#39;, isDirectory: false },
+  201    { path: &#39;.git&#39;, isDirectory: true },
+  202  ] as const;
+  203  
+  204  /**
+  205   * Files that contain sensitive secrets or credentials and should be
+  206   * completely hidden (deny read/write) in any sandbox.
+  207   */
+  208  export const SECRET_FILES = [
+  209    { pattern: &#39;.env&#39; },
+  210    { pattern: &#39;.env.*&#39; },
+  211  ] as const;
+  212  
+  213  /**
+  214   * Checks if a given file name matches any of the secret file patterns.
+  215   */
+  216  export function isSecretFile(fileName: string): boolean {
+  217    return SECRET_FILES.some((s) =&gt; {
+  218      if (s.pattern.endsWith(&#39;*&#39;)) {
+  219        const prefix = s.pattern.slice(0, -1);
+  220        return fileName.startsWith(prefix);
+  221      }
+  222      return fileName === s.pattern;
+  223    });</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>packages/core/src/services/sandboxManager.ts:194–223</code>
+      <span>治理文件与秘密文件清单。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/sandbox/linux/LinuxSandboxManager.ts:48–114</code>
+      <span>seccomp BPF 与 ptrace 拒绝。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/sandbox/windows/WindowsSandboxManager.ts:56–72</code>
+      <span>Windows isolation 后端。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-sandbox-003" data-search="默认 sandbox mode 的 default 是可写 workspace，plan 才只读 sandboxpolicymanager 内建 fallback 中 plan 为 readonly/network off，default 和 accepting_edits 为 writable/network off；yolo 明确打开网络、写权限和 yolo 标志。 即使开启沙箱，普通默认模式也允许改工作区；“开沙箱”不等于“只读”。 policy-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">18</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>风险</span><span>gemini-sandbox-003</span></div>
+        <h3>默认 sandbox mode 的 default 是可写 workspace，plan 才只读</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>SandboxPolicyManager 内建 fallback 中 plan 为 readonly/network off，default 和 accepting_edits 为 writable/network off；YOLO 明确打开网络、写权限和 yolo 标志。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>即使开启沙箱，普通默认模式也允许改工作区；“开沙箱”不等于“只读”。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>产品 UI 必须同时展示 sandbox enabled 与当前 mode，避免用户产生错误安全感。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 配置</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/policy/sandboxPolicyManager.ts · L49–L94</div>
+        <pre><code>   49    private static get DEFAULT_CONFIG(): SandboxTomlSchemaType {
+   50      if (!SandboxPolicyManager._DEFAULT_CONFIG) {
+   51        const __filename = fileURLToPath(import.meta.url);
+   52        const __dirname = path.dirname(__filename);
+   53        const defaultPath = path.join(
+   54          __dirname,
+   55          &#39;policies&#39;,
+   56          &#39;sandbox-default.toml&#39;,
+   57        );
+   58        try {
+   59          const content = fs.readFileSync(defaultPath, &#39;utf8&#39;);
+   60          if (typeof content !== &#39;string&#39;) {
+   61            SandboxPolicyManager._DEFAULT_CONFIG = {
+   62              modes: {
+   63                plan: {
+   64                  network: false,
+   65                  readonly: true,
+   66                  approvedTools: [],
+   67                  allowOverrides: true,
+   68                },
+   69                default: {
+   70                  network: false,
+   71                  readonly: false,
+   72                  approvedTools: [],
+      … 12 lines omitted; exact range 49–94 …
+   85          }
+   86          SandboxPolicyManager._DEFAULT_CONFIG = SandboxTomlSchema.parse(
+   87            toml.parse(content),
+   88          );
+   89        } catch (e) {
+   90          debugLogger.error(`Failed to parse default sandbox policy: ${e}`);
+   91          throw new Error(`Failed to parse default sandbox policy: ${e}`);
+   92        }
+   93      }
+   94      return SandboxPolicyManager._DEFAULT_CONFIG;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">配置</span>
+      <code>packages/core/src/policy/sandboxPolicyManager.ts:49–94</code>
+      <span>plan/default/accepting_edits 默认能力。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/policy/sandboxPolicyManager.ts:140–158</code>
+      <span>YOLO 和 mode 映射。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-6">
+      <div class="chapter-rule"><span>06</span></div>
+      <div class="chapter-kicker">DIMENSION · MCP-EXTENSIONS-SKILLS-MEMORY-HOOKS</div>
+      <h2>MCP、扩展、Skills、记忆与 Hooks</h2>
+      <p class="chapter-deck">本章共 5 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-mcp-001" data-search="mcp 支持 stdio、streamable http、sse fallback、oauth、动态目录刷新和 progress mcpclient 连接后发现 tools/prompts/resources 并注册，监听 listchanged；网络 transport 首选 http，失败可回退 sse，401 仅在显式 oauth.enabled 时发现/认证并重试；调用有 timeout、abort 与 progress token 路由。 本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 oauth。 mcp-extensions-skills-memory-hooks">
+    <header class="finding-head">
+      <div class="finding-no">19</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-mcp-001</span></div>
+        <h3>MCP 支持 stdio、Streamable HTTP、SSE fallback、OAuth、动态目录刷新和 progress</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>McpClient 连接后发现 tools/prompts/resources 并注册，监听 listChanged；网络 transport 首选 HTTP，失败可回退 SSE，401 仅在显式 oauth.enabled 时发现/认证并重试；调用有 timeout、abort 与 progress token 路由。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 OAuth。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>连接器成熟，且认证意图边界清楚；热刷新仍需依赖 registry sort 与 policy validation。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/tools/mcp-client.ts · L188–L292</div>
+        <pre><code>  188    async connect(): Promise&lt;void&gt; {
+  189      if (this.status !== MCPServerStatus.DISCONNECTED) {
+  190        throw new Error(
+  191          `Can only connect when the client is disconnected, current state is ${this.status}`,
+  192        );
+  193      }
+  194      this.updateStatus(MCPServerStatus.CONNECTING);
+  195      try {
+  196        this.client = await connectToMcpServer(
+  197          this.clientVersion,
+  198          this.serverName,
+  199          this.serverConfig,
+  200          this.debugMode,
+  201          this.workspaceContext,
+  202          this.cliConfig,
+  203        );
+  204  
+  205        this.registerNotificationHandlers();
+  206  
+  207        const originalOnError = this.client.onerror;
+  208        this.client.onerror = (error) =&gt; {
+  209          if (this.status !== MCPServerStatus.CONNECTED) {
+  210            return;
+  211          }
+      … 71 lines omitted; exact range 188–292 …
+  283  
+  284    /**
+  285     * Disconnects from the MCP server.
+  286     */
+  287    async disconnect(): Promise&lt;void&gt; {
+  288      if (this.status !== MCPServerStatus.CONNECTED) {
+  289        return;
+  290      }
+  291      for (const registries of this.registeredRegistries) {
+  292        registries.toolRegistry.removeMcpToolsByServer(this.serverName);</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 4 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/tools/mcp-client.ts:188–292</code>
+      <span>连接、发现、注册与断开。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/tools/mcp-client.ts:390–430</code>
+      <span>listChanged 动态刷新。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/tools/mcp-client.ts:1829–1916</code>
+      <span>transport 选择与连接。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/tools/mcp-client.ts:1927–2059</code>
+      <span>SSE fallback 和显式 OAuth gate。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-extension-001" data-search="扩展是能力包：mcp、policy/checker、context、commands、hooks、agents 与 skills 可成组热装卸 extensionloader 启动扩展时连接 mcp、刷新工具、注册 rules/checkers；批次完成后统一 refresh memory/system prompt/hooks/agent registry/skills。停止时按 source 移除政策并做同样刷新。 扩展不是单个脚本，而是一箱可协同变化的工具、规则、记忆、钩子和 agent。 mcp-extensions-skills-memory-hooks">
+    <header class="finding-head">
+      <div class="finding-no">20</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-extension-001</span></div>
+        <h3>扩展是能力包：MCP、policy/checker、context、commands、hooks、agents 与 skills 可成组热装卸</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ExtensionLoader 启动扩展时连接 MCP、刷新工具、注册 rules/checkers；批次完成后统一 refresh memory/system prompt/hooks/agent registry/skills。停止时按 source 移除政策并做同样刷新。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>扩展不是单个脚本，而是一箱可协同变化的工具、规则、记忆、钩子和 Agent。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>扩展卸载能回收治理状态；批量刷新减少 prompt cache 抖动。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/utils/extensionLoader.ts · L31–L110</div>
+        <pre><code>   31    /**
+   32     * Fully initializes all active extensions.
+   33     *
+   34     * Called within `Config.initialize`, which must already have an
+   35     * McpClientManager, PromptRegistry, and GeminiChat set up.
+   36     */
+   37    async start(config: Config): Promise&lt;void&gt; {
+   38      this.isStarting = true;
+   39      try {
+   40        if (!this.config) {
+   41          this.config = config;
+   42        } else {
+   43          throw new Error(&#39;Already started, you may only call `start` once.&#39;);
+   44        }
+   45        await Promise.all(
+   46          this.getExtensions()
+   47            .filter((e) =&gt; e.isActive)
+   48            .map(this.startExtension.bind(this)),
+   49        );
+   50      } finally {
+   51        this.isStarting = false;
+   52      }
+   53    }
+   54  
+      … 46 lines omitted; exact range 31–110 …
+  101        this.eventEmitter?.emit(&#39;extensionsStarting&#39;, {
+  102          total: this.startingCount,
+  103          completed: this.startCompletedCount,
+  104        });
+  105        if (this.startingCount === this.startCompletedCount) {
+  106          this.startingCount = 0;
+  107          this.startCompletedCount = 0;
+  108        }
+  109        await this.maybeRefreshMemories();
+  110      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/utils/extensionLoader.ts:31–110</code>
+      <span>启动、MCP、policy 和批次刷新。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/utils/extensionLoader.ts:113–132</code>
+      <span>统一刷新上下文、hooks、agents、skills。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/utils/extensionLoader.ts:172–225</code>
+      <span>停止与按来源移除政策。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-memory-001" data-search="gemini.md/memory 分 global、user-project、extension、project，并支持受信目录 jit 加载 memory discovery 分类别收集并串联；环境 memory 从 trusted root 向上到 git root；工具触达子目录时，只有目标处于 trusted root 才 jit 搜索并按 inode/device 去重。 常驻规章分层保存，走进更深目录时才加载当地规则；不受信目录不会因为读一个文件就注入它的说明。 mcp-extensions-skills-memory-hooks">
+    <header class="finding-head">
+      <div class="finding-no">21</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-memory-001</span></div>
+        <h3>GEMINI.md/Memory 分 global、user-project、extension、project，并支持受信目录 JIT 加载</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>memory discovery 分类别收集并串联；环境 memory 从 trusted root 向上到 git root；工具触达子目录时，只有目标处于 trusted root 才 JIT 搜索并按 inode/device 去重。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>常驻规章分层保存，走进更深目录时才加载当地规则；不受信目录不会因为读一个文件就注入它的说明。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>兼顾大仓库按需上下文与 prompt injection 边界。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/utils/memoryDiscovery.ts · L383–L454</div>
+        <pre><code>  383  export function getExtensionMemoryPaths(
+  384    extensionLoader: ExtensionLoader,
+  385  ): string[] {
+  386    const extensionPaths = extensionLoader
+  387      .getExtensions()
+  388      .filter((ext) =&gt; ext.isActive)
+  389      .flatMap((ext) =&gt; ext.contextFiles)
+  390      .map((p) =&gt; toAbsolutePath(p));
+  391  
+  392    // Deduplicate case-insensitively (so macOS/Windows don&#39;t keep two casings of
+  393    // the same file) while preserving the first encountered casing for display.
+  394    const seenKeys = new Set&lt;string&gt;();
+  395    const unique: string[] = [];
+  396    for (const p of extensionPaths) {
+  397      const key = normalizePath(p);
+  398      if (seenKeys.has(key)) continue;
+  399      seenKeys.add(key);
+  400      unique.push(p);
+  401    }
+  402    return unique.sort();
+  403  }
+  404  
+  405  export async function getEnvironmentMemoryPaths(
+  406    trustedRoots: string[],
+      … 38 lines omitted; exact range 383–454 …
+  445          .map((p) =&gt; contentsMap.get(p))
+  446          .filter((c): c is GeminiFileContent =&gt; !!c),
+  447      );
+  448  
+  449    return {
+  450      global: getConcatenated(paths.global),
+  451      extension: getConcatenated(paths.extension),
+  452      project: getConcatenated(paths.project),
+  453      userProjectMemory: getConcatenated(paths.userProjectMemory ?? []),
+  454    };</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/utils/memoryDiscovery.ts:383–454</code>
+      <span>extension/environment 分层与分类。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/utils/memoryDiscovery.ts:512–572</code>
+      <span>JIT trusted-root gate 与 traversal ceiling。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/utils/memoryDiscovery.ts:578–639</code>
+      <span>文件身份去重与并发上限。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-skills-001" data-search="skills 有明确覆盖顺序，workspace skills 受 folder trust 保护 skillmanager 依次加载 builtin、extension、user、.agents alias、workspace，后者同名覆盖前者；未信任 workspace 时直接跳过项目 skills，并可由管理员全局禁用或按名禁用。 越靠近项目的技能优先级越高，但项目没被信任前不会让它改 agent 的做事方式。 mcp-extensions-skills-memory-hooks">
+    <header class="finding-head">
+      <div class="finding-no">22</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-skills-001</span></div>
+        <h3>Skills 有明确覆盖顺序，workspace skills 受 folder trust 保护</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>SkillManager 依次加载 builtin、extension、user、.agents alias、workspace，后者同名覆盖前者；未信任 workspace 时直接跳过项目 skills，并可由管理员全局禁用或按名禁用。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>越靠近项目的技能优先级越高，但项目没被信任前不会让它改 Agent 的做事方式。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>skills 被正确视为可执行影响，而非普通文档。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/skills/skillManager.ts · L17–L99</div>
+        <pre><code>   17  export class SkillManager {
+   18    private skills: SkillDefinition[] = [];
+   19    private activeSkillNames: Set&lt;string&gt; = new Set();
+   20    private adminSkillsEnabled = true;
+   21  
+   22    /**
+   23     * Clears all discovered skills.
+   24     */
+   25    clearSkills(): void {
+   26      this.skills = [];
+   27    }
+   28  
+   29    /**
+   30     * Resets session-scoped state (active skill names).
+   31     */
+   32    reset(): void {
+   33      this.activeSkillNames.clear();
+   34    }
+   35  
+   36    /**
+   37     * Sets administrative settings for skills.
+   38     */
+   39    setAdminSettings(enabled: boolean): void {
+   40      this.adminSkillsEnabled = enabled;
+      … 49 lines omitted; exact range 17–99 …
+   90        storage.getProjectSkillsDir(),
+   91      );
+   92      this.addSkillsWithPrecedence(projectSkills);
+   93  
+   94      // 4.1 Workspace agent skills alias (.agents/skills)
+   95      const projectAgentSkills = await loadSkillsFromDir(
+   96        storage.getProjectAgentSkillsDir(),
+   97      );
+   98      this.addSkillsWithPrecedence(projectAgentSkills);
+   99    }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/skills/skillManager.ts:17–99</code>
+      <span>来源、优先级与 trust gate。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/skills/skillManager.ts:124–188</code>
+      <span>冲突覆盖、禁用与展示。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-hooks-001" data-search="before/afteragent hooks 可停止、阻断、注入上下文或要求清空后继续 beforeagent 对每个 prompt_id 去重并可 stop/block/additionalcontext；afteragent 只在最外层且没有 pending tools 时运行，可 stop、block、clearcontext，并将 continue reason 作为新请求递归运行。 钩子既能在开工前加背景/拦截，也能在收工时验收，不合格可清空现场后让 agent 按理由重做。 mcp-extensions-skills-memory-hooks">
+    <header class="finding-head">
+      <div class="finding-no">23</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-hooks-001</span></div>
+        <h3>Before/AfterAgent hooks 可停止、阻断、注入上下文或要求清空后继续</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>BeforeAgent 对每个 prompt_id 去重并可 stop/block/additionalContext；AfterAgent 只在最外层且没有 pending tools 时运行，可 stop、block、clearContext，并将 continue reason 作为新请求递归运行。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>钩子既能在开工前加背景/拦截，也能在收工时验收，不合格可清空现场后让 Agent 按理由重做。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>适合策略与质量门，但递归 continuation 要有 turn 上限和 hook state 防重。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/core/client.ts · L153–L252</div>
+        <pre><code>  153    // Hook state to deduplicate BeforeAgent calls and track response for
+  154    // AfterAgent
+  155    private hookStateMap = new Map&lt;
+  156      string,
+  157      {
+  158        hasFiredBeforeAgent: boolean;
+  159        cumulativeResponse: string;
+  160        activeCalls: number;
+  161        originalRequest: PartListUnion;
+  162      }
+  163    &gt;();
+  164  
+  165    private async fireBeforeAgentHookSafe(
+  166      request: PartListUnion,
+  167      prompt_id: string,
+  168    ): Promise&lt;BeforeAgentHookReturn&gt; {
+  169      let hookState = this.hookStateMap.get(prompt_id);
+  170      if (!hookState) {
+  171        hookState = {
+  172          hasFiredBeforeAgent: false,
+  173          cumulativeResponse: &#39;&#39;,
+  174          activeCalls: 0,
+  175          originalRequest: request,
+  176        };
+      … 66 lines omitted; exact range 153–252 …
+  243  
+  244      const hookOutput = await this.config
+  245        .getHookSystem()
+  246        ?.fireAfterAgentEvent(
+  247          partToString(finalRequest),
+  248          finalResponseText,
+  249          stopHookActive,
+  250        );
+  251  
+  252      return hookOutput;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:153–252</code>
+      <span>Before/AfterAgent 安全包装与去重。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/core/client.ts:930–1034</code>
+      <span>stop/block/context/continuation 行为。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-7">
+      <div class="chapter-rule"><span>07</span></div>
+      <div class="chapter-kicker">DIMENSION · SUBAGENTS-COLLABORATION</div>
+      <h2>子 Agent 与协作</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-agent-001" data-search="子 agent 统一为可订阅、可重放、可中止的 agentprotocol agentsession 包装 send/subscribe/abort/events，并把一次 stream 限定在 agent_start→agent_end；它先订阅再回放历史，处理 setup 期间 early events，支持按 eventid 或 streamid 重接。 无论子 agent 在本机还是远程，上层看到的都是一条带编号、能续看的事件流。 subagents-collaboration">
+    <header class="finding-head">
+      <div class="finding-no">24</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-agent-001</span></div>
+        <h3>子 Agent 统一为可订阅、可重放、可中止的 AgentProtocol</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>AgentSession 包装 send/subscribe/abort/events，并把一次 stream 限定在 agent_start→agent_end；它先订阅再回放历史，处理 setup 期间 early events，支持按 eventId 或 streamId 重接。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>无论子 Agent 在本机还是远程，上层看到的都是一条带编号、能续看的事件流。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>UI、SDK 与 A2A server 可共享协议，断线恢复不必理解每种 executor。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/agent/agent-session.ts · L14–L69</div>
+        <pre><code>   14  /**
+   15   * AgentSession is a wrapper around AgentProtocol that provides a more
+   16   * convenient API for consuming agent activity as an AsyncIterable.
+   17   */
+   18  export class AgentSession implements AgentProtocol {
+   19    private _protocol: AgentProtocol;
+   20  
+   21    constructor(protocol: AgentProtocol) {
+   22      this._protocol = protocol;
+   23    }
+   24  
+   25    async send(payload: AgentSend): Promise&lt;{ streamId: string | null }&gt; {
+   26      return this._protocol.send(payload);
+   27    }
+   28  
+   29    subscribe(callback: (event: AgentEvent) =&gt; void): Unsubscribe {
+   30      return this._protocol.subscribe(callback);
+   31    }
+   32  
+   33    async abort(): Promise&lt;void&gt; {
+   34      return this._protocol.abort();
+   35    }
+   36  
+   37    get events(): readonly AgentEvent[] {
+      … 22 lines omitted; exact range 14–69 …
+   60     * optionally replaying events from history or reattaching to an existing stream.
+   61     *
+   62     * @param options Options for replaying or reattaching to the event stream.
+   63     */
+   64    async *stream(
+   65      options: {
+   66        eventId?: string;
+   67        streamId?: string;
+   68      } = {},
+   69    ): AsyncIterable&lt;AgentEvent&gt; {</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>packages/core/src/agent/agent-session.ts:14–69</code>
+      <span>AgentProtocol wrapper 与 AsyncIterable。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/agent/agent-session.ts:70–165</code>
+      <span>订阅优先、eventId resume 和生命周期过滤。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/agent/agent-session.ts:166–223</code>
+      <span>streamId replay、early events 和清理。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-agent-002" data-search="local 子 agent 支持后台执行和取消，但同一 protocol 实例不允许并发 stream localsubagentprotocol 在 send(message) 时若已有 activestreamid 直接报错；它用 settimeout 后台启动，独立 abortcontroller，取消时丢弃 partial output 并返回空 aborted result。 一个子 agent 会话一次只接一单；主线程能先拿到 streamid，不必等它做完，但不能同时塞第二单。 subagents-collaboration">
+    <header class="finding-head">
+      <div class="finding-no">25</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>限制</span><span>gemini-agent-002</span></div>
+        <h3>Local 子 Agent 支持后台执行和取消，但同一 protocol 实例不允许并发 stream</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>LocalSubagentProtocol 在 send(message) 时若已有 activeStreamId 直接报错；它用 setTimeout 后台启动，独立 AbortController，取消时丢弃 partial output 并返回空 aborted result。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>一个子 Agent 会话一次只接一单；主线程能先拿到 streamId，不必等它做完，但不能同时塞第二单。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>并发应通过多个 Agent 实例而非重入同一实例，取消的部分成果不会自动保留。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/agents/local-subagent-protocol.ts · L69–L95</div>
+        <pre><code>   69  class LocalSubagentProtocol implements AgentProtocol {
+   70    private _events: AgentEvent[] = [];
+   71    private _subscribers = new Set&lt;(event: AgentEvent) =&gt; void&gt;();
+   72    private _streamId: string = randomUUID();
+   73    private _eventCounter = 0;
+   74    private _agentStartEmitted = false;
+   75    private _agentEndEmitted = false;
+   76    private _activeStreamId: string | undefined;
+   77    private _abortController = new AbortController();
+   78  
+   79    // Result promise wiring — re-created per stream in _beginNewStream()
+   80    private _resultResolve!: (output: OutputObject) =&gt; void;
+   81    private _resultReject!: (err: unknown) =&gt; void;
+   82    private _resultPromise: Promise&lt;OutputObject&gt; | undefined;
+   83  
+   84    // Buffered config from send({update})
+   85    private _bufferedConfig: Record&lt;string, unknown&gt; = {};
+   86  
+   87    constructor(
+   88      private readonly definition: LocalAgentDefinition,
+   89      private readonly context: AgentLoopContext,
+   90      // Required for API parity across protocol constructors (local, remote, legacy)
+   91      _messageBus: MessageBus,
+   92      private readonly _rawActivityCallback?: (
+   93        activity: SubagentActivityEvent,
+   94      ) =&gt; void,
+   95    ) {}</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/agents/local-subagent-protocol.ts:69–95</code>
+      <span>事件、stream 与 abort 状态。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/agents/local-subagent-protocol.ts:112–162</code>
+      <span>单 active stream、后台启动与取消。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/agents/local-subagent-protocol.ts:183–215</code>
+      <span>stream 重置和 abort 结果。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-8">
+      <div class="chapter-rule"><span>08</span></div>
+      <div class="chapter-kicker">DIMENSION · PERSISTENCE-OBSERVABILITY-MATURITY</div>
+      <h2>持久化、观测与成熟度</h2>
+      <p class="chapter-deck">本章共 3 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="gemini-persistence-001" data-search="会话记录是增量 jsonl，支持 rewind、metadata patch 和完整 checkpoint chatrecordingservice 逐行解析；$rewindto 删除目标及以后消息，$set 可增量更新 metadata 或用 messages 数组重建 checkpoint，坏行被隔离忽略，缺关键 metadata 时回退 legacy parser。 对话文件像事件日志：可以写“回到某一步”、只改元数据，也能偶尔写一张完整快照；一行坏了不拖垮整份会话。 persistence-observability-maturity">
+    <header class="finding-head">
+      <div class="finding-no">26</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-persistence-001</span></div>
+        <h3>会话记录是增量 JSONL，支持 rewind、metadata patch 和完整 checkpoint</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>ChatRecordingService 逐行解析；$rewindTo 删除目标及以后消息，$set 可增量更新 metadata 或用 messages 数组重建 checkpoint，坏行被隔离忽略，缺关键 metadata 时回退 legacy parser。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>对话文件像事件日志：可以写“回到某一步”、只改元数据，也能偶尔写一张完整快照；一行坏了不拖垮整份会话。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>支持 resume/rewind 与格式迁移，需持续测试 checkpoint 和增量事件的一致性。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/services/chatRecordingService.ts · L150–L203</div>
+        <pre><code>  150    try {
+  151      const fileStream = fs.createReadStream(filePath);
+  152      const rl = readline.createInterface({
+  153        input: fileStream,
+  154        crlfDelay: Infinity,
+  155      });
+  156  
+  157      let metadata: Partial&lt;ConversationRecord&gt; = {};
+  158      const messagesMap = new Map&lt;string, MessageRecord&gt;();
+  159      const messageIds: string[] = [];
+  160      const messageKinds = new Map&lt;
+  161        string,
+  162        { isUser: boolean; isResumable: boolean }
+  163      &gt;();
+  164      let isTrackingMemoryScratchpadFreshness = false;
+  165      let memoryScratchpadIsStale = false;
+  166      let firstUserMessageStr: string | undefined;
+  167  
+  168      for await (const line of rl) {
+  169        if (!line.trim()) continue;
+  170        try {
+  171          const record = JSON.parse(line) as unknown;
+  172          if (isRewindRecord(record)) {
+  173            if (isTrackingMemoryScratchpadFreshness) {
+      … 20 lines omitted; exact range 150–203 …
+  194              }
+  195              if (found) {
+  196                for (const id of idsToDelete) {
+  197                  messagesMap.delete(id);
+  198                }
+  199              } else {
+  200                messagesMap.clear();
+  201              }
+  202            }
+  203          } else if (isMessageRecord(record)) {</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/services/chatRecordingService.ts:150–203</code>
+      <span>JSONL、rewind 和错误隔离。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/services/chatRecordingService.ts:203–300</code>
+      <span>message 与 metadata checkpoint。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/services/chatRecordingService.ts:300–350</code>
+      <span>initial/legacy record 和 fallback。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-observe-001" data-search="opentelemetry 可导出到 gcp、otlp http/grpc、文件或控制台 telemetry sdk 同时构造 trace/log/metric exporter，支持 gcp 直出、otlp http/grpc+gzip、单文件和 console；nodesdk 加载 http instrumentation，并可周期监控内存和 event loop。 既能接企业观测平台，也能只落本地文件；模型调用之外还能看到进程内存和事件循环卡顿。 persistence-observability-maturity">
+    <header class="finding-head">
+      <div class="finding-no">27</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>gemini-observe-001</span></div>
+        <h3>OpenTelemetry 可导出到 GCP、OTLP HTTP/gRPC、文件或控制台</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>telemetry SDK 同时构造 trace/log/metric exporter，支持 GCP 直出、OTLP HTTP/grpc+gzip、单文件和 console；NodeSDK 加载 HTTP instrumentation，并可周期监控内存和 event loop。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>既能接企业观测平台，也能只落本地文件；模型调用之外还能看到进程内存和事件循环卡顿。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>生产可观测性完整，但凭据、提示内容与遥测开关需纳入隐私治理。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/core/src/telemetry/sdk.ts · L240–L318</div>
+        <pre><code>  240    const otlpEndpoint = config.getTelemetryOtlpEndpoint();
+  241    const otlpProtocol = config.getTelemetryOtlpProtocol();
+  242    const telemetryTarget = config.getTelemetryTarget();
+  243    const useCollector = config.getTelemetryUseCollector();
+  244  
+  245    const parsedEndpoint = parseOtlpEndpoint(otlpEndpoint, otlpProtocol);
+  246    const telemetryOutfile = config.getTelemetryOutfile();
+  247    const useOtlp = !!parsedEndpoint &amp;&amp; !telemetryOutfile;
+  248  
+  249    const gcpProjectId =
+  250      process.env[&#39;OTLP_GOOGLE_CLOUD_PROJECT&#39;] ||
+  251      process.env[&#39;GOOGLE_CLOUD_PROJECT&#39;];
+  252    const useDirectGcpExport =
+  253      telemetryTarget === TelemetryTarget.GCP &amp;&amp; !useCollector;
+  254  
+  255    let spanExporter:
+  256      | OTLPTraceExporter
+  257      | OTLPTraceExporterHttp
+  258      | GcpTraceExporter
+  259      | FileSpanExporter
+  260      | ConsoleSpanExporter;
+  261    let logExporter:
+  262      | OTLPLogExporter
+  263      | OTLPLogExporterHttp
+      … 45 lines omitted; exact range 240–318 …
+  309          compression: CompressionAlgorithm.GZIP,
+  310        });
+  311        metricReader = new PeriodicExportingMetricReader({
+  312          exporter: new OTLPMetricExporter({
+  313            url: parsedEndpoint,
+  314            compression: CompressionAlgorithm.GZIP,
+  315          }),
+  316          exportIntervalMillis: 10000,
+  317        });
+  318      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/telemetry/sdk.ts:240–318</code>
+      <span>GCP 与 OTLP exporters。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/core/src/telemetry/sdk.ts:319–375</code>
+      <span>file/console、NodeSDK 和运行时监控。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="gemini-maturity-001" data-search="大型 typescript monorepo，测试面广，apache-2.0 固定提交约 2,144 个 typescript 文件，机械统计 892 个 *.test.ts/tsx；根许可证是 apache license 2.0。 这是一套带 cli、core、sdk、acp/a2a、策略和平台沙箱的系统，不是单文件 demo。 persistence-observability-maturity">
+    <header class="finding-head">
+      <div class="finding-no">28</div>
+      <div>
+        <div class="eyebrow"><span class="level">L3</span><span>事实</span><span>gemini-maturity-001</span></div>
+        <h3>大型 TypeScript monorepo，测试面广，Apache-2.0</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>固定提交约 2,144 个 TypeScript 文件，机械统计 892 个 *.test.ts/tsx；根许可证是 Apache License 2.0。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>这是一套带 CLI、core、SDK、ACP/A2A、策略和平台沙箱的系统，不是单文件 demo。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>架构可借鉴性高，但新旧上下文路径和多前端会扩大回归矩阵。</p></div>
+        <div class="caveat"><span>边界</span><ul><li>文件数是固定 checkout 的机械统计，不等于测试覆盖率。</li></ul></div>
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">LICENSE · L1–L28</div>
+        <pre><code>    1  
+    2                                   Apache License
+    3                             Version 2.0, January 2004
+    4                          http://www.apache.org/licenses/
+    5  
+    6     TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+    7  
+    8     1. Definitions.
+    9  
+   10        &quot;License&quot; shall mean the terms and conditions for use, reproduction,
+   11        and distribution as defined by Sections 1 through 9 of this document.
+   12  
+   13        &quot;Licensor&quot; shall mean the copyright owner or entity authorized by
+   14        the copyright owner that is granting the License.
+   15  
+   16        &quot;Legal Entity&quot; shall mean the union of the acting entity and all
+   17        other entities that control, are controlled by, or are under common
+   18        control with that entity. For the purposes of this definition,
+   19        &quot;control&quot; means (i) the power, direct or indirect, to cause the
+   20        direction or management of such entity, whether by contract or
+   21        otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   22        outstanding shares, or (iii) beneficial ownership of such entity.
+   23  
+   24        &quot;You&quot; (or &quot;Your&quot;) shall mean an individual or Legal Entity
+   25        exercising permissions granted by this License.
+   26  
+   27        &quot;Source&quot; form shall mean the preferred form for making modifications,
+   28        including but not limited to software source code, documentation</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>LICENSE:1–28</code>
+      <span>Apache License 2.0。</span>
+    </li>
+    <li>
+      <span class="role">测试</span>
+      <code>packages/core/src/context/contextManager.test.ts:1–40</code>
+      <span>ContextManager 专项测试入口。</span>
+    </li>
+    <li>
+      <span class="role">测试</span>
+      <code>packages/core/src/services/sandboxManager.integration.test.ts:1–40</code>
+      <span>sandbox 集成测试入口。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+  </div>
+
+  <section class="chapter source-index" id="sources">
+    <div class="chapter-kicker">APPENDIX · SOURCE INDEX</div>
+    <h2>本报告引用过的实现文件</h2>
+    <p class="chapter-deck">这是一份代码阅读索引，不是仓库文件总表。机器候选扫描覆盖整个仓库；进入结论的文件必须经人工沿调用链复核。</p>
+    <ol><li><span>01</span><code>packages/core/src/core/client.ts</code><small>L79–111, 875–907, 910–1060, 614–715, 717–807, 744–763, 810–855, 107–120, 1196–1248, 640–678, 829–838, 153–252, 930–1034</small></li><li><span>02</span><code>packages/core/src/core/contentGenerator.ts</code><small>L35–70, 72–110, 285–310, 312–410</small></li><li><span>03</span><code>packages/core/src/core/geminiChat.ts</code><small>L517–578, 580–648</small></li><li><span>04</span><code>packages/core/src/context/chatCompressionService.ts</code><small>L37–52, 54–100, 124–142, 144–215</small></li><li><span>05</span><code>packages/core/src/context/contextManager.ts</code><small>L26–88, 90–195, 197–275</small></li><li><span>06</span><code>packages/core/src/core/turn.ts</code><small>L236–320</small></li><li><span>07</span><code>packages/core/src/agents/agent-scheduler.ts</code><small>L42–92</small></li><li><span>08</span><code>packages/core/src/scheduler/tool-executor.ts</code><small>L250–297, 299–368</small></li><li><span>09</span><code>packages/core/src/policy/policy-engine.ts</code><small>L49–195, 198–260, 253–260, 284–341</small></li><li><span>10</span><code>packages/core/src/services/sandboxManagerFactory.ts</code><small>L19–43</small></li><li><span>11</span><code>packages/core/src/services/sandboxManager.ts</code><small>L285–333, 194–223</small></li><li><span>12</span><code>packages/core/src/sandbox/linux/LinuxSandboxManager.ts</code><small>L48–114</small></li><li><span>13</span><code>packages/core/src/sandbox/windows/WindowsSandboxManager.ts</code><small>L56–72</small></li><li><span>14</span><code>packages/core/src/policy/sandboxPolicyManager.ts</code><small>L49–94, 140–158</small></li><li><span>15</span><code>packages/core/src/tools/mcp-client.ts</code><small>L188–292, 390–430, 1829–1916, 1927–2059</small></li><li><span>16</span><code>packages/core/src/utils/extensionLoader.ts</code><small>L31–110, 113–132, 172–225</small></li><li><span>17</span><code>packages/core/src/utils/memoryDiscovery.ts</code><small>L383–454, 512–572, 578–639</small></li><li><span>18</span><code>packages/core/src/skills/skillManager.ts</code><small>L17–99, 124–188</small></li><li><span>19</span><code>packages/core/src/agent/agent-session.ts</code><small>L14–69, 70–165, 166–223</small></li><li><span>20</span><code>packages/core/src/agents/local-subagent-protocol.ts</code><small>L69–95, 112–162, 183–215</small></li><li><span>21</span><code>packages/core/src/services/chatRecordingService.ts</code><small>L150–203, 203–300, 300–350</small></li><li><span>22</span><code>packages/core/src/telemetry/sdk.ts</code><small>L240–318, 319–375</small></li><li><span>23</span><code>LICENSE</code><small>L1–28</small></li><li><span>24</span><code>packages/core/src/context/contextManager.test.ts</code><small>L1–40</small></li><li><span>25</span><code>packages/core/src/services/sandboxManager.integration.test.ts</code><small>L1–40</small></li></ol>
+  </section>
+
+  <footer class="report-footer">
+    <div><span>SNAPSHOT</span><code>bef6119500b0238ad84f6396d2a6cabda9991554</code></div>
+    <nav>
+      <a href="codex.html">← OpenAI Codex</a>
+      <a href="jcode.html">JCode →</a>
+    </nav>
+  </footer>
+  </main>
+  <script src="../assets/report.js"></script>
+</body>
+</html>

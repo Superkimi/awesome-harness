@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>Open Interpreter · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Open Interpreter · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Open Interpreter</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>aaf0aebf8203</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Open Interpreter · aaf0aebf8203</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>Rust / TypeScript / Markdown</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Open Interpreter · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/openinterpreter/ch07-security.mp4" data-video-status="planned">待发布 MP4</a><a href="../../../../videos/openinterpreter/ch07-security.srt" data-video-status="planned">SRT</a><em>aaf0aebf8203</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>源码</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 它不是在旧 Python 循环上继续打补丁，而是把一套 Codex 级 Rust Harness 换了产品入口，再加入自己的多 Harness 能力。</p><h2>再看这段源码</h2><div class="source-card"><div><span>codex-rs/core/src/tools/handlers/harness_fs.rs · L39–94</span><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/tools/handlers/harness_fs.rs#L39-L94" target="_blank" rel="noreferrer">打开固定提交 ↗</a></div><pre><code>   39  pub(crate) fn resolve_model_path(
+   40      invocation: &amp;ToolInvocation,
+   41      path: &amp;str,
+   42  ) -&gt; Result&lt;PathBuf, FunctionCallError&gt; {
+   43      let path = normalize_model_path_text(path);
+   44      let path = PathBuf::from(path);
+   45      if path.is_absolute() {
+   46          Ok(path)
+   47      } else {
+   48          Ok(primary_cwd(invocation).join(path))
+   49      }
+   50  }
+   51  
+   52  pub(crate) fn checked_read_path(
+   53      invocation: &amp;ToolInvocation,
+   54      path: &amp;str,
+   55      operation: &amp;str,
+   56  ) -&gt; Result&lt;PathBuf, FunctionCallError&gt; {
+   57      let path = resolve_model_path(invocation, path)?;
+   58      ensure_read_allowed(invocation, &amp;path, operation)?;
+   59      Ok(path)
+   60  }
+   61  
+   62  pub(crate) fn checked_write_path(
+   63      invocation: &amp;ToolInvocation,
+   64      path: &amp;str,
+   65      operation: &amp;str,
+   66  ) -&gt; Result&lt;PathBuf, FunctionCallError&gt; {
+   67      let path = resolve_model_path(invocation, path)?;
+   68      ensure_write_allowed(invocation, &amp;path, operation)?;</code></pre></div><h2>翻译成小白能懂的话</h2><p>这段代码不是“顺便做了点事”，它在本章控制面上承担一个明确职责。阅读时先找输入、状态变化、外部副作用和错误出口，再把它放回 Open Interpreter 的完整任务链。</p><div class="flow-strip"><span>输入</span><i>→</i><span>规则 / 状态</span><i>→</i><span>动作</span><i>→</i><span>回执</span></div><h2>把它放进图里</h2><iframe class="diagram-frame" src="../diagrams/architecture.html" title="Open Interpreter architecture" loading="lazy"></iframe><h2>小练习：不要只会复述</h2><div class="exercise"><p>打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。</p><details><summary>查看提示</summary><p>提示：如果源码里只有 prompt 或 UI 文案，没有状态、权限或执行代码，不要把它写成强保证。</p></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

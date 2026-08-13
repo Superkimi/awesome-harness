@@ -1,0 +1,350 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "prime-agent",
+  "snapshot": {
+    "repository": "PrimeIntellect-ai/prime-agent",
+    "commit": "a3b3e753490d0a6ed180e905200c1a6690d78608",
+    "commitDate": "2026-08-11T23:12:36+02:00"
+  },
+  "method": {
+    "readmePolicy": "README 只用来定位入口和产品边界；结论以 packages/agent、packages/coding-agent 的运行实现、类型契约、资源/扩展/MCP/RLM/daemon 模块和测试为主，固定 shallow HEAD 后记录行号。",
+    "factPolicy": "优先引用可执行 TypeScript、公共类型、持久化协议和测试；默认值、可配置能力和实际强制边界分别描述。源码没有证明 OS 隔离的地方不会把安全口号当成沙箱事实。",
+    "inferencePolicy": "把低层 agent-loop 与 coding-agent host 的组合关系标为架构推断；把 host shell、扩展权限面和 daemon 恢复复杂度作为限制/风险，不推测模型服务端行为。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "纯 AgentMessage loop、AgentSession host、interactive/print/rpc/daemon 入口。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "上下文转换紧贴 provider call，支持动态 key、流式事件与 abort。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "reserve/keep 预算、chars/4 估算、合法 cut point、结构化摘要和 branch summary。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "参数验证、before/after hook、串行/并行、流式结果和终止提示。" },
+    { "dimension": "execution-sandbox", "status": "partial", "evidenceLevels": ["L1", "L2", "L3"], "notes": "bash 默认 spawn 宿主 shell；BashOperations 可换远端执行器，但本包没有默认 OS sandbox。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "tool hook、参数验证、abort、资源来源 metadata 与 daemon socket/worker 身份校验。" },
+    { "dimension": "mcp-connectors", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "McpManager 管 OAuth provider、refresh/config/login host request，并区分内置 catalog 与用户覆盖。" },
+    { "dimension": "instructions-skills-plugins", "status": "verified", "evidenceLevels": ["L1", "L2", "L3", "L4"], "notes": "AGENTS/CLAUDE 上下文、skills/prompts/themes/extensions 动态资源和冲突诊断。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "RLM child registry、daemon resident workers、prompt admission、heartbeats 与 recovery journals。" },
+    { "dimension": "persistence-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "版本化 JSONL append-only session tree、原子 rewrite、typed events、telemetry/usage。" },
+    { "dimension": "tests-benchmarks-maturity", "status": "verified", "evidenceLevels": ["L1", "L3"], "notes": "agent loop、compaction、session tree、daemon、RLM、MCP、telemetry 等有独立测试。" }
+  ],
+  "findings": [
+    {
+      "id": "prime-arch-001", "dimension": "architecture-loop", "evidenceLevel": "L1", "claimType": "fact", "title": "低层 Agent Loop 是可复用的 provider-neutral 状态机",
+      "fact": "agentLoop 只接收 prompts、AgentContext、AgentLoopConfig 和可选 streamFn；runLoop 把 steering、tool calls、follow-up、continuation 和 abort 编排成外层/内层循环，并最终发出 agent_end。",
+      "plainLanguage": "Prime Agent 把“模型怎么流式回答、什么时候执行工具、用户插话后是否继续”抽成一个不依赖 TUI 的小内核，上层入口只负责喂配置和消费事件。",
+      "implication": "自研时可把 loop 做成纯运行时，再让 CLI、RPC、桌面 UI 共用；不要让界面组件自己复制一套 tool loop。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 178, "endLine": 205, "role": "implementation", "excerpt": "agentLoop 创建流并启动 runAgentLoop。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 307, "endLine": 373, "role": "implementation", "excerpt": "外层/内层 turn loop、stream response、tool batch。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 422, "endLine": 460, "role": "implementation", "excerpt": "follow-up/continuation poll 后发出 agent_end。" }
+      ]
+    },
+    {
+      "id": "prime-arch-002", "dimension": "provider-streaming", "evidenceLevel": "L1", "claimType": "fact", "title": "Provider 边界前才做上下文变换和密钥解析",
+      "fact": "streamAssistantResponse 在每次 provider 请求前依次执行 transformContext、convertToLlm、动态 getApiKey、动态 system prompt，然后把 Context 交给 streamFunction；流事件逐步回写 context.messages，并对 abort 生成最终 aborted message。",
+      "plainLanguage": "上下文不会在会话开始时被一次性拍扁，长任务中每次请求都可以重新裁剪、换系统提示和刷新短期 token。",
+      "implication": "上下文压缩、OAuth refresh 和 provider 适配应放在真正发请求的边界，避免 token 过期或 stale prompt。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 467, "endLine": 521, "role": "implementation", "excerpt": "transformContext、convertToLlm、getApiKey 和 Context 组装。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 526, "endLine": 603, "role": "implementation", "excerpt": "增量事件、终态 message 和 abort 收尾。" },
+        { "path": "packages/agent/src/types.ts", "startLine": 148, "endLine": 183, "role": "contract", "excerpt": "transformContext 与动态 API key 契约。" }
+      ]
+    },
+    {
+      "id": "prime-loop-003", "dimension": "architecture-loop", "evidenceLevel": "L1", "claimType": "fact", "title": "Steering、follow-up、continuation 是三个不同的队列语义",
+      "fact": "runLoop 在当前 assistant turn 完成工具后轮询 steering；没有工具和 steering 时才轮询 follow-up；最后通过 getContinuationMessages 处理宿主拥有的长任务续跑策略。",
+      "plainLanguage": "用户正在打断时是一种消息，用户等 Agent 停下来再追加是另一种消息，系统为了长目标自动继续又是第三种消息，三者不会混成一个 pending 数组。",
+      "implication": "长任务产品应给消息定义明确的 admission boundary，才能保证“插话”不会跳过当前工具调用或错误地重放。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 317, "endLine": 345, "role": "implementation", "excerpt": "turn 开始注入 steering pending messages。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 385, "endLine": 419, "role": "implementation", "excerpt": "shouldStop、steering poll 和 turn boundary。" },
+        { "path": "packages/agent/src/types.ts", "startLine": 206, "endLine": 244, "role": "contract", "excerpt": "steering/follow-up/continuation 的顺序和契约。" }
+      ]
+    },
+    {
+      "id": "prime-tools-001", "dimension": "tool-dispatch", "evidenceLevel": "L1", "claimType": "fact", "title": "工具调用先预检再执行，支持串行和并行两条路径",
+      "fact": "executeToolCalls 根据全局 toolExecution 或单个工具 executionMode 决定串行/并行；两条路径都先 prepareToolCall，验证参数后才执行，结果 message 保持工具调用源顺序。",
+      "plainLanguage": "多个独立查询可以并发跑，但带副作用的工具能强制串行；模型给错参数时不会直接进 shell，而是先变成错误 tool result。",
+      "implication": "工具调度应把“可并行性”和“参数校验”写进 ToolDefinition，而不是让模型提示词决定。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 608, "endLine": 623, "role": "implementation", "excerpt": "按全局/工具 executionMode 选择串行或并行。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 630, "endLine": 688, "role": "implementation", "excerpt": "串行工具调用的 prepare、execute、result。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 690, "endLine": 735, "role": "implementation", "excerpt": "并行准备、Promise.all 与结果顺序。" }
+      ]
+    },
+    {
+      "id": "prime-tools-002", "dimension": "permissions-security", "evidenceLevel": "L1", "claimType": "fact", "title": "before/after tool hook 是可编程的策略门",
+      "fact": "prepareToolCall 在参数 schema 验证后调用 beforeToolCall，返回 block 就生成错误结果而不执行；执行结束后 afterToolCall 可覆盖 content、details、isError 和 terminate。",
+      "plainLanguage": "审批、审计、脱敏、工具白名单和“这个结果是否要终止 Agent”都可以在一个统一钩子里实现，而且 block 发生在真正执行前。",
+      "implication": "策略要留在 dispatch pipeline，而不是散落在每个工具内部；同时要审计扩展是否能覆盖结果或终止状态。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 795, "endLine": 848, "role": "implementation", "excerpt": "tool lookup、参数验证与 beforeToolCall block。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 850, "endLine": 904, "role": "implementation", "excerpt": "abort-safe execute 与 streamed update。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 906, "endLine": 945, "role": "implementation", "excerpt": "afterToolCall 对结果和 terminate 的覆盖。" },
+        { "path": "packages/agent/src/types.ts", "startLine": 246, "endLine": 277, "role": "contract", "excerpt": "hook 的阻断与字段覆盖契约。" }
+      ]
+    },
+    {
+      "id": "prime-context-001", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "默认压缩预留 16384 token，尾部保留 20000 token",
+      "fact": "DEFAULT_COMPACTION_SETTINGS 将 enabled 设为 true、reserveTokens 设为 16384、keepRecentTokens 设为 20000；shouldCompact 在 contextTokens > contextWindow - reserveTokens 时触发。",
+      "plainLanguage": "它不会等到 provider 报 context overflow 才处理，而是提前留出一块回答空间，再保留最近工作集。",
+      "implication": "自研应把 reserve/keep 做成可见配置并在模型切换时重新计算，不要硬编码单一窗口。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 122, "endLine": 132, "role": "config", "excerpt": "压缩默认值。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 226, "endLine": 233, "role": "implementation", "excerpt": "enabled 和 contextWindow-reserve 触发条件。" }
+      ]
+    },
+    {
+      "id": "prime-context-002", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "Token 估算融合 provider usage 与 trailing message 估算",
+      "fact": "estimateContextTokens 使用最后一个有效 assistant usage 作为锚点，对其后的消息用 estimateTokens 累加；没有 usage 时按角色估算，文本采用 chars/4，图片按约 4800 字符计。",
+      "plainLanguage": "刚从模型拿到真实 token 账单就用真实数，刚塞进来的工具结果还没账单就先用保守估算，不会因为只看旧 usage 而漏算最新输入。",
+      "implication": "上下文预算应允许“真实 usage + 未结算尾巴”混合，且图片/工具输出需要有明确估算策略。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 138, "endLine": 147, "role": "implementation", "excerpt": "usage totalTokens 或分项求和。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 192, "endLine": 224, "role": "implementation", "excerpt": "last usage + trailing estimate。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 243, "endLine": 297, "role": "implementation", "excerpt": "各角色 chars/4 和图片估算。" }
+      ]
+    },
+    {
+      "id": "prime-context-003", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "Cut point 避开孤立 tool result，保留完整 tool turn",
+      "fact": "findValidCutPoints 允许在 user/assistant/custom/bashExecution 等消息切分，明确跳过 toolResult；findCutPoint 还能检测切在 turn 中间的情况并保留 turn prefix。",
+      "plainLanguage": "压缩不会只删掉工具调用上半段或回执下半段，避免下一轮看到一张没有出处的工具结果。",
+      "implication": "对话裁剪需要 message role invariant；“按 N 条消息截断”对 coding agent 不够安全。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 303, "endLine": 339, "role": "implementation", "excerpt": "合法 cut point 与 toolResult 排除。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 434, "endLine": 458, "role": "implementation", "excerpt": "split turn 与 turnStartIndex。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 618, "endLine": 634, "role": "contract", "excerpt": "messagesToSummarize、turnPrefix、fileOps 结构。" }
+      ]
+    },
+    {
+      "id": "prime-context-004", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "摘要提示词固定为可恢复的结构化 checkpoint",
+      "fact": "SUMMARIZATION_PROMPT 强制 Goal、Constraints & Preferences、Progress/Done/In Progress/Blocked、Key Decisions、Next Steps、Critical Context 七个区块，并要求保留精确路径、函数名和错误信息；更新摘要会合并 previous-summary。",
+      "plainLanguage": "摘要不是一句“我们做了很多事”，而是下一任模型可以按清单接手的交接卡。",
+      "implication": "长任务的摘要模板应和恢复协议一起版本化，并对路径、错误和下一步做保真约束。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 465, "endLine": 496, "role": "prompt", "excerpt": "固定摘要格式和精确上下文要求。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 501, "endLine": 538, "role": "prompt", "excerpt": "previous-summary 更新规则。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 552, "endLine": 611, "role": "implementation", "excerpt": "0.8 reserve maxTokens 与 LLM summary。" }
+      ]
+    },
+    {
+      "id": "prime-persistence-001", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "SessionManager 用带 parentId 的 JSONL 树表达分支、压缩和扩展状态",
+      "fact": "SessionEntry 包含 message、compaction、branch_summary、custom、session_state、agent_status 等类型；SessionHeader 保存 version、cwd、parentSession、rlmDepth 和 git context。",
+      "plainLanguage": "会话文件不是一条只能向后追加的聊天记录，而是一棵可导航的树；扩展可以持久化自己的 entry，又不会把内部状态强塞给模型。",
+      "implication": "要支持 fork、resume、compaction 和子 Agent，持久化格式需要 parent link、版本号和“不进入 LLM context”的 entry 类型。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 33, "endLine": 54, "role": "config", "excerpt": "当前 session version 和 content entry 类型。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 75, "endLine": 85, "role": "contract", "excerpt": "SessionHeader 字段。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 126, "endLine": 163, "role": "contract", "excerpt": "compaction/branch/custom entry 契约。" }
+      ]
+    },
+    {
+      "id": "prime-persistence-002", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "Context 重建沿 parent tree，并把 compaction summary 放在 retained messages 前",
+      "fact": "buildSessionContext 从 leaf 沿 parentId 回溯再 reverse，找到 compaction 后把 summary message 与 retainedMessages 放在前面，再追加 compaction 之后的消息；同时恢复 model、thinking level 和 service tier。",
+      "plainLanguage": "从任意分支恢复时，模型看到的是“摘要→保留的旧消息→新分支”，UI 还可以知道真实的树边界。",
+      "implication": "恢复逻辑应是持久化格式的一部分，而不是 UI 临时拼接；压缩和分支要共享同一 ancestry traversal。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 472, "endLine": 535, "role": "implementation", "excerpt": "leaf 到 root 的 tree traversal 与 setting 恢复。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 537, "endLine": 596, "role": "implementation", "excerpt": "summary-first context 与 retained messages。" }
+      ]
+    },
+    {
+      "id": "prime-persistence-003", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "写盘采用临时文件 rename，普通 entry 采用 append-only",
+      "fact": "_rewriteFile 将完整 JSONL 写入带随机名的临时文件后 rename；_persist 在已有 assistant 后追加一行，尚未有 assistant 时暂缓非状态 entry，避免半成品会话。",
+      "plainLanguage": "完整重写时不会留下半个 JSONL；常规消息又不必每次重写整个文件，兼顾可靠性与成本。",
+      "implication": "会话持久化要显式处理“第一条 assistant 尚未出现”的预模型状态，并用原子替换防崩溃损坏。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 1345, "endLine": 1364, "role": "implementation", "excerpt": "临时文件、metadata 和原子 rename。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 1442, "endLine": 1475, "role": "implementation", "excerpt": "flushNow 与 append persistence guard。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 1477, "endLine": 1499, "role": "implementation", "excerpt": "append entry 更新内存 index 和 leaf。" }
+      ]
+    },
+    {
+      "id": "prime-exec-001", "dimension": "execution-sandbox", "evidenceLevel": "L1", "claimType": "limitation", "title": "默认 bash 是宿主 shell，不等于 OS 沙箱",
+      "fact": "createLocalBashOperations 使用 getShellConfig 得到的 shell，spawn 时传入当前 cwd 与 shell env，detached 子进程由 killProcessTree 管理；BashOperations 只是可插拔执行接口。",
+      "plainLanguage": "它能可靠地超时和杀掉进程树，但默认命令就是在当前机器的 shell 里跑；源码没有在这里自动启动容器、Seatbelt 或 bubblewrap。",
+      "implication": "如果产品面向不可信仓库，必须显式注入远端/容器 BashOperations 或在更上层做 sandbox policy，不能把 timeout 当隔离。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 36, "endLine": 58, "role": "contract", "excerpt": "BashOperations 可换远端执行器。" },
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 60, "endLine": 117, "role": "implementation", "excerpt": "spawn host shell、env、timeout、abort 和 process tree kill。" },
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 276, "endLine": 298, "role": "implementation", "excerpt": "默认 ops 与 bash schema/command。" }
+      ],
+      "caveats": ["上层配置或 extension 可以替换 operations；本结论只针对这个默认实现。"]
+    },
+    {
+      "id": "prime-exec-002", "dimension": "execution-sandbox", "evidenceLevel": "L1", "claimType": "fact", "title": "Bash 输出有行/字节上限并把完整内容留在临时文件",
+      "fact": "Bash tool description 宣布输出按 DEFAULT_MAX_LINES 或 DEFAULT_MAX_BYTES 截断；OutputAccumulator 在流式 update 和结束时生成 truncation/fullOutputPath details。",
+      "plainLanguage": "大日志不会把上下文撑爆，模型还能拿到一个完整输出文件路径继续查。",
+      "implication": "执行工具应把展示输出和可恢复 artifact 分离，并在 tool result 中明确截断范围。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 250, "endLine": 266, "role": "implementation", "excerpt": "truncation/fullOutputPath 警告。" },
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 276, "endLine": 287, "role": "contract", "excerpt": "bash 工具 schema 和截断承诺。" },
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 303, "endLine": 314, "role": "implementation", "excerpt": "流式 snapshot 与 full output details。" }
+      ]
+    },
+    {
+      "id": "prime-resources-001", "dimension": "instructions-skills-plugins", "evidenceLevel": "L1", "claimType": "fact", "title": "ResourceLoader 统一管理 skills、prompts、themes、extensions 和 AGENTS 文件",
+      "fact": "ResourceLoader 暴露 getSkills/getPrompts/getThemes/getAgentsFiles/getSystemPrompt、extendResources 和 reload；reload 解析启用路径、加载 extensions、skills、prompts、themes，再按 cwd/agentDir 加载项目上下文文件。",
+      "plainLanguage": "指令、技能、主题和扩展不是四套互不相干的扫描器，而是在 reload 时形成一份带诊断的资源快照。",
+      "implication": "插件/技能热更新要有单一 loader 和明确的 reload boundary，才能通知 session 资源变了。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 23, "endLine": 39, "role": "contract", "excerpt": "ResourceLoader 公共资源接口。" },
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 336, "endLine": 365, "role": "implementation", "excerpt": "settings/package resolution 和 enabled resource paths。" },
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 409, "endLine": 479, "role": "implementation", "excerpt": "extension/skill/prompt/theme/context file reload。" }
+      ]
+    },
+    {
+      "id": "prime-resources-002", "dimension": "instructions-skills-plugins", "evidenceLevel": "L1", "claimType": "fact", "title": "资源来源带 user/project/temporary metadata 并去重冲突",
+      "fact": "resource-loader 根据 agentDir 和 cwd 下的 skills/prompts/themes/extensions 根目录给资源标注 scope；mergePaths 用 canonical path 去重，dedupePrompts 对同名 prompt 生成 collision diagnostics。",
+      "plainLanguage": "系统知道一个 skill 是用户级、项目级还是临时 CLI 注入的；同名 prompt 不会静默覆盖，而是留下谁赢、谁输的诊断。",
+      "implication": "自研扩展系统需保留来源元数据和碰撞报告，否则排查“为什么这条指令生效”会非常困难。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 646, "endLine": 678, "role": "implementation", "excerpt": "agent/project/temporary source metadata。" },
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 681, "endLine": 690, "role": "implementation", "excerpt": "canonical path 去重。" },
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 811, "endLine": 830, "role": "implementation", "excerpt": "prompt name collision diagnostics。" }
+      ]
+    },
+    {
+      "id": "prime-ext-001", "dimension": "instructions-skills-plugins", "evidenceLevel": "L1", "claimType": "fact", "title": "Extension API 覆盖生命周期、工具、命令、provider 和持久化",
+      "fact": "ExtensionAPI 支持 session/context/provider/agent/turn/message/tool/input 等事件，registerTool、registerCommand、registerShortcut、registerFlag、appendEntry、exec、setActiveTools 和 provider registration。",
+      "plainLanguage": "扩展不是只能加一个 prompt；它可以加入工具、CLI 命令、模型 provider、上下文变换和 session state。",
+      "implication": "这种能力适合构建插件生态，但必须把 extension 来源、冲突和权限当作一等公民。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1024, "endLine": 1074, "role": "contract", "excerpt": "事件订阅面。" },
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1080, "endLine": 1110, "role": "contract", "excerpt": "tool/command/shortcut/flag registration。" },
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1140, "endLine": 1163, "role": "contract", "excerpt": "appendEntry、exec、active tool actions。" },
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1188, "endLine": 1199, "role": "contract", "excerpt": "provider registration runtime timing。" }
+      ]
+    },
+    {
+      "id": "prime-ext-002", "dimension": "permissions-security", "evidenceLevel": "L1", "claimType": "fact", "title": "Extension runner 按注册顺序串行执行，session-before 可以取消",
+      "fact": "runner.emit 遍历 extension 和 handler，捕获异常写入 ExtensionError；session_before_* 事件收到 cancel 会立即返回。emitToolCall 也按顺序处理 block，emitContext 与 before_provider_request 允许前一个结果成为下一个输入。",
+      "plainLanguage": "扩展链像一条可观察的中间件管线：早期扩展能阻止 session switch 或 tool call，后面的扩展看到前面已经变换过的 context。",
+      "implication": "要把 extension handler 的顺序、异常隔离、阻断和结果变换写进契约测试，避免插件之间互相覆盖。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/extensions/runner.ts", "startLine": 670, "endLine": 711, "role": "implementation", "excerpt": "顺序 dispatch、session cancel、error capture。" },
+        { "path": "packages/coding-agent/src/core/extensions/runner.ts", "startLine": 805, "endLine": 826, "role": "implementation", "excerpt": "tool_call block chain。" },
+        { "path": "packages/coding-agent/src/core/extensions/runner.ts", "startLine": 857, "endLine": 887, "role": "implementation", "excerpt": "context handler 变换链。" },
+        { "path": "packages/coding-agent/src/core/extensions/runner.ts", "startLine": 889, "endLine": 920, "role": "implementation", "excerpt": "provider request payload 变换链。" }
+      ]
+    },
+    {
+      "id": "prime-mcp-001", "dimension": "mcp-connectors", "evidenceLevel": "L1", "claimType": "fact", "title": "MCP host 侧把 OAuth provider 与 kernel 请求分开",
+      "fact": "McpManager refresh/config/begin_login host request 会读取 auth storage、重新获取 API key，并把解析后的 server URL/config 交给 kernel；stdio server 由 Python 自己管理，HTTP 用户 server 才在 host 侧注册 OAuth provider。",
+      "plainLanguage": "登录凭据、UI 交互和真正的 MCP kernel 连接没有混成一条黑盒；host 只做身份和配置桥接。",
+      "implication": "连接器设计应区分 credential plane、control plane 和 tool execution plane，避免把 token 直接塞进模型上下文。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/mcp/mcp-manager.ts", "startLine": 36, "endLine": 78, "role": "implementation", "excerpt": "McpManager 与 catalog/user server integration。" },
+        { "path": "packages/coding-agent/src/core/mcp/mcp-manager.ts", "startLine": 147, "endLine": 198, "role": "implementation", "excerpt": "mcp.refresh/config/begin_login host requests。" }
+      ]
+    },
+    {
+      "id": "prime-collab-001", "dimension": "subagents-collaboration", "evidenceLevel": "L1", "claimType": "fact", "title": "RLM child runtime 有显式 registry、深度和完成释放协议",
+      "fact": "RlmSubagentRegistryEntry 记录 child id、active/session id、name、dir、status；CreateRlmSubagentRuntimeOptions 携带 parent、model、tools、rlmDepth、rlmMaxDepth 和 parent node；SubagentRuntimeHost 要求 create、complete、release、delete 等生命周期动作。",
+      "plainLanguage": "子 Agent 不是简单 `Promise.all`：父子关系、状态、目录、模型、深度和完成后回收都有可查询的对象。",
+      "implication": "多 Agent 系统要把 child 生命周期持久化，才能支持观察、取消、恢复和成本归因。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/rlm-runtime.ts", "startLine": 14, "endLine": 39, "role": "contract", "excerpt": "RLM handle 和 registry 状态。" },
+        { "path": "packages/coding-agent/src/core/rlm-runtime.ts", "startLine": 201, "endLine": 241, "role": "contract", "excerpt": "child runtime 参数和 host 生命周期。" }
+      ]
+    },
+    {
+      "id": "prime-collab-002", "dimension": "subagents-collaboration", "evidenceLevel": "L1", "claimType": "fact", "title": "Daemon supervisor 是 resident worker 控制面而不是一次性 subprocess",
+      "fact": "DaemonSupervisor 启动时取得 socket lease、创建 0700 descriptor dir、写 supervisor config/journal，加载 worker descriptors 并 adoptOrRecoverWorker；协议包含 prompt/prompt_and_wait、cancel、heartbeats、retry_worker、session tree/stats 等命令。",
+      "plainLanguage": "后台 Agent 可以脱离前台 UI 常驻，客户端断线后仍能通过 socket 找回 worker，恢复 journal 和 heartbeat。",
+      "implication": "需要远程继续、移动端查看或长时间任务时，resident supervisor 比每次 CLI 启新进程更合适，但运维复杂度也会显著上升。",
+      "citations": [
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 158, "endLine": 212, "role": "contract", "excerpt": "daemon command surface。" },
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 641, "endLine": 705, "role": "implementation", "excerpt": "socket lease、descriptor 权限、journals、adopt/recover。" },
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 920, "endLine": 944, "role": "implementation", "excerpt": "扫描和标记 worker descriptor 为 recovering。" }
+      ]
+    },
+    {
+      "id": "prime-collab-003", "dimension": "subagents-collaboration", "evidenceLevel": "L1", "claimType": "fact", "title": "Prompt admission 与 heartbeat 让 daemon 交互可取消且可观测",
+      "fact": "daemon supervisor 为每个 client/activeSession/admissionId 维护 waiting/owned/cancelled 状态，断开时转发 cancel_prompt_admission；heartbeats_list 会汇总 ready workers 的 heartbeat snapshot。",
+      "plainLanguage": "用户点了等待式 prompt 后断网，不会留下一个永远占着队列的请求；心跳也能告诉控制面任务还活着还是已断开。",
+      "implication": "异步控制面需要 admission id、幂等 key 和 client disconnect cleanup，不应只靠 websocket 生命周期。",
+      "citations": [
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 1125, "endLine": 1184, "role": "implementation", "excerpt": "prompt admission map 与断线取消。" },
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 1186, "endLine": 1210, "role": "implementation", "excerpt": "prompt admission 输入校验。" },
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 1635, "endLine": 1678, "role": "implementation", "excerpt": "heartbeat snapshot 合并。" }
+      ]
+    },
+    {
+      "id": "prime-observe-001", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "Agent events 覆盖 agent、turn、message 和 tool execution 四层",
+      "fact": "AgentEvent 类型至少包括 agent_start/end、turn_start/end、message_start/update/end、tool_execution_start/update/end；AgentSession 还扩展 compaction、RLM child update 等宿主事件。",
+      "plainLanguage": "UI 可以画出模型流式文本、工具进度和每个 turn 的边界，而不是只能等最终字符串。",
+      "implication": "观测模型应把 lifecycle、partial output、tool artifact 和终态分层，便于 replay 与故障定位。",
+      "citations": [
+        { "path": "packages/agent/src/types.ts", "startLine": 399, "endLine": 421, "role": "contract", "excerpt": "agent/turn/message/tool event union。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 318, "endLine": 390, "role": "contract", "excerpt": "session compaction、RLM 与 host event 类型。" }
+      ]
+    },
+    {
+      "id": "prime-provider-001", "dimension": "provider-streaming", "evidenceLevel": "L1", "claimType": "fact", "title": "运行时支持 provider 动态系统提示和过期 token 刷新",
+      "fact": "AgentLoopConfig 文档明确 getSystemPrompt 每次 LLM call 解析，getApiKey 可为每次调用获取短期 OAuth token；streamAssistantResponse 在请求前执行两者。",
+      "plainLanguage": "长时间工具执行后，下一次模型调用仍能拿到最新授权和最新资源说明。",
+      "implication": "多 provider harness 应把 credential refresh 和 system prompt resolution 做成 request-time hook，而不是启动时静态读取。",
+      "citations": [
+        { "path": "packages/agent/src/types.ts", "startLine": 170, "endLine": 183, "role": "contract", "excerpt": "动态 system prompt/API key 设计目的。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 501, "endLine": 519, "role": "implementation", "excerpt": "请求前 key 和 system prompt resolve。" }
+      ]
+    },
+    {
+      "id": "prime-risk-001", "dimension": "execution-sandbox", "evidenceLevel": "L2", "claimType": "risk", "title": "扩展可以获得 shell/exec 和 active tool 控制权，权限面很宽",
+      "fact": "ExtensionAPI 同时暴露 exec、registerTool、setActiveTools、provider registration、appendEntry 和 session actions；资源 loader 还会加载用户/项目/CLI extension。",
+      "plainLanguage": "插件一旦被加载，不只是加一段说明，它可以执行命令、改工具面、持久化状态和注册模型。",
+      "implication": "生产部署应对 extension 来源做 allowlist/签名/隔离，至少在报告和审批面把 extension 能力显式列出来。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1080, "endLine": 1163, "role": "contract", "excerpt": "插件工具、命令、exec、active tools 能力。" },
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 413, "endLine": 435, "role": "implementation", "excerpt": "启用路径加载并保留冲突诊断。" }
+      ],
+      "caveats": ["本风险是插件权限面的架构推断，不等于每个 extension 都恶意。"]
+    },
+    {
+      "id": "prime-risk-002", "dimension": "subagents-collaboration", "evidenceLevel": "L2", "claimType": "risk", "title": "Daemon/RLM 的恢复正确性依赖多个 journal、lease 和 session 入口协同",
+      "fact": "daemon supervisor 同时维护 supervisor config、worker descriptor、command journal、recovery journal、orphan journal、socket identity 与 session file；RLM 还把 child depth、parent node 和完成释放交给 host。",
+      "plainLanguage": "它很强，但出错时要同时判断进程身份、socket、worker 状态、session 文件和 child registry，排障门槛高。",
+      "implication": "自研要先定义故障状态机和可重放事件，再扩展常驻 worker；否则“恢复”可能变成重复执行或孤儿进程。",
+      "citations": [
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 49, "endLine": 53, "role": "implementation", "excerpt": "command/worker recovery journals。" },
+        { "path": "packages/coding-agent/src/modes/daemon/daemon-supervisor.ts", "startLine": 633, "endLine": 660, "role": "implementation", "excerpt": "descriptor/config/snapshot roots 与 startup fencing。" },
+        { "path": "packages/coding-agent/src/core/rlm-runtime.ts", "startLine": 205, "endLine": 241, "role": "contract", "excerpt": "parent/child depth、publish/complete/release/delete。" }
+      ],
+      "caveats": ["这是基于多个实现模块的维护复杂度推断；并非源码声称的 bug。"]
+    },
+    {
+      "id": "prime-maturity-001", "dimension": "tests-benchmarks-maturity", "evidenceLevel": "L3", "claimType": "fact", "title": "测试布局覆盖 agent、session、daemon、RLM、MCP 与 telemetry",
+      "fact": "coding-agent test 目录包含 acp-rlm-subagents、daemon runtime lease、daemon supervisor eviction/side-question、agent-session tree/concurrent、MCP/auth、telemetry、exec、kernel startup 等契约测试。",
+      "plainLanguage": "项目没有只测“模型能回答一句话”，而是把长会话、后台 worker、子 Agent 和工具执行拆成可回归的测试文件。",
+      "implication": "建设自研 harness 时应把恢复、并发、权限和观测作为一等测试维度，而不是上线后再补。",
+      "citations": [
+        { "path": "packages/coding-agent/test/acp-rlm-subagents.test.ts", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "ACP/RLM 子 Agent 测试入口。" },
+        { "path": "packages/coding-agent/test/daemon-runtime-lease.test.ts", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "daemon runtime lease 测试入口。" },
+        { "path": "packages/coding-agent/test/agent-session-tree-navigation.test.ts", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "session tree navigation 测试入口。" },
+        { "path": "packages/coding-agent/test/telemetry.test.ts", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "telemetry 测试入口。" }
+      ]
+    },
+    {
+      "id": "prime-recommend-001", "dimension": "architecture-loop", "evidenceLevel": "L2", "claimType": "inference", "title": "最值得借鉴的是“纯 loop + coding host + extension bus”三层分离",
+      "fact": "低层 agent-loop 只处理消息/工具/流；AgentSession 组合 compaction、resource loader、MCP、RLM、session manager；ExtensionRunner 再把 context/provider/tool/session 变换做成可插拔 bus。",
+      "plainLanguage": "这套分层让我们既能复用基础 loop，又能按产品需要装配 TUI、RPC、daemon 或插件，而不是把所有能力塞进一个巨型 Agent 类。",
+      "implication": "自研架构建议沿此边界拆包：Core Loop、Harness Session、Policy/Extension Bus、Execution Adapters、Persistence/Control Plane。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 1, "endLine": 13, "role": "contract", "excerpt": "AgentSession 作为 interactive/print/rpc 共用 host。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 412, "endLine": 500, "role": "contract", "excerpt": "session host 的 manager/resource/MCP/RLM 配置。" },
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1028, "endLine": 1058, "role": "contract", "excerpt": "ExtensionAPI 覆盖 session/context/provider。" }
+      ],
+      "caveats": ["这是跨模块架构归纳，不是仓库作者的单一官方标签。"]
+    },
+    {
+      "id": "prime-recommend-002", "dimension": "context-compaction", "evidenceLevel": "L2", "claimType": "inference", "title": "适合长程 coding，但要为宿主 shell 补强 sandbox policy",
+      "fact": "项目同时提供 request-time context transform、结构化 compaction、branch-aware JSONL、RLM/daemon continuation 和截断 artifact；但默认 bash 是 host spawn，隔离依赖 BashOperations 或更高层。",
+      "plainLanguage": "它很适合做“能停下来、能恢复、能继续”的工程 Agent；真正接入不可信代码库时，安全边界要由部署方补齐。",
+      "implication": "自研落地可以直接借鉴它的 loop/session/compaction 机制，同时把执行适配器设计成强制 sandbox backend，而不是默认本机 shell。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 636, "endLine": 712, "role": "implementation", "excerpt": "跨 compaction boundary 的 preparation 与 fileOps。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 1345, "endLine": 1475, "role": "implementation", "excerpt": "原子 session persistence。" },
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 66, "endLine": 117, "role": "implementation", "excerpt": "host shell spawn。" }
+      ],
+      "caveats": ["“适合长程”是基于实现组合的工程判断；不能替代对具体部署的安全评审。"]
+    }
+  ]
+}

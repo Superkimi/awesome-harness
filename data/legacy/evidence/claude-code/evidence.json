@@ -1,0 +1,407 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "claude-code",
+  "snapshot": {
+    "repository": "claude-code-best/claude-code",
+    "commit": "53f347d34666e847405714095020afdfadb95503",
+    "commitDate": "2026-07-27T00:20:42Z"
+  },
+  "method": {
+    "readmePolicy": "README/AGENTS 只用于确认仓库自述与入口；实现结论来自 query loop、API adapter、compact、permission、sandbox、MCP、AgentTool、plugin、session 和测试源码。",
+    "factPolicy": "该仓库明确自述为反编译/复原版本；所有事实仅适用于本固定提交，绝不把它当成 Anthropic 官方 Claude Code 源码。",
+    "inferencePolicy": "严格区分实现存在、feature gate 可达、默认启用和外部依赖内部行为；空实现、空 beta header 与 ant-only 分支都按限制项处理。"
+  },
+  "coverage": [
+    { "dimension": "provenance-maturity", "status": "verified", "evidenceLevels": ["L2", "L3"], "notes": "确认反编译/复原属性、stub 密度、测试规模和根许可证缺失。" },
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 query 主循环、streaming tool execution、重试、缺失 tool result 修复与 stop hook。" },
+    { "dimension": "provider-streaming-retry", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "审计 Anthropic 主路径、Bedrock/Vertex 相关参数和本 fork 增加的 OpenAI/Gemini/Grok adapter。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 snip、microcompact、autocompact、session memory、reactive compact 与阈值/熔断。" },
+    { "dimension": "tools-editing", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "审计内建与 MCP 工具池、稳定排序、动态工具发现和运行中执行。" },
+    { "dimension": "permissions-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计规则优先级、模式、hook/classifier、无头行为与可选 OS sandbox。" },
+    { "dimension": "mcp-connectors", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "审计 stdio/SSE/HTTP/WebSocket/proxy、OAuth、超时、重连、工具/资源与企业策略。" },
+    { "dimension": "instructions-skills-plugins", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "审计 CLAUDE.md、skill 延迟发现、plugin manifest、commands/agents/skills/hooks 与信任来源。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 sync/async、fork、worktree、agent memory/MCP/hooks、resume、coordinator/swarm 分支。" },
+    { "dimension": "session-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 JSONL parentUuid 链、sidechain、file snapshots、OTEL、Perfetto、Langfuse 与 stub analytics 边界。" }
+  ],
+  "findings": [
+    {
+      "id": "claude-code-provenance-001",
+      "dimension": "provenance-maturity",
+      "evidenceLevel": "L2",
+      "claimType": "limitation",
+      "title": "这是反编译/复原仓库，不是 Anthropic 官方 Claude Code 源码",
+      "fact": "仓库自己的 AGENTS.md 明确称其为 reverse-engineered/decompiled 版本，目标是恢复核心功能并裁剪次要能力，同时承认很多模块是 stub 或由 feature flag 关闭。",
+      "plainLanguage": "它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。",
+      "implication": "报告可评价这个固定提交的实现，但任何对官方产品内部机制的映射都必须标注为推断。",
+      "citations": [
+        { "path": "AGENTS.md", "startLine": 1, "endLine": 8, "role": "provenance", "excerpt": "仓库自述为 reverse-engineered/decompiled，并承认 stub/feature-off。" },
+        { "path": "AGENTS.md", "startLine": 252, "endLine": 264, "role": "provenance", "excerpt": "列出恢复、空实现与简化模块。" }
+      ]
+    },
+    {
+      "id": "claude-code-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "主 Harness 是一个持续循环的消息变换与工具执行流水线",
+      "fact": "query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。",
+      "plainLanguage": "每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。",
+      "implication": "上下文、工具、权限和恢复都在同一编排循环交汇，修改其中任何一步都可能影响缓存与 transcript 一致性。",
+      "citations": [
+        { "path": "src/query.ts", "startLine": 460, "endLine": 666, "role": "implementation", "excerpt": "主循环和压缩前置流水线。" },
+        { "path": "src/query.ts", "startLine": 668, "endLine": 882, "role": "implementation", "excerpt": "响应状态、硬上限和预测压缩。" },
+        { "path": "src/query.ts", "startLine": 1557, "endLine": 1803, "role": "implementation", "excerpt": "stop hooks、工具结果和续跑控制。" }
+      ]
+    },
+    {
+      "id": "claude-code-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具可以随流式响应提前启动，并补齐协议不完整的 tool result",
+      "fact": "query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。",
+      "plainLanguage": "模型还在吐后续内容时，已经完整的工具参数可以先开工；账本缺一张回执时，系统会补一张失败回执，避免下一轮 API 拒绝整段对话。",
+      "implication": "降低工具启动延迟并提高恢复性，但要求工具调用去重、取消和消息顺序非常严谨。",
+      "citations": [
+        { "path": "src/query.ts", "startLine": 971, "endLine": 1124, "role": "implementation", "excerpt": "streaming tool executor 与 tool_use backfill。" },
+        { "path": "src/query.ts", "startLine": 1158, "endLine": 1245, "role": "implementation", "excerpt": "缺失 tool_result 合成与结果归并。" },
+        { "path": "src/services/api/claude.ts", "startLine": 1321, "endLine": 1325, "role": "implementation", "excerpt": "发请求前再次修复 tool_use/tool_result 配对。" }
+      ]
+    },
+    {
+      "id": "claude-code-provider-001",
+      "dimension": "provider-streaming-retry",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "共享预处理之后按 Provider 分流，Anthropic 仍是最深的主路径",
+      "fact": "消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。",
+      "plainLanguage": "先把所有方言共有的消息账本整理好，再交给各家的翻译器；Anthropic 方言拥有最完整的缓存、thinking 和 beta 功能。",
+      "implication": "多模型可用性强，但新增兼容层不自动获得 Anthropic 路径全部语义，必须独立做工具与 usage 回归。",
+      "citations": [
+        { "path": "src/services/api/claude.ts", "startLine": 1282, "endLine": 1338, "role": "implementation", "excerpt": "共享消息预处理。" },
+        { "path": "src/services/api/claude.ts", "startLine": 1340, "endLine": 1381, "role": "implementation", "excerpt": "OpenAI/Gemini/Grok adapter 分流。" },
+        { "path": "src/services/api/claude.ts", "startLine": 1635, "endLine": 1640, "role": "implementation", "excerpt": "Bedrock 特有参数。" }
+      ]
+    },
+    {
+      "id": "claude-code-provider-002",
+      "dimension": "provider-streaming-retry",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "流式异常可退回非流式请求，且为 fallback 设置独立超时",
+      "fact": "API 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。",
+      "plainLanguage": "流式通道卡住时会换普通请求再试，不让“无限等待”成为默认恢复策略。",
+      "implication": "交互韧性较高；但若工具已经由流式路径提前启动，重复请求可能产生双执行风险，所以代码也提供禁用该 fallback 的门。",
+      "citations": [
+        { "path": "src/services/api/claude.ts", "startLine": 818, "endLine": 925, "role": "implementation", "excerpt": "非流式 fallback 超时与请求。" },
+        { "path": "src/services/api/claude.ts", "startLine": 2418, "endLine": 2465, "role": "implementation", "excerpt": "不完整流检测。" },
+        { "path": "src/services/api/claude.ts", "startLine": 2583, "endLine": 2667, "role": "implementation", "excerpt": "双工具风险、禁用门与 fallback 启动。" }
+      ]
+    },
+    {
+      "id": "claude-code-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文不是单层摘要，而是 snip、工具结果瘦身、session memory 与 autocompact 的阶梯",
+      "fact": "snip 根据边界和 UUID 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。",
+      "plainLanguage": "先精准剪掉明确不要的旧段，再清空大块工具输出，最后才用模型写摘要；不同手术刀处理不同类型的肥胖。",
+      "implication": "比单一“全历史总结”更保真，但分层状态、缓存标记和 resume 重建复杂。",
+      "citations": [
+        { "path": "src/services/compact/snipCompact.ts", "startLine": 60, "endLine": 147, "role": "implementation", "excerpt": "snip boundary、UUID 过滤和 tokensFreed。" },
+        { "path": "src/services/compact/microCompact.ts", "startLine": 38, "endLine": 50, "role": "config", "excerpt": "可微压缩工具集合。" },
+        { "path": "src/services/compact/autoCompact.ts", "startLine": 270, "endLine": 363, "role": "implementation", "excerpt": "session memory 优先与 legacy compact 回退。" }
+      ]
+    },
+    {
+      "id": "claude-code-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩为输出预留预算，并有连续失败熔断",
+      "fact": "有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。",
+      "plainLanguage": "不会把车厢塞满到回答没座位；整理行李连续失败三次后先停手，不再每回合烧一次模型调用。",
+      "implication": "阈值与错误治理成熟，但部分阈值注释来自不可核验的内部指标，报告只采纳代码常量和行为。",
+      "citations": [
+        { "path": "src/services/compact/autoCompact.ts", "startLine": 28, "endLine": 93, "role": "config", "excerpt": "输出预留和多窗口 buffer。" },
+        { "path": "src/services/compact/autoCompact.ts", "startLine": 96, "endLine": 174, "role": "implementation", "excerpt": "失败计数和触发阈值。" },
+        { "path": "src/services/compact/autoCompact.ts", "startLine": 286, "endLine": 293, "role": "implementation", "excerpt": "连续三次失败熔断。" }
+      ]
+    },
+    {
+      "id": "claude-code-context-003",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "cache-editing 微压缩代码存在，但该固定提交的关键 beta header 为空",
+      "fact": "microcompact 的 cached path 能登记 tool result、生成 cache_edits 并维持 pinned edits；然而 API 层明确检查到本 fork 的 CACHE_EDITING_BETA_HEADER 为空，headerAvailable=false 时关闭该路径。",
+      "plainLanguage": "发动机舱里有这套零件，但点火钥匙没公开，当前版本不会真正挂入生产链路。",
+      "implication": "不能把 cached microcompact 计为该固定提交默认可用能力；真正可达的是 time-based 清空和 autocompact 等路径。",
+      "citations": [
+        { "path": "src/services/compact/microCompact.ts", "startLine": 257, "endLine": 307, "role": "implementation", "excerpt": "feature/model/source gate 与 cached path。" },
+        { "path": "src/services/compact/microCompact.ts", "startLine": 309, "endLine": 402, "role": "implementation", "excerpt": "cache_edits 状态和消息不改写语义。" },
+        { "path": "src/services/api/claude.ts", "startLine": 1210, "endLine": 1235, "role": "limitation", "excerpt": "空 beta header 导致 cachedMCEnabled=false。" }
+      ]
+    },
+    {
+      "id": "claude-code-context-004",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "超长请求有 reactive compact 与循环保护",
+      "fact": "query 捕获 prompt-too-long 和媒体相关错误后可移除失败消息、触发压缩并重试；同时记录已尝试状态，防止恢复逻辑无限循环。",
+      "plainLanguage": "真的撞到窗口上限时，会倒车、重新打包再试；同一次事故不会无限重复。",
+      "implication": "预测阈值漏判时仍有救生路径，适合长会话，但压缩前后的 tool pairing 与 transcript 必须同步修复。",
+      "citations": [
+        { "path": "src/query.ts", "startLine": 1352, "endLine": 1450, "role": "implementation", "excerpt": "reactive compact、媒体恢复和 loop guard。" },
+        { "path": "src/services/compact/autoCompact.ts", "startLine": 189, "endLine": 268, "role": "implementation", "excerpt": "reactive/context collapse gate 与递归防护。" }
+      ]
+    },
+    {
+      "id": "claude-code-tools-001",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具池合并内建与 MCP，并为 prompt cache 做确定性排序",
+      "fact": "assembleToolPool 先装配内建工具，再接 MCP 工具，应用 deny 过滤，并按稳定分区排序；工具重名时内建工具优先。",
+      "plainLanguage": "工具箱每轮不能乱序，否则模型缓存会失效；外接工具也不能偷偷覆盖同名的原厂扳手。",
+      "implication": "工具发现和缓存稳定性被当作 Harness 核心问题，而不只是 UI 列表。",
+      "citations": [
+        { "path": "src/tools.ts", "startLine": 378, "endLine": 420, "role": "implementation", "excerpt": "工具合并、去重、过滤和排序。" },
+        { "path": "src/services/api/claude.ts", "startLine": 1258, "endLine": 1277, "role": "implementation", "excerpt": "工具 schema 构建和 deferred tools。" },
+        { "path": "src/services/api/claude.ts", "startLine": 1388, "endLine": 1415, "role": "prompt", "excerpt": "动态工具发现/执行协议。" }
+      ]
+    },
+    {
+      "id": "claude-code-permission-001",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "权限是“规则 → 工具自检 → 安全检查 → 模式 → 用户/自动判定”的有序流水线",
+      "fact": "显式 deny、ask、工具自己的内容级检查和敏感路径 safetyCheck 先执行；之后 bypass/always-allow 才可能放行，passthrough 最终转为 ask。dontAsk 把 ask 变 deny，auto 可进入分类器。",
+      "plainLanguage": "不是一个总开关，而是多道门；即使开了 bypass，显式 ask 和某些安全路径仍能拦住。",
+      "implication": "规则优先级清晰，适合企业策略；复杂度也意味着每种工具必须准确返回 decisionReason。",
+      "citations": [
+        { "path": "src/utils/permissions/permissions.ts", "startLine": 1179, "endLine": 1281, "role": "implementation", "excerpt": "deny/ask/tool check/safetyCheck 顺序。" },
+        { "path": "src/utils/permissions/permissions.ts", "startLine": 1283, "endLine": 1340, "role": "implementation", "excerpt": "bypass、allow rule 和 ask 转换。" },
+        { "path": "src/utils/permissions/permissions.ts", "startLine": 502, "endLine": 540, "role": "implementation", "excerpt": "dontAsk 与 auto classifier 分流。" }
+      ]
+    },
+    {
+      "id": "claude-code-permission-002",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "无头与后台 Agent 默认不能弹窗，先给 hook/分类器机会再 fail closed",
+      "fact": "无头权限请求会执行 PermissionRequest hooks；hook 无决定时回到自动拒绝。后台 bubble/coordinator worker 可先等待自动检查，swarm worker 还能把请求转给 leader，主线程才展示交互对话框。",
+      "plainLanguage": "没人盯屏幕时不会卡在“请点允许”；可以让自动政策先裁决，裁决不了再拒绝或向上冒泡。",
+      "implication": "协作 Agent 的权限不是复制主线程 UI，而是独立的异步授权协议。",
+      "citations": [
+        { "path": "src/utils/permissions/permissions.ts", "startLine": 392, "endLine": 470, "role": "implementation", "excerpt": "无头 PermissionRequest hook 与失败回退。" },
+        { "path": "src/hooks/useCanUseTool.tsx", "startLine": 154, "endLine": 197, "role": "implementation", "excerpt": "coordinator/swarm 自动判定分支。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 421, "endLine": 472, "role": "implementation", "excerpt": "Agent permission mode 和后台提示策略。" }
+      ]
+    },
+    {
+      "id": "claude-code-sandbox-001",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "有真实 OS sandbox 适配，但默认关闭且默认允许退回非沙箱命令",
+      "fact": "适配层调用外部 @anthropic-ai/sandbox-runtime；sandbox.enabled 默认 false，allowUnsandboxedCommands 默认 true，只有 enabled+failIfUnavailable 才要求启动失败即失败。平台/依赖不满足时 isSandboxingEnabled 返回 false。",
+      "plainLanguage": "确实能装防护罩，但开箱时罩子没扣上，而且政策默认允许个别命令绕开它。",
+      "implication": "可评为“具备可选强隔离能力”，不能评为“默认安全沙箱”；底层 seatbelt/bubblewrap 细节还依赖仓库外的包。",
+      "citations": [
+        { "path": "src/utils/sandbox/sandbox-adapter.ts", "startLine": 1, "endLine": 22, "role": "implementation", "excerpt": "外部 sandbox-runtime bridge。" },
+        { "path": "src/utils/sandbox/sandbox-adapter.ts", "startLine": 459, "endLine": 485, "role": "config", "excerpt": "默认关闭、autoAllow 和 unsandboxed fallback。" },
+        { "path": "src/utils/sandbox/sandbox-adapter.ts", "startLine": 528, "endLine": 547, "role": "implementation", "excerpt": "平台、依赖、配置联合 gate。" }
+      ]
+    },
+    {
+      "id": "claude-code-sandbox-002",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "hook 只做网络沙箱，包装失败时会继续无沙箱执行",
+      "fact": "shell hook 在 sandbox 开启时配置 deny-all outbound，但给予全文件系统写权限；wrap 失败会记录 warning 并运行原命令。Bash 的 excludedCommands 也被源码明确标注为便利功能而非安全边界。",
+      "plainLanguage": "hook 能被断网，但仍可改本机文件；连断网罩都戴不上时，为兼容旧行为会直接执行。",
+      "implication": "企业场景应把 hook fail-open 改为策略可控的 fail-closed，并把项目 hook 来源信任与动作权限分开。",
+      "citations": [
+        { "path": "src/utils/hooks.ts", "startLine": 1041, "endLine": 1088, "role": "risk", "excerpt": "hook network-only sandbox 与失败后无沙箱执行。" },
+        { "path": "packages/builtin-tools/src/tools/BashTool/shouldUseSandbox.ts", "startLine": 18, "endLine": 20, "role": "limitation", "excerpt": "excludedCommands 不是安全边界。" },
+        { "path": "packages/builtin-tools/src/tools/BashTool/shouldUseSandbox.ts", "startLine": 130, "endLine": 152, "role": "implementation", "excerpt": "显式 disable/excluded command 绕开 sandbox。" }
+      ]
+    },
+    {
+      "id": "claude-code-mcp-001",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 是完整连接层：stdio、SSE、Streamable HTTP、WebSocket 和 claude.ai proxy",
+      "fact": "client 根据 server type 构造不同 transport，支持 OAuth/static/session ingress header、代理、IDE 通道和进程内 server；连接有超时，断线会清连接及工具/资源缓存以便重连。",
+      "plainLanguage": "它不是只会启动本地 MCP 子进程，也能连长连接、HTTP、WebSocket 和平台代理；线断了会丢掉旧工具清单重新握手。",
+      "implication": "连接器成熟度高，但 transport 分支很多，安全策略和生命周期测试成本显著。",
+      "citations": [
+        { "path": "src/services/mcp/client.ts", "startLine": 596, "endLine": 678, "role": "implementation", "excerpt": "SSE transport 与 OAuth/header。" },
+        { "path": "src/services/mcp/client.ts", "startLine": 709, "endLine": 905, "role": "implementation", "excerpt": "WebSocket、HTTP 和 claude.ai proxy。" },
+        { "path": "src/services/mcp/client.ts", "startLine": 1030, "endLine": 1110, "role": "implementation", "excerpt": "连接超时和错误分类。" }
+      ]
+    },
+    {
+      "id": "claude-code-mcp-002",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 具备描述限长、请求超时与企业 allow/deny 管理",
+      "fact": "工具描述和 server instructions 有长度上限；普通 POST 请求 60 秒超时，但工具调用默认约 27.8 小时且可由环境变量覆盖；配置层合并 plugin/connectors，并应用企业 allowlist/denylist。",
+      "plainLanguage": "连接握手不会无限等，过长的工具说明不会把上下文吃光；但真正工具执行默认几乎不设上限，长任务友好、失控任务风险也更大。",
+      "implication": "自研 Harness 应把 connect/request/tool 三类 timeout 分开，并给 MCP 执行建立组织级上限与取消链。",
+      "citations": [
+        { "path": "src/services/mcp/client.ts", "startLine": 210, "endLine": 229, "role": "config", "excerpt": "工具调用 timeout 与描述限长。" },
+        { "path": "src/services/mcp/client.ts", "startLine": 462, "endLine": 530, "role": "implementation", "excerpt": "HTTP 请求独立 timeout。" },
+        { "path": "src/services/mcp/config.ts", "startLine": 214, "endLine": 309, "role": "implementation", "excerpt": "plugin/connectors 去重与手工配置优先。" },
+        { "path": "src/services/mcp/config.ts", "startLine": 336, "endLine": 430, "role": "policy", "excerpt": "企业 allowlist/denylist 来源与匹配。" }
+      ]
+    },
+    {
+      "id": "claude-code-instructions-001",
+      "dimension": "instructions-skills-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "项目指令与环境快照分层注入，并在会话内缓存",
+      "fact": "getUserContext 从层级 memory files 组装 CLAUDE.md，可通过 bare/环境变量禁用；getSystemContext 并行采集 git branch/status/log/user 并截断状态，二者 memoize 为会话上下文。",
+      "plainLanguage": "一份是团队写给 Agent 的长期说明书，另一份是开工那一刻的工地快照；后者明确不会自动更新。",
+      "implication": "prompt cache 稳定，但会话中的 git status 会变旧，模型需要在关键操作前主动重新查询。",
+      "citations": [
+        { "path": "src/context.ts", "startLine": 36, "endLine": 111, "role": "implementation", "excerpt": "git 快照、并行采集和截断。" },
+        { "path": "src/context.ts", "startLine": 113, "endLine": 150, "role": "implementation", "excerpt": "system context memoize。" },
+        { "path": "src/context.ts", "startLine": 152, "endLine": 188, "role": "implementation", "excerpt": "CLAUDE.md discovery、禁用门和 user context。" }
+      ]
+    },
+    {
+      "id": "claude-code-plugin-001",
+      "dimension": "instructions-skills-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "插件是复合扩展包，不只是 prompt 文件",
+      "fact": "plugin loader 支持 marketplace/git/npm 缓存、manifest schema 和路径 containment，并从 commands、agents、skills、output styles、hooks 等目录装载组件；缺 manifest 时还能创建最小 manifest。",
+      "plainLanguage": "一个插件能同时带命令、技能、子 Agent 和钩子，接近应用包而不是单张提示词。",
+      "implication": "扩展能力强，也扩大供应链与任意代码执行面；必须把来源、版本、签名/审批和 hooks 权限纳入治理。",
+      "citations": [
+        { "path": "src/utils/plugins/pluginLoader.ts", "startLine": 1, "endLine": 29, "role": "architecture", "excerpt": "插件来源、目录结构和 loader 职责。" },
+        { "path": "src/utils/plugins/pluginLoader.ts", "startLine": 912, "endLine": 1092, "role": "implementation", "excerpt": "缓存、manifest 校验与版本目录。" },
+        { "path": "src/utils/plugins/pluginLoader.ts", "startLine": 1314, "endLine": 1389, "role": "implementation", "excerpt": "复合组件发现与 plugin object 构造。" }
+      ]
+    },
+    {
+      "id": "claude-code-skill-001",
+      "dimension": "instructions-skills-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skill 采用元数据先行、内容按需装载，并支持路径条件激活",
+      "fact": "skill loader 只用 name/description/whenToUse 估算前置 token；完整内容在调用时读取，运行中还能扫描新目录，按 paths frontmatter 匹配触及文件后激活条件 skill。",
+      "plainLanguage": "模型先看技能目录卡片，真正要用时才翻整本手册；碰到特定文件类型还能自动把相关手册加入工具箱。",
+      "implication": "降低常驻 prompt 成本，但动态注册必须维持工具定义排序和缓存稳定。",
+      "citations": [
+        { "path": "src/skills/loadSkillsDir.ts", "startLine": 78, "endLine": 108, "role": "implementation", "excerpt": "skill 路径和 frontmatter token 估算。" },
+        { "path": "src/skills/loadSkillsDir.ts", "startLine": 182, "endLine": 260, "role": "implementation", "excerpt": "frontmatter 解析和延迟加载字段。" },
+        { "path": "src/skills/loadSkillsDir.ts", "startLine": 986, "endLine": 1054, "role": "implementation", "excerpt": "按文件路径条件激活 skill。" }
+      ]
+    },
+    {
+      "id": "claude-code-agent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 是独立 query 运行时，可定制模型、工具、权限、MCP、hooks、skills、memory 和 isolation",
+      "fact": "Agent 定义 schema 包含 tools/disallowedTools、model/effort、permissionMode、mcpServers、hooks、maxTurns、skills、memory、background、worktree isolation；runAgent 为其构造独立系统提示、工具池、权限视图、MCP client 和 transcript。",
+      "plainLanguage": "它不是把任务文本塞给同一个聊天窗口，而是给工人发单独的工具箱、说明书、权限卡和工作日志。",
+      "implication": "这是实质多 Agent Harness；复杂性主要在权限继承、资源清理、缓存和恢复，而非“能不能再调一次模型”。",
+      "citations": [
+        { "path": "packages/builtin-tools/src/tools/AgentTool/loadAgentsDir.ts", "startLine": 58, "endLine": 132, "role": "contract", "excerpt": "Agent JSON/frontmatter 能力面。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 509, "endLine": 673, "role": "implementation", "excerpt": "工具、系统 prompt、hooks、skills 与 MCP 装配。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 675, "endLine": 751, "role": "implementation", "excerpt": "独立 context、sidechain 和 metadata。" }
+      ]
+    },
+    {
+      "id": "claude-code-agent-002",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "同步、异步、fork 与 worktree 是四个可组合的协作语义",
+      "fact": "后台 Agent 使用不链接父 ESC 的 AbortController 并返回 async_launched；fork 可继承完整父消息、精确 system prompt 和工具定义以共享 prompt cache；worktree isolation 创建独立工作副本，无改动时清理、有改动时保留。",
+      "plainLanguage": "工人可以当场等结果，也能后台继续；可以只拿任务卡，也能复制父会话全部记忆；改代码时还能分配独立工位。",
+      "implication": "协作吞吐与上下文复用领先，但 worktree 只是文件工作区隔离，不等于进程/网络安全沙箱。",
+      "citations": [
+        { "path": "packages/builtin-tools/src/tools/AgentTool/forkSubagent.ts", "startLine": 18, "endLine": 71, "role": "implementation", "excerpt": "fork gate、完整上下文和 bubble mode。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/forkSubagent.ts", "startLine": 95, "endLine": 175, "role": "implementation", "excerpt": "cache-identical fork message 构造。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/AgentTool.tsx", "startLine": 696, "endLine": 827, "role": "implementation", "excerpt": "async 判定、worktree 创建与清理。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/AgentTool.tsx", "startLine": 829, "endLine": 912, "role": "implementation", "excerpt": "后台生命周期和独立取消。" }
+      ]
+    },
+    {
+      "id": "claude-code-agent-003",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 有 sidechain 持久化、可恢复元数据和严格资源清理",
+      "fact": "runAgent 将初始/新增消息写入独立 sidechain JSONL，并记录 agentType、worktreePath、description；finally 结束 Langfuse trace，关闭 agent MCP、hooks、缓存、文件状态、todo、shell/monitor tasks。",
+      "plainLanguage": "后台工人有自己的工作日志，重启后能知道它是谁、在哪个工位；收工时也会回收插座、进程和临时账本。",
+      "implication": "生命周期工程较完整，适合长会话和大量 worker；清理路径任何漏项都可能成为进程或内存泄漏。",
+      "citations": [
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 741, "endLine": 773, "role": "implementation", "excerpt": "sidechain、metadata 和 Langfuse。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 775, "endLine": 834, "role": "implementation", "excerpt": "query 输出持久化。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 844, "endLine": 889, "role": "implementation", "excerpt": "完整资源清理。" }
+      ]
+    },
+    {
+      "id": "claude-code-session-001",
+      "dimension": "session-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "会话是 append-only JSONL 树，而不是简单聊天数组",
+      "fact": "主会话与每个 agent 各有 JSONL；消息用 parentUuid 建链，compact boundary、file history、attribution、mode、content replacement 等都作为条目追加；resume 会修复旧 progress fork、snip gap 和孤儿并行 tool result。",
+      "plainLanguage": "日志更像带分叉的版本树：可以从某个节点继续、压缩或恢复文件快照，不只是从头到尾的一串气泡。",
+      "implication": "可恢复性很强，但 parentUuid 一致性是核心不变量，代码中大量修复逻辑也说明这里是高风险复杂区。",
+      "citations": [
+        { "path": "src/utils/sessionStorage.ts", "startLine": 130, "endLine": 168, "role": "contract", "excerpt": "transcript entry 与 parentUuid 不变量。" },
+        { "path": "src/utils/sessionStorage.ts", "startLine": 1023, "endLine": 1090, "role": "implementation", "excerpt": "消息追加、compact boundary 和会话 stamp。" },
+        { "path": "src/utils/sessionStorage.ts", "startLine": 1997, "endLine": 2073, "role": "implementation", "excerpt": "snip 后 parentUuid relink。" },
+        { "path": "src/utils/sessionStorage.ts", "startLine": 2110, "endLine": 2130, "role": "implementation", "excerpt": "从 leaf 重建会话链与循环检测。" }
+      ]
+    },
+    {
+      "id": "claude-code-observability-001",
+      "dimension": "session-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "开源复原代码中仍有可用 OTEL/Perfetto/Langfuse，但内部 analytics 不可等同",
+      "fact": "instrumentation 支持 metrics/logs/traces 的 console、OTLP grpc/http、Prometheus 等 exporter；Agent 层注册 Perfetto 层级并可创建 Langfuse subtrace。与此同时仓库自述 Analytics/GrowthBook/Sentry 为 empty implementations。",
+      "plainLanguage": "标准观测管道是真代码，可以接企业采集；原厂内部埋点名字很多，但这个仓库里的后端并不完整。",
+      "implication": "评价时应把开放标准观测与不可用的内部遥测分开，不能因大量 logEvent 调用就认定原厂分析链已复现。",
+      "citations": [
+        { "path": "src/utils/telemetry/instrumentation.ts", "startLine": 1, "endLine": 71, "role": "implementation", "excerpt": "OTEL logs/metrics/traces 依赖和默认周期。" },
+        { "path": "src/utils/telemetry/instrumentation.ts", "startLine": 119, "endLine": 205, "role": "implementation", "excerpt": "console/OTLP/Prometheus metrics exporter。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 356, "endLine": 368, "role": "implementation", "excerpt": "Perfetto agent hierarchy。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/runAgent.ts", "startLine": 756, "endLine": 773, "role": "implementation", "excerpt": "Langfuse sub-agent trace。" },
+        { "path": "AGENTS.md", "startLine": 252, "endLine": 264, "role": "limitation", "excerpt": "内部 analytics/GrowthBook/Sentry 空实现。" }
+      ]
+    },
+    {
+      "id": "claude-code-maturity-001",
+      "dimension": "provenance-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "limitation",
+      "title": "测试很多，但复原完整度和许可边界仍是采用门槛",
+      "fact": "固定提交包含 449 个 test/spec 文件，其中 src/packages 有 442 个；仓库内仍有大量 stub/TODO/feature gate 命中，且根目录未见仓库级 LICENSE。",
+      "plainLanguage": "它不是玩具项目，回归网很大；但“测得多”不能消除拆机复原缺件和法律授权不明确的问题。",
+      "implication": "适合作为研究样本和实现线索，不宜直接作为企业产品基座；若复用代码必须单独做许可证与来源审查。",
+      "citations": [
+        { "path": "src/services/compact/__tests__/snipCompact.test.ts", "startLine": 1, "endLine": 80, "role": "test", "excerpt": "上下文剪裁行为测试样本。" },
+        { "path": "src/utils/permissions/__tests__/permissions.test.ts", "startLine": 1, "endLine": 80, "role": "test", "excerpt": "权限流水线测试样本。" },
+        { "path": "packages/builtin-tools/src/tools/AgentTool/__tests__/resumeAgent.test.ts", "startLine": 1, "endLine": 20, "role": "test", "excerpt": "子 Agent 恢复测试样本。" },
+        { "path": "AGENTS.md", "startLine": 5, "endLine": 8, "role": "provenance", "excerpt": "复原目标与 stub 声明。" }
+      ]
+    }
+  ]
+}
