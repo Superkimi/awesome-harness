@@ -57,7 +57,18 @@ for (const project of projects) {
     for (const type of ["architecture", "sequence", "capability"]) {
       const diagram = fs.readFileSync(path.join(base, "diagrams", `${type}.html`), "utf8");
       assert(diagram.includes("ARCHIFY-READY") || diagram.includes("archify-guided-views-data"), `${project.slug}/${lang}/${type}: diagram is missing Archify handoff marker`);
-      assert((diagram.match(/class="diagram-node/g) || []).length >= 5 || (diagram.match(/data-node-id=/g) || []).length >= 5 || diagram.includes("data-archify-wrapper"), `${project.slug}/${lang}/${type}: diagram has too few source-backed nodes`);
+      if (diagram.includes("data-archify-wrapper")) {
+        const legacyType = type === "capability" ? "architecture" : type;
+        const canonical = path.join(site, "legacy", "diagrams", `${project.slug}-${legacyType}.html`);
+        assert(fs.existsSync(canonical), `${project.slug}/${lang}/${type}: Archify wrapper target is missing`);
+        if (fs.existsSync(canonical)) {
+          const canonicalHtml = fs.readFileSync(canonical, "utf8");
+          assert((canonicalHtml.match(/data-node-id="/g) || []).length >= 8, `${project.slug}/${lang}/${type}: canonical Archify map has too few nodes`);
+        }
+      } else {
+        assert((diagram.match(/<g id="node-/g) || []).length >= 10, `${project.slug}/${lang}/${type}: source-backed map has too few authored nodes`);
+        assert((diagram.match(/data-edge-from=/g) || []).length >= 8, `${project.slug}/${lang}/${type}: source-backed map has too few handoffs`);
+      }
     }
     const firstChapter = fs.readFileSync(path.join(base, "tutorial", `ch${chapterDefs[0].number}-${chapterDefs[0].id}.html`), "utf8");
     assert(firstChapter.includes("Evidence board") || firstChapter.includes("本章证据板"), `${project.slug}/${lang}: chapter is not evidence-led`);
@@ -65,6 +76,7 @@ for (const project of projects) {
       const chapterHtml = fs.readFileSync(path.join(base, "tutorial", `ch${chapter.number}-${chapter.id}.html`), "utf8");
       assert(chapterHtml.includes("source-reading-map"), `${project.slug}/${lang}/${chapter.id}: chapter has no source reading map`);
       assert(chapterHtml.includes("mechanism-panel"), `${project.slug}/${lang}/${chapter.id}: chapter has no execution-semantics panel`);
+      assert((chapterHtml.match(/class="diagram-frame/g) || []).length === 1, `${project.slug}/${lang}/${chapter.id}: chapter must embed exactly one diagram`);
     }
   }
 }
