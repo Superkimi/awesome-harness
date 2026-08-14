@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · OpenAI Codex · 902bd9e06b3e</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/codex/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch02-architecture.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</p></section><section><span>白话解释</span><p>一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>配置热更新只能在安全边界生效，换来 prompt cache 和工具调用的确定性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>153–212</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>213–274</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:153–274</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  153  pub(crate) async fn run_turn(
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · OpenAI Codex · 902bd9e06b3e</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/codex/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch02-architecture.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</p></section><section><span>白话解释</span><p>一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>配置热更新只能在安全边界生效，换来 prompt cache 和工具调用的确定性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>153–212</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>213–274</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:153–274</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  153  pub(crate) async fn run_turn(
   154      sess: Arc&lt;Session&gt;,
   155      turn_context: Arc&lt;TurnContext&gt;,
   156      turn_extension_data: Arc&lt;codex_extension_api::ExtensionData&gt;,
@@ -1128,4 +1128,165 @@
  1341          Arc::clone(&amp;sess),
  1342          Arc::clone(&amp;step_context),
  1343          Arc::clone(&amp;turn_diff_tracker),
- 1344      );</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:153–274 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>try_run_sampling_request 消费流式 ResponseEvent；完整 tool item 到达后进入 FuturesOrdered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:2034–2168 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:1176–1273 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:1176–1273 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+ 1344      );</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:153–274 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>try_run_sampling_request 消费流式 ResponseEvent；完整 tool item 到达后进入 FuturesOrdered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:2034–2168 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:1176–1273 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:1176–1273 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>codex-rs/ext/agent/tests/agent_service.rs</b><small>2276 bytes · .rs</small></div><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/ext/agent/tests/agent_service.rs#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>1. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2  use codex_agent_extension::AgentInvocation;
+    3  use codex_agent_extension::AgentRunner;
+    4  use codex_protocol::protocol::EventMsg;
+    5  use core_test_support::responses;
+    6  use core_test_support::skip_if_no_network;
+    7  use core_test_support::test_codex::test_codex;
+    8  use core_test_support::wait_for_event;
+    9  use pretty_assertions::assert_eq;
+   10
+   11  #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+   12  async fn starts_resolved_agent_prompt_in_forked_thread() -&gt; Result&lt;()&gt; {
+   13      skip_if_no_network!(Ok(()));
+   14
+   15      let server = responses::start_mock_server().await;
+   16      let response_mock = responses::mount_sse_once(
+   17          &amp;server,
+   18          responses::sse(vec![
+   19              responses::ev_response_created(&quot;agent-response&quot;),
+   20              responses::ev_completed(&quot;agent-response&quot;),
+   21          ]),
+   22      )
+   23      .await;
+   24      let test = test_codex().build_with_auto_env(&amp;server).await?;
+   25      let parent_thread_id = test.session_configured.session_id.into();
+   26      let agent_runner = AgentRunner::new(std::sync::Arc::downgrade(&amp;test.thread_manager));
+   27
+   28      let agent_run = agent_runner
+   29          .start(
+   30              parent_thread_id,
+   31              AgentInvocation {
+   32                  config: test.config.clone(),
+   33                  prompt: &quot;Use $example-agent to inspect the current changes.&quot;.to_string(),
+   34                  parent_trace: None,</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>codex-rs/state/migrations/0015_agent_jobs_max_runtime_seconds.sql</b><small>63 bytes · .sql</small></div><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/state/migrations/0015_agent_jobs_max_runtime_seconds.sql#L2-L3" target="_blank" rel="noreferrer">L2–3 ↗</a></header><p>2. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2  ADD COLUMN max_runtime_seconds INTEGER;
+    3</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>codex-rs/code-mode-runtime/src/service_contract_tests.rs</b><small>15769 bytes · .rs</small></div><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/code-mode-runtime/src/service_contract_tests.rs#L201-L216" target="_blank" rel="noreferrer">L201–216 ↗</a></header><p>3. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  201          RuntimeResponse::Yielded {
+  202              cell_id: cell_id(&quot;1&quot;),
+  203              content_items: vec![FunctionCallOutputContentItem::InputText {
+  204                  text: &quot;before&quot;.to_string(),
+  205              }],
+  206          }
+  207      );
+  208      assert_eq!(
+  209          service
+  210              .wait(WaitRequest {
+  211                  cell_id: cell_id(&quot;1&quot;),
+  212                  yield_time_ms: 60_000,
+  213              })
+  214              .await
+  215              .unwrap(),
+  216          WaitOutcome::LiveCell(RuntimeResponse::Result {
+  217              cell_id: cell_id(&quot;1&quot;),
+  218              content_items: vec![FunctionCallOutputContentItem::InputText {
+  219                  text: &quot;after&quot;.to_string(),
+  220              }],
+  221              error_text: None,
+  222          })
+  223      );
+  224  }
+  225
+  226  #[tokio::test]
+  227  async fn returns_and_resumes_from_the_pending_frontier() {
+  228      let (delegate, mut events_rx) = BlockingDelegate::new();
+  229      let service = InProcessCodeModeSession::with_delegate(delegate.clone());
+  230
+  231      assert_eq!(
+  232          service
+  233              .execute_to_pending(ExecuteRequest {</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>codex-rs/code-mode-runtime/src/service_tests.rs</b><small>38392 bytes · .rs</small></div><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/code-mode-runtime/src/service_tests.rs#L10-L25" target="_blank" rel="noreferrer">L10–25 ↗</a></header><p>4. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   10  use super::RuntimeResponse;
+   11  use super::WaitOutcome;
+   12  use super::WaitRequest;
+   13  use super::WaitToPendingOutcome;
+   14  use super::WaitToPendingRequest;
+   15  use crate::CodeModeToolKind;
+   16  use crate::ExecuteRequest;
+   17  use crate::ExecuteToPendingOutcome;
+   18  use crate::FunctionCallOutputContentItem;
+   19  use crate::ToolDefinition;
+   20  use codex_code_mode_protocol::CodeModeSessionCellExecutionLimits;
+   21  use codex_code_mode_protocol::NotificationFuture;
+   22  use codex_code_mode_protocol::ToolInvocationFuture;
+   23  use codex_protocol::ToolName;
+   24  use pretty_assertions::assert_eq;
+   25  use serde_json::Value as JsonValue;
+   26  use tokio::sync::Notify;
+   27  use tokio_util::sync::CancellationToken;
+   28
+   29  #[test]
+   30  fn resolve_yield_timeout_applies_grace_before_session_limits() {
+   31      for (max_yield_time_ms, requested_yield_time_ms, expected_timeout) in [
+   32          (None, 0, Duration::ZERO),
+   33          (None, 9_999, Duration::from_millis(9_999)),
+   34          (None, 10_000, Duration::from_secs(11)),
+   35          (None, 10_001, Duration::from_millis(11_001)),
+   36          (Some(0), 0, Duration::ZERO),
+   37          (Some(0), 10_000, Duration::ZERO),
+   38          (Some(5_000), 9_999, Duration::from_secs(5)),
+   39          (Some(10_000), 10_000, Duration::from_secs(10)),
+   40          (Some(10_500), 10_000, Duration::from_millis(10_500)),
+   41          (Some(11_000), 10_000, Duration::from_secs(11)),
+   42          (Some(12_000), 10_000, Duration::from_secs(11)),</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>codex-rs/external-agent-migration/src/service_tests.rs</b><small>2441 bytes · .rs</small></div><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/external-agent-migration/src/service_tests.rs#L6-L21" target="_blank" rel="noreferrer">L6–21 ↗</a></header><p>5. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    6  const EXTERNAL_AGENT_PROJECT_CONFIG_FILE: &amp;str = &quot;.claude.json&quot;;
+    7  const EXTERNAL_AGENT_PLUGIN_MANIFEST_DIR: &amp;str = &quot;.claude-plugin&quot;;
+    8  const SOURCE_EXTERNAL_AGENT_NAME: &amp;str = &quot;claude&quot;;
+    9  const SOURCE_EXTERNAL_AGENT_DISPLAY_NAME: &amp;str = &quot;Claude&quot;;
+   10  const SOURCE_EXTERNAL_AGENT_PRODUCT_NAME: &amp;str = &quot;Claude Code&quot;;
+   11  const SOURCE_EXTERNAL_AGENT_UPPER_NAME: &amp;str = &quot;CLAUDE&quot;;
+   12  const SOURCE_EXTERNAL_AGENT_UPPER_PRODUCT_NAME: &amp;str = &quot;CLAUDE-CODE&quot;;
+   13
+   14  fn fixture_paths() -&gt; (TempDir, PathBuf, PathBuf) {
+   15      let root = TempDir::new().expect(&quot;create tempdir&quot;);
+   16      let external_agent_home = root.path().join(EXTERNAL_AGENT_DIR);
+   17      let codex_home = root.path().join(&quot;.codex&quot;);
+   18      (root, external_agent_home, codex_home)
+   19  }
+   20
+   21  fn service_for_paths(
+   22      external_agent_home: PathBuf,
+   23      codex_home: PathBuf,
+   24  ) -&gt; ExternalAgentConfigService {
+   25      ExternalAgentConfigService::new_for_test(codex_home, external_agent_home)
+   26  }
+   27
+   28  fn github_plugin_details() -&gt; MigrationDetails {
+   29      MigrationDetails {
+   30          plugins: vec![PluginsMigration {
+   31              marketplace_name: &quot;acme-tools&quot;.to_string(),
+   32              plugin_names: vec![&quot;formatter&quot;.to_string()],
+   33          }],
+   34          ..Default::default()
+   35      }
+   36  }
+   37
+   38  fn assert_single_plugin_raw_error(</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>codex-rs/state/src/runtime/external_agent_config_imports_tests.rs</b><small>6069 bytes · .rs</small></div><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/state/src/runtime/external_agent_config_imports_tests.rs#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>6. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2  use crate::runtime::test_support::unique_temp_dir;
+    3  use codex_utils_absolute_path::test_support::PathExt;
+    4  use pretty_assertions::assert_eq;
+    5
+    6  #[tokio::test]
+    7  async fn records_completion_by_import_id() -&gt; anyhow::Result&lt;()&gt; {
+    8      let runtime = StateRuntime::init(
+    9          crate::SqliteConfig::new_for_testing(unique_temp_dir().as_path().abs()),
+   10          &quot;test-provider&quot;.to_string(),
+   11      )
+   12      .await?;
+   13
+   14      runtime
+   15          .record_external_agent_config_import_completed(
+   16              &quot;import-1&quot;,
+   17              Some(&quot;provider-1&quot;),
+   18              &amp;[ExternalAgentConfigImportSuccessRecord {
+   19                  item_type: &quot;CONFIG&quot;.to_string(),
+   20                  cwd: None,
+   21                  source: Some(&quot;settings.json&quot;.to_string()),
+   22                  target: Some(&quot;config.toml&quot;.to_string()),
+   23                  title: None,
+   24              }],
+   25              &amp;[],
+   26          )
+   27          .await?;
+   28      runtime
+   29          .record_external_agent_config_import_completed(
+   30              &quot;import-1&quot;,
+   31              Some(&quot;provider-2&quot;),
+   32              &amp;[
+   33                  ExternalAgentConfigImportSuccessRecord {
+   34                      item_type: &quot;CONFIG&quot;.to_string(),</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

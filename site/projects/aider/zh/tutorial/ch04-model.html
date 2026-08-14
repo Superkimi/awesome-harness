@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>Aider · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Aider · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Aider</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>5dc9490bb35f</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · Aider · 5dc9490bb35f</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>6 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>Aider · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/aider/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/aider/ch04-model.srt" data-video-status="published">SRT</a><em>5dc9490bb35f</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ Aider 的循环很直接：你说一次，它生成修改；修改格式错了或检查失败，就把错误原样喂回模型再试，但不会无限自修。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="aider-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · LiteLLM 是统一 Provider 适配层</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Model.send_completion 把模型名、messages、stream、temperature、可选单个 function tool 和 extra params 交给 litellm.completion；流式和非流式结果由 Coder 分别消费。</p></section><section><span>白话解释</span><p>Aider 把各家模型 API 的差异交给 LiteLLM，自己的核心只面对一套近似 OpenAI 的消息格式。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>接模型很快，但 Provider 行为、重试和能力元数据也部分受 LiteLLM 语义约束。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>985–1010</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1011–1037</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>aider/models.py:985–1037</span><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L985-L1037" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  985      def send_completion(self, messages, functions, stream, temperature=None):
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>Aider · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Aider · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Aider</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>5dc9490bb35f</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · Aider · 5dc9490bb35f</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>6 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>Aider · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/aider/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/aider/ch04-model.srt" data-video-status="published">SRT</a><em>5dc9490bb35f</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ Aider 的循环很直接：你说一次，它生成修改；修改格式错了或检查失败，就把错误原样喂回模型再试，但不会无限自修。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="aider-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · LiteLLM 是统一 Provider 适配层</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Model.send_completion 把模型名、messages、stream、temperature、可选单个 function tool 和 extra params 交给 litellm.completion；流式和非流式结果由 Coder 分别消费。</p></section><section><span>白话解释</span><p>Aider 把各家模型 API 的差异交给 LiteLLM，自己的核心只面对一套近似 OpenAI 的消息格式。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>接模型很快，但 Provider 行为、重试和能力元数据也部分受 LiteLLM 语义约束。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>985–1010</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1011–1037</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>aider/models.py:985–1037</span><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L985-L1037" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  985      def send_completion(self, messages, functions, stream, temperature=None):
   986          if os.environ.get(&quot;AIDER_SANITY_CHECK_TURNS&quot;):
   987              sanity_check_messages(messages)
   988
@@ -768,4 +768,196 @@
  1485
  1486                      self.io.tool_output(f&quot;Retrying in {retry_delay:.1f} seconds...&quot;)
  1487                      time.sleep(retry_delay)
- 1488                      continue</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>Model.send_completion 把模型名、messages、stream、temperature、可选单个 function tool 和 extra params 交给 litellm.completion；流式和非流式结果由 Coder 分别消费。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L985-L1037" target="_blank" rel="noreferrer">aider/models.py:985–1037 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>每次请求按 system、examples、已摘要历史、repo map、只读文件、可编辑文件、当前消息和 reminder 的顺序组装。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/coders/base_coder.py#L1226-L1338" target="_blank" rel="noreferrer">aider/coders/base_coder.py:1226–1338 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>RepoMap 用 tree-sitter 查询提取定义/引用，缺少引用时用 Pygments 补齐；构建文件间 MultiDiGraph，并以当前聊天文件、用户提及和符号特征调权后运行 PageRank。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/repomap.py#L300-L363" target="_blank" rel="noreferrer">aider/repomap.py:300–363 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>排序后的 tags 被逐步渲染成代码树，算法用二分搜索选择条目数量，以不超预算且尽可能接近预算为目标，15% 误差内可提前停止。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/repomap.py#L629-L706" target="_blank" rel="noreferrer">aider/repomap.py:629–706 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Aider architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+ 1488                      continue</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>Model.send_completion 把模型名、messages、stream、temperature、可选单个 function tool 和 extra params 交给 litellm.completion；流式和非流式结果由 Coder 分别消费。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L985-L1037" target="_blank" rel="noreferrer">aider/models.py:985–1037 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>每次请求按 system、examples、已摘要历史、repo map、只读文件、可编辑文件、当前消息和 reminder 的顺序组装。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/coders/base_coder.py#L1226-L1338" target="_blank" rel="noreferrer">aider/coders/base_coder.py:1226–1338 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>RepoMap 用 tree-sitter 查询提取定义/引用，缺少引用时用 Pygments 补齐；构建文件间 MultiDiGraph，并以当前聊天文件、用户提及和符号特征调权后运行 PageRank。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/repomap.py#L300-L363" target="_blank" rel="noreferrer">aider/repomap.py:300–363 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>排序后的 tags 被逐步渲染成代码树，算法用二分搜索选择条目数量，以不超预算且尽可能接近预算为目标，15% 误差内可提前停止。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/repomap.py#L629-L706" target="_blank" rel="noreferrer">aider/repomap.py:629–706 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>tests/basic/test_model_info_manager.py</b><small>3173 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/tests/basic/test_model_info_manager.py#L7-L22" target="_blank" rel="noreferrer">L7–22 ↗</a></header><p>1. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    7  from aider.models import ModelInfoManager
+    8
+    9
+   10  class TestModelInfoManager(TestCase):
+   11      def setUp(self):
+   12          self.original_env = os.environ.copy()
+   13          self.manager = ModelInfoManager()
+   14          # Create a temporary directory for cache
+   15          self.temp_dir = tempfile.TemporaryDirectory()
+   16          self.manager.cache_dir = Path(self.temp_dir.name)
+   17          self.manager.cache_file = self.manager.cache_dir / &quot;model_prices_and_context_window.json&quot;
+   18          self.manager.cache_dir.mkdir(exist_ok=True)
+   19
+   20      def tearDown(self):
+   21          self.temp_dir.cleanup()
+   22          os.environ.clear()
+   23          os.environ.update(self.original_env)
+   24
+   25      @patch(&quot;requests.get&quot;)
+   26      def test_update_cache_respects_verify_ssl(self, mock_get):
+   27          # Setup mock response
+   28          mock_response = MagicMock()
+   29          mock_response.status_code = 200
+   30          mock_response.json.return_value = {&quot;test_model&quot;: {&quot;max_tokens&quot;: 4096}}
+   31          mock_get.return_value = mock_response
+   32
+   33          # Test with default verify_ssl=True
+   34          self.manager._update_cache()
+   35          mock_get.assert_called_with(self.manager.MODEL_INFO_URL, timeout=5, verify=True)
+   36
+   37          # Test with verify_ssl=False
+   38          mock_get.reset_mock()
+   39          self.manager.set_verify_ssl(False)</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>tests/basic/test_models.py</b><small>22037 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/tests/basic/test_models.py#L324-L339" target="_blank" rel="noreferrer">L324–339 ↗</a></header><p>2. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  324          # Test provider/deepseek-r1 case
+  325          model = Model(&quot;someprovider/deepseek-r1&quot;)
+  326          self.assertEqual(model.edit_format, &quot;diff&quot;)
+  327          self.assertTrue(model.use_repo_map)
+  328          self.assertTrue(model.examples_as_sys_msg)
+  329          self.assertFalse(model.use_temperature)
+  330          self.assertEqual(model.reasoning_tag, &quot;think&quot;)
+  331
+  332          # Test provider/deepseek-v3 case
+  333          model = Model(&quot;anotherprovider/deepseek-v3&quot;)
+  334          self.assertEqual(model.edit_format, &quot;diff&quot;)
+  335          self.assertTrue(model.use_repo_map)
+  336          self.assertEqual(model.reminder, &quot;sys&quot;)
+  337          self.assertTrue(model.examples_as_sys_msg)
+  338
+  339          # Test llama3 70b case
+  340          model = Model(&quot;llama3-70b&quot;)
+  341          self.assertEqual(model.edit_format, &quot;diff&quot;)
+  342          self.assertTrue(model.use_repo_map)
+  343          self.assertTrue(model.send_undo_reply)
+  344          self.assertTrue(model.examples_as_sys_msg)
+  345
+  346          # Test gpt-4 case
+  347          model = Model(&quot;gpt-4&quot;)
+  348          self.assertEqual(model.edit_format, &quot;diff&quot;)
+  349          self.assertTrue(model.use_repo_map)
+  350          self.assertTrue(model.send_undo_reply)
+  351
+  352          # Test gpt-3.5 case
+  353          model = Model(&quot;gpt-3.5&quot;)
+  354          self.assertEqual(model.reminder, &quot;sys&quot;)
+  355
+  356          # Test 3.5-sonnet case</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>aider/llm.py</b><small>1103 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/llm.py#L14-L29" target="_blank" rel="noreferrer">L14–29 ↗</a></header><p>3. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   14  os.environ[&quot;LITELLM_MODE&quot;] = &quot;PRODUCTION&quot;
+   15
+   16  # `import litellm` takes 1.5 seconds, defer it!
+   17
+   18  VERBOSE = False
+   19
+   20
+   21  class LazyLiteLLM:
+   22      _lazy_module = None
+   23
+   24      def __getattr__(self, name):
+   25          if name == &quot;_lazy_module&quot;:
+   26              return super()
+   27          self._load_litellm()
+   28          return getattr(self._lazy_module, name)
+   29
+   30      def _load_litellm(self):
+   31          if self._lazy_module is not None:
+   32              return
+   33
+   34          if VERBOSE:
+   35              print(&quot;Loading litellm...&quot;)
+   36
+   37          self._lazy_module = importlib.import_module(&quot;litellm&quot;)
+   38
+   39          self._lazy_module.suppress_debug_info = True
+   40          self._lazy_module.set_verbose = False
+   41          self._lazy_module.drop_params = True
+   42          self._lazy_module._logging._disable_debugging()
+   43
+   44
+   45  litellm = LazyLiteLLM()
+   46</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>aider/mdstream.py</b><small>7594 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/mdstream.py#L92-L107" target="_blank" rel="noreferrer">L92–107 ↗</a></header><p>4. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   92  class MarkdownStream:
+   93      &quot;&quot;&quot;Streaming markdown renderer that progressively displays content with a live updating window.
+   94
+   95      Uses rich.console and rich.live to render markdown content with smooth scrolling
+   96      and partial updates. Maintains a sliding window of visible content while streaming
+   97      in new markdown text.
+   98      &quot;&quot;&quot;
+   99
+  100      live = None  # Rich Live display instance
+  101      when = 0  # Timestamp of last update
+  102      min_delay = 1.0 / 20  # Minimum time between updates (20fps)
+  103      live_window = 6  # Number of lines to keep visible at bottom during streaming
+  104
+  105      def __init__(self, mdargs=None):
+  106          &quot;&quot;&quot;Initialize the markdown stream.
+  107
+  108          Args:
+  109              mdargs (dict, optional): Additional arguments to pass to rich Markdown renderer
+  110          &quot;&quot;&quot;
+  111          self.printed = []  # Stores lines that have already been printed
+  112
+  113          if mdargs:
+  114              self.mdargs = mdargs
+  115          else:
+  116              self.mdargs = dict()
+  117
+  118          # Defer Live creation until the first update.
+  119          self.live = None
+  120          self._live_started = False
+  121
+  122      def _render_markdown_to_lines(self, text):
+  123          &quot;&quot;&quot;Render markdown text to a list of lines.
+  124</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>aider/models.py</b><small>46342 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L244-L259" target="_blank" rel="noreferrer">L244–259 ↗</a></header><p>5. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  244              if info and info.get(&quot;litellm_provider&quot;) == pieces[0]:
+  245                  return info
+  246
+  247          return dict()
+  248
+  249      def get_model_info(self, model):
+  250          cached_info = self.get_model_from_cached_json_db(model)
+  251
+  252          litellm_info = None
+  253          if litellm._lazy_module or not cached_info:
+  254              try:
+  255                  litellm_info = litellm.get_model_info(model)
+  256              except Exception as ex:
+  257                  if &quot;model_prices_and_context_window.json&quot; not in str(ex):
+  258                      print(str(ex))
+  259
+  260          if litellm_info:
+  261              return litellm_info
+  262
+  263          if not cached_info and model.startswith(&quot;openrouter/&quot;):
+  264              # First try using the locally cached OpenRouter model database
+  265              openrouter_info = self.openrouter_manager.get_model_info(model)
+  266              if openrouter_info:
+  267                  return openrouter_info
+  268
+  269              # Fallback to legacy web-scraping if the API cache does not contain the model
+  270              openrouter_info = self.fetch_openrouter_model_info(model)
+  271              if openrouter_info:
+  272                  return openrouter_info
+  273
+  274          return cached_info
+  275
+  276      def fetch_openrouter_model_info(self, model):</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>aider/resources/model-metadata.json</b><small>28342 bytes · .json</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/resources/model-metadata.json#L11-L26" target="_blank" rel="noreferrer">L11–26 ↗</a></header><p>6. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   11          &quot;litellm_provider&quot;: &quot;deepseek&quot;,
+   12          &quot;mode&quot;: &quot;chat&quot;,
+   13          //&quot;supports_function_calling&quot;: true,
+   14          &quot;supports_assistant_prefill&quot;: true,
+   15          &quot;supports_tool_choice&quot;: false,
+   16          &quot;supports_prompt_caching&quot;: true
+   17      },
+   18      &quot;deepseek/deepseek-chat&quot;: {
+   19          &quot;max_tokens&quot;: 8192,
+   20          &quot;max_input_tokens&quot;: 128000,
+   21          &quot;max_output_tokens&quot;: 8192,
+   22          &quot;input_cost_per_token&quot;: 0.00000028,
+   23          &quot;input_cost_per_token_cache_hit&quot;: 0.000000028,
+   24          &quot;cache_read_input_token_cost&quot;: 0.000000028,
+   25          &quot;cache_creation_input_token_cost&quot;: 0.0,
+   26          &quot;output_cost_per_token&quot;: 0.00000042,
+   27          &quot;litellm_provider&quot;: &quot;deepseek&quot;,
+   28          &quot;mode&quot;: &quot;chat&quot;,
+   29          //&quot;supports_function_calling&quot;: true,
+   30          &quot;supports_assistant_prefill&quot;: true,
+   31          //&quot;supports_tool_choice&quot;: true,
+   32          &quot;supports_prompt_caching&quot;: true
+   33      },
+   34      &quot;openrouter/deepseek/deepseek-r1:free&quot;: {
+   35          &quot;max_tokens&quot;: 8192,
+   36          &quot;max_input_tokens&quot;: 64000,
+   37          &quot;max_output_tokens&quot;: 8192,
+   38          &quot;input_cost_per_token&quot;: 0.0,
+   39          &quot;input_cost_per_token_cache_hit&quot;: 0.0,
+   40          &quot;cache_read_input_token_cost&quot;: 0.00,
+   41          &quot;cache_creation_input_token_cost&quot;: 0.0,
+   42          &quot;output_cost_per_token&quot;: 0.0,
+   43          &quot;litellm_provider&quot;: &quot;openrouter&quot;,</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Aider architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

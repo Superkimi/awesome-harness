@@ -5,6 +5,9 @@ An independently maintained bilingual atlas of open-source Agent Harness project
 - Chinese and English single-page technical analysis
 - Ten standalone beginner tutorial chapters
 - Clickable architecture, sequence, and capability maps
+- Per-chapter source maps with six real local files and pinned passages
+- Per-project implementation dossier for entrypoints, manifests, plugins/MCP, tests, and commands
+- A 21-concept source audit covering logs, approvals, projections, jobs, transactions, queues, parallelism, and more
 - Pinned commits, line ranges, and GitHub links
 - Slots for the technical-analysis and chapter video releases
 - Preserved long-form prior-finding audits under site/legacy/reports/, alongside the common ten-chapter entrypoint

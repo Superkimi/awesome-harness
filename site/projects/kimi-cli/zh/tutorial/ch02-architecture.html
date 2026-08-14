@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>Kimi CLI · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Kimi CLI · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Kimi CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cbc15c076d17</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Kimi CLI · cbc15c076d17</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>4 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Kimi CLI · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/kimi-cli/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/kimi-cli/ch02-architecture.srt" data-video-status="published">SRT</a><em>cbc15c076d17</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一次用户输入可能触发多次“模型思考—调工具—看结果—再思考”，每一步前都留存档点。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="kimi-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每轮是带检查点的多步状态机，不是单次聊天请求</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run 先刷新 OAuth、建立 approval source、运行 UserPromptSubmit hook，再进入 _turn；_turn 先 checkpoint、持久化 user message，然后 _agent_loop 逐 step 做压缩、checkpoint、LLM+工具执行，直到无工具调用、拒绝或重复调用强停。</p></section><section><span>白话解释</span><p>一次用户输入可能触发多次“模型思考—调工具—看结果—再思考”，每一步前都留存档点。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>长任务可恢复、可插话，也需要严格的步数上限和副作用治理。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>659–699</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>700–742</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/kimisoul.py:659–742</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  659      async def run(
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>Kimi CLI · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Kimi CLI · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Kimi CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cbc15c076d17</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Kimi CLI · cbc15c076d17</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>4 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Kimi CLI · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/kimi-cli/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/kimi-cli/ch02-architecture.srt" data-video-status="published">SRT</a><em>cbc15c076d17</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一次用户输入可能触发多次“模型思考—调工具—看结果—再思考”，每一步前都留存档点。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="kimi-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每轮是带检查点的多步状态机，不是单次聊天请求</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run 先刷新 OAuth、建立 approval source、运行 UserPromptSubmit hook，再进入 _turn；_turn 先 checkpoint、持久化 user message，然后 _agent_loop 逐 step 做压缩、checkpoint、LLM+工具执行，直到无工具调用、拒绝或重复调用强停。</p></section><section><span>白话解释</span><p>一次用户输入可能触发多次“模型思考—调工具—看结果—再思考”，每一步前都留存档点。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>长任务可恢复、可插话，也需要严格的步数上限和副作用治理。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>659–699</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>700–742</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/kimisoul.py:659–742</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  659      async def run(
   660          self,
   661          user_input: str | list[ContentPart],
   662          *,
@@ -487,4 +487,188 @@
  1317              )
  1318              # raise to let the main loop take us back to the future
  1319              raise BackToTheFuture(
- 1320                  dmail.checkpoint_id,</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>run 先刷新 OAuth、建立 approval source、运行 UserPromptSubmit hook，再进入 _turn；_turn 先 checkpoint、持久化 user message，然后 _agent_loop 逐 step 做压缩、checkpoint、LLM+工具执行，直到无工具调用、拒绝或重复调用强停。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:659–742 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>root 每 step 最多领取 4 条 pending notification；Plan/AFK 等 injection 合并成 user-side system reminder；历史归一化后调用 kosong.step，流式回调消息和工具结果，随后 await 所有 tool results 并 shield 写回上下文。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1132-L1194" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:1132–1194 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>steer queue 会在 step 结束或相邻 step 间作为新的 user message 注入；SendDMail 可携 checkpoint id 触发 BackToTheFuture，主循环旋转并回退 context，再注入未来消息并清空重复调用状态。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L622-L653" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:622–653 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>step/compaction 使用指数抖动重试；401 仅对 OAuth provider 强制刷新一次；连接/超时可调用 RetryableChatProvider.on_retryable_error 并只恢复一次；空响应和 429/500/502/503/504 进入 tenacity。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1220-L1249" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:1220–1249 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Kimi CLI sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+ 1320                  dmail.checkpoint_id,</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>run 先刷新 OAuth、建立 approval source、运行 UserPromptSubmit hook，再进入 _turn；_turn 先 checkpoint、持久化 user message，然后 _agent_loop 逐 step 做压缩、checkpoint、LLM+工具执行，直到无工具调用、拒绝或重复调用强停。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:659–742 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>root 每 step 最多领取 4 条 pending notification；Plan/AFK 等 injection 合并成 user-side system reminder；历史归一化后调用 kosong.step，流式回调消息和工具结果，随后 await 所有 tool results 并 shield 写回上下文。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1132-L1194" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:1132–1194 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>steer queue 会在 step 结束或相邻 step 间作为新的 user message 注入；SendDMail 可携 checkpoint id 触发 BackToTheFuture，主循环旋转并回退 context，再注入未来消息并清空重复调用状态。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L622-L653" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:622–653 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>step/compaction 使用指数抖动重试；401 仅对 OAuth provider 强制刷新一次；连接/超时可调用 RetryableChatProvider.on_retryable_error 并只恢复一次；空响应和 429/500/502/503/504 进入 tenacity。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1220-L1249" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:1220–1249 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>.agents/skills/feature-smoke-test/scripts/inspect_session.py</b><small>11262 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/.agents/skills/feature-smoke-test/scripts/inspect_session.py#L255-L270" target="_blank" rel="noreferrer">L255–270 ↗</a></header><p>1. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  255          runtime = load_json(task_dir / &quot;runtime.json&quot;) or {}
+  256          control = load_json(task_dir / &quot;control.json&quot;) or {}
+  257          consumer = load_json(task_dir / &quot;consumer.json&quot;) or {}
+  258          print(f&quot;task_id: {task_dir.name}&quot;)
+  259          print(f&quot;  description: {spec.get(&#39;description&#39;)}&quot;)
+  260          print(f&quot;  kind: {spec.get(&#39;kind&#39;)}&quot;)
+  261          print(f&quot;  status: {runtime.get(&#39;status&#39;)}&quot;)
+  262          if runtime.get(&quot;exit_code&quot;) is not None:
+  263              print(f&quot;  exit_code: {runtime.get(&#39;exit_code&#39;)}&quot;)
+  264          if spec.get(&quot;cwd&quot;):
+  265              print(f&quot;  cwd: {spec.get(&#39;cwd&#39;)}&quot;)
+  266          if spec.get(&quot;timeout_s&quot;) is not None:
+  267              print(f&quot;  timeout_s: {spec.get(&#39;timeout_s&#39;)}&quot;)
+  268          for key in (
+  269              &quot;created_at&quot;,
+  270              &quot;started_at&quot;,
+  271              &quot;finished_at&quot;,
+  272              &quot;heartbeat_at&quot;,
+  273              &quot;failure_reason&quot;,
+  274              &quot;worker_pid&quot;,
+  275              &quot;child_pid&quot;,
+  276          ):
+  277              value = runtime.get(key)
+  278              if value is not None:
+  279                  print(f&quot;  {key}: {value}&quot;)
+  280          for key in (&quot;kill_requested_at&quot;, &quot;kill_reason&quot;):
+  281              value = control.get(key)
+  282              if value is not None:
+  283                  print(f&quot;  {key}: {value}&quot;)
+  284          for key in (&quot;last_read_offset&quot;, &quot;last_viewed_at&quot;):
+  285              value = consumer.get(key)
+  286              if value is not None:
+  287                  print(f&quot;  {key}: {value}&quot;)</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>src/kimi_cli/agentspec.py</b><small>6225 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/agentspec.py#L10-L25" target="_blank" rel="noreferrer">L10–25 ↗</a></header><p>2. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   10  from kimi_cli.exception import AgentSpecError
+   11
+   12  DEFAULT_AGENT_SPEC_VERSION = &quot;1&quot;
+   13  SUPPORTED_AGENT_SPEC_VERSIONS = (DEFAULT_AGENT_SPEC_VERSION,)
+   14
+   15
+   16  def get_agents_dir() -&gt; Path:
+   17      return Path(__file__).parent / &quot;agents&quot;
+   18
+   19
+   20  DEFAULT_AGENT_FILE = get_agents_dir() / &quot;default&quot; / &quot;agent.yaml&quot;
+   21  OKABE_AGENT_FILE = get_agents_dir() / &quot;okabe&quot; / &quot;agent.yaml&quot;
+   22
+   23
+   24  class Inherit(NamedTuple):
+   25      &quot;&quot;&quot;Marker class for inheritance in agent spec.&quot;&quot;&quot;
+   26
+   27
+   28  inherit = Inherit()
+   29
+   30
+   31  class AgentSpec(BaseModel):
+   32      &quot;&quot;&quot;Agent specification.&quot;&quot;&quot;
+   33
+   34      extend: str | None = Field(default=None, description=&quot;Agent file to extend&quot;)
+   35      name: str | Inherit = Field(default=inherit, description=&quot;Agent name&quot;)  # required
+   36      system_prompt_path: Path | Inherit = Field(
+   37          default=inherit, description=&quot;System prompt path&quot;
+   38      )  # required
+   39      system_prompt_args: dict[str, str] = Field(
+   40          default_factory=dict, description=&quot;System prompt arguments&quot;
+   41      )
+   42      model: str | None = Field(default=None, description=&quot;Default model alias&quot;)</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>tests_ai/accuracy_smoke/local_kimi_cli_agent.py</b><small>1492 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests_ai/accuracy_smoke/local_kimi_cli_agent.py#L7-L22" target="_blank" rel="noreferrer">L7–22 ↗</a></header><p>3. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    7  from harbor.agents.installed.kimi_cli import KimiCli
+    8  from harbor.environments.base import BaseEnvironment
+    9
+   10
+   11  class LocalKimiCli(KimiCli):
+   12      &quot;&quot;&quot;Harbor Kimi agent that installs kimi-cli from a local wheel.&quot;&quot;&quot;
+   13
+   14      @staticmethod
+   15      def name() -&gt; str:
+   16          return &quot;kimi-cli-local&quot;
+   17
+   18      async def install(self, environment: BaseEnvironment) -&gt; None:
+   19          wheel_path = os.environ.get(&quot;KIMI_CLI_WHEEL_PATH&quot;)
+   20          if wheel_path:
+   21              wheel_file = Path(wheel_path)
+   22              if not wheel_file.is_file():
+   23                  raise ValueError(f&quot;KIMI_CLI_WHEEL_PATH does not exist: {wheel_path}&quot;)
+   24              await self.exec_as_root(
+   25                  environment,
+   26                  command=&quot;apt-get update &amp;&amp; apt-get install -y curl&quot;,
+   27                  env={&quot;DEBIAN_FRONTEND&quot;: &quot;noninteractive&quot;},
+   28              )
+   29              wheel_target = f&quot;/tmp/{wheel_file.name}&quot;
+   30              await environment.upload_file(wheel_file, wheel_target)
+   31              install_cmd = (
+   32                  &quot;set -euo pipefail; &quot;
+   33                  &quot;curl -LsSf https://astral.sh/uv/install.sh | bash &amp;&amp; &quot;
+   34                  &#39;export PATH=&quot;$HOME/.local/bin:$PATH&quot; &amp;&amp; &#39;
+   35                  f&quot;uv tool install --python 3.13 {shlex.quote(wheel_target)} &amp;&amp; &quot;
+   36                  &quot;kimi --version&quot;
+   37              )
+   38              await self.exec_as_agent(environment, command=install_cmd)
+   39              return</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>tests_ai/scripts/main.yaml</b><small>2929 bytes · .yaml</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests_ai/scripts/main.yaml#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>4. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2  agent:
+    3    extend: default
+    4    system_prompt_args:
+    5      ROLE_ADDITIONAL: |
+    6        &lt;role&gt;
+    7        !!IMPORTANT!!
+    8
+    9        You are now assigned an important task - to audit the current codebase. You shall not scan over the codebase blindly, instead, you should follow the following instructions.
+   10
+   11        There are some markdown files prefixed with `test_` in the directory the user is about to specify. Each of these files is a &quot;test&quot;, which contains the instruction to test/audit a specific aspect of the requirements/invariants we want to ensure in this codebase. The level-1 header in each of these files is the &quot;name&quot; of the &quot;test&quot;. In each of the &quot;test&quot;s, there may be one or more &quot;case&quot;s. The level-2 headers provide the &quot;name&quot;s of such &quot;case&quot;s, in the form of `Case &lt;n&gt;: &lt;case-name&gt;` or `&lt;case-name&gt;`. In each &quot;case&quot;, a &quot;Scope&quot; section and a &quot;Requirements&quot; section are given, specifying the scope in the codebase you should examine for this &quot;case&quot;, and the required invariants, respectively.
+   12
+   13        &quot;Test&quot;s are not related or dependent to each other. You should spawn as many as possible &quot;worker&quot; subagents via Task tool in parallel (in one single response) to do the audit. First, you must list/glob all the `test_*.md` files inside the directory the user is about to specify via a user message. You must not directly read the file contents after listing. Then, you must spawn a &quot;worker&quot; subagent for each of the `test_*.md` files, let the subagent read the test file content, examine all the &quot;case&quot;s in it, determine whether the &quot;case&quot;s can &quot;pass&quot; or not.
+   14
+   15        Once all `test_*.md` files are &quot;executed&quot;. You must collect the results from all the subagents and compile them into one JSON file `report.json` in the following format:
+   16
+   17        ```json
+   18        [
+   19          {
+   20            &quot;file&quot;: &quot;/path/to/the/test.md&quot;,
+   21            &quot;name&quot;: &quot;The name of the test&quot;,
+   22            &quot;cases&quot;: [
+   23              {
+   24                &quot;name&quot;: &quot;The name of the case without the Case &lt;n&gt; prefix&quot;,
+   25                &quot;pass&quot;: true  // or false if failed to pass
+   26              }
+   27            ]
+   28          }
+   29        ]
+   30        ```
+   31
+   32        The `report.json` file must be in correct JSON format, with proper character escaping. It must be written to the directory given by the user which contains all the test files.
+   33
+   34        Beside the `report.json`, you must also compile a concise human-readable summary in the final response, containing the passed and failed test cases, and suggestions on how to fix the failed ones.</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>tests_e2e/AGENTS.md</b><small>4334 bytes · .md</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests_e2e/AGENTS.md#L55-L70" target="_blank" rel="noreferrer">L55–70 ↗</a></header><p>5. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   55  **Config and Runtime Flags**
+   56  - W-25 `--config` inline: JSON/TOML string config works.
+   57  - W-28 CLI override: `--model` overrides `default_model`.
+   58  - W-30 Work dir: `prompt` asks &quot;where is the current directory&quot;, verify `--work-dir` (real LLM).
+   59
+   60  **Extensions (Agents/Skills/MCP)**
+   61  - W-31 Built-in agent boundary: `default` calling `SendDMail` fails or is rejected.
+   62  - W-32 Custom agent: `--agent-file` excludes tool and calls are rejected.
+   63  - W-33 Subagents: prompt &quot;parallel call two task tools, each runs shell sleep 0.5 and 1 second&quot;;
+   64    verify Task/SubagentEvent streaming/ToolResult/multiple approvals (real LLM).
+   65  - W-34 Skill call: create a test skill, `/skill:test` injects `SKILL.md` (wire has no `/help`).
+   66  - W-35 Flow skill: `/flow:&lt;name&gt;` runs the flow until `END`.
+   67  - W-36 MCP: use a Python fastmcp test server, load via `--mcp-config-file`, verify tool works.
+   68
+   69  **Resilience and Errors**
+   70  - W-37 Invalid JSON: malformed JSON line returns `-32700`.
+   71  - W-38 Invalid request: missing fields returns `-32600`.
+   72  - W-39 Unknown method: returns `-32601`.
+   73  - W-40 Invalid params: bad structure returns `-32602`.
+   74  - W-41 Cancel without active turn: returns `-32000`.
+   75  - W-42 LLM errors: unsupported model `-32002` and service error `-32003`.
+   76
+   77  ## Real LLM Placeholders
+   78  - W-10/W-12/W-30/W-33 require a real provider; everything else uses `_scripted_echo`.
+   79</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>tests_e2e/test_wire_sessions.py</b><small>16533 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests_e2e/test_wire_sessions.py#L23-L38" target="_blank" rel="noreferrer">L23–38 ↗</a></header><p>6. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   23  def _session_dir(home_dir: Path, work_dir: Path) -&gt; Path:
+   24      digest = hashlib.md5(str(work_dir).encode(&quot;utf-8&quot;)).hexdigest()
+   25      return share_dir(home_dir) / &quot;sessions&quot; / digest
+   26
+   27
+   28  def _count_lines(path: Path) -&gt; int:
+   29      if not path.exists():
+   30          return 0
+   31      return len(path.read_text(encoding=&quot;utf-8&quot;).splitlines())
+   32
+   33
+   34  def _read_roles(path: Path) -&gt; list[str]:
+   35      if not path.exists():
+   36          return []
+   37      roles: list[str] = []
+   38      for line in path.read_text(encoding=&quot;utf-8&quot;).splitlines():
+   39          if not line.strip():
+   40              continue
+   41          roles.append(json.loads(line)[&quot;role&quot;])
+   42      return roles
+   43
+   44
+   45  def test_session_files_created(tmp_path) -&gt; None:
+   46      config_path = write_scripted_config(tmp_path, [&quot;text: hello&quot;])
+   47      work_dir = make_work_dir(tmp_path)
+   48      home_dir = make_home_dir(tmp_path)
+   49      session_id = &quot;e2e-session&quot;
+   50
+   51      wire = start_wire(
+   52          config_path=config_path,
+   53          config_text=None,
+   54          work_dir=work_dir,
+   55          home_dir=home_dir,</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Kimi CLI sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

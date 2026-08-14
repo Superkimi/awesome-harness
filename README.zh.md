@@ -5,6 +5,9 @@
 - 中文/English 单页技术分析
 - 10 章独立小白教程页面
 - 架构图、时序图、能力图（可点击节点）
+- 每章源码地图：本地仓库命中的 6 个真实文件与固定提交短段
+- 单页实现面清单：入口、manifest、插件/MCP、测试、命令线索
+- 21 项概念审计：session log、approval、projection、jobs、transaction、queues、parallelism 等
 - 固定 commit、源码行号和 GitHub 跳转
 - 技术分析视频与章节视频的发布位
 - 旧 finding 的完整长报告保留在 site/legacy/reports/，新入口统一拆成十章教程

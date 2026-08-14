@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>MonkeyCode · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">MonkeyCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>MonkeyCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>fcc5320b15a1</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · MonkeyCode · fcc5320b15a1</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>4 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>MonkeyCode · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/monkeycode/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/monkeycode/ch07-security.srt" data-video-status="published">SRT</a><em>fcc5320b15a1</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="monkey-sandbox-001" data-finding-dimension="execution"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>execution</span></div><h3>01 · 隔离边界主要依赖仓库外 VM，Codex 内层 sandbox 明确关闭</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>平台协议申请带 host、image、CPU、memory、git 和 TTL 的 VirtualMachine；但 Codex 模板设置 sandbox_mode=danger-full-access，并将 /workspace 标为 trusted。仓库内只有 VM API 合同，没有底层 namespace/hypervisor enforcement。</p></section><section><span>白话解释</span><p>Codex 在房间里面拿的是万能钥匙；安全取决于这个“房间”到底是不是一间真正隔离的 VM，而造房间的代码不在本仓库。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署评审必须联审 codingmatrix/Taskflow 执行器，不能因类型名叫 VirtualMachine 就自动认定强隔离。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>72–81</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>82–92</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/pkg/taskflow/types.go:72–92</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   72  // VirtualMachine 虚拟机信息
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>MonkeyCode · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">MonkeyCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>MonkeyCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>fcc5320b15a1</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · MonkeyCode · fcc5320b15a1</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>4 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>MonkeyCode · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/monkeycode/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/monkeycode/ch07-security.srt" data-video-status="published">SRT</a><em>fcc5320b15a1</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="monkey-sandbox-001" data-finding-dimension="execution"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>execution</span></div><h3>01 · 隔离边界主要依赖仓库外 VM，Codex 内层 sandbox 明确关闭</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>平台协议申请带 host、image、CPU、memory、git 和 TTL 的 VirtualMachine；但 Codex 模板设置 sandbox_mode=danger-full-access，并将 /workspace 标为 trusted。仓库内只有 VM API 合同，没有底层 namespace/hypervisor enforcement。</p></section><section><span>白话解释</span><p>Codex 在房间里面拿的是万能钥匙；安全取决于这个“房间”到底是不是一间真正隔离的 VM，而造房间的代码不在本仓库。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署评审必须联审 codingmatrix/Taskflow 执行器，不能因类型名叫 VirtualMachine 就自动认定强隔离。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>72–81</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>82–92</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/pkg/taskflow/types.go:72–92</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   72  // VirtualMachine 虚拟机信息
    73  type VirtualMachine struct {
    74  	ID            string               `json:&quot;id&quot;`
    75  	AccessToken   string               `json:&quot;access_token,omitempty&quot;`
@@ -343,4 +343,196 @@
   137  	guard   *Guard
   138  	base    *http.Transport
   139  	direct  *http.Transport
-  140  	proxied *http.Transport</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>平台协议申请带 host、image、CPU、memory、git 和 TTL 的 VirtualMachine；但 Codex 模板设置 sandbox_mode=danger-full-access，并将 /workspace 标为 trusted。仓库内只有 VM API 合同，没有底层 namespace/hypervisor enforcement。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92" target="_blank" rel="noreferrer">backend/pkg/taskflow/types.go:72–92 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>AutoApprove API 只把 task ID 和布尔值传给 Taskflow；Codex 模板使用 approval_policy=untrusted，OpenCode 模板却允许 doom_loop、外部目录和 .env 读取。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L157-L163" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:157–163 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>默认限制 1000 文件、单文件 32MiB、总解压 256MiB；先查声明尺寸，再用 LimitReader 验证实际尺寸，并拒绝绝对路径、反斜线和 .. 逃逸。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/unpack.go#L12-L31" target="_blank" rel="noreferrer">backend/biz/agentresource/unpack.go:12–31 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>netguard 校验 http/https、特殊 IPv4 写法、localhost/private/metadata IP，并在 dial 时使用已验证 IP；测试覆盖十进制、八进制、十六进制、IPv6 和私有代理。然而示例配置明确为 SaaS 开启、私有化默认 false。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/netguard/guard.go#L53-L69" target="_blank" rel="noreferrer">backend/pkg/netguard/guard.go:53–69 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="MonkeyCode architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+  140  	proxied *http.Transport</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>平台协议申请带 host、image、CPU、memory、git 和 TTL 的 VirtualMachine；但 Codex 模板设置 sandbox_mode=danger-full-access，并将 /workspace 标为 trusted。仓库内只有 VM API 合同，没有底层 namespace/hypervisor enforcement。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92" target="_blank" rel="noreferrer">backend/pkg/taskflow/types.go:72–92 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>AutoApprove API 只把 task ID 和布尔值传给 Taskflow；Codex 模板使用 approval_policy=untrusted，OpenCode 模板却允许 doom_loop、外部目录和 .env 读取。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L157-L163" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:157–163 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>默认限制 1000 文件、单文件 32MiB、总解压 256MiB；先查声明尺寸，再用 LimitReader 验证实际尺寸，并拒绝绝对路径、反斜线和 .. 逃逸。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/unpack.go#L12-L31" target="_blank" rel="noreferrer">backend/biz/agentresource/unpack.go:12–31 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>netguard 校验 http/https、特殊 IPv4 写法、localhost/private/metadata IP，并在 dial 时使用已验证 IP；测试覆盖十进制、八进制、十六进制、IPv6 和私有代理。然而示例配置明确为 SaaS 开启、私有化默认 false。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/netguard/guard.go#L53-L69" target="_blank" rel="noreferrer">backend/pkg/netguard/guard.go:53–69 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>backend/biz/team/handler/http/v1/policy_route_test.go</b><small>2060 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/team/handler/http/v1/policy_route_test.go#L20-L35" target="_blank" rel="noreferrer">L20–35 ↗</a></header><p>1. 与“安全：审批、权限和边界”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   20  func TestNewTeamPolicyHandlerRegistersRoutes(t *testing.T) {
+   21  	injector := do.New()
+   22  	w := web.New()
+   23  	do.ProvideValue(injector, w)
+   24  	do.ProvideValue(injector, slog.New(slog.NewTextHandler(io.Discard, nil)))
+   25  	do.ProvideValue(injector, &amp;config.Config{})
+   26  	do.ProvideValue(injector, &amp;middleware.AuthMiddleware{})
+   27  	do.ProvideValue(injector, &amp;middleware.AuditMiddleware{})
+   28  	do.ProvideValue[domain.TeamPolicyUsecase](injector, &amp;teamPolicyUsecaseStub{})
+   29  	do.ProvideValue[domain.TeamPolicyRepo](injector, &amp;teamPolicyRepoStub{})
+   30
+   31  	if _, err := NewTeamPolicyHandler(injector); err != nil {
+   32  		t.Fatal(err)
+   33  	}
+   34
+   35  	want := map[string]bool{
+   36  		&quot;GET /api/v1/teams/task-vm-idle-policy&quot;: false,
+   37  		&quot;PUT /api/v1/teams/task-vm-idle-policy&quot;: false,
+   38  	}
+   39  	for _, route := range w.Routes() {
+   40  		key := route.Method + &quot; &quot; + route.Path
+   41  		if _, ok := want[key]; ok {
+   42  			want[key] = true
+   43  		}
+   44  	}
+   45  	for route, ok := range want {
+   46  		if !ok {
+   47  			t.Fatalf(&quot;%s route is not registered&quot;, route)
+   48  		}
+   49  	}
+   50  }
+   51
+   52  type teamPolicyUsecaseStub struct {</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>backend/biz/team/repo/policy_test.go</b><small>1218 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/team/repo/policy_test.go#L15-L30" target="_blank" rel="noreferrer">L15–30 ↗</a></header><p>2. 与“安全：审批、权限和边界”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   15  func TestTeamPolicyRepoUpdateTaskVMIdlePolicyUpdatesTaskConcurrencyLimit(t *testing.T) {
+   16  	ctx := context.Background()
+   17  	client, err := db.Open(&quot;sqlite3&quot;, &quot;file:team_policy_repo?mode=memory&amp;cache=shared&amp;_fk=1&quot;)
+   18  	if err != nil {
+   19  		t.Fatal(err)
+   20  	}
+   21  	t.Cleanup(func() { _ = client.Close() })
+   22  	if err := client.Schema.Create(ctx, schema.WithForeignKeys(false)); err != nil {
+   23  		t.Fatal(err)
+   24  	}
+   25  	teamID := uuid.New()
+   26  	if _, err := client.Team.Create().
+   27  		SetID(teamID).
+   28  		SetName(&quot;研发团队&quot;).
+   29  		SetMemberLimit(10).
+   30  		Save(ctx); err != nil {
+   31  		t.Fatal(err)
+   32  	}
+   33
+   34  	r := &amp;TeamPolicyRepo{db: client}
+   35  	got, err := r.UpdateTaskVMIdlePolicy(ctx, teamID, &amp;domain.UpdateTeamTaskVMIdlePolicyReq{
+   36  		TaskConcurrencyLimit: 6,
+   37  		SleepEnabled:         true,
+   38  		SleepSeconds:         1200,
+   39  		RecycleEnabled:       true,
+   40  		RecycleSeconds:       7200,
+   41  	})
+   42  	if err != nil {
+   43  		t.Fatal(err)
+   44  	}
+   45  	if got.TaskConcurrencyLimit != 6 {
+   46  		t.Fatalf(&quot;task concurrency limit = %d, want 6&quot;, got.TaskConcurrencyLimit)
+   47  	}</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>backend/biz/vmidle/usecase/policy_test.go</b><small>24989 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/vmidle/usecase/policy_test.go#L29-L44" target="_blank" rel="noreferrer">L29–44 ↗</a></header><p>3. 与“安全：审批、权限和边界”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   29  	policy := &amp;domain.TeamTaskVMIdlePolicy{
+   30  		TeamID:                  uuid.New(),
+   31  		SleepEnabled:            true,
+   32  		EffectiveSleepSeconds:   600,
+   33  		RecycleEnabled:          true,
+   34  		EffectiveRecycleSeconds: 3600,
+   35  	}
+   36  	schedules := []notifySchedule{{name: &quot;default&quot;, lead: 600 * time.Second, leadSeconds: 600}}
+   37
+   38  	got := buildVMIdleSchedulePlan(policy, schedules, now)
+   39  	if got.SleepAt == nil || !got.SleepAt.Equal(now.Add(600*time.Second)) {
+   40  		t.Fatalf(&quot;sleep at = %v, want %v&quot;, got.SleepAt, now.Add(600*time.Second))
+   41  	}
+   42  	if got.RecycleAt == nil || !got.RecycleAt.Equal(now.Add(3600*time.Second)) {
+   43  		t.Fatalf(&quot;recycle at = %v, want %v&quot;, got.RecycleAt, now.Add(3600*time.Second))
+   44  	}
+   45  	if len(got.NotifyJobs) != 1 || got.NotifyJobs[0].MemberSuffix != &quot;default&quot; {
+   46  		t.Fatalf(&quot;notify jobs = %#v&quot;, got.NotifyJobs)
+   47  	}
+   48  	if !got.NotifyJobs[0].RunAt.Equal(now.Add(3000 * time.Second)) {
+   49  		t.Fatalf(&quot;notify at = %v, want %v&quot;, got.NotifyJobs[0].RunAt, now.Add(3000*time.Second))
+   50  	}
+   51  }
+   52
+   53  func TestResolvePolicyForVMFallsBackToGlobalWhenTeamMissing(t *testing.T) {
+   54  	r := &amp;vmIdleRefresher{
+   55  		cfg: &amp;config.Config{VMIdle: config.VMIdle{SleepSeconds: 600, RecycleSeconds: 604800}},
+   56  	}
+   57  	vm := &amp;db.VirtualMachine{ID: &quot;vm-1&quot;}
+   58
+   59  	got, err := r.resolvePolicyForVM(context.Background(), vm)
+   60  	if err != nil {
+   61  		t.Fatal(err)</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>backend/domain/team_policy_test.go</b><small>3787 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/domain/team_policy_test.go#L12-L27" target="_blank" rel="noreferrer">L12–27 ↗</a></header><p>4. 与“安全：审批、权限和边界”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   12  func TestResolveTeamTaskVMIdlePolicyInheritsGlobalDefaults(t *testing.T) {
+   13  	team := &amp;db.Team{
+   14  		ID:                   uuid.New(),
+   15  		TaskVMSleepEnabled:   true,
+   16  		TaskVMSleepSeconds:   0,
+   17  		TaskVMRecycleEnabled: true,
+   18  		TaskVMRecycleSeconds: 0,
+   19  	}
+   20
+   21  	got, err := ResolveTeamTaskVMIdlePolicy(team, config.VMIdle{
+   22  		SleepSeconds:   600,
+   23  		RecycleSeconds: 604800,
+   24  	})
+   25  	if err != nil {
+   26  		t.Fatal(err)
+   27  	}
+   28  	if !got.SleepEnabled || got.SleepSeconds != 0 || got.EffectiveSleepSeconds != 600 || !got.SleepInherited {
+   29  		t.Fatalf(&quot;sleep policy = %#v&quot;, got)
+   30  	}
+   31  	if !got.RecycleEnabled || got.RecycleSeconds != 0 || got.EffectiveRecycleSeconds != 604800 || !got.RecycleInherited {
+   32  		t.Fatalf(&quot;recycle policy = %#v&quot;, got)
+   33  	}
+   34  }
+   35
+   36  func TestResolveTeamTaskVMIdlePolicyIncludesTaskConcurrencyLimit(t *testing.T) {
+   37  	teamID := uuid.New()
+   38  	team := &amp;db.Team{
+   39  		ID:                   teamID,
+   40  		TaskConcurrencyLimit: 5,
+   41  		TaskVMSleepEnabled:   true,
+   42  		TaskVMSleepSeconds:   0,
+   43  		TaskVMRecycleEnabled: true,
+   44  		TaskVMRecycleSeconds: 0,</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>desktop/ui-next/src/lib/ipc/approvals.test.ts</b><small>4634 bytes · .ts</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui-next/src/lib/ipc/approvals.test.ts#L36-L51" target="_blank" rel="noreferrer">L36–51 ↗</a></header><p>5. 与“安全：审批、权限和边界”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   36  describe(&quot;审批答复(permission-resp,载荷对表壳侧 session.rs)&quot;, () =&gt; {
+   37    it.each([
+   38      [&quot;allow&quot;, { approved: true, remember: false, persist: false }],
+   39      [&quot;always&quot;, { approved: true, remember: true, persist: false }],
+   40      [&quot;persist&quot;, { approved: true, remember: true, persist: true }],
+   41      [&quot;deny&quot;, { approved: false, remember: false, persist: false }],
+   42    ] as const)(&quot;动作 %s 的档位映射&quot;, async (action, expected) =&gt; {
+   43      const calls = stubShell();
+   44      await sendPermAnswer(&quot;s1&quot;, &quot;p1&quot;, action);
+   45      expect(calls).toEqual([
+   46        {
+   47          cmd: &quot;session_send&quot;,
+   48          args: { id: &quot;s1&quot;, ftype: &quot;permission-resp&quot;, payload: { id: &quot;p1&quot;, ...expected } },
+   49        },
+   50      ]);
+   51    });
+   52  });
+   53
+   54  describe(&quot;提问答复(reply-question)&quot;, () =&gt; {
+   55    it(&quot;answers_json 是 {问题: 答案} 的 JSON 字符串,多选为数组&quot;, async () =&gt; {
+   56      const calls = stubShell();
+   57      await sendAskAnswers(&quot;s1&quot;, &quot;req-1&quot;, { 用哪种方案: &quot;A&quot;, 选依赖: [&quot;x&quot;, &quot;y&quot;] });
+   58      expect(calls[0]).toEqual({
+   59        cmd: &quot;session_send&quot;,
+   60        args: {
+   61          id: &quot;s1&quot;,
+   62          ftype: &quot;reply-question&quot;,
+   63          payload: {
+   64            request_id: &quot;req-1&quot;,
+   65            answers_json: JSON.stringify({ 用哪种方案: &quot;A&quot;, 选依赖: [&quot;x&quot;, &quot;y&quot;] }),
+   66            cancelled: false,
+   67          },
+   68        },</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>backend/biz/team/handler/http/v1/policy.go</b><small>2672 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/team/handler/http/v1/policy.go#L15-L30" target="_blank" rel="noreferrer">L15–30 ↗</a></header><p>6. 与“安全：审批、权限和边界”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   15  type TeamPolicyHandler struct {
+   16  	usecase domain.TeamPolicyUsecase
+   17  	repo    domain.TeamPolicyRepo
+   18  }
+   19
+   20  func NewTeamPolicyHandler(i *do.Injector) (*TeamPolicyHandler, error) {
+   21  	w := do.MustInvoke[*web.Web](i)
+   22  	auth := do.MustInvoke[*middleware.AuthMiddleware](i)
+   23  	audit := do.MustInvoke[*middleware.AuditMiddleware](i)
+   24
+   25  	h := &amp;TeamPolicyHandler{
+   26  		usecase: do.MustInvoke[domain.TeamPolicyUsecase](i),
+   27  		repo:    do.MustInvoke[domain.TeamPolicyRepo](i),
+   28  	}
+   29
+   30  	adminAuth := middleware.TeamAdminAuth(func(ctx context.Context, teamID, userID uuid.UUID) bool {
+   31  		member, err := h.repo.GetMember(ctx, teamID, userID)
+   32  		if err != nil {
+   33  			return false
+   34  		}
+   35  		return member.Role == consts.TeamMemberRoleAdmin
+   36  	})
+   37
+   38  	g := w.Group(&quot;/api/v1/teams/task-vm-idle-policy&quot;)
+   39  	g.GET(&quot;&quot;, web.BaseHandler(h.Get), auth.TeamAuth())
+   40  	g.PUT(&quot;&quot;, web.BindHandler(h.Update), auth.TeamAuth(), adminAuth, audit.Audit(&quot;update_team_task_vm_idle_policy&quot;))
+   41
+   42  	return h, nil
+   43  }
+   44
+   45  // Get 获取任务开发环境空闲策略
+   46  //
+   47  //	@Summary		获取任务开发环境空闲策略</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="MonkeyCode architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

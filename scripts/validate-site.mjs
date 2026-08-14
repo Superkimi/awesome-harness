@@ -52,6 +52,8 @@ for (const project of projects) {
     assert(analysis.includes("report-hero-v2"), `${project.slug}/${lang}: analysis did not use the detailed report shell`);
     assert((analysis.match(/class="finding-card/g) || []).length >= 1, `${project.slug}/${lang}: analysis has no source finding cards`);
     assert((analysis.match(/class="diagram-figure/g) || []).length === 3, `${project.slug}/${lang}: analysis does not embed three diagram figures`);
+    assert(analysis.includes("implementation-inventory"), `${project.slug}/${lang}: analysis has no source implementation inventory`);
+    assert(analysis.includes("concept-audit"), `${project.slug}/${lang}: analysis has no requested-concept audit`);
     for (const type of ["architecture", "sequence", "capability"]) {
       const diagram = fs.readFileSync(path.join(base, "diagrams", `${type}.html`), "utf8");
       assert(diagram.includes("ARCHIFY-READY") || diagram.includes("archify-guided-views-data"), `${project.slug}/${lang}/${type}: diagram is missing Archify handoff marker`);
@@ -59,6 +61,11 @@ for (const project of projects) {
     }
     const firstChapter = fs.readFileSync(path.join(base, "tutorial", `ch${chapterDefs[0].number}-${chapterDefs[0].id}.html`), "utf8");
     assert(firstChapter.includes("Evidence board") || firstChapter.includes("本章证据板"), `${project.slug}/${lang}: chapter is not evidence-led`);
+    for (const chapter of chapterDefs) {
+      const chapterHtml = fs.readFileSync(path.join(base, "tutorial", `ch${chapter.number}-${chapter.id}.html`), "utf8");
+      assert(chapterHtml.includes("source-reading-map"), `${project.slug}/${lang}/${chapter.id}: chapter has no source reading map`);
+      assert(chapterHtml.includes("mechanism-panel"), `${project.slug}/${lang}/${chapter.id}: chapter has no execution-semantics panel`);
+    }
   }
 }
 

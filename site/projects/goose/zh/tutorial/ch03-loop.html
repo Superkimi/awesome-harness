@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="一次用户请求如何变成多步执行？"><title>Goose · M03 · 主循环：任务为什么会继续推进</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Goose · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch03-loop.html">中</a><a href="../../en/tutorial/ch03-loop.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Goose</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="active" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>11deb564d09d</div></aside><main><section class="chapter-hero"><p class="eyebrow">M03 · Goose · 11deb564d09d</p><h1>主循环：任务为什么会继续推进</h1><p class="lede">一次用户请求如何变成多步执行？</p><div class="chapter-meta"><span>第 3 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M03</span><b>Goose · M03 · 主循环：任务为什么会继续推进</b></div><div class="video-links"><a href="../../../../videos/goose/ch03-loop.mp4" data-video-status="published">MP4</a><a href="../../../../videos/goose/ch03-loop.srt" data-video-status="published">SRT</a><em>11deb564d09d</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像快递员看回执：拿到任务、写一张行动单、执行、把回执放回桌面，再决定是否继续。</p></div><h2>先回答本章问题</h2><p>一次用户请求如何变成多步执行？ 它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="goose-loop-001" data-finding-dimension="loop"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>01 · 单一流式 Agent 循环驱动推理、工具和持久化</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>reply_internal 在一个有界 loop 中调用 provider stream，消费增量消息，执行工具，把结果加入会话，再决定继续、重试、压缩或结束。</p></section><section><span>白话解释</span><p>它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Harness 的真正核心是状态机而不是提示词；重试、转向、停止钩子和上下文恢复都进入同一控制环。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1930–1985</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1986–2043</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><div class="finding-caveat"><span>边界 / 风险</span><ul><li>默认最大 turn 是 1000，不代表每次任务都会接近该值；会话配置和环境参数可覆盖。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · 021b0db8dbee · <a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L1930-L2043" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/goose/src/agents/agent.rs:1930–2043</span><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L1930-L2043" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1930          let inner = Box::pin(async_stream::try_stream! {
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="一次用户请求如何变成多步执行？"><title>Goose · M03 · 主循环：任务为什么会继续推进</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Goose · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch03-loop.html">中</a><a href="../../en/tutorial/ch03-loop.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Goose</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="active" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>11deb564d09d</div></aside><main><section class="chapter-hero"><p class="eyebrow">M03 · Goose · 11deb564d09d</p><h1>主循环：任务为什么会继续推进</h1><p class="lede">一次用户请求如何变成多步执行？</p><div class="chapter-meta"><span>第 3 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M03</span><b>Goose · M03 · 主循环：任务为什么会继续推进</b></div><div class="video-links"><a href="../../../../videos/goose/ch03-loop.mp4" data-video-status="published">MP4</a><a href="../../../../videos/goose/ch03-loop.srt" data-video-status="published">SRT</a><em>11deb564d09d</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像快递员看回执：拿到任务、写一张行动单、执行、把回执放回桌面，再决定是否继续。</p></div><h2>先回答本章问题</h2><p>一次用户请求如何变成多步执行？ 它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="goose-loop-001" data-finding-dimension="loop"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>01 · 单一流式 Agent 循环驱动推理、工具和持久化</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>reply_internal 在一个有界 loop 中调用 provider stream，消费增量消息，执行工具，把结果加入会话，再决定继续、重试、压缩或结束。</p></section><section><span>白话解释</span><p>它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Harness 的真正核心是状态机而不是提示词；重试、转向、停止钩子和上下文恢复都进入同一控制环。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1930–1985</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1986–2043</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><div class="finding-caveat"><span>边界 / 风险</span><ul><li>默认最大 turn 是 1000，不代表每次任务都会接近该值；会话配置和环境参数可覆盖。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · 021b0db8dbee · <a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L1930-L2043" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/goose/src/agents/agent.rs:1930–2043</span><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L1930-L2043" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1930          let inner = Box::pin(async_stream::try_stream! {
  1931              let mut turns_taken = 0u32;
  1932              let max_turns = session_config.max_turns.unwrap_or_else(|| {
  1933                  Config::global()
@@ -532,4 +532,139 @@
   147
   148  /// Context needed for the reply function
   149  pub struct ReplyContext {
-  150      pub conversation: Conversation,</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">LOOP · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>reply_internal 在一个有界 loop 中调用 provider stream，消费增量消息，执行工具，把结果加入会话，再决定继续、重试、压缩或结束。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L1930-L2043" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:1930–2043 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L67-L79" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:67–79 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L67-L79" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:67–79 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L67-L79" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:67–79 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="Goose capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch02-architecture.html">← 架构：有哪些层，谁负责什么</a><a href="ch04-model.html">模型与消息：流式结果如何进入状态 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+  150      pub conversation: Conversation,</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">LOOP · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>reply_internal 在一个有界 loop 中调用 provider stream，消费增量消息，执行工具，把结果加入会话，再决定继续、重试、压缩或结束。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L1930-L2043" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:1930–2043 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L67-L79" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:67–79 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L67-L79" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:67–79 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>空模型响应最多重试 3 次；阻塞停止的插件 hook 连续超过可配置上限后会被强制覆盖，避免无限循环。</blockquote><a href="https://github.com/aaif-goose/goose/blob/021b0db8dbee8d6c7e9ffbab580a4143598a3560/crates/goose/src/agents/agent.rs#L67-L79" target="_blank" rel="noreferrer">crates/goose/src/agents/agent.rs:67–79 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>crates/goose-cli/src/scenario_tests/scenario_runner.rs</b><small>10787 bytes · .rs</small></div><a href="https://github.com/aaif-goose/goose/blob/11deb564d09db782a17878af7cfafd299d9fa461/crates/goose-cli/src/scenario_tests/scenario_runner.rs#L76-L91" target="_blank" rel="noreferrer">L76–91 ↗</a></header><p>1. 与“主循环：任务为什么会继续推进”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   76          return Ok(());
+   77      }
+   78
+   79      let excluded_providers: HashSet&lt;_&gt; = providers_to_skip
+   80          .into_iter()
+   81          .flatten()
+   82          .map(|name| name.to_lowercase())
+   83          .collect();
+   84
+   85      let all_configs = get_provider_configs();
+   86
+   87      let all_config_len = all_configs.len();
+   88
+   89      let configs_to_test: Vec&lt;_&gt; = all_configs
+   90          .into_iter()
+   91          .filter(|c| !excluded_providers.contains(&amp;c.name.to_lowercase()))
+   92          .collect();
+   93
+   94      if let Some(to_skip) = providers_to_skip {
+   95          if configs_to_test.len() != all_config_len - to_skip.len() {
+   96              return Err(anyhow::anyhow!(&quot;Some providers in skip list don&#39;t exist&quot;));
+   97          }
+   98      }
+   99
+  100      let mut failures = Vec::new();
+  101
+  102      for config in configs_to_test {
+  103          match run_provider_scenario_with_validation(
+  104              config,
+  105              test_name,
+  106              &amp;message_generator,
+  107              &amp;validator,
+  108          )</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>crates/goose/tests/mcp_replays/uvrun--withfastmcp==2.14.4fastmcpruntests_fastmcp_test_server.py</b><small>5946 bytes · .py</small></div><a href="https://github.com/aaif-goose/goose/blob/11deb564d09db782a17878af7cfafd299d9fa461/crates/goose/tests/mcp_replays/uvrun--withfastmcp==2.14.4fastmcpruntests_fastmcp_test_server.py#L36-L43" target="_blank" rel="noreferrer">L36–43 ↗</a></header><p>2. 与“主循环：任务为什么会继续推进”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   36  STDERR:   return self.connection_class(**self.connection_kwargs)
+   37  STDOUT: {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:0,&quot;result&quot;:{&quot;protocolVersion&quot;:&quot;2025-11-25&quot;,&quot;capabilities&quot;:{&quot;experimental&quot;:{},&quot;prompts&quot;:{&quot;listChanged&quot;:false},&quot;resources&quot;:{&quot;subscribe&quot;:false,&quot;listChanged&quot;:false},&quot;tools&quot;:{&quot;listChanged&quot;:true},&quot;tasks&quot;:{&quot;list&quot;:{},&quot;cancel&quot;:{},&quot;requests&quot;:{&quot;tools&quot;:{&quot;call&quot;:{}},&quot;prompts&quot;:{&quot;get&quot;:{}},&quot;resources&quot;:{&quot;read&quot;:{}}}}},&quot;serverInfo&quot;:{&quot;name&quot;:&quot;mymcp&quot;,&quot;version&quot;:&quot;2.14.4&quot;}}}
+   38  STDIN: {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;method&quot;:&quot;notifications/initialized&quot;}
+   39  STDIN: {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/list&quot;,&quot;params&quot;:{&quot;_meta&quot;:{&quot;agent-session-id&quot;:&quot;test-session-id&quot;,&quot;progressToken&quot;:0}}}
+   40  STDOUT: {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;result&quot;:{&quot;tools&quot;:[{&quot;name&quot;:&quot;divide&quot;,&quot;description&quot;:&quot;Divide two numbers and return the result.&quot;,&quot;inputSchema&quot;:{&quot;properties&quot;:{&quot;dividend&quot;:{&quot;description&quot;:&quot;Dividend/numerator of the division.&quot;,&quot;type&quot;:&quot;number&quot;},&quot;divisor&quot;:{&quot;description&quot;:&quot;Divisor/denominator of the division.&quot;,&quot;type&quot;:&quot;number&quot;}},&quot;required&quot;:[&quot;dividend&quot;,&quot;divisor&quot;],&quot;type&quot;:&quot;object&quot;},&quot;outputSchema&quot;:{&quot;description&quot;:&quot;Generic wrapper for non-object return types.&quot;,&quot;properties&quot;:{&quot;result&quot;:{&quot;type&quot;:&quot;number&quot;}},&quot;required&quot;:[&quot;result&quot;],&quot;type&quot;:&quot;object&quot;,&quot;x-fastmcp-wrap-result&quot;:true},&quot;_meta&quot;:{&quot;_fastmcp&quot;:{&quot;tags&quot;:[]}}}]}}
+   41  STDIN: {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:2,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;_meta&quot;:{&quot;agent-session-id&quot;:&quot;test-session-id&quot;,&quot;agent-tool-call-request-id&quot;:&quot;test-id&quot;,&quot;progressToken&quot;:1},&quot;name&quot;:&quot;divide&quot;,&quot;arguments&quot;:{&quot;dividend&quot;:10,&quot;divisor&quot;:2}}}
+   42  STDOUT: {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:2,&quot;result&quot;:{&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;5.0&quot;}],&quot;structuredContent&quot;:{&quot;result&quot;:5.0},&quot;isError&quot;:false}}
+   43</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>crates/goose/tests/mcp_replays/uvrun--withfastmcp==2.14.4fastmcpruntests_fastmcp_test_server.py.results.json</b><small>172 bytes · .json</small></div><a href="https://github.com/aaif-goose/goose/blob/11deb564d09db782a17878af7cfafd299d9fa461/crates/goose/tests/mcp_replays/uvrun--withfastmcp==2.14.4fastmcpruntests_fastmcp_test_server.py.results.json#L1-L14" target="_blank" rel="noreferrer">L1–14 ↗</a></header><p>3. 与“主循环：任务为什么会继续推进”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  [
+    2    {
+    3      &quot;content&quot;: [
+    4        {
+    5          &quot;type&quot;: &quot;text&quot;,
+    6          &quot;text&quot;: &quot;5.0&quot;
+    7        }
+    8      ],
+    9      &quot;structuredContent&quot;: {
+   10        &quot;result&quot;: 5.0
+   11      },
+   12      &quot;isError&quot;: false
+   13    }
+   14  ]</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>crates/goose/tests/tetrate_streaming.rs</b><small>10870 bytes · .rs</small></div><a href="https://github.com/aaif-goose/goose/blob/11deb564d09db782a17878af7cfafd299d9fa461/crates/goose/tests/tetrate_streaming.rs#L22-L37" target="_blank" rel="noreferrer">L22–37 ↗</a></header><p>4. 与“主循环：任务为什么会继续推进”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   22      #[ignore] // Ignore by default, run with --ignored flag when API key is available
+   23      async fn test_tetrate_streaming_basic() -&gt; Result&lt;()&gt; {
+   24          let provider = create_test_provider().await?;
+   25
+   26          let messages = vec![Message::user().with_text(&quot;Count from 1 to 5, one number at a time.&quot;)];
+   27          let model_config =
+   28              ModelConfig::new(&quot;claude-3-5-sonnet-latest&quot;).with_canonical_limits(&quot;tetrate&quot;);
+   29
+   30          let mut stream = provider
+   31              .stream(
+   32                  &amp;model_config,
+   33                  &quot;You are a helpful assistant that counts numbers.&quot;,
+   34                  &amp;messages,
+   35                  &amp;[],
+   36              )
+   37              .await?;
+   38
+   39          let mut chunk_count = 0;
+   40          let mut content_chunks = Vec::new();
+   41
+   42          while let Some(result) = stream.next().await {
+   43              let (message, usage) = result?;
+   44              chunk_count += 1;
+   45
+   46              if let Some(msg) = message {
+   47                  let text = msg.as_concat_text();
+   48                  if !text.is_empty() {
+   49                      content_chunks.push(text);
+   50                  }
+   51              }
+   52
+   53              // Check if we have usage information in the final chunk
+   54              if usage.is_some() {</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>documentation/src/components/DesktopAutoUpdateSteps.js</b><small>1033 bytes · .js</small></div><a href="https://github.com/aaif-goose/goose/blob/11deb564d09db782a17878af7cfafd299d9fa461/documentation/src/components/DesktopAutoUpdateSteps.js#L5-L20" target="_blank" rel="noreferrer">L5–20 ↗</a></header><p>5. 与“主循环：任务为什么会继续推进”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    5    return (
+    6      &lt;&gt;
+    7        &lt;p&gt;&lt;strong&gt;To automatically download and install updates:&lt;/strong&gt;&lt;/p&gt;
+    8        &lt;ol&gt;
+    9          &lt;li&gt;Click the &lt;PanelLeft className=&quot;inline&quot; size={16} /&gt; button in the top-left to open the sidebar&lt;/li&gt;
+   10          &lt;li&gt;Click &lt;code&gt;Settings&lt;/code&gt; in the sidebar&lt;/li&gt;
+   11          &lt;li&gt;Click &lt;code&gt;App&lt;/code&gt;&lt;/li&gt;
+   12          &lt;li&gt;Scroll down to the &lt;code&gt;Updates&lt;/code&gt; section:
+   13            &lt;ul&gt;
+   14              &lt;li&gt;Check if your current version is &quot;up to date&quot; or if a newer version is available&lt;/li&gt;
+   15              &lt;li&gt;To automatically download the newer version, click &lt;code&gt;Check for Updates&lt;/code&gt;&lt;/li&gt;
+   16            &lt;/ul&gt;
+   17          &lt;/li&gt;
+   18          &lt;li&gt;Click &lt;code&gt;Install &amp; Restart&lt;/code&gt; to immediately relaunch goose Desktop and apply the update&lt;br /&gt;
+   19              &lt;strong&gt;Note:&lt;/strong&gt; If the app can&#39;t be automatically updated, you&#39;ll be prompted to manually install the downloaded version&lt;/li&gt;
+   20        &lt;/ol&gt;
+   21      &lt;/&gt;
+   22    );
+   23  };
+   24</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>scripts/run-benchmarks.sh</b><small>12034 bytes · .sh</small></div><a href="https://github.com/aaif-goose/goose/blob/11deb564d09db782a17878af7cfafd299d9fa461/scripts/run-benchmarks.sh#L146-L161" target="_blank" rel="noreferrer">L146–161 ↗</a></header><p>6. 与“主循环：任务为什么会继续推进”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  146  # Loop through each provider-model pair
+  147  for ((i=0; i&lt;$COUNT; i++)); do
+  148    provider=&quot;${PROVIDERS[i]}&quot;
+  149    model=&quot;${MODELS[i]}&quot;
+  150
+  151    echo &quot;==========================================================&quot;
+  152    echo &quot;Provider: $provider, Model: $model&quot;
+  153    echo &quot;==========================================================&quot;
+  154
+  155    echo &quot;## Provider: $provider, Model: $model&quot; &gt;&gt; &quot;$SUMMARY_FILE&quot;
+  156
+  157    # Set environment variables for this provider/model instead of using configure
+  158    export GOOSE_PROVIDER=&quot;$provider&quot;
+  159    export GOOSE_MODEL=&quot;$model&quot;
+  160
+  161    # Set toolshim environment variables if enabled
+  162    if [ &quot;$TOOLSHIM&quot; = true ]; then
+  163      export GOOSE_TOOLSHIM=1
+  164      if [[ -n &quot;$TOOLSHIM_MODEL&quot; ]]; then
+  165        export GOOSE_TOOLSHIM_OLLAMA_MODEL=&quot;$TOOLSHIM_MODEL&quot;
+  166      fi
+  167    fi
+  168
+  169    # Run the benchmark and save results to JSON
+  170    echo &quot;Running benchmark for $provider/$model with suites: $SUITES&quot;
+  171    OUTPUT_FILE=&quot;$OUTPUT_DIR/${provider}-${model}.json&quot;
+  172    ANALYSIS_FILE=&quot;$OUTPUT_DIR/${provider}-${model}-analysis.txt&quot;
+  173
+  174    if $GOOSE_CMD bench --suites &quot;$SUITES&quot; --output &quot;$OUTPUT_FILE&quot; --format json; then
+  175      echo &quot;✅ Benchmark completed successfully&quot; | tee -a &quot;$SUMMARY_FILE&quot;
+  176
+  177      # Parse the JSON to check for failures
+  178      if [ -f &quot;$OUTPUT_FILE&quot; ]; then</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="Goose capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch02-architecture.html">← 架构：有哪些层，谁负责什么</a><a href="ch04-model.html">模型与消息：流式结果如何进入状态 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

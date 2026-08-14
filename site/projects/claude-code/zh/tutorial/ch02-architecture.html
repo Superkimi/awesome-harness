@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>Claude Code（复原） · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Claude Code（复原） · 3bb6b5746238</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Claude Code（复原） · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch02-architecture.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 是一个持续循环的消息变换与工具执行流水线</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</p></section><section><span>白话解释</span><p>每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文、工具、权限和恢复都在同一编排循环交汇，修改其中任何一步都可能影响缓存与 transcript 一致性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>460–562</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>563–666</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:460–666</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  460    while (true) {
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>Claude Code（复原） · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Claude Code（复原） · 3bb6b5746238</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Claude Code（复原） · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch02-architecture.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 是一个持续循环的消息变换与工具执行流水线</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</p></section><section><span>白话解释</span><p>每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文、工具、权限和恢复都在同一编排循环交汇，修改其中任何一步都可能影响缓存与 transcript 一致性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>460–562</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>563–666</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:460–666</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  460    while (true) {
   461      // Destructure state at the top of each iteration. toolUseContext alone
   462      // is reassigned within an iteration (queryTracking, messages updates);
   463      // the rest are read-only between continue sites.
@@ -499,4 +499,194 @@
  1192                  innerError.originalModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
  1193                fallback_model:
  1194                  fallbackModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
- 1195                entrypoint:</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">src/query.ts:460–666 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Claude Code（复原） sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+ 1195                entrypoint:</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">src/query.ts:460–666 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>src/services/acp/agent/createSessionMethod.ts</b><small>11039 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/acp/agent/createSessionMethod.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>1. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2   * AcpAgent.prototype.createSession implementation, attached via Object.assign.
+    3   * Extracted from sessionLifecycle.ts to keep that module under the 500-line
+    4   * budget. The barrel (./index.ts) imports this module for its side effect.
+    5   */
+    6  import { randomUUID } from &#39;node:crypto&#39;
+    7  import type {
+    8    NewSessionRequest,
+    9    NewSessionResponse,
+   10    SessionModeState,
+   11    SessionModelState,
+   12  } from &#39;@agentclientprotocol/sdk&#39;
+   13  import type { Message } from &#39;../../../types/message.js&#39;
+   14  import { QueryEngine } from &#39;../../../QueryEngine.js&#39;
+   15  import type { QueryEngineConfig } from &#39;../../../QueryEngine.js&#39;
+   16  import type { Tools } from &#39;../../../Tool.js&#39;
+   17  import { getTools } from &#39;../../../tools.js&#39;
+   18  import { getEmptyToolPermissionContext } from &#39;../../../Tool.js&#39;
+   19  import type { PermissionMode } from &#39;../../../types/permissions.js&#39;
+   20  import { getCommands } from &#39;../../../commands.js&#39;
+   21  import { getAgentDefinitionsWithOverrides } from &#39;@claude-code-best/builtin-tools/tools/AgentTool/loadAgentsDir.js&#39;
+   22  import {
+   23    setOriginalCwd,
+   24    switchSession,
+   25    getSessionProjectDir,
+   26  } from &#39;../../../bootstrap/state.js&#39;
+   27  import type { SessionId } from &#39;../../../types/ids.js&#39;
+   28  import { enableConfigs } from &#39;../../../utils/config.js&#39;
+   29  import { applySafeConfigEnvironmentVariables } from &#39;../../../utils/managedEnv.js&#39;
+   30  import { resetSettingsCache } from &#39;../../../utils/settings/settingsCache.js&#39;
+   31  import { FileStateCache } from &#39;../../../utils/fileStateCache.js&#39;
+   32  import { getDefaultAppState } from &#39;../../../state/AppStateStore.js&#39;
+   33  import type { AppState } from &#39;../../../state/AppStateStore.js&#39;
+   34  import { createAcpCanUseTool } from &#39;../permissions.js&#39;</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>src/services/acp/agent/sessionLifecycle.ts</b><small>9095 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/acp/agent/sessionLifecycle.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>2. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2   * Session-lifecycle methods for AcpAgent (excluding createSession, which
+    3   * lives in ./createSessionMethod.ts), attached to the prototype via
+    4   * Object.assign. The barrel (./index.ts) imports this module for its side
+    5   * effect so the prototype is populated before any instance is built.
+    6   *
+    7   * Methods attached here: getOrCreateSession, teardownSession,
+    8   * replaySessionHistory, applySessionMode, updateConfigOption.
+    9   */
+   10  import { type UUID } from &#39;node:crypto&#39;
+   11  import { dirname } from &#39;node:path&#39;
+   12  import type {
+   13    NewSessionRequest,
+   14    NewSessionResponse,
+   15  } from &#39;@agentclientprotocol/sdk&#39;
+   16  import type { Message } from &#39;../../../types/message.js&#39;
+   17  import { deserializeMessages } from &#39;../../../utils/conversationRecovery.js&#39;
+   18  import { getLastSessionLog } from &#39;../../../utils/sessionStorage.js&#39;
+   19  import type { PermissionMode } from &#39;../../../types/permissions.js&#39;
+   20  import { setOriginalCwd, switchSession } from &#39;../../../bootstrap/state.js&#39;
+   21  import type { SessionId } from &#39;../../../types/ids.js&#39;
+   22  import { replayHistoryMessages } from &#39;../bridge.js&#39;
+   23  import { computeSessionFingerprint } from &#39;../utils.js&#39;
+   24  import { resolveSessionFilePath } from &#39;../../../utils/sessionStoragePortable.js&#39;
+   25  import { AcpAgent } from &#39;./AcpAgent.js&#39;
+   26  import type { AcpSession } from &#39;./sessionTypes.js&#39;
+   27  import { isPermissionMode } from &#39;./permissionMode.js&#39;
+   28  import {
+   29    getConnection,
+   30    readClientCapabilities,
+   31    syncSessionConfigState,
+   32  } from &#39;./internalAccessors.js&#39;
+   33
+   34  // ── getOrCreateSession ───────────────────────────────────────────</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>src/services/acp/agent/sessionTypes.ts</b><small>1087 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/acp/agent/sessionTypes.ts#L6-L21" target="_blank" rel="noreferrer">L6–21 ↗</a></header><p>3. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    6  } from &#39;@agentclientprotocol/sdk&#39;
+    7  import type { QueryEngine } from &#39;../../../QueryEngine.js&#39;
+    8  import type { Command } from &#39;../../../types/command.js&#39;
+    9  import type { AppState } from &#39;../../../state/AppStateStore.js&#39;
+   10  import type { ToolUseCache } from &#39;../bridge.js&#39;
+   11
+   12  // ── Session state ─────────────────────────────────────────────────
+   13
+   14  export type AcpSession = {
+   15    queryEngine: QueryEngine
+   16    cancelled: boolean
+   17    cancelGeneration: number
+   18    cwd: string
+   19    sessionFingerprint: string
+   20    modes: SessionModeState
+   21    models: SessionModelState
+   22    configOptions: SessionConfigOption[]
+   23    promptRunning: boolean
+   24    pendingMessages: Map&lt;string, PendingPrompt&gt;
+   25    pendingQueue: string[]
+   26    pendingQueueHead: number
+   27    toolUseCache: ToolUseCache
+   28    clientCapabilities?: ClientCapabilities
+   29    appState: AppState
+   30    commands: Command[]
+   31  }
+   32
+   33  export type PendingPrompt = {
+   34    resolve: (cancelled: boolean) =&gt; void
+   35  }
+   36</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>src/tasks/LocalMainSessionTask.ts</b><small>15541 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/tasks/LocalMainSessionTask.ts#L9-L24" target="_blank" rel="noreferrer">L9–24 ↗</a></header><p>4. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    9   * This reuses the LocalAgentTask state structure since the behavior is similar.
+   10   */
+   11
+   12  import type { UUID } from &#39;crypto&#39;
+   13  import { randomBytes } from &#39;crypto&#39;
+   14  import {
+   15    OUTPUT_FILE_TAG,
+   16    STATUS_TAG,
+   17    SUMMARY_TAG,
+   18    TASK_ID_TAG,
+   19    TASK_NOTIFICATION_TAG,
+   20    TOOL_USE_ID_TAG,
+   21  } from &#39;../constants/xml.js&#39;
+   22  import { type QueryParams, query } from &#39;../query.js&#39;
+   23  import { roughTokenCountEstimation } from &#39;../services/tokenEstimation.js&#39;
+   24  import type { SetAppState } from &#39;../Task.js&#39;
+   25  import { createTaskStateBase } from &#39;../Task.js&#39;
+   26  import type {
+   27    AgentDefinition,
+   28    CustomAgentDefinition,
+   29  } from &#39;@claude-code-best/builtin-tools/tools/AgentTool/loadAgentsDir.js&#39;
+   30  import { asAgentId } from &#39;../types/ids.js&#39;
+   31  import type { Message } from &#39;../types/message.js&#39;
+   32  import { createAbortController } from &#39;../utils/abortController.js&#39;
+   33  import {
+   34    runWithAgentContext,
+   35    type SubagentContext,
+   36  } from &#39;../utils/agentContext.js&#39;
+   37  import { registerCleanup } from &#39;../utils/cleanupRegistry.js&#39;
+   38  import { logForDebugging } from &#39;../utils/debug.js&#39;
+   39  import { logError } from &#39;../utils/log.js&#39;
+   40  import { enqueuePendingNotification } from &#39;../utils/messageQueueManager.js&#39;
+   41  import { emitTaskTerminatedSdk } from &#39;../utils/sdkEventQueue.js&#39;</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>src/utils/agenticSessionSearch.ts</b><small>10067 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/agenticSessionSearch.ts#L50-L65" target="_blank" rel="noreferrer">L50–65 ↗</a></header><p>5. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   50  type AgenticSearchResult = {
+   51    relevant_indices: number[]
+   52  }
+   53
+   54  /**
+   55   * Extracts searchable text content from a message.
+   56   */
+   57  function extractMessageText(message: SerializedMessage): string {
+   58    if (message.type !== &#39;user&#39; &amp;&amp; message.type !== &#39;assistant&#39;) {
+   59      return &#39;&#39;
+   60    }
+   61
+   62    const content = &#39;message&#39; in message ? message.message?.content : undefined
+   63    if (!content) return &#39;&#39;
+   64
+   65    if (typeof content === &#39;string&#39;) {
+   66      return content
+   67    }
+   68
+   69    if (Array.isArray(content)) {
+   70      return content
+   71        .map(block =&gt; {
+   72          if (typeof block === &#39;string&#39;) return block
+   73          if (&#39;text&#39; in block &amp;&amp; typeof block.text === &#39;string&#39;) return block.text
+   74          return &#39;&#39;
+   75        })
+   76        .filter(Boolean)
+   77        .join(&#39; &#39;)
+   78    }
+   79
+   80    return &#39;&#39;
+   81  }
+   82</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>src/services/acp/__tests__/agent.test.ts</b><small>51769 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/acp/__tests__/agent.test.ts#L199-L214" target="_blank" rel="noreferrer">L199–214 ↗</a></header><p>6. 与“架构：有哪些层，谁负责什么”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  199  const { AcpAgent } = await import(&#39;../agent.js&#39;)
+  200  const { forwardSessionUpdates } = await import(&#39;../bridge.js&#39;)
+  201
+  202  // ── Helpers ───────────────────────────────────────────────────────
+  203
+  204  function makeConn() {
+  205    return {
+  206      sessionUpdate: mock(async () =&gt; {}),
+  207      requestPermission: mock(async () =&gt; ({
+  208        outcome: { outcome: &#39;cancelled&#39; },
+  209      })),
+  210    } as any
+  211  }
+  212
+  213  function removeBypassMode(session: any) {
+  214    session.modes = {
+  215      ...session.modes,
+  216      availableModes: session.modes.availableModes.filter(
+  217        (mode: any) =&gt; mode.id !== &#39;bypassPermissions&#39;,
+  218      ),
+  219    }
+  220    session.appState.toolPermissionContext = {
+  221      ...session.appState.toolPermissionContext,
+  222      isBypassPermissionsModeAvailable: false,
+  223    }
+  224  }
+  225
+  226  function restoreEnv(name: string, value: string | undefined) {
+  227    if (value === undefined) {
+  228      delete process.env[name]
+  229    } else {
+  230      process.env[name] = value
+  231    }</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Claude Code（复原） sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

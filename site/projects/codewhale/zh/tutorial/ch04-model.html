@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>CodeWhale · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · CodeWhale · cfc2f2b13c07</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>7 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>CodeWhale · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch04-model.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：7 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 单轮流式循环有取消、steer、工具预算和子 Agent 结果注入</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>handle_deepseek_turn 为一个外部用户 turn 保留 StuckGuard、ReadRepeatGuard、context recovery counter、ToolCallBudget、goal continuation counter 和 stream retry counter；每次 provider 请求前检查取消、runtime authority、steer 输入、子 Agent completion、max steps 与目标 token budget。</p></section><section><span>白话解释</span><p>模型还在思考时，用户可以插话；子 Agent 做完的结果会在下一次请求前被父 Agent 看见；工具调用总数和流断线重试都有单轮账本。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Steer、cancel 和 child completion 都应在 provider request boundary 注入，才能避免“已取消但又发了一次请求”。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>364–387</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>388–412</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L364-L412" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine/turn_loop.rs:364–412</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L364-L412" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  364      pub(super) async fn handle_deepseek_turn(
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>CodeWhale · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · CodeWhale · cfc2f2b13c07</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>7 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>CodeWhale · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch04-model.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：7 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 单轮流式循环有取消、steer、工具预算和子 Agent 结果注入</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>handle_deepseek_turn 为一个外部用户 turn 保留 StuckGuard、ReadRepeatGuard、context recovery counter、ToolCallBudget、goal continuation counter 和 stream retry counter；每次 provider 请求前检查取消、runtime authority、steer 输入、子 Agent completion、max steps 与目标 token budget。</p></section><section><span>白话解释</span><p>模型还在思考时，用户可以插话；子 Agent 做完的结果会在下一次请求前被父 Agent 看见；工具调用总数和流断线重试都有单轮账本。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Steer、cancel 和 child completion 都应在 provider request boundary 注入，才能避免“已取消但又发了一次请求”。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>364–387</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>388–412</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L364-L412" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine/turn_loop.rs:364–412</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L364-L412" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  364      pub(super) async fn handle_deepseek_turn(
   365          &amp;mut self,
   366          turn: &amp;mut TurnContext,
   367          tool_policy: ToolSurfacePolicy,
@@ -1702,4 +1702,196 @@
    91      #[allow(dead_code)]
    92      pub const fn with_token_budget(token_budget: u64) -&gt; Self {
    93          Self {
-   94              token_budget: Some(token_budget),</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>handle_deepseek_turn 为一个外部用户 turn 保留 StuckGuard、ReadRepeatGuard、context recovery counter、ToolCallBudget、goal continuation counter 和 stream retry counter；每次 provider 请求前检查取消、runtime authority、steer 输入、子 Agent completion、max steps 与目标 token budget。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L364-L412" target="_blank" rel="noreferrer">crates/tui/src/core/engine/turn_loop.rs:364–412 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>turn loop 在构造 request 前用 PrefixStabilityManager 对 system prompt 和 active tools 做 fingerprint check，发出 changed/stable 事件；随后还用 frozen_prefix 做三段式 immutable prefix 校验，记录 drift 而不默默重写历史。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L620-L687" target="_blank" rel="noreferrer">crates/tui/src/core/engine/turn_loop.rs:620–687 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>ContextBudget 计算 route window、已用输入、clamped output cap、headroom、可用 input、75% compaction trigger 和 Low/Medium/High/Critical pressure；所有减法使用 saturating arithmetic，避免小窗口被大输出预留打成负预算。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/context_budget.rs#L1-L32" target="_blank" rel="noreferrer">crates/tui/src/context_budget.rs:1–32 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>plan_compaction 会固定最近消息，依据 repo-aware working set 和外部 pin 保留路径，识别错误/patch，最后通过 fixpoint 规则确保 assistant tool call 与 tool result 不被拆开；用户消息始终保留。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/compaction.rs#L473-L507" target="_blank" rel="noreferrer">crates/tui/src/compaction.rs:473–507 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="CodeWhale architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+   94              token_budget: Some(token_budget),</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>handle_deepseek_turn 为一个外部用户 turn 保留 StuckGuard、ReadRepeatGuard、context recovery counter、ToolCallBudget、goal continuation counter 和 stream retry counter；每次 provider 请求前检查取消、runtime authority、steer 输入、子 Agent completion、max steps 与目标 token budget。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L364-L412" target="_blank" rel="noreferrer">crates/tui/src/core/engine/turn_loop.rs:364–412 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>turn loop 在构造 request 前用 PrefixStabilityManager 对 system prompt 和 active tools 做 fingerprint check，发出 changed/stable 事件；随后还用 frozen_prefix 做三段式 immutable prefix 校验，记录 drift 而不默默重写历史。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/turn_loop.rs#L620-L687" target="_blank" rel="noreferrer">crates/tui/src/core/engine/turn_loop.rs:620–687 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>ContextBudget 计算 route window、已用输入、clamped output cap、headroom、可用 input、75% compaction trigger 和 Low/Medium/High/Critical pressure；所有减法使用 saturating arithmetic，避免小窗口被大输出预留打成负预算。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/context_budget.rs#L1-L32" target="_blank" rel="noreferrer">crates/tui/src/context_budget.rs:1–32 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>plan_compaction 会固定最近消息，依据 repo-aware working set 和外部 pin 保留路径，识别错误/patch，最后通过 fixpoint 规则确保 assistant tool call 与 tool result 不被拆开；用户消息始终保留。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/compaction.rs#L473-L507" target="_blank" rel="noreferrer">crates/tui/src/compaction.rs:473–507 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>crates/tui/src/llm_response_cache.rs</b><small>7239 bytes · .rs</small></div><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/llm_response_cache.rs#L43-L58" target="_blank" rel="noreferrer">L43–58 ↗</a></header><p>1. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   43          provider: &amp;str,
+   44          base_url: &amp;str,
+   45          path_suffix: Option&lt;&amp;str&gt;,
+   46          api_key: &amp;str,
+   47          wire_body: &amp;[u8],
+   48      ) -&gt; [u8; 32] {
+   49          let mut hasher = Sha256::new();
+   50          update_field(&amp;mut hasher, provider.as_bytes());
+   51          update_field(&amp;mut hasher, base_url.as_bytes());
+   52          update_field(&amp;mut hasher, path_suffix.unwrap_or(&quot;&quot;).as_bytes());
+   53          update_field(&amp;mut hasher, &amp;Sha256::digest(api_key.as_bytes()));
+   54          update_field(&amp;mut hasher, wire_body);
+   55          hasher.finalize().into()
+   56      }
+   57
+   58      pub(crate) fn get(&amp;self, key: &amp;[u8; 32]) -&gt; Option&lt;MessageResponse&gt; {
+   59          let mut cache = self.inner.lock().ok()?;
+   60          cache.get(key).cloned().map(|mut response| {
+   61              response.usage = Usage::default();
+   62              response
+   63          })
+   64      }
+   65
+   66      pub(crate) fn put(&amp;self, key: [u8; 32], value: MessageResponse) {
+   67          if let Ok(mut cache) = self.inner.lock() {
+   68              cache.put(key, value);
+   69          }
+   70      }
+   71  }
+   72
+   73  fn update_field(hasher: &amp;mut Sha256, bytes: &amp;[u8]) {
+   74      hasher.update((bytes.len() as u64).to_le_bytes());
+   75      hasher.update(bytes);</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>docs/architecture/provider-model-settings-v091.md</b><small>5531 bytes · .md</small></div><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/docs/architecture/provider-model-settings-v091.md#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>2. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  # Provider, model, and settings contract for v0.9.1
+    2
+    3  This note records the live-code answers used for the v0.9.1 cutover. A provider
+    4  is a route/account boundary. A model is a provider-qualified choice. Provider
+    5  setup and adding a model are deliberately separate operations.
+    6
+    7  ## Live state definitions
+    8
+    9  1. **Configured, enabled, current, saved, and default are distinct.** A provider
+   10     is configured when `config::provider_is_configured` finds the active route,
+   11     usable auth/external consent, or meaningful explicit provider configuration
+   12     (`provider_is_configured` in `crates/tui/src/config.rs`; grep the symbol
+   13     rather than trusting a line number). An enabled model is a
+   14     `(provider identity, model id)` entry in `Settings::enabled_models`; the
+   15     current model is `App::{api_provider,model,auto_model}`; a saved
+   16     provider-specific preference is `Settings::provider_models`; and the startup
+   17     default is `Settings::default_provider` plus the provider-scoped preference
+   18     (with `default_model` retained only as the DeepSeek compatibility fallback).
+   19     Startup resolves these layers in `App::new` (`tui/app.rs:2964-3220`).
+   20
+   21  2. **Duplicate IDs remain provider-qualified.** `ModelPickerRow` carries both an
+   22     `ApiProvider` and wire model ID. Cross-provider rows render as
+   23     `Provider display name · model-id`, and apply events preserve the provider
+   24     (`tui/model_picker.rs:203-213,1247-1255`). No bare model ID is treated as a
+   25     globally unique owner.
+   26
+   27  3. **Non-catalog cases are conservative.** The active custom/unknown/local tag
+   28     remains a selectable current row when the route accepts passthrough IDs.
+   29     Retired aliases are normalized for display without losing the pre-apply
+   30     value. `auto` is synthetic and is never persisted as an enabled model.
+   31     Self-hosted/keyless means only that authentication is unnecessary; it does
+   32     not imply reachability or health. Row selectability and explanations come
+   33     from the route-specific readiness snapshot</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>crates/cli/tests/model_resolve_provenance.rs</b><small>14236 bytes · .rs</small></div><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/cli/tests/model_resolve_provenance.rs#L4-L19" target="_blank" rel="noreferrer">L4–19 ↗</a></header><p>3. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    4  //! `provider: deepseek` because the subcommand read only the CLI flags and
+    5  //! never consulted the resolved runtime. A diagnostic that confidently
+    6  //! reports the wrong provider is worse than one that reports nothing, so
+    7  //! every provider is asserted here rather than DeepSeek alone.
+    8
+    9  use std::collections::BTreeMap;
+   10  use std::fs;
+   11  use std::path::PathBuf;
+   12  use std::process::Command;
+   13
+   14  use tempfile::TempDir;
+   15
+   16  /// Run `model resolve` against a sealed HOME containing `config`.
+   17  ///
+   18  /// `env_clear` plus a temporary HOME keeps this off the real
+   19  /// `~/.codewhale/config.toml`; the suite has written to real user state before
+   20  /// (#4831) and this test must never be the one that does it again.
+   21  fn resolve_with_config(config: &amp;str, args: &amp;[&amp;str]) -&gt; BTreeMap&lt;String, String&gt; {
+   22      let fixture = TempDir::new().expect(&quot;fixture root&quot;);
+   23      let home = fixture.path().join(&quot;sealed-home&quot;);
+   24      fs::create_dir_all(home.join(&quot;.codewhale&quot;)).expect(&quot;sealed config dir&quot;);
+   25      fs::write(home.join(&quot;.codewhale&quot;).join(&quot;config.toml&quot;), config).expect(&quot;seed config&quot;);
+   26
+   27      let mut command = Command::new(codewhale_binary());
+   28      command.arg(&quot;model&quot;).arg(&quot;resolve&quot;).args(args);
+   29      let output = command
+   30          .env_clear()
+   31          .env(&quot;HOME&quot;, &amp;home)
+   32          .env(&quot;USERPROFILE&quot;, &amp;home)
+   33          .env(&quot;CODEWHALE_HOME&quot;, home.join(&quot;.codewhale&quot;))
+   34          .env(&quot;CODEWHALE_SECRET_BACKEND&quot;, &quot;file&quot;)
+   35          .output()
+   36          .expect(&quot;run model resolve&quot;);</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>crates/tui/src/client/chat/tests/stream_decoder.rs</b><small>49203 bytes · .rs</small></div><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/client/chat/tests/stream_decoder.rs#L154-L169" target="_blank" rel="noreferrer">L154–169 ↗</a></header><p>4. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  154          is_reasoning_model_for_stream(crate::config::ApiProvider::Moonshot, &quot;kimi-k2.6&quot;);
+  155      let mut content_index = 0u32;
+  156      let mut text_started = false;
+  157      let mut thinking_started = false;
+  158      let mut tool_indices = std::collections::HashMap::new();
+  159      let mut reasoning_detail_buffers = std::collections::HashMap::new();
+  160      let mut events = Vec::new();
+  161      for chunk in chunks {
+  162          let value: Value = serde_json::from_str(chunk).expect(&quot;valid SSE JSON&quot;);
+  163          events.extend(parse_sse_chunk(
+  164              &amp;value,
+  165              &amp;mut content_index,
+  166              &amp;mut text_started,
+  167              &amp;mut thinking_started,
+  168              &amp;mut tool_indices,
+  169              &amp;mut reasoning_detail_buffers,
+  170              is_reasoning,
+  171          ));
+  172      }
+  173
+  174      let thinking: String = events
+  175          .iter()
+  176          .filter_map(|event| match event {
+  177              StreamEvent::ContentBlockDelta {
+  178                  delta: Delta::ThinkingDelta { thinking },
+  179                  ..
+  180              } =&gt; Some(thinking.as_str()),
+  181              _ =&gt; None,
+  182          })
+  183          .collect();
+  184      assert_eq!(thinking, &quot;Let me check the config.&quot;);
+  185
+  186      let thinking_starts = events</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>crates/tui/tests/fixtures/codex_models_cache.json</b><small>1195 bytes · .json</small></div><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/tests/fixtures/codex_models_cache.json#L5-L20" target="_blank" rel="noreferrer">L5–20 ↗</a></header><p>5. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    5    &quot;models&quot;: [
+    6      {
+    7        &quot;slug&quot;: &quot;gpt-test-secondary&quot;,
+    8        &quot;display_name&quot;: &quot;GPT Test Secondary&quot;,
+    9        &quot;priority&quot;: 20,
+   10        &quot;context_window&quot;: 128000,
+   11        &quot;supports_parallel_tool_calls&quot;: false,
+   12        &quot;supported_reasoning_levels&quot;: [{&quot;effort&quot;: &quot;medium&quot;}],
+   13        &quot;visibility&quot;: &quot;list&quot;,
+   14        &quot;supported_in_api&quot;: true,
+   15        &quot;base_instructions&quot;: &quot;ignored by CodeWhale&quot;
+   16      },
+   17      {
+   18        &quot;slug&quot;: &quot;gpt-test-primary&quot;,
+   19        &quot;display_name&quot;: &quot;GPT Test Primary&quot;,
+   20        &quot;priority&quot;: 10,
+   21        &quot;context_window&quot;: 372000,
+   22        &quot;supports_parallel_tool_calls&quot;: true,
+   23        &quot;supported_reasoning_levels&quot;: [{&quot;effort&quot;: &quot;high&quot;}],
+   24        &quot;visibility&quot;: &quot;list&quot;,
+   25        &quot;supported_in_api&quot;: true,
+   26        &quot;base_instructions&quot;: &quot;ignored by CodeWhale&quot;
+   27      },
+   28      {
+   29        &quot;slug&quot;: &quot;codex-test-review&quot;,
+   30        &quot;display_name&quot;: &quot;Codex Test Review&quot;,
+   31        &quot;priority&quot;: 30,
+   32        &quot;context_window&quot;: 272000,
+   33        &quot;supports_parallel_tool_calls&quot;: true,
+   34        &quot;supported_reasoning_levels&quot;: [{&quot;effort&quot;: &quot;medium&quot;}],
+   35        &quot;visibility&quot;: &quot;hide&quot;,
+   36        &quot;supported_in_api&quot;: true,
+   37        &quot;base_instructions&quot;: &quot;ignored by CodeWhale&quot;</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>crates/tui/tests/integration/exec_stream_drop_acceptance.rs</b><small>13305 bytes · .rs</small></div><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/tests/integration/exec_stream_drop_acceptance.rs#L107-L122" target="_blank" rel="noreferrer">L107–122 ↗</a></header><p>6. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  107          error_line.contains(&quot;Provider stream connection dropped&quot;),
+  108          &quot;the error channel must carry the real failure: {error_line}&quot;
+  109      );
+  110      let meta = terminal_metadata(&amp;stdout);
+  111      assert_eq!(meta[&quot;meta&quot;][&quot;status&quot;].as_str(), Some(&quot;failed&quot;), &quot;{meta}&quot;);
+  112      assert_eq!(
+  113          meta[&quot;meta&quot;][&quot;error_category&quot;].as_str(),
+  114          Some(&quot;network&quot;),
+  115          &quot;the terminal receipt must classify the failure as retryable infra: {meta}&quot;
+  116      );
+  117  }
+  118
+  119  /// Extract the terminal `metadata` event from the stream-json stdout.
+  120  fn terminal_metadata(stdout: &amp;str) -&gt; Value {
+  121      let line = stdout
+  122          .lines()
+  123          .rev()
+  124          .find(|line| line.contains(r#&quot;&quot;type&quot;:&quot;metadata&quot;&quot;#))
+  125          .unwrap_or_else(|| panic!(&quot;stream-json metadata event missing: {stdout}&quot;));
+  126      serde_json::from_str(line).expect(&quot;metadata event is valid JSON&quot;)
+  127  }
+  128
+  129  /// Spawn a raw HTTP server that answers `GET /v1/models` and, for every POST
+  130  /// to the chat endpoint, either truncates the SSE body mid-stream (the first
+  131  /// `drops` requests) or completes a normal text turn. Returns the base URL
+  132  /// and a counter of chat-completion POSTs.
+  133  async fn start_flaky_server(
+  134      drops: usize,
+  135  ) -&gt; (String, Arc&lt;AtomicUsize&gt;, tokio::task::JoinHandle&lt;()&gt;) {
+  136      let listener = tokio::net::TcpListener::bind(&quot;127.0.0.1:0&quot;)
+  137          .await
+  138          .expect(&quot;bind flaky server&quot;);
+  139      let addr = listener.local_addr().expect(&quot;flaky server addr&quot;);</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="CodeWhale architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

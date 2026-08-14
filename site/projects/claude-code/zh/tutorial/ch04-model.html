@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>Claude Code（复原） · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · Claude Code（复原） · 3bb6b5746238</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>6 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>Claude Code（复原） · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch04-model.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 共享预处理之后按 Provider 分流，Anthropic 仍是最深的主路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</p></section><section><span>白话解释</span><p>先把所有方言共有的消息账本整理好，再交给各家的翻译器；Anthropic 方言拥有最完整的缓存、thinking 和 beta 功能。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多模型可用性强，但新增兼容层不自动获得 Anthropic 路径全部语义，必须独立做工具与 usage 回归。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1282–1309</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1310–1338</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/api/claude.ts:1282–1338</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1282    // Normalize messages before building system prompt (needed for fingerprinting)
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>Claude Code（复原） · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · Claude Code（复原） · 3bb6b5746238</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>6 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>Claude Code（复原） · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch04-model.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 共享预处理之后按 Provider 分流，Anthropic 仍是最深的主路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</p></section><section><span>白话解释</span><p>先把所有方言共有的消息账本整理好，再交给各家的翻译器；Anthropic 方言拥有最完整的缓存、thinking 和 beta 功能。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多模型可用性强，但新增兼容层不自动获得 Anthropic 路径全部语义，必须独立做工具与 usage 回归。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1282–1309</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1310–1338</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/api/claude.ts:1282–1338</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1282    // Normalize messages before building system prompt (needed for fingerprinting)
  1283    // Instrumentation: Track message count before normalization
  1284    logEvent(&#39;tengu_api_before_normalize&#39;, {
  1285      preNormalizedMessageCount: messages.length,
@@ -835,4 +835,196 @@
  1518            const next: State = {
  1519              messages: [
  1520                ...messagesForQuery,
- 1521                ...assistantMessages,</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>API 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L818-L925" target="_blank" rel="noreferrer">src/services/api/claude.ts:818–925 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>snip 根据边界和 UUID 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/snipCompact.ts#L60-L147" target="_blank" rel="noreferrer">src/services/compact/snipCompact.ts:60–147 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/autoCompact.ts#L28-L93" target="_blank" rel="noreferrer">src/services/compact/autoCompact.ts:28–93 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Claude Code（复原） architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+ 1521                ...assistantMessages,</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>API 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L818-L925" target="_blank" rel="noreferrer">src/services/api/claude.ts:818–925 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>snip 根据边界和 UUID 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/snipCompact.ts#L60-L147" target="_blank" rel="noreferrer">src/services/compact/snipCompact.ts:60–147 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/autoCompact.ts#L28-L93" target="_blank" rel="noreferrer">src/services/compact/autoCompact.ts:28–93 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>packages/@ant/model-provider/src/providers/gemini/__tests__/convertMessages.test.ts</b><small>6022 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/model-provider/src/providers/gemini/__tests__/convertMessages.test.ts#L50-L65" target="_blank" rel="noreferrer">L50–65 ↗</a></header><p>1. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   50          role: &#39;model&#39;,
+   51          parts: [
+   52            {
+   53              functionCall: {
+   54                name: &#39;bash&#39;,
+   55                args: { command: &#39;ls&#39; },
+   56              },
+   57              thoughtSignature: &#39;sig-tool&#39;,
+   58            },
+   59          ],
+   60        },
+   61      ])
+   62    })
+   63
+   64    test(&#39;converts tool_result to functionResponse using prior tool name&#39;, () =&gt; {
+   65      const result = anthropicMessagesToGemini(
+   66        [
+   67          makeAssistantMsg([
+   68            {
+   69              type: &#39;tool_use&#39;,
+   70              id: &#39;toolu_123&#39;,
+   71              name: &#39;bash&#39;,
+   72              input: { command: &#39;ls&#39; },
+   73            },
+   74          ]),
+   75          makeUserMsg([
+   76            {
+   77              type: &#39;tool_result&#39;,
+   78              tool_use_id: &#39;toolu_123&#39;,
+   79              content: &#39;file.txt&#39;,
+   80            },
+   81          ]),
+   82        ],</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>packages/@ant/model-provider/src/providers/gemini/__tests__/streamAdapter.test.ts</b><small>4686 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/model-provider/src/providers/gemini/__tests__/streamAdapter.test.ts#L64-L79" target="_blank" rel="noreferrer">L64–79 ↗</a></header><p>2. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   64      expect(events[0].type).toBe(&#39;message_start&#39;)
+   65      expect(textDeltas).toHaveLength(2)
+   66      expect(textDeltas[0].delta.text).toBe(&#39;Hello&#39;)
+   67      expect(textDeltas[1].delta.text).toBe(&#39; world&#39;)
+   68
+   69      const messageDelta = events.find(event =&gt; event.type === &#39;message_delta&#39;)
+   70      expect(messageDelta.delta.stop_reason).toBe(&#39;end_turn&#39;)
+   71    })
+   72
+   73    test(&#39;converts thinking chunks and signatures&#39;, async () =&gt; {
+   74      const events = await collectEvents([
+   75        {
+   76          candidates: [
+   77            {
+   78              content: {
+   79                parts: [{ text: &#39;Think&#39;, thought: true }],
+   80              },
+   81            },
+   82          ],
+   83        },
+   84        {
+   85          candidates: [
+   86            {
+   87              content: {
+   88                parts: [{ thought: true, thoughtSignature: &#39;sig-123&#39; }],
+   89              },
+   90              finishReason: &#39;STOP&#39;,
+   91            },
+   92          ],
+   93        },
+   94      ])
+   95
+   96      const blockStart = events.find(</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>packages/@ant/model-provider/src/shared/__tests__/openaiConvertMessages.test.ts</b><small>18060 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/model-provider/src/shared/__tests__/openaiConvertMessages.test.ts#L473-L488" target="_blank" rel="noreferrer">L473–488 ↗</a></header><p>3. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  473      // when the model answers directly without reasoning. The empty value
+  474      // must be echoed back in the next request — otherwise DeepSeek returns
+  475      // 400 (&quot;reasoning_content ... must be passed back&quot;). See issue #399.
+  476      const result = anthropicMessagesToOpenAI(
+  477        [
+  478          makeUserMsg(&#39;question&#39;),
+  479          makeAssistantMsg([
+  480            { type: &#39;thinking&#39; as const, thinking: &#39;&#39; },
+  481            { type: &#39;text&#39;, text: &#39;Answer.&#39; },
+  482          ]),
+  483        ],
+  484        [] as any,
+  485        { enableThinking: true },
+  486      )
+  487      const assistant = result.filter(m =&gt; m.role === &#39;assistant&#39;)[0] as any
+  488      expect(assistant.reasoning_content).toBe(&#39;&#39;)
+  489      expect(assistant.content).toBe(&#39;Answer.&#39;)
+  490    })
+  491
+  492    test(&#39;omits reasoning_content when no thinking block is present&#39;, () =&gt; {
+  493      // No thinking block at all → no reasoning_content field on the
+  494      // OpenAI-format assistant message (relevant for non-thinking models).
+  495      const result = anthropicMessagesToOpenAI(
+  496        [
+  497          makeUserMsg(&#39;question&#39;),
+  498          makeAssistantMsg([{ type: &#39;text&#39;, text: &#39;Answer.&#39; }]),
+  499        ],
+  500        [] as any,
+  501      )
+  502      const assistant = result.filter(m =&gt; m.role === &#39;assistant&#39;)[0] as any
+  503      expect(assistant.reasoning_content).toBeUndefined()
+  504      expect(assistant.content).toBe(&#39;Answer.&#39;)
+  505    })</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>packages/@ant/model-provider/src/shared/__tests__/openaiStreamAdapter.test.ts</b><small>29098 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/model-provider/src/shared/__tests__/openaiStreamAdapter.test.ts#L558-L573" target="_blank" rel="noreferrer">L558–573 ↗</a></header><p>4. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  558    test(&#39;ignores cache writes for compatible providers by default&#39;, async () =&gt; {
+  559      const events = await collectEvents([
+  560        makeChunk({
+  561          choices: [{ index: 0, delta: { content: &#39;hi&#39; }, finish_reason: null }],
+  562        }),
+  563        makeChunk({
+  564          choices: [{ index: 0, delta: {}, finish_reason: &#39;stop&#39; }],
+  565          usage: {
+  566            prompt_tokens: 1000,
+  567            completion_tokens: 50,
+  568            total_tokens: 1050,
+  569            prompt_tokens_details: {
+  570              cached_tokens: 600,
+  571              cache_write_tokens: 250,
+  572            },
+  573          } as any,
+  574        }),
+  575      ])
+  576
+  577      const msgDelta = events.find(e =&gt; e.type === &#39;message_delta&#39;) as any
+  578      expect(msgDelta.usage.input_tokens).toBe(400)
+  579      expect(msgDelta.usage.cache_creation_input_tokens).toBe(0)
+  580    })
+  581
+  582    test(&#39;maps cached_tokens to cache_read_input_tokens&#39;, async () =&gt; {
+  583      const events = await collectEvents([
+  584        makeChunk({
+  585          choices: [
+  586            {
+  587              index: 0,
+  588              delta: { content: &#39;hi&#39; },
+  589              finish_reason: null,
+  590            },</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>packages/@ant/model-provider/src/providers/gemini/convertMessages.ts</b><small>7943 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/model-provider/src/providers/gemini/convertMessages.ts#L157-L172" target="_blank" rel="noreferrer">L157–172 ↗</a></header><p>5. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>  157        role: &#39;model&#39;,
+  158        parts: createTextGeminiParts(content),
+  159      }
+  160    }
+  161
+  162    if (!Array.isArray(content)) {
+  163      return { role: &#39;model&#39;, parts: [] }
+  164    }
+  165
+  166    const parts: GeminiPart[] = []
+  167    for (const block of content) {
+  168      if (typeof block === &#39;string&#39;) {
+  169        parts.push(...createTextGeminiParts(block))
+  170        continue
+  171      }
+  172
+  173      if (block.type === &#39;text&#39;) {
+  174        parts.push(
+  175          ...createTextGeminiParts(
+  176            block.text,
+  177            getGeminiThoughtSignature(
+  178              block as unknown as Record&lt;string, unknown&gt;,
+  179            ),
+  180          ),
+  181        )
+  182        continue
+  183      }
+  184
+  185      if (block.type === &#39;thinking&#39;) {
+  186        const thinkingPart = createThinkingGeminiPart(
+  187          block.thinking,
+  188          block.signature,
+  189        )</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>packages/@ant/model-provider/src/providers/gemini/streamAdapter.ts</b><small>6788 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/model-provider/src/providers/gemini/streamAdapter.ts#L7-L22" target="_blank" rel="noreferrer">L7–22 ↗</a></header><p>6. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    7    model: string,
+    8  ): AsyncGenerator&lt;BetaRawMessageStreamEvent, void&gt; {
+    9    const messageId = `msg_${randomUUID().replace(/-/g, &#39;&#39;).slice(0, 24)}`
+   10    let started = false
+   11    let stopped = false
+   12    let nextContentIndex = 0
+   13    let openTextLikeBlock: { index: number; type: &#39;text&#39; | &#39;thinking&#39; } | null =
+   14      null
+   15    let sawToolUse = false
+   16    let finishReason: string | undefined
+   17    let inputTokens = 0
+   18    let outputTokens = 0
+   19    let cachedReadTokens = 0
+   20
+   21    for await (const chunk of stream) {
+   22      const usage = chunk.usageMetadata
+   23      if (usage) {
+   24        inputTokens = usage.promptTokenCount ?? inputTokens
+   25        outputTokens =
+   26          (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0)
+   27        cachedReadTokens = usage.cachedContentTokenCount ?? cachedReadTokens
+   28      }
+   29
+   30      if (!started) {
+   31        started = true
+   32        yield {
+   33          type: &#39;message_start&#39;,
+   34          message: {
+   35            id: messageId,
+   36            type: &#39;message&#39;,
+   37            role: &#39;assistant&#39;,
+   38            content: [],
+   39            model,</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Claude Code（复原） architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

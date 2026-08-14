@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>7 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch04-model.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：7 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · Provider 消息对象把模型内容与本地显示元数据分开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。</p></section><section><span>白话解释</span><p>用户看到的半截流式输出可以保存下来，但它不会偷偷再喂给模型；真正发到 API 的内容和本地 UI 账本是两条线。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>本地可观测性、恢复和 prompt cache 可以同时成立；模型可见消息类型必须有单独的 wire sanitizer。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>40–56</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>57–75</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/provider.go:40–75</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   40  // Message is a single conversation message.
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>7 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch04-model.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：7 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · Provider 消息对象把模型内容与本地显示元数据分开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。</p></section><section><span>白话解释</span><p>用户看到的半截流式输出可以保存下来，但它不会偷偷再喂给模型；真正发到 API 的内容和本地 UI 账本是两条线。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>本地可观测性、恢复和 prompt cache 可以同时成立；模型可见消息类型必须有单独的 wire sanitizer。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>40–56</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>57–75</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/provider.go:40–75</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   40  // Message is a single conversation message.
    41  type Message struct {
    42  	Role Role `json:&quot;role&quot;`
    43  	// Content is the provider-visible conversation content. Keeping this legacy
@@ -1378,4 +1378,196 @@
   121  	return allow
   122  }
   123
-  124  // WriteDoc overwrites a doc-memory file with body, after checking path is a</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>NormalizeMessages 在 wire 层补齐未回答的 assistant tool call、丢弃孤儿 tool result、恢复缺失工具名，并对半流式截断参数闭合 JSON；健康历史走 zero-allocation fast path，存盘历史使用保守的 NormalizeSessionMessages。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">internal/provider/provider.go:179–192 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>OpenAI-compatible client 对 DeepSeek 标记 RequiresToolCallReasoning，并按模型/配置决定是否警告缺失 reasoning；构造请求时对包含 tool calls 的 assistant 消息发送 reasoning_content（包括空字符串），同时支持 DeepSeek Beta prefix continuation 和最多三次尚未输出 token 的断流重连。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">internal/provider/openai/openai.go:279–316 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>Anthropic provider 使用手写 net/http SSE；原生 Anthropic 的 thinking block 需要签名回放，而 DeepSeek Anthropic 端点使用 unsigned thinking、thinking.type 与 output_config.effort，client 通过 deepseek 标志分别处理。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">internal/provider/anthropic/anthropic.go:1–20 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepSeek-Reasonix architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+  124  // WriteDoc overwrites a doc-memory file with body, after checking path is a</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>NormalizeMessages 在 wire 层补齐未回答的 assistant tool call、丢弃孤儿 tool result、恢复缺失工具名，并对半流式截断参数闭合 JSON；健康历史走 zero-allocation fast path，存盘历史使用保守的 NormalizeSessionMessages。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">internal/provider/provider.go:179–192 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>OpenAI-compatible client 对 DeepSeek 标记 RequiresToolCallReasoning，并按模型/配置决定是否警告缺失 reasoning；构造请求时对包含 tool calls 的 assistant 消息发送 reasoning_content（包括空字符串），同时支持 DeepSeek Beta prefix continuation 和最多三次尚未输出 token 的断流重连。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">internal/provider/openai/openai.go:279–316 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>Anthropic provider 使用手写 net/http SSE；原生 Anthropic 的 thinking block 需要签名回放，而 DeepSeek Anthropic 端点使用 unsigned thinking、thinking.type 与 output_config.effort，client 通过 deepseek 标志分别处理。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">internal/provider/anthropic/anthropic.go:1–20 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>desktop/frontend/src/__tests__/provider-editor-model-picker.test.tsx</b><small>13864 bytes · .tsx</small></div><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/desktop/frontend/src/__tests__/provider-editor-model-picker.test.tsx#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>1. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  // Run: tsx src/__tests__/provider-editor-model-picker.test.tsx
+    2
+    3  import { JSDOM } from &quot;jsdom&quot;;
+    4  import React from &quot;react&quot;;
+    5  import { act } from &quot;react&quot;;
+    6  import { createRoot } from &quot;react-dom/client&quot;;
+    7  import { LocaleProvider } from &quot;../lib/i18n&quot;;
+    8  import {
+    9    ProviderEditor,
+   10    ProviderEditorModelPicker,
+   11    providerSupportsServerWebSearch,
+   12    providerSupportsServerWebSearchForView,
+   13    providerVisionCapabilityForView,
+   14  } from &quot;../components/SettingsPanel&quot;;
+   15  import type { ProviderView } from &quot;../lib/types&quot;;
+   16
+   17  let passed = 0;
+   18  let failed = 0;
+   19
+   20  function ok(value: boolean, label: string) {
+   21    if (value) {
+   22      process.stdout.write(`  PASS  ${label}\n`);
+   23      passed += 1;
+   24    } else {
+   25      process.stdout.write(`  FAIL  ${label}\n`);
+   26      failed += 1;
+   27    }
+   28  }
+   29
+   30  function flushPromises(): Promise&lt;void&gt; {
+   31    return new Promise((resolve) =&gt; setTimeout(resolve, 0));
+   32  }
+   33</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>desktop/frontend/src/__tests__/provider-model-cache.test.ts</b><small>6874 bytes · .ts</small></div><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/desktop/frontend/src/__tests__/provider-model-cache.test.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>2. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  // Run: tsx src/__tests__/provider-model-cache.test.ts
+    2
+    3  import type { ProviderView } from &quot;../lib/types&quot;;
+    4  import {
+    5    cachedFetchProviderModels,
+    6    clearModelCache,
+    7    invalidateProviderCacheByAPIKeyEnv,
+    8    isBackingOff,
+    9  } from &quot;../lib/providerModelCache&quot;;
+   10
+   11  let passed = 0;
+   12  let failed = 0;
+   13
+   14  function ok(value: boolean, label: string) {
+   15    if (value) {
+   16      process.stdout.write(`  PASS  ${label}\n`);
+   17      passed += 1;
+   18    } else {
+   19      process.stdout.write(`  FAIL  ${label}\n`);
+   20      failed += 1;
+   21    }
+   22  }
+   23
+   24  async function rejects(run: () =&gt; Promise&lt;unknown&gt;, label: string) {
+   25    try {
+   26      await run();
+   27      ok(false, label);
+   28    } catch {
+   29      ok(true, label);
+   30    }
+   31  }
+   32
+   33  function provider(overrides: Partial&lt;ProviderView&gt; = {}): ProviderView {</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>desktop/frontend/src/__tests__/provider-model-refresh.test.ts</b><small>8631 bytes · .ts</small></div><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/desktop/frontend/src/__tests__/provider-model-refresh.test.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>3. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  // Run: tsx src/__tests__/provider-model-refresh.test.ts
+    2
+    3  import {
+    4    apiKeyEnvFromProviderName,
+    5    createLatestRequestGate,
+    6    inferredVisionModels,
+    7    isLikelyChatModel,
+    8    isLikelyVisionModel,
+    9    mergedFetchedProviderModels,
+   10    mergeProviderModelContextWindows,
+   11    providerApiKeyEnvForSave,
+   12    providerDefaultModel,
+   13    providerIsConfigured,
+   14    providerModelCandidates,
+   15    providerModelContextWindowDrafts,
+   16    providerModelContextWindowIsSmall,
+   17    providerRequiresKey,
+   18    removeProviderAccessesForMock,
+   19  } from &quot;../lib/providerModels&quot;;
+   20  import type { ProviderView } from &quot;../lib/types&quot;;
+   21
+   22  let passed = 0;
+   23  let failed = 0;
+   24
+   25  function eq(a: unknown, b: unknown, label: string) {
+   26    if (JSON.stringify(a) === JSON.stringify(b)) {
+   27      process.stdout.write(`  PASS  ${label}\n`);
+   28      passed += 1;
+   29    } else {
+   30      process.stdout.write(`  FAIL  ${label}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}\n`);
+   31      failed += 1;
+   32    }
+   33  }</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>desktop/frontend/src/lib/providerModelCache.ts</b><small>4831 bytes · .ts</small></div><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/desktop/frontend/src/lib/providerModelCache.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>4. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  import type { ProviderView } from &quot;./types&quot;;
+    2
+    3  // Provider model cache with single-flight deduplication and time-based
+    4  // exponential backoff. The memory-only cache identity mirrors every ProviderView
+    5  // field that can change model discovery or credential resolution; persistent
+    6  // cooldowns use the backend&#39;s opaque fingerprint instead.
+    7
+    8  type CacheEntry = { at: number; models: string[] };
+    9  type BackoffEntry = { delay: number; retryAt: number; error: unknown };
+   10
+   11  const cache = new Map&lt;string, CacheEntry&gt;();
+   12  const inflight = new Map&lt;string, Promise&lt;string[]&gt;&gt;();
+   13  const backoff = new Map&lt;string, BackoffEntry&gt;();
+   14  const generations = new Map&lt;string, number&gt;();
+   15
+   16  const TTL = 60_000;
+   17  const BACKOFF_INITIAL = 1_000;
+   18  const BACKOFF_CAP = 60_000;
+   19  let cacheEpoch = 0;
+   20
+   21  function normalizedHeaders(headers?: Record&lt;string, string&gt; | null): [string, string][] {
+   22    return Object.entries(headers ?? {}).sort(([a], [b]) =&gt; a.localeCompare(b));
+   23  }
+   24
+   25  function cacheKey(p: ProviderView): string {
+   26    return JSON.stringify([
+   27      p.apiKeyEnv.trim(),
+   28      p.name.trim(),
+   29      p.kind.trim(),
+   30      p.baseUrl.trim(),
+   31      p.modelsUrl.trim(),
+   32      Boolean(p.authHeader),
+   33      normalizedHeaders(p.headers),</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>desktop/frontend/src/lib/providerModels.ts</b><small>7197 bytes · .ts</small></div><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/desktop/frontend/src/lib/providerModels.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>5. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  import type { ProviderModelOverrideView, ProviderView } from &quot;./types&quot;;
+    2
+    3  export type LatestRequestGate = {
+    4    begin(key: string): number;
+    5    cancel(key: string): void;
+    6    isCurrent(key: string, generation: number): boolean;
+    7  };
+    8
+    9  // Async provider discovery is last-request-wins per access card. A stale
+   10  // completion may settle, but it cannot replace a newer draft or loading state.
+   11  export function createLatestRequestGate(): LatestRequestGate {
+   12    const generations = new Map&lt;string, number&gt;();
+   13    const advance = (key: string) =&gt; {
+   14      const generation = (generations.get(key) ?? 0) + 1;
+   15      generations.set(key, generation);
+   16      return generation;
+   17    };
+   18    return {
+   19      begin: advance,
+   20      cancel: (key) =&gt; {
+   21        advance(key);
+   22      },
+   23      isCurrent: (key, generation) =&gt; generations.get(key) === generation,
+   24    };
+   25  }
+   26
+   27  export function removeProviderAccessesForMock(providers: ProviderView[], names: string[]): ProviderView[] {
+   28    const requested = new Set(names);
+   29    return providers.flatMap((provider) =&gt; {
+   30      if (!requested.has(provider.name)) return [provider];
+   31      return provider.builtIn ? [{ ...provider, added: false }] : [];
+   32    });
+   33  }</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>internal/extension/providerext/stream_lifecycle_test.go</b><small>2727 bytes · .go</small></div><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/extension/providerext/stream_lifecycle_test.go#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>6. 与“模型与消息：流式结果如何进入状态”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  package providerext
+    2
+    3  import (
+    4  	&quot;context&quot;
+    5  	&quot;sync&quot;
+    6  	&quot;sync/atomic&quot;
+    7  	&quot;testing&quot;
+    8
+    9  	&quot;reasonix/internal/extension/protocol&quot;
+   10  	&quot;reasonix/internal/provider&quot;
+   11  )
+   12
+   13  func TestFinishedStreamUnregistersDrainCancel(t *testing.T) {
+   14  	r := testResolver(t, baseCatalog(), nil)
+   15  	var unregistered atomic.Int32
+   16  	stream := &amp;extensionStream{
+   17  		done: make(chan struct{}),
+   18  		unregisterDrainCancel: func() {
+   19  			unregistered.Add(1)
+   20  		},
+   21  	}
+   22  	r.mu.Lock()
+   23  	r.streams[&quot;finished&quot;] = stream
+   24  	r.finishLocked(&quot;finished&quot;, stream, provider.Chunk{})
+   25  	r.finishLocked(&quot;finished&quot;, stream, provider.Chunk{})
+   26  	r.mu.Unlock()
+   27  	if got := unregistered.Load(); got != 1 {
+   28  		t.Fatalf(&quot;drain cancel unregister count = %d, want 1&quot;, got)
+   29  	}
+   30  }
+   31
+   32  func TestDrainCancelInstallUnregistersWhenStreamAlreadyFinished(t *testing.T) {
+   33  	r := testResolver(t, baseCatalog(), nil)</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepSeek-Reasonix architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
