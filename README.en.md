@@ -9,7 +9,7 @@ An independently maintained bilingual atlas of open-source Agent Harness project
 - Per-project implementation dossier for entrypoints, manifests, plugins/MCP, tests, and commands
 - A 21-concept source audit covering logs, approvals, projections, jobs, transactions, queues, parallelism, and more
 - Pinned commits, line ranges, and GitHub links
-- Slots for the technical-analysis and chapter video releases
+- This repository ships only text tutorials, source evidence, and interactive maps; video releases live in the separate video repository
 - Preserved long-form prior-finding audits under site/legacy/reports/, alongside the common ten-chapter entrypoint
 
 Site entry: site/en/index.html. Version ledger: site/data/versions.json.

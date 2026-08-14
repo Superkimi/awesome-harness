@@ -1,8 +1,0 @@
-# M10 · 证据：JSONL 树、事件层和测试布局
-
-- Canvas: 1080×1920, 30fps, 132s
-- Palette: #17181d #f4f4f0 #ffaf73 #9ed8ff
-- Motion: short entrance reveals; no synthesized narration; separate SRT
-- Fixed source commit: 7787f07415d843b9a800f6a4720e0c739bd608e5
-- Evidence source: legacy evidence ledger, not README
-- Do not show: URLs, server paths, personal names, account handles, API keys

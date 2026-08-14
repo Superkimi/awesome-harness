@@ -9,7 +9,7 @@
 - 单页实现面清单：入口、manifest、插件/MCP、测试、命令线索
 - 21 项概念审计：session log、approval、projection、jobs、transaction、queues、parallelism 等
 - 固定 commit、源码行号和 GitHub 跳转
-- 技术分析视频与章节视频的发布位
+- 本仓库只发布图文教程、源码证据和交互图；视频单独维护在 video 仓库
 - 旧 finding 的完整长报告保留在 site/legacy/reports/，新入口统一拆成十章教程
 
 站点入口：site/zh/index.html。版本账本：site/data/versions.json。

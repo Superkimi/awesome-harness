@@ -27,10 +27,10 @@ assert(fs.existsSync(path.join(site, "en/index.html")), "missing site/en/index.h
 assert(htmlFiles.length === projects.length * 2 * (1 + 1 + chapterDefs.length + 3) + 3, `expected ${projects.length * 2 * (1 + 1 + chapterDefs.length + 3) + 3} html files, found ${htmlFiles.length}`);
 
 const versions = JSON.parse(fs.readFileSync(path.join(site, "data/versions.json"), "utf8"));
-const videos = JSON.parse(fs.readFileSync(path.join(site, "data/videos.json"), "utf8"));
 const legacyInventory = JSON.parse(fs.readFileSync(path.join(root, "data/legacy/inventory.json"), "utf8"));
 const legacyBySlug = new Map(legacyInventory.repositories.map((repo) => [repo.slug === "MonkeyCode" ? "monkeycode" : repo.slug, repo]));
-assert(videos.entries?.length === projects.length * (1 + chapterDefs.length), `expected ${projects.length * (1 + chapterDefs.length)} video entries, found ${videos.entries?.length ?? 0}`);
+assert(!fs.existsSync(path.join(site, "videos")), "video assets must not be deployed with the text tutorial");
+assert(!fs.existsSync(path.join(site, "data", "videos.json")), "video catalog must not be deployed with the text tutorial");
 for (const project of projects) {
   const version = versions.projects?.[project.slug];
   assert(version?.commit === project.commit, `${project.slug}: version ledger commit mismatch`);
@@ -72,6 +72,8 @@ for (const project of projects) {
 for (const file of htmlFiles) {
   const html = fs.readFileSync(file, "utf8");
   assert(!html.includes("source file not found"), `${path.relative(root, file)} contains a missing source citation`);
+  assert(!html.includes("video-panel") && !html.includes("chapter-video") && !html.includes("VIDEO + SUBTITLES"), `${path.relative(root, file)} contains a video UI reference`);
+  assert(!/(?:href|src)="[^"]+\.(?:mp4|srt)(?:[?#"]|$)/i.test(html), `${path.relative(root, file)} contains a video asset link`);
   if (file.includes(`${path.sep}projects${path.sep}`) && !file.includes(`${path.sep}diagrams${path.sep}`)) {
     assert(html.includes("github.com/"), `${path.relative(root, file)} has no pinned source link`);
   }
@@ -81,7 +83,6 @@ for (const file of htmlFiles) {
     if (target.includes("dataset.") || target.includes(".replace(") || target.includes("+n.")) continue;
     const resolved = path.resolve(path.dirname(file), target);
     const candidate = fs.existsSync(resolved) ? resolved : fs.existsSync(path.join(resolved, "index.html")) ? path.join(resolved, "index.html") : null;
-    if (candidate === null && (target.endsWith(".mp4") || target.endsWith(".srt"))) continue;
     assert(candidate !== null, `${path.relative(root, file)} -> broken local link ${target}`);
   }
 }
@@ -90,4 +91,4 @@ if (failures.length) {
   console.error(failures.map((failure) => `FAIL ${failure}`).join("\n"));
   process.exit(1);
 }
-console.log(JSON.stringify({ htmlFiles: htmlFiles.length, projects: projects.length, languages: 2, chaptersPerProject: chapterDefs.length, videoEntries: videos.entries.length, localLinks: "ok", sourceAnchors: "ok" }));
+console.log(JSON.stringify({ htmlFiles: htmlFiles.length, projects: projects.length, languages: 2, chaptersPerProject: chapterDefs.length, videoAssets: 0, localLinks: "ok", sourceAnchors: "ok" }));
