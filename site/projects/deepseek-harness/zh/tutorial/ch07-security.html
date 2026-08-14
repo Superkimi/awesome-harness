@@ -1,0 +1,56 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>DeepSeek Harness · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek Harness · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek Harness</strong><small>Plugin-composed, event-sourced Coding Agent Harness</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>47f943859bef</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · DeepSeek Harness · 47f943859bef</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 把 DeepSeek Harness 想成一棵可以热插拔的运行树：事件日志是黑匣子，Agent loop 是驾驶员，工具/模型/沙箱只是可以更换的部件。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="dsh-security-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>security</span></div><h3>01 · 审批与沙箱是两条不同的控制轴</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>工具 pre-execute 的 ask/deny/allow 是策略判断；sandbox-local 的 confine 则负责把 argv 放进 OS runner，两者在不同 package 和事件 seam。</p></section><section><span>白话解释</span><p>问用户‘是否允许’不能替代限制命令能碰到哪些文件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>安全面板和审计日志要同时显示 approval 与 enforcement。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L1-L27" target="_blank" rel="noreferrer">packages/sandbox/sandbox-local/src/index.ts:1–27 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:142–175</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L142-L175" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  142    interface Events {
+  143      /**
+  144       * Allow, deny, or ask before dispatch. `next()` delegates to allow; missing
+  145       * approval support turns `ask` into denial. Async gates must observe
+  146       * `exec.signal`; the registry rechecks cancellation after they settle but
+  147       * never abandons their promise.
+  148       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  149       * @param exec - the pending call (name, parsed arguments, caller agent).
+  150       * @mode waterfall
+  151       */
+  152      &#39;tools/pre-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, next: () =&gt; Promise&lt;PreToolDecision&gt;): Promise&lt;PreToolDecision&gt;
+  153      /**
+  154       * Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns
+  155       * a normalized result; wrappers may change only `exec.signal`, while call
+  156       * identity remains immutable. The registry re-fuses the original caller
+  157       * signal before the body, so replacement cannot detach caller cancellation;
+  158       * wrappers must still restore their signal and reach quiescence.
+  159       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  160       * @param exec - the allowed call about to dispatch (name, parsed arguments, caller agent, signal).
+  161       * @mode waterfall
+  162       */
+  163      &#39;tools/execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolDispatchExecution, next: () =&gt; Promise&lt;ToolExecutionResult&gt;): Promise&lt;ToolExecutionResult&gt;
+  164      /**
+  165       * Accept, replace, enrich, or block a normalized dispatch result. `next()`
+  166       * accepts it unchanged; thrown tools still reach this waterfall as errors. Async
+  167       * listeners must observe `exec.signal`; after they settle, caller
+  168       * cancellation replaces only a successful accepted outcome with the code
+  169       * selected by whether the tool body was invoked.
+  170       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  171       * @param exec - the call that just ran (name, parsed arguments, caller agent).
+  172       * @param result - the dispatch outcome a listener may accept, replace, or block.
+  173       * @mode waterfall
+  174       */
+  175      &#39;tools/post-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, result: Readonly&lt;ToolExecutionResult&gt;, next: () =&gt; Promise&lt;PostToolDecision&gt;): Promise&lt;PostToolDecision&gt;</code></pre></div></div></article><article class="finding-card compact" id="dsh-security-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 工具回调必须尊重 caller signal，取消不能丢失</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>工具 around-dispatch 允许替换 exec.signal，但 registry 会在 body 前重新融合 caller signal；文档要求 listener 等待自有工作 quiescence。</p></section><section><span>白话解释</span><p>超时或取消不能只让 UI 变灰，真正的子进程和网络请求也要停在安全边界。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>取消语义是工具契约的一部分，测试必须覆盖半途取消。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L1-L27" target="_blank" rel="noreferrer">packages/sandbox/sandbox-local/src/index.ts:1–27 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:154–176</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L154-L176" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  154       * Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns
+  155       * a normalized result; wrappers may change only `exec.signal`, while call
+  156       * identity remains immutable. The registry re-fuses the original caller
+  157       * signal before the body, so replacement cannot detach caller cancellation;
+  158       * wrappers must still restore their signal and reach quiescence.
+  159       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  160       * @param exec - the allowed call about to dispatch (name, parsed arguments, caller agent, signal).
+  161       * @mode waterfall
+  162       */
+  163      &#39;tools/execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolDispatchExecution, next: () =&gt; Promise&lt;ToolExecutionResult&gt;): Promise&lt;ToolExecutionResult&gt;
+  164      /**
+  165       * Accept, replace, enrich, or block a normalized dispatch result. `next()`
+  166       * accepts it unchanged; thrown tools still reach this waterfall as errors. Async
+  167       * listeners must observe `exec.signal`; after they settle, caller
+  168       * cancellation replaces only a successful accepted outcome with the code
+  169       * selected by whether the tool body was invoked.
+  170       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  171       * @param exec - the call that just ran (name, parsed arguments, caller agent).
+  172       * @param result - the dispatch outcome a listener may accept, replace, or block.
+  173       * @mode waterfall
+  174       */
+  175      &#39;tools/post-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, result: Readonly&lt;ToolExecutionResult&gt;, next: () =&gt; Promise&lt;PostToolDecision&gt;): Promise&lt;PostToolDecision&gt;
+  176      /**</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepSeek Harness architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,6 +1,6 @@
 # Awesome Harness
 
-An independently maintained bilingual atlas of open-source Agent Harness projects. The current release contains seven source snapshots plus eighteen projects refreshed to their current remote branch HEAD. Those eighteen retain the previous finding ledger structure, but source excerpts, commits, line ranges, and links were regenerated; the pages distinguish “source refreshed” from “historical finding still requiring semantic re-review.” Every project includes:
+An independently maintained bilingual atlas of open-source Agent Harness projects. The current release contains 8 source snapshots plus 18 projects refreshed to their current remote branch HEAD. Legacy projects retain the previous finding ledger structure, but source excerpts, commits, line ranges, and links were regenerated; the pages distinguish “source refreshed” from “historical finding still requiring semantic re-review.” Every project includes:
 
 - Chinese and English single-page technical analysis
 - Ten standalone beginner tutorial chapters
@@ -13,6 +13,6 @@ Site entry: site/en/index.html. Version ledger: site/data/versions.json.
 
 sources/ is local audit input and is intentionally not committed. To reproduce source excerpts, run node scripts/fetch-sources.mjs; it checks out the commits recorded in data/projects.mjs. Then run node scripts/generate-site.mjs and node scripts/validate-site.mjs.
 
-Note: Diagram Design is a diagram-generation Skill/Harness, not an executable agent runtime. The matrix compares it as a harness specimen without claiming it is an execution sandbox. data/legacy/ contains historical findings plus the current source version ledger; run npm run refresh-legacy to refresh the eighteen repositories and their code excerpts.
+Note: Diagram Design is a diagram-generation Skill/Harness, not an executable agent runtime. The matrix compares it as a harness specimen without claiming it is an execution sandbox. data/legacy/ contains historical findings plus the current source version ledger; run npm run refresh-legacy to refresh the legacy repositories and their code excerpts.
 
 > Generate pages with: node scripts/generate-site.mjs

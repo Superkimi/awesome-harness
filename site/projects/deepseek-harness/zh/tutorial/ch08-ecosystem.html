@@ -1,0 +1,102 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="新能力如何被发现、加载、调用和卸载？"><title>DeepSeek Harness · M08 · 扩展：MCP、Skill、插件如何接入</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek Harness · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch08-ecosystem.html">中</a><a href="../../en/tutorial/ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek Harness</strong><small>Plugin-composed, event-sourced Coding Agent Harness</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>47f943859bef</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · DeepSeek Harness · 47f943859bef</p><h1>扩展：MCP、Skill、插件如何接入</h1><p class="lede">新能力如何被发现、加载、调用和卸载？</p><div class="chapter-meta"><span>第 8 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。</p></div><h2>先回答本章问题</h2><p>新能力如何被发现、加载、调用和卸载？ 把 DeepSeek Harness 想成一棵可以热插拔的运行树：事件日志是黑匣子，Agent loop 是驾驶员，工具/模型/沙箱只是可以更换的部件。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="dsh-connectors-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>connectors</span></div><h3>01 · LLM、MCP、FS、Shell 和子 Agent 共用 capability seam</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 将 Service Definition、Provider、Consumer 定义为 seam 的三个角色；远端 sandbox 可以同时替换 Bash、PTY 和 LSP 的执行世界。</p></section><section><span>白话解释</span><p>换一个 provider，不需要为每种工具复制一套逻辑。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>连接器设计应先抽象执行世界，再堆具体工具。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L13-L42" target="_blank" rel="noreferrer">packages/core/system-prompt/src/index.ts:13–42 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:99–142</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L99-L142" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   99
+  100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
+  101
+  102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
+  103
+  104  ## Where new behavior goes
+  105
+  106  New behavior attaches to a documented extension point. Changing the loop itself updates this map.
+  107
+  108  | Goal | Mechanism |
+  109  |---|---|
+  110  | Add a model provider | register its adapter on `ctx.llm` |
+  111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |
+  119  | Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |
+  120  | Add model-facing context | call `agent.inject()`; it lands in the next admitted request |
+  121  | Add UI or editor integration | drive `ctx.agents` and render from `session/event` |
+  122  | Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |
+  123  | Add durable session state | extend `SessionEventMap`; render and replay from the log |
+  124  | Generate session titles | register the sole `ctx.sessionTitle` provider |
+  125  | Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |
+  126  | Fork a live session | `ctx.sessions.fork(source, boundary?, childSessionId?)` |
+  127  | Scope a registration to one agent | use that agent&#39;s `agent.ctx` |
+  128
+  129  The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [Chat nodes](cookbook/adding-a-conversation-node.md).
+  130</code></pre></div></div></article><article class="finding-card compact" id="dsh-connectors-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · 工具管道用 waterfall/emit 区分决策与观测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>tools/pre-execute 可以 allow/deny/ask，tools/execute 包装实际 dispatch，tools/post-execute 可改写结果，tools/result 只观察最终冻结结果。</p></section><section><span>白话解释</span><p>审批、重试、结果改写和指标不是一个大函数里的隐式分支，而是可插拔的阶段。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>每个阶段要写清楚是否能阻断、是否持久化、是否允许改写。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L13-L42" target="_blank" rel="noreferrer">packages/core/system-prompt/src/index.ts:13–42 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:137–207</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L137-L207" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  137  declare module &#39;@deepseek-ai/cordis&#39; {
+  138    interface Context {
+  139      tools: ToolRuntime
+  140    }
+  141
+  142    interface Events {
+  143      /**
+  144       * Allow, deny, or ask before dispatch. `next()` delegates to allow; missing
+  145       * approval support turns `ask` into denial. Async gates must observe
+  146       * `exec.signal`; the registry rechecks cancellation after they settle but
+  147       * never abandons their promise.
+  148       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  149       * @param exec - the pending call (name, parsed arguments, caller agent).
+  150       * @mode waterfall
+  151       */
+  152      &#39;tools/pre-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, next: () =&gt; Promise&lt;PreToolDecision&gt;): Promise&lt;PreToolDecision&gt;
+  153      /**
+  154       * Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns
+  155       * a normalized result; wrappers may change only `exec.signal`, while call
+  156       * identity remains immutable. The registry re-fuses the original caller
+  157       * signal before the body, so replacement cannot detach caller cancellation;
+  158       * wrappers must still restore their signal and reach quiescence.
+  159       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  160       * @param exec - the allowed call about to dispatch (name, parsed arguments, caller agent, signal).
+  161       * @mode waterfall
+  162       */
+  163      &#39;tools/execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolDispatchExecution, next: () =&gt; Promise&lt;ToolExecutionResult&gt;): Promise&lt;ToolExecutionResult&gt;
+  164      /**
+  165       * Accept, replace, enrich, or block a normalized dispatch result. `next()`
+  166       * accepts it unchanged; thrown tools still reach this waterfall as errors. Async
+  167       * listeners must observe `exec.signal`; after they settle, caller
+  168       * cancellation replaces only a successful accepted outcome with the code
+  169       * selected by whether the tool body was invoked.
+  170       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  171       * @param exec - the call that just ran (name, parsed arguments, caller agent).
+  172       * @param result - the dispatch outcome a listener may accept, replace, or block.
+  173       * @mode waterfall
+  174       */
+  175      &#39;tools/post-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, result: Readonly&lt;ToolExecutionResult&gt;, next: () =&gt; Promise&lt;PostToolDecision&gt;): Promise&lt;PostToolDecision&gt;
+  176      /**
+  177       * Allow a listener to replace content in the DURABLE LOG COPY of one
+  178       * `run_code` sub-dispatch outcome before the bridge appends its
+  179       * `tool/code-dispatch` event. `next()` keeps the
+  180       * content unchanged; a listener may return replacement blocks (e.g. the
+  181       * spill policy&#39;s preview + locator for an oversized text result). Only the
+  182       * logged copy is affected — the program already received the complete
+  183       * value, and the model sees neither. A throwing listener is contained:
+  184       * the bridge falls back to logging the original settled content.
+  185       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s dispatches.
+  186       * @param dispatch - the parent execution, sub-call identity, and the settled content to log.
+  187       * @mode waterfall
+  188       */
+  189      &#39;tools/code-dispatch-log&#39;(this: Scoped&lt;ToolRuntime&gt;, dispatch: CodeDispatchLog, next: () =&gt; Promise&lt;ContentBlock[]&gt;): Promise&lt;ContentBlock[]&gt;
+  190      /**
+  191       * Observe the frozen, lossless-JSON final outcome. Listener failures are contained.
+  192       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): keyed by `exec.agent`.
+  193       * @param exec - the execution object that traversed the pipeline.
+  194       * @param result - a deep-frozen snapshot of the final returned result.
+  195       * @mode emit
+  196       */
+  197      &#39;tools/result&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: Readonly&lt;ToolExecution&gt;, result: Readonly&lt;ToolExecutionResult&gt;): undefined
+  198      /**
+  199       * A tool was registered or unregistered, or a scoped restriction changed
+  200       * (the available tool set changed — possibly for one scope only). An
+  201       * UNFILTERED registry-subject notification, deliberately not scope-filtered
+  202       * dispatch: a global change concerns every agent&#39;s next assembly, so a
+  203       * scoped listener subscribing here sees every change, not just its own
+  204       * scope&#39;s.
+  205       * @mode emit
+  206       */
+  207      &#39;tools/change&#39;(): void</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="DeepSeek Harness sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← 安全：审批、权限和边界</a><a href="ch09-collaboration.html">协作：子 Agent 与工作流 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

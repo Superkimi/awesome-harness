@@ -1,0 +1,159 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Which claims are facts, inferences, and risks to address?"><title>DeepSeek Harness · M10 · Evidence and trade-offs: bringing lessons home</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek Harness · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch10-evidence.html">中</a><a href="ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek Harness</strong><small>Plugin-composed, event-sourced Coding Agent Harness</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="active" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>47f943859bef</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · DeepSeek Harness · 47f943859bef</p><h1>Evidence and trade-offs: bringing lessons home</h1><p class="lede">Which claims are facts, inferences, and risks to address?</p><div class="chapter-meta"><span>Chapter 10 / 10</span><span>4 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Source review is bridge inspection: a diagram is a claim, tests are load checks, and recovery drills prove the return path.</p></div><h2>Answer the chapter question first</h2><p>Which claims are facts, inferences, and risks to address? Think of DeepSeek Harness as a hot-swappable runtime tree: the event log is the black box, the agent loop is the driver, and model/tools/sandbox are replaceable parts.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="dsh-observability-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · JSONL persistence avoids torn reads with a stable stat/read loop</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>readStableFile compares fileRevision before and after readFile and retries if a writer appended; readRaw preserves the original JSONL text and compressed frames.</p></section><section><span>PLAIN LANGUAGE</span><p>Recovery does not mistake a session being written for a complete fact.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Persistence readers must account for concurrent writers rather than calling readFile once.</p></section><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/index.ts#L1-L26" target="_blank" rel="noreferrer">packages/session/session-persistence-jsonl/src/index.ts:1–26 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/session/session-persistence-jsonl/src/index.ts:239–303</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/index.ts#L239-L303" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  239    /**
+  240     * Read a session&#39;s stored artifact text verbatim: the durable file bytes
+  241     * decoded from this backend&#39;s physical encoding (complete zstd frames
+  242     * concatenated, or UTF-8 plaintext). The content is the exact JSONL text the
+  243     * backend wrote — never a reconstruction from parsed events — so packed-
+  244     * chunk rows, key order, and line breaks survive byte-for-byte. A torn
+  245     * final frame is omitted, matching the committed-prefix semantics of every
+  246     * other read.
+  247     * @param id - the persisted session to read.
+  248     * @param signal - optional cancellation for the stat/read/decode work.
+  249     * @returns the raw artifact text plus the header parsed from its own first
+  250     * line, or `undefined` when the session has no stored artifact.
+  251     */
+  252    override async readRaw(id: SessionId, signal?: AbortSignal): Promise&lt;SessionRawArtifact | undefined&gt; {
+  253      signal?.throwIfAborted()
+  254      await this.ensureRootEncoding()
+  255      signal?.throwIfAborted()
+  256      const path = await this.findLog(id, signal)
+  257      if (path === undefined) return undefined
+  258      const { buffer } = await this.readStableFile(path, signal)
+  259      let content: string
+  260      if (this.compression === &#39;zstd&#39;) {
+  261        const { frames } = scanZstdFrames(buffer)
+  262        if (frames.length === 0) throw new Error(&#39;empty or header-less Zstandard session log&#39;)
+  263        const decoder = createZstdFrameDecoder()
+  264        const plaintexts: Buffer[] = []
+  265        // The decoder yields views into a reused buffer; copy each frame&#39;s
+  266        // plaintext immediately so a later concat cannot read overwritten memory.
+  267        for (const plaintext of decoder.decode(buffer, frames)) {
+  268          signal?.throwIfAborted()
+  269          plaintexts.push(Buffer.from(plaintext))
+  270        }
+  271        content = Buffer.concat(plaintexts).toString(&#39;utf8&#39;)
+  272      } else {
+  273        content = buffer.toString(&#39;utf8&#39;)
+  274      }
+  275      const meta = parseHeaderMeta(content.split(&#39;\n&#39;, 1)[0] as string)
+  276      if (meta === undefined || meta.id !== id) {
+  277        throw new Error(`corrupt session log: invalid header line in &quot;${path}&quot;`)
+  278      }
+  279      // The logical artifact name is `session.jsonl` regardless of the physical
+  280      // encoding suffix (`.jsonl.zstd` marks compression only).
+  281      return { meta, filename: &#39;session.jsonl&#39;, content }
+  282    }
+  283
+  284    /**
+  285     * Read a file&#39;s bytes under a revision-stable loop: a writer appending
+  286     * between stat and readFile would yield a torn physical file, so retry
+  287     * while the stat revision changes.
+  288     * @param path - the artifact file to read.
+  289     * @param signal - optional cancellation for the stat/read work.
+  290     * @returns the stable bytes and the revision that matched both stats.
+  291     */
+  292    private async readStableFile(
+  293      path: string,
+  294      signal?: AbortSignal,
+  295    ): Promise&lt;{ buffer: Buffer; revision: PersistenceRevision }&gt; {
+  296      for (;;) {
+  297        signal?.throwIfAborted()
+  298        const before = fileRevision(await stat(path, { bigint: true }))
+  299        const buffer = await readFile(path, { signal })
+  300        signal?.throwIfAborted()
+  301        const after = fileRevision(await stat(path, { bigint: true }))
+  302        if (before === after) return { buffer, revision: after }
+  303      }</code></pre></div></div></article><article class="finding-card compact" id="dsh-observability-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>observability</span></div><h3>02 · Durable and live events are separate surfaces for replay and control</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>architecture.md defines session events as durable facts, agent/* as live coordination, and capability events as policy/adapter extension points.</p></section><section><span>PLAIN LANGUAGE</span><p>Replay is the black box; live control is the radio. One cannot replace the other.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Observability must state which data is recoverable and which exists only in the live process.</p></section><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/index.ts#L1-L26" target="_blank" rel="noreferrer">packages/session/session-persistence-jsonl/src/index.ts:1–26 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:67–95</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L67-L95" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   67  ```text
+   68  turn/start
+   69    claim next-step input plus one queued message
+   70    assemble prompt sections + tool schemas
+   71    -&gt; agent/pre-step                   reject | enter(messages)
+   72       reject, or a first enter rewritten empty -&gt; close the turn with no step
+   73       step/start
+   74       append entered messages as user/message
+   75       derive model history from the log
+   76       agent/request -&gt; llm/stream -&gt; assistant/chunk* -&gt; assistant/message
+   77       tool/call* -&gt; tools/pre-execute -&gt; tools/execute -&gt; tools/post-execute -&gt; tool/result*
+   78       step/end
+   79       tools owe another request, or next-step input arrived -&gt; claim -&gt; next step
+   80    -&gt; agent/turn-stopping
+   81  turn/end
+   82  ```
+   83
+   84  `turn/*`, `step/*`, `user/message`, `assistant/*`, and `tool/*` are durable session events; the rest are live extension points across three domains. `agent/pre-step`, `agent/request`, `llm/stream`, and the three `tools/*` events are waterfalls, whose listeners must call `next()` to delegate; `agent/turn-stopping` is serial and has no `next()`.
+   85
+   86  Input reaches the driver through one inbox. Some messages wake it immediately; injected context waits in the inbox until another message does.
+   87
+   88  `agent/pre-step` decides what the model sees. Listeners may rewrite the claimed messages or reject them outright; a rejected or empty first claim still closes a durable turn that spent no step, so the log records the attempt. Each step reads the prompt sections and tool schemas that plugins registered.
+   89
+   90  Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
+   91
+   92  ## Session log
+   93
+   94  The session log is the source of the context the model sees. `deriveMessages()` projects model history from it, and raw `assistant/chunk` events preserve replay and UI fidelity. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
+   95</code></pre></div></div></article><article class="finding-card compact" id="dsh-recovery-001" data-finding-dimension="recovery"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>recovery</span></div><h3>03 · Compaction runs at pre-step pressure and canonical overflow</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>agent-lifecycle documents compaction-basic handling pressure at agent/pre-step and canonical overflow at agent/request-error; the failed step closes before a retry turn is considered.</p></section><section><span>PLAIN LANGUAGE</span><p>Compaction does not suddenly delete history; it reorganizes the request after a failed step is closed.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Compaction, retry, and event closure need an explicit order to avoid orphan tool results.</p></section><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/tests/loop.spec.ts#L1-L29" target="_blank" rel="noreferrer">packages/core/agent-loop/tests/loop.spec.ts:1–29 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/agent-lifecycle.md:73–95</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/agent-lifecycle.md#L73-L95" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   73
+   74  The `assistant/message` event records every successful provider call, including content-less and `max-tokens` finishes. Empty content stays out of derived history, while the durable event keeps usage and `sourceEventSeqs` listing the exact `assistant/chunk` events, including an explicit empty list.
+   75
+   76  `dsh-compaction-basic` uses `agent/pre-step` for pressure before request derivation and `agent/request-error` only for canonical context overflow. Once either trigger qualifies, optional tool-result pruning runs before summary selection. Recovery works between the closed failed step and failed turn close, and opens a fresh retry turn only when pruning or summarization advances the surface replacement generation; otherwise the original request error remains authoritative.
+   77
+   78  The returned `agent/pre-step` decision is authoritative; listeners wrapping `next()` preserve downstream messages unless replacement is intentional. Steering and injected context pass through the same waterfall after a later claim operation takes their next-step batch.
+   79
+   80  SDK users that need replayable transcript data should consume `session/event`; `agent/*` is the live coordination API for queue/status, prompt interception, request construction, steering, continuation, and errors.
+   81
+   82  Maintenance mode: curated Mermaid sequence; exact event signatures live in the generated Cordis catalog.
+   83</code></pre></div></div></article><article class="finding-card compact" id="dsh-recovery-002" data-finding-dimension="recovery"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>recovery</span></div><h3>04 · JSONL records version, parent session, delegation depth, and encoding</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>HeaderLine carries version, id, cwd, parentSession, origin, delegationDepth, and agentPreset; logPath selects zstd or plaintext artifacts.</p></section><section><span>PLAIN LANGUAGE</span><p>Recovery first identifies the ledger, its parent, and delegation depth before reading later events.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>A session header should be a verifiable migration protocol, not a few debug fields.</p></section><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/tests/loop.spec.ts#L1-L29" target="_blank" rel="noreferrer">packages/core/agent-loop/tests/loop.spec.ts:1–29 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/session/session-persistence-jsonl/src/format.ts:29–85</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/format.ts#L29-L85" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   29   * The first JSONL record of a session artifact: the immutable
+   30   * {@link SessionHeader} tagged as a `session` record so a reader can tell it
+   31   * apart from an event line.
+   32   */
+   33  export interface HeaderLine {
+   34    type: &#39;session&#39;
+   35    version: number
+   36    id: SessionId
+   37    createdAt: number
+   38    cwd?: string
+   39    parentSession?: SessionId
+   40    seedLength?: number
+   41    origin?: &#39;subagent&#39;
+   42    delegationDepth: number
+   43    agentPreset?: string
+   44  }
+   45
+   46  /**
+   47   * Build the header line object from a {@link SessionHeader}.
+   48   * @param header - the immutable session metadata to serialize.
+   49   * @returns the `type: &#39;session&#39;`-tagged line object, absent optional fields omitted (never null).
+   50   */
+   51  export function toHeaderLine(header: SessionHeader): HeaderLine {
+   52    return {
+   53      type: &#39;session&#39;,
+   54      version: header.version,
+   55      id: header.id,
+   56      createdAt: header.createdAt,
+   57      ...header.cwd !== undefined ? { cwd: header.cwd } : {},
+   58      ...header.parentSession !== undefined ? { parentSession: header.parentSession } : {},
+   59      ...header.seedLength !== undefined ? { seedLength: header.seedLength } : {},
+   60      ...header.origin !== undefined ? { origin: header.origin } : {},
+   61      delegationDepth: header.delegationDepth ?? 0,
+   62      ...header.agentPreset !== undefined ? { agentPreset: header.agentPreset } : {},
+   63    }
+   64  }
+   65
+   66  /**
+   67   * Parse a header line back into a {@link SessionHeader}.
+   68   * @param line - the shape-checked first line of a log (see the `isHeaderLine` guard).
+   69   * @returns the header, absent optional fields omitted.
+   70   */
+   71  export function fromHeaderLine(line: HeaderLine): SessionHeader {
+   72    if (Object.hasOwn(line, &#39;sandboxMode&#39;) || Object.hasOwn(line, &#39;approvalPolicy&#39;)) {
+   73      throw new Error(&#39;session header uses retired policy baseline fields&#39;)
+   74    }
+   75    return {
+   76      version: line.version,
+   77      id: line.id,
+   78      createdAt: line.createdAt,
+   79      ...line.cwd !== undefined ? { cwd: line.cwd } : {},
+   80      ...line.parentSession !== undefined ? { parentSession: line.parentSession } : {},
+   81      ...line.seedLength !== undefined ? { seedLength: line.seedLength } : {},
+   82      ...line.origin !== undefined ? { origin: line.origin } : {},
+   83      delegationDepth: line.delegationDepth,
+   84      ...line.agentPreset !== undefined ? { agentPreset: line.agentPreset } : {},
+   85    }</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepSeek Harness architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← Collaboration: sub-agents and workflows</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

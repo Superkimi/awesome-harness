@@ -48,6 +48,17 @@ for (const project of projects) {
     for (const type of ["architecture", "sequence", "capability"]) {
       assert(fs.existsSync(path.join(base, "diagrams", `${type}.html`)), `${project.slug}/${lang}: missing ${type} diagram`);
     }
+    const analysis = fs.readFileSync(path.join(base, "analysis.html"), "utf8");
+    assert(analysis.includes("report-hero-v2"), `${project.slug}/${lang}: analysis did not use the detailed report shell`);
+    assert((analysis.match(/class="finding-card/g) || []).length >= 1, `${project.slug}/${lang}: analysis has no source finding cards`);
+    assert((analysis.match(/class="diagram-figure/g) || []).length === 3, `${project.slug}/${lang}: analysis does not embed three diagram figures`);
+    for (const type of ["architecture", "sequence", "capability"]) {
+      const diagram = fs.readFileSync(path.join(base, "diagrams", `${type}.html`), "utf8");
+      assert(diagram.includes("ARCHIFY-READY"), `${project.slug}/${lang}/${type}: diagram is missing Archify handoff marker`);
+      assert((diagram.match(/class="diagram-node/g) || []).length >= 5, `${project.slug}/${lang}/${type}: diagram has too few source-backed nodes`);
+    }
+    const firstChapter = fs.readFileSync(path.join(base, "tutorial", `ch${chapterDefs[0].number}-${chapterDefs[0].id}.html`), "utf8");
+    assert(firstChapter.includes("Evidence board") || firstChapter.includes("本章证据板"), `${project.slug}/${lang}: chapter is not evidence-led`);
   }
 }
 
@@ -60,6 +71,7 @@ for (const file of htmlFiles) {
   for (const match of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
     const target = match[1].split("#")[0].split("?")[0];
     if (!target || target.startsWith("http:") || target.startsWith("https:") || target.startsWith("mailto:") || target.startsWith("data:") || target.startsWith("javascript:") || target.startsWith("#")) continue;
+    if (target.includes("dataset.") || target.includes(".replace(") || target.includes("+n.")) continue;
     const resolved = path.resolve(path.dirname(file), target);
     const candidate = fs.existsSync(resolved) ? resolved : fs.existsSync(path.join(resolved, "index.html")) ? path.join(resolved, "index.html") : null;
     if (candidate === null && (target.endsWith(".mp4") || target.endsWith(".srt"))) continue;

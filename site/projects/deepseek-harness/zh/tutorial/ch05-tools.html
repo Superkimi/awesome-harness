@@ -1,0 +1,89 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="工具声明、参数、执行和回执在哪里发生？"><title>DeepSeek Harness · M05 · 工具：Agent 的手脚怎样被注册</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek Harness · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch05-tools.html">中</a><a href="../../en/tutorial/ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek Harness</strong><small>Plugin-composed, event-sourced Coding Agent Harness</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="active" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>47f943859bef</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · DeepSeek Harness · 47f943859bef</p><h1>工具：Agent 的手脚怎样被注册</h1><p class="lede">工具声明、参数、执行和回执在哪里发生？</p><div class="chapter-meta"><span>第 5 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>工具像机场跑道：模型拿到登机牌还不够，注册、权限、参数、执行和回执要逐关通过。</p></div><h2>先回答本章问题</h2><p>工具声明、参数、执行和回执在哪里发生？ 把 DeepSeek Harness 想成一棵可以热插拔的运行树：事件日志是黑匣子，Agent loop 是驾驶员，工具/模型/沙箱只是可以更换的部件。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="dsh-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具调用先按 executionMode 分组</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>executeToolCalls 先解析所有 tool-call，再按 executionMode 把连续 parallel 调用放进 bounded pool；遇到 exclusive 就形成 barrier。</p></section><section><span>白话解释</span><p>能并行的读操作一起做，可能冲突的写操作排队做。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发策略应是工具声明的一部分，而不是模型临时决定。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L10-L39" target="_blank" rel="noreferrer">packages/core/agent-loop/src/tool-calls.ts:10–39 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:59–100</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L59-L100" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   59  export async function executeToolCalls(
+   60    ctx: Context,
+   61    turn: number,
+   62    step: number,
+   63    toolCalls: ToolCallBlock[],
+   64    signal: AbortSignal,
+   65    acceptContext: (context: UserMessage) =&gt; void,
+   66  ): Promise&lt;{ concluded: boolean }&gt; {
+   67    const agent = ctx.agents.requireInitiator()
+   68    const { session } = agent
+   69
+   70    // Inputs are distinct because tools/execute wrappers may replace `exec.signal`.
+   71    const planned: PlannedCall[] = toolCalls.map(block =&gt; ({
+   72      block,
+   73      exec: {
+   74        callId: block.id,
+   75        name: block.name,
+   76        arguments: parseArguments(block.arguments),
+   77        agent,
+   78        signal,
+   79      },
+   80    }))
+   81
+   82    let next = 0
+   83    let concluded = false
+   84    while (next &lt; planned.length) {
+   85      // Commit before classifying again so registry changes affect unstarted calls.
+   86      // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded by the loop condition
+   87      const first = planned[next]!
+   88      const mode = ctx.tools.executionMode(first.exec).kind
+   89      const group = mode === &#39;parallel&#39; ? planned.slice(next) : [first]
+   90      const outcome = await runGroup(
+   91        ctx, turn, step, group, mode, signal, acceptContext,
+   92      )
+   93      next += outcome.consumed
+   94      concluded ||= outcome.concluded
+   95      if (outcome.aborted) {
+   96        for (const call of planned.slice(next)) appendSkippedToolCall(session, turn, step, call.block)
+   97        return { concluded }
+   98      }
+   99    }
+  100    return { concluded }</code></pre></div></div></article><article class="finding-card compact" id="dsh-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 工具结果异步完成，但按模型顺序提交</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>runGroup 用 slots 保存完成结果，commitReady 只从连续可提交的 index 开始 finalize/finish、appendToolResult，并把 additionalContexts 放进下一步。</p></section><section><span>白话解释</span><p>第三个工具先完成也不能把第二个工具的回执顶到模型前面。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发系统一定要有稳定 call id、提交序号和取消后的合成结果。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L10-L39" target="_blank" rel="noreferrer">packages/core/agent-loop/src/tool-calls.ts:10–39 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:112–159</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L112-L159" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  112  /**
+  113   * Run one exclusive barrier or parallel pool. Later calls are reclassified
+  114   * before start; an exclusive reclassification waits for the current pool to
+  115   * drain and remains for the caller&#39;s next barrier. Results and contexts commit
+  116   * in model order. Abort stops starts, drains and commits started calls, accepts
+  117   * their contexts into the owning batch, records results for skipped calls, and
+  118   * returns an aborted outcome. Scheduler failure drains dispatches without
+  119   * committing synthetic recovery results.
+  120   */
+  121  async function runGroup(
+  122    ctx: Context,
+  123    turn: number,
+  124    step: number,
+  125    group: PlannedCall[],
+  126    mode: ToolExecutionMode[&#39;kind&#39;],
+  127    signal: AbortSignal,
+  128    acceptContext: (context: UserMessage) =&gt; void,
+  129  ): Promise&lt;GroupOutcome&gt; {
+  130    const { session } = ctx.agents.requireInitiator()
+  131    const { maxParallelToolCalls } = ctx.agentLoop.config
+  132    const slots: (Slot | undefined)[] = group.map(() =&gt; undefined)
+  133    // Started slots retain their `tool/call` seq so the result can cite it.
+  134    const callSeqs: number[] = group.map(() =&gt; -1)
+  135    let nextToStart = 0
+  136    let committed = 0
+  137    let started = 0
+  138    let aborted: boolean = signal.aborted
+  139    let concluded = false
+  140    let schedulerFailure: { error: unknown } | undefined
+  141    const throwSchedulerFailure = (): void =&gt; {
+  142      if (schedulerFailure !== undefined) throw schedulerFailure.error
+  143    }
+  144
+  145    // `committed` advances only across contiguous model-order slots.
+  146    const commitReady = async (): Promise&lt;void&gt; =&gt; {
+  147      while (committed &lt; group.length) {
+  148        const slot = slots[committed]
+  149        if (slot === undefined) break
+  150        const call = group[committed]
+  151        const result = slot.needsPost
+  152          ? await ctx.tools[TOOL_RUNTIME_SCHEDULER].finalize(slot.exec, slot.result)
+  153          : ctx.tools[TOOL_RUNTIME_SCHEDULER].finish(slot.exec, slot.result)
+  154        // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  155        appendToolResult(session, turn, step, call!.block, result, callSeqs[committed]!)
+  156        for (const context of result.additionalContexts ?? []) acceptContext(context)
+  157        concluded ||= result.concludesTurn === true
+  158        committed++
+  159      }</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="DeepSeek Harness sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← 模型与消息：流式结果如何进入状态</a><a href="ch06-context.html">上下文：长任务怎样不丢重点 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

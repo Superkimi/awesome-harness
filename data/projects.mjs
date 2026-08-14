@@ -238,6 +238,58 @@ const baseProjects = [
       ["state", "skills/diagram-design/SKILL.md", "state machine|transitions|guards"],
       ["engineering", "skills/diagram-design/SKILL.md", "Pre-Output Checklist|anti-pattern|accessibility"]
     ]
+  },
+  {
+    slug: "deepseek-harness",
+    name: "DeepSeek Harness",
+    repo: "deepseek-ai/deepseek-harness",
+    branch: "main",
+    commit: "47f943859bef60e4160492346772ded9b24f765a",
+    date: "2026-08-13T19:38:46+08:00",
+    language: "TypeScript / Cordis / Node sandbox runners",
+    kind: "Plugin-composed, event-sourced Coding Agent Harness",
+    zh: {
+      thesis: "DeepSeek Harness 把 Agent 做成 Cordis 插件树：模型、工具、会话日志、权限、沙箱、Skill、子 Agent 和 UI 都是可替换服务。它最值得研究的不是某个工具，而是‘模型可见的一切必须可从事件日志重建’这条硬约束。",
+      strengths: [
+        "插件、服务和事件把能力拆成可替换 seam，profile/bundle/patch 可以在启动时重组整棵运行树",
+        "turn/step、agent/*、tools/* 三类事件分工清楚，工具可以并行执行但结果仍按模型顺序提交",
+        "JSONL 会话日志、checkpoint、压缩、沙箱 runner 探测和 fail-closed 让恢复与隔离成为运行时能力"
+      ],
+      limits: [
+        "Cordis 插件数量巨大，真正理解一次请求需要跨 agent-loop、session、tools、llm、sandbox 多个 package",
+        "sandbox-local 依赖 bwrap/Landlock/Seatbelt/Windows ACL 等宿主能力；不可用时会拒绝执行，而不是自动退回裸进程",
+        "插件可组合性很强，但 profile/patch 的最终配置必须落盘并审计，否则实际启动树不容易从 UI 猜出"
+      ],
+      lesson: "把 DeepSeek Harness 想成一棵可以热插拔的运行树：事件日志是黑匣子，Agent loop 是驾驶员，工具/模型/沙箱只是可以更换的部件。"
+    },
+    en: {
+      thesis: "DeepSeek Harness models an agent as a Cordis plugin tree: models, tools, session logs, permissions, sandboxes, skills, sub-agents, and UI are replaceable services. Its central lesson is the invariant that everything visible to a model must be reconstructable from the session log.",
+      strengths: [
+        "Plugins, services, and events form replaceable seams; profiles, bundles, and patches can recompose the runtime tree",
+        "Turn/step, agent/*, and tools/* events have distinct roles; tools may run in parallel while results commit in model order",
+        "JSONL logs, checkpoints, compaction, runner probes, and fail-closed sandbox selection make recovery and isolation runtime features"
+      ],
+      limits: [
+        "The Cordis package graph is large; one request crosses agent-loop, session, tools, llm, and sandbox packages",
+        "sandbox-local depends on bwrap, Landlock, Seatbelt, or Windows ACL capabilities and refuses execution when confinement is unavailable",
+        "Composition is powerful, but the resolved profile/patch tree must be persisted and audited rather than inferred from the UI"
+      ],
+      lesson: "Think of DeepSeek Harness as a hot-swappable runtime tree: the event log is the black box, the agent loop is the driver, and model/tools/sandbox are replaceable parts."
+    },
+    anchors: [
+      ["architecture", "docs/architecture.md", "Cordis|profile|bundle|Core packages"],
+      ["loop", "packages/core/agent-loop/src/agent.ts", "private async turn|preStep|turn/start"],
+      ["model", "packages/llm/llm/src/index.ts", "GenerateOptions|Message|Stream"],
+      ["tools", "packages/core/agent-loop/src/tool-calls.ts", "executeToolCalls|executionMode|commitReady"],
+      ["context", "packages/core/agent-loop/src/agent.ts", "assembleContextFor|runtimeContext|systemPrompt"],
+      ["security", "packages/sandbox/sandbox-local/src/index.ts", "fail closed|PLATFORM_CHAINS|confine"],
+      ["ecosystem", "packages/core/system-prompt/src/index.ts", "register|assemble|toolOrder"],
+      ["collaboration", "packages/subagent/subagent/src/child-agent.ts", "child|descriptor|depth"],
+      ["state", "packages/session/session-persistence-jsonl/src/index.ts", "readRaw|readStableFile|coordinator"],
+      ["engineering", "packages/core/agent-loop/tests/loop.spec.ts", "turn/start|step/end|agent"],
+      ["instructions", "packages/context/agent-instructions/src/index.ts", "instructions|workspace|load"],
+      ["recovery", "packages/compaction/compaction-basic/src/index.ts", "pre-step|request-error|compact"]
+    ]
   }
 ];
 
@@ -426,6 +478,34 @@ export const dimensionNotes = {
       collaboration: "Ownership, routing, and escalation semantics clarify team relationships, but do not replace a task-orchestration runtime.",
       instructions: "SKILL.md, references, templates, and examples are the complete instruction/extension surface; callers must load resources by route.",
       recovery: "State-machine guidance asks for transitions, guards, side effects, and failure paths, making it possible to trace a diagram back to code and tests."
+    }
+  },
+  "deepseek-harness": {
+    zh: {
+      architecture: "Cordis 把每个能力都装成插件：profile 选择 bundle，bundle 提供 patch，patch 再按层级覆盖配置；Agent、Session、Tools、LLM、Sandbox 都有自己的 ctx service。",
+      loop: "ReactLoopAgent 维护 idle/maintenance/running 三态；turn 开始后先从 inbox claim，再过 agent/pre-step，随后进入 step、LLM、工具和 turn-stopping。",
+      modelContext: "systemPrompt 先汇总插件注册的段落与工具 schema，RuntimeContextProjection 再把动态状态放进模型可见上下文；任何模型可见输入都必须有日志事件来源。",
+      execution: "工具调度先按 executionMode 分成 exclusive barrier 或 bounded parallel pool，policy、prepare、execute、post 和 result 仍按模型顺序提交。",
+      tools: "工具不是简单函数：注册表提供 schema、presentation、executionMode、prepare/finalize 和附加上下文，调度器负责结果回写与取消。",
+      connectors: "LLM adapter、MCP client、Skills、LSP、filesystem、terminal、ACP 和插件都通过 Cordis service seam 连接，不需要修改主循环。",
+      security: "sandbox-local 按平台选择 bwrap→Landlock、Seatbelt 或 Windows ACL；探测失败会报告 unavailable 并拒绝返回裸 argv，审批策略另由 session policy 控制。",
+      observability: "session/event 是可回放事实，agent/* 是实时协调，tools/* 是能力拦截；JSONL persistence 通过 stable stat/read 避免读到写入中的半截文件。",
+      collaboration: "subagent descriptor、delegationDepth、child session 和 settlement 让子 Agent 有独立日志与生命周期，而不是主 prompt 里的角色扮演。",
+      instructions: "agent-instructions 从工作区层级读取指令，system-prompt 再按稳定顺序合并 persona、工具说明、动态上下文与用户输入，插件通过事件 seam 注入。",
+      recovery: "compaction 在 pre-step 或 canonical overflow 后触发，失败 step 会先闭合，再按 replacement generation 决定是否开新 retry turn；日志可继续重放。"
+    },
+    en: {
+      architecture: "Cordis mounts every capability as a plugin: profiles select bundles, bundles provide patches, and patches override rows by layer; Agent, Session, Tools, LLM, and Sandbox each own a service.",
+      loop: "ReactLoopAgent has idle, maintenance, and running phases. A turn claims inbox input, passes agent/pre-step, then enters step, LLM, tools, and turn-stopping.",
+      modelContext: "systemPrompt gathers plugin-registered sections and tool schemas, then RuntimeContextProjection adds live state; every model-visible input must have a session-log source.",
+      execution: "Tool scheduling classifies calls into exclusive barriers or bounded parallel pools; policy, prepare, execute, post, and result commit remain model ordered.",
+      tools: "A tool is more than a function: the registry owns schema, presentation, executionMode, prepare/finalize, and extra context, while the scheduler handles receipts and cancellation.",
+      connectors: "LLM adapters, MCP, Skills, LSP, filesystem, terminal, ACP, and plugins connect through Cordis service seams without changing the main loop.",
+      security: "sandbox-local selects bwrap/Landlock, Seatbelt, or Windows ACL by platform; failed probes report unavailable and refuse to return a raw argv. Approval is a separate session policy.",
+      observability: "session/event is the replayable fact stream, agent/* is live coordination, and tools/* are capability seams; JSONL persistence uses stable stat/read to avoid torn reads.",
+      collaboration: "Subagent descriptors, delegation depth, child sessions, and settlement give child agents independent logs and lifecycles instead of prompt role-play.",
+      instructions: "agent-instructions loads workspace-scoped guidance, while system-prompt merges persona, tool docs, runtime context, and user input in stable order; plugins inject through event seams.",
+      recovery: "Compaction runs at pre-step or canonical overflow; a failed step closes first, then a replacement generation decides whether to open a retry turn, all replayable from the log."
     }
   }
 };
