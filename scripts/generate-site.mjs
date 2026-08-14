@@ -11,6 +11,24 @@ const sourceRoot = path.join(root, "sources");
 const historicalSourceRoot = path.resolve(root, "..", "sources");
 const siteRoot = path.join(root, "site");
 const sourceInfo = new Map(projects.map((project) => [project.slug, project]));
+// Legacy repositories are still valid source snapshots, but the new site is a
+// single current edition.  Normalise inherited labels in memory so no page
+// points readers at a prior report, migration, or “ten chapter” release.
+for (const project of projects) {
+  if (!project.legacy) continue;
+  project.kind = String(project.kind || "").replace(/^Legacy source-backed harness audit$/, "Source-backed harness audit");
+  for (const lang of ["zh", "en"]) {
+    const copy = project[lang];
+    if (!copy) continue;
+    copy.thesis = String(copy.thesis || "")
+      .replace(/既有源码账本覆盖 (\d+) 个 Harness 维度；这次迁移把原有事实重新排成单页分析和十章教程/, "源码证据覆盖 $1 个 Harness 维度；本页按统一章节和执行图展开")
+      .replace(/The existing source ledger for (.+?) covers (\d+) Harness dimensions\. This migration reshapes those facts into a single analysis page and ten standalone chapters/, "$1 has $2 source-backed Harness dimensions. This edition expands them into a single analysis page and executable source chapters");
+    copy.limits = (copy.limits || []).map((item) => String(item)
+      .replace(/当前页面复用既有源码账本；迁移到自研前仍需做部署级验证/g, "当前源码证据仍需部署级验证")
+      .replace(/This page reuses the existing source ledger; validate deployment before adopting it/g, "Validate deployment behavior before adopting this source snapshot")
+      .replace(/This snapshot reuses the prior source ledger and its pinned commit/g, "Source claims are pinned to the checked-out commit"));
+  }
+}
 const evidenceRoot = path.join(root, "data", "legacy", "evidence");
 const evidenceLedgers = new Map();
 for (const project of projects) {
@@ -45,6 +63,7 @@ function repoPath(project, relative) { return path.join(sourceRepo(project), rel
 const sourceContentCache = new Map();
 const sourceFileListCache = new Map();
 const conceptIndexCache = new Map();
+const commandInventoryCache = new Map();
 const chapterSearchTerms = {
   overview: ["main", "cli", "agent", "session", "run", "start", "command"],
   architecture: ["runtime", "agent", "session", "router", "service", "main", "kernel"],
@@ -55,7 +74,8 @@ const chapterSearchTerms = {
   security: ["permission", "approval", "sandbox", "policy", "allow", "deny", "trust", "isolate"],
   ecosystem: ["plugin", "mcp", "skill", "hook", "extension", "connector", "register"],
   collaboration: ["subagent", "sub-agent", "agent", "job", "task", "worker", "parallel", "queue"],
-  evidence: ["log", "trace", "event", "checkpoint", "retry", "replay", "persist", "store", "recover"]
+  evidence: ["log", "trace", "event", "checkpoint", "retry", "replay", "persist", "store", "recover"],
+  commands: ["command", "subcommand", "slash", "register", "dispatch", "router", "argv", "argument", "goal", "plan", "help"]
 };
 const conceptDefs = [
   { id: "entry", zh: "entry / 入口", en: "entry / entrypoint", patterns: [/\bmain\b/i, /\bcli\b/i, /entry(point)?/i], noteZh: "谁把用户输入变成一次可运行的 session。", noteEn: "Who turns user input into a runnable session." },
@@ -198,6 +218,90 @@ function implementationInventory(project, lang) {
   const commandList = commands.map((command) => ({ relative: command }));
   return `<section class="implementation-inventory"><div class="inventory-head"><span>${lang === "zh" ? "源码面板 · 实现面" : "SOURCE DOSSIER · IMPLEMENTATION SURFACE"}</span><b>${files.length} ${lang === "zh" ? "个可读文件" : "readable files"}</b></div><p>${lang === "zh" ? "这里把“入口、注册、扩展、测试和指令线索”从本地快照中单独列出；它不是根据 README 猜的功能清单。文件路径和提交行号仍然是最终证据。" : "This panel separates entrypoints, registration, extensions, tests, and command clues from the local snapshot; it is not a README-derived feature list. File paths and pinned lines remain the final evidence."}</p><div class="inventory-grid">${card(lang === "zh" ? "清单 / 构建入口" : "Manifests / build", manifests, lang === "zh" ? "依赖、脚本、workspace 或编译边界。" : "Dependencies, scripts, workspace, or build boundaries.")}${card(lang === "zh" ? "入口 / Session / UI" : "Entrypoints / session / UI", entries, lang === "zh" ? "主进程、CLI、服务或桌面入口候选。" : "Main process, CLI, service, or desktop entry candidates.")}${card(lang === "zh" ? "Plugins / MCP / Tools" : "Plugins / MCP / tools", extensionFiles, lang === "zh" ? "能力注册和外部连接器的真实文件面。" : "Actual files behind capability registration and connectors.")}${card(lang === "zh" ? "Tests / Bench / Fixtures" : "Tests / bench / fixtures", testFiles, lang === "zh" ? "用于验证状态、回执和失败边界的测试面。" : "Test surface for state, receipts, and failure boundaries.")}${card(lang === "zh" ? "指令 / 参数线索" : "Commands / argument clues", commandList, lang === "zh" ? "从代码中的命令构造器和参数声明提取的线索，需点击源码复核。" : "Clues extracted from command builders and argument declarations; verify in source.")}</div></section>`;
 }
+
+function commandInventory(project, lang) {
+  const cacheKey = `${project.slug}\0${lang}`;
+  if (commandInventoryCache.has(cacheKey)) return commandInventoryCache.get(cacheKey);
+  const codeExts = new Set([".rs", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".py", ".go", ".java", ".kt", ".ex", ".rb", ".sh", ".fish", ".ps1"]);
+  const files = sourceFiles(project)
+    .filter((file) => !/readme|(^|\/)docs?\//i.test(file.relative) && (codeExts.has(file.ext) || /(^|\/)(package\.json|pyproject\.toml|Cargo\.toml|go\.mod|deno\.json|composer\.json)$/i.test(file.relative)))
+    .sort((a, b) => {
+      const score = (file) => (/\/cmd\/|\/cli|command|entry|router|dispatch|slash|prompt|input|goal/i.test(file.relative) ? 8 : 0) - (/test|bench|fixture|example|vendor|update-helper|installer|release|deploy/i.test(file.relative) ? 7 : 0);
+      return score(b) - score(a) || a.relative.localeCompare(b.relative);
+    });
+  const candidates = [];
+  const seen = new Set();
+  const add = (label, file, line, kind, raw) => {
+    const normalized = String(label || "").trim().replace(/["'`]/g, "");
+    if (!normalized || normalized.length < 2 || normalized.length > 64 || seen.has(normalized.toLowerCase())) return;
+    if (/^(true|false|null|undefined|http|https|src|test|name|value|command)$/i.test(normalized)) return;
+    seen.add(normalized.toLowerCase());
+    const start = Math.max(1, line - 5);
+    const end = line + 12;
+    candidates.push({ label: normalized, path: file.relative, line, start, end, kind, raw, snippet: sourceSnippet(project, project.commit, file.relative, start, end, 42) });
+  };
+  const patterns = [
+    { re: /(?:Command::new|Subcommand::with_name|\.command|subcommand|add_argument|add_subparsers|registerCommand|register_command|addCommand)\s*\(\s*["'`]([^"'`]+)["'`]/g, kind: "registered" },
+    { re: /(?<![\w/])(--[a-z][a-z0-9-]{2,})(?![\w-])/gi, kind: "flag" },
+    { re: /["'`](\/[a-z][a-z0-9_-]{2,})/gi, kind: "slash" }
+  ];
+  for (const file of files) {
+    let content = "";
+    try { content = fs.readFileSync(path.join(sourceRepo(project), file.relative), "utf8"); } catch (_) { continue; }
+    if (!content || content.length > 220000) continue;
+    const lines = content.split(/\r?\n/);
+    for (const { re, kind } of patterns) {
+      re.lastIndex = 0;
+      let match;
+      while ((match = re.exec(content)) && candidates.length < 18) {
+        const line = content.slice(0, match.index).split(/\r?\n/).length;
+        const raw = lines[line - 1] || "";
+        if (kind === "slash") {
+          const token = String(match[1] || "");
+          const relevant = /command|slash|prompt|directive|shortcut|input|action|handler|route|builtin|help|goal|plan|status|resume|compact|model/i.test(raw) || /^(goal|plan|help|status|resume|compact|model|settings|clear|quit|exit|review|run|test)$/i.test(token);
+          if (!relevant) continue;
+        }
+        if (kind === "flag" && /(^|\/)(\.github|\.githooks|benchmarks|testdata|fixtures|examples)\//i.test(file.relative)) continue;
+        if (/(update-helper|installer|release|deploy|workflow|e2ebench)/i.test(file.relative)) continue;
+        add(match[1], file, line, kind, raw);
+      }
+      if (candidates.length >= 18) break;
+    }
+    if (candidates.length >= 18) break;
+  }
+  if (!candidates.length) {
+    const commandHits = conceptIndex(project).get("commands") || [];
+    for (const hit of commandHits.slice(0, 6)) {
+      const file = files.find((item) => item.relative === hit.path) || sourceFiles(project).find((item) => item.relative === hit.path);
+      if (file) add(lang === "zh" ? "命令面线索" : "command-surface clue", file, hit.line, "surface", "concept audit");
+    }
+  }
+  if (!candidates.length) {
+    const fallback = findCitation(project, "tools");
+    candidates.push({ label: lang === "zh" ? "未定位的内置指令" : "built-in command not located", path: fallback.path, line: fallback.start, start: fallback.start, end: fallback.end, kind: "unlocated", raw: "", snippet: fallback.snippet });
+  }
+  const result = candidates.slice(0, 12);
+  commandInventoryCache.set(cacheKey, result);
+  return result;
+}
+
+function commandExecutionSection(project, lang, hostFile = path.join(siteRoot, "projects", project.slug, lang, "analysis.html")) {
+  const commands = commandInventory(project, lang);
+  const commandDiagramFile = path.join(siteRoot, "projects", project.slug, lang, "diagrams", "commands.html");
+  const commandDiagramHref = rel(hostFile, commandDiagramFile);
+  const commandCards = commands.map((command, index) => {
+    const source = sourceUrlAtCommit(project, command.path, command.start, command.end, project.commit);
+    const plain = command.kind === "slash"
+      ? (lang === "zh" ? "这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。" : "A slash-command clue: the interaction layer recognises the token before routing it through the project's registry.")
+      : command.kind === "flag"
+        ? (lang === "zh" ? "这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。" : "A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.")
+        : command.kind === "registered"
+          ? (lang === "zh" ? "这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。" : "A registration point: the command name is bound to a handler here; the execution map traces policy, tools, and receipts after it.")
+          : (lang === "zh" ? "当前快照只定位到命令面相关文件，不能把它误写成一个已确认的用户命令。" : "The snapshot only locates a command-surface file; do not overstate it as a confirmed user command.");
+    return `<article class="command-card"><header><span>${String(index + 1).padStart(2, "0")}</span><div><h3><code>${esc(command.label)}</code></h3><small>${esc(command.kind)} · ${esc(command.path)}:${command.line}</small></div><a href="${esc(source)}" target="_blank" rel="noreferrer">${lang === "zh" ? "源码" : "Source"} ↗</a></header><p>${esc(plain)}</p><pre><code>${esc(command.snippet || command.raw || "// source evidence unavailable")}</code></pre><a class="command-map-link" href="${esc(`${commandDiagramHref}?command=${encodeURIComponent(command.label)}#command-flow`)}">${lang === "zh" ? "打开这条指令的执行图" : "Open this command's execution map"} →</a></article>`;
+  }).join("");
+  return `<section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>${commands.length} ${lang === "zh" ? "条指令线索" : "command clues"}</b></div><p>${lang === "zh" ? "指令不是 UI 文案列表：每条线索都来自本地源码中的注册器、参数解析器或 slash token。点击源码行号，再用执行图查看从解析到回执的完整路径；未定位项会明确标注，不会被包装成事实。" : "Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked."}</p><div class="command-grid">${commandCards}</div></section>`;
+}
 function sourceSnippet(project, commit, relative, start, end, maxLines = 72) {
   const repo = sourceRepo(project);
   const file = path.join(repo, relative);
@@ -221,7 +325,7 @@ function langName(lang) { return lang === "zh" ? "中文" : "English"; }
 function text(project, lang, key) { return project[lang]?.[key] || project.zh[key] || ""; }
 
 function findCitation(project, anchorKey) {
-  const legacyAlias = { architecture: "architecture", loop: "loop", model: "model", tools: "tools", context: "context", security: "security", ecosystem: "ecosystem", collaboration: "collaboration", state: "evidence", engineering: "evidence" };
+  const legacyAlias = { architecture: "architecture", loop: "loop", model: "model", tools: "tools", context: "context", security: "security", ecosystem: "ecosystem", collaboration: "collaboration", commands: "tools", state: "evidence", engineering: "evidence" };
   const anchor = project.anchors.find((item) => item[0] === anchorKey)
     || project.anchors.find((item) => item[0] === legacyAlias[anchorKey])
     || project.anchors[0];
@@ -319,7 +423,8 @@ const chapterFindingPatterns = {
   security: /security|execution/i,
   ecosystem: /connectors|instructions/i,
   collaboration: /^collaboration$/i,
-  evidence: /observability|recovery/i
+  evidence: /observability|recovery/i,
+  commands: /instructions|tools|connectors|architecture/i
 };
 
 function fieldText(value, lang, fallback = "") {
@@ -452,7 +557,7 @@ function findingCard(project, lang, finding, index, compact = false) {
   return `<article class="finding-card${compact ? " compact" : ""}" id="${esc(finding.id)}" data-finding-dimension="${esc(finding.dimension)}"><header><span class="finding-index">${String(index + 1).padStart(2, "0")}</span><div><div class="finding-meta"><b>${esc(finding.evidenceLevel)}</b><span>${esc(finding.claimType)}</span><span>${esc(finding.dimension)}</span></div><h3>${esc(title)}</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>${lang === "zh" ? "源码事实" : "SOURCE FACT"}</span><p>${esc(finding.fact)}</p></section><section><span>${lang === "zh" ? "白话解释" : "PLAIN LANGUAGE"}</span><p>${esc(finding.plain)}</p></section><section class="finding-impact"><span>${lang === "zh" ? "对自研 Harness 的含义" : "IMPLICATION"}</span><p>${esc(finding.implication)}</p></section>${lineReadingGuide(project, lang, finding)}${caveats}${historical}${currentLink}</div><div class="finding-code"><div class="finding-code-head"><span>${esc(pathLabel)}</span><a href="${esc(sourceUrlAtCommit(project, citation.path, citation.start, citation.end, citation.commit || project.commit))}" target="_blank" rel="noreferrer">${lang === "zh" ? "固定提交" : "PINNED"} ↗</a></div><pre><code>${esc(citation.snippet)}</code></pre>${lineByLineTable(lang, citation.snippet)}${currentCode}</div></div></article>`;
 }
 
-const chapterAnchor = { overview: "architecture", architecture: "architecture", loop: "loop", model: "model", tools: "tools", context: "context", security: "security", ecosystem: "ecosystem", collaboration: "collaboration", evidence: "engineering" };
+const chapterAnchor = { overview: "architecture", architecture: "architecture", loop: "loop", model: "model", tools: "tools", context: "context", security: "security", ecosystem: "ecosystem", collaboration: "collaboration", evidence: "engineering", commands: "commands" };
 const dimensionDefs = [
   { id: "architecture", anchor: "architecture", zh: "架构与所有权", en: "Architecture & ownership" },
   { id: "loop", anchor: "loop", zh: "控制循环", en: "Control loop" },
@@ -477,7 +582,8 @@ const analogies = {
     security: "审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。",
     ecosystem: "插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。",
     collaboration: "真正协作像派工单：要有负责的人、边界、预算、取消方式和可验收的交付物。",
-    evidence: "源码审计像验桥：图纸是声明，测试是承重，恢复演练才说明断电后能不能回来。"
+    evidence: "源码审计像验桥：图纸是声明，测试是承重，恢复演练才说明断电后能不能回来。",
+    commands: "指令像机场值机单：先认出航班，再检查登机规则，交给正确柜台执行，最后把登机和到达状态写回系统。"
   },
   en: {
     overview: "Treat the project as a workshop: find the entrypoint, workbench, toolbox, and delivery desk before memorizing APIs.",
@@ -489,7 +595,8 @@ const analogies = {
     security: "Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.",
     ecosystem: "Plugins and MCP are external devices: docs, device, power, and network must be registered separately.",
     collaboration: "Real collaboration is a work order with an owner, boundary, budget, cancellation, and verifiable artifact.",
-    evidence: "Source review is bridge inspection: a diagram is a claim, tests are load checks, and recovery drills prove the return path."
+    evidence: "Source review is bridge inspection: a diagram is a claim, tests are load checks, and recovery drills prove the return path.",
+    commands: "A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session."
   }
 };
 
@@ -525,11 +632,7 @@ function pageShell({ title, description, lang, project, current, body, rootPage 
   const homeHref = project ? `${prefix}${lang}/index.html` : "index.html";
   const reportHref = project ? (current === "analysis" ? "analysis.html" : "../analysis.html") : homeHref;
   const tutorialHref = project ? (current === "analysis" ? "tutorial/index.html" : "index.html") : homeHref;
-  if (project?.legacy && current === "analysis") {
-    const legacyHref = `${prefix}legacy/reports/${project.slug}.html`;
-    body = `<section class="prose legacy-note"><div class="section-head"><span>LEGACY SOURCE AUDIT</span><h2>${lang === "zh" ? "迁移前的长报告仍然保留" : "The prior long-form audit is preserved"}</h2></div><p>${lang === "zh" ? "这个项目来自上一轮源码审计账本。新页面已经按统一模板拆成十章；下面的链接保留原审计中的完整 coverage、调用链、风险判断和源码引用，方便逐段复核。" : "This project comes from the previous source-audit ledger. The new site now splits it into ten common chapters; the link preserves the earlier coverage, call chain, risks, and source citations for review."}</p><a class="legacy-report-link" href="${legacyHref}">${lang === "zh" ? "打开完整中文长报告 ↗" : "Open the full Chinese audit ↗"}</a></section>${body}`;
-  }
-  return `<!doctype html><html lang="${lang === "zh" ? "zh-CN" : "en"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${esc(description)}"><title>${esc(title)}</title><link rel="stylesheet" href="${prefix}assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="${homeHref}">AWESOME <em>HARNESS</em></a><span class="crumb">${esc(project ? `${project.name} · ${langName(lang)}` : "Open-source agent harness atlas")}</span><nav><a href="${homeHref}">${lang === "zh" ? "总览" : "Overview"}</a>${project ? `<a href="${reportHref}">${lang === "zh" ? "技术分析" : "Analysis"}</a><a href="${tutorialHref}">${lang === "zh" ? "小白教程" : "Tutorial"}</a>` : ""}<a href="${zhHref}">中</a><a href="${enHref}">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side>${project ? projectNav(project, lang, current) : atlasNav(lang)}</aside><main>${body}</main></div><script src="${prefix}assets/harness.js"></script></body></html>`;
+  return `<!doctype html><html lang="${lang === "zh" ? "zh-CN" : "en"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${esc(description)}"><title>${esc(title)}</title><link rel="stylesheet" href="${prefix}assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="${homeHref}">AWESOME <em>HARNESS</em></a><span class="crumb">${esc(project ? `${project.name} · ${langName(lang)}` : "Open-source agent harness atlas")}</span><nav><a href="${homeHref}">${lang === "zh" ? "总览" : "Overview"}</a>${project ? `<a href="${reportHref}">${lang === "zh" ? "技术分析" : "Analysis"}</a><a href="${tutorialHref}">${lang === "zh" ? "源码教程" : "Source course"}</a>` : ""}<a href="${zhHref}">中</a><a href="${enHref}">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side>${project ? projectNav(project, lang, current) : atlasNav(lang)}</aside><main>${body}</main></div><script src="${prefix}assets/harness.js"></script></body></html>`;
 }
 
 function atlasNav(lang) {
@@ -707,7 +810,33 @@ function archifySvg(project, lang, type) {
     ["agents", lang === "zh" ? "协作" : "Collaboration", lang === "zh" ? "子 Agent / jobs" : "Sub-agents / jobs", 680, 610, "collaboration"],
     ["recovery", lang === "zh" ? "恢复" : "Recovery", lang === "zh" ? "重试、回滚、人工接管" : "Retry, rollback, handoff", 980, 610, "recovery"]
   ];
-  const authored = type === "sequence" ? sequenceNodes : type === "capability" ? capabilityNodes : architectureNodes;
+  const loopNodes = [
+    ["goal", lang === "zh" ? "目标 / 输入" : "Goal / input", lang === "zh" ? "用户请求进入 session" : "User request enters session", 70, 110, "architecture"],
+    ["session", lang === "zh" ? "Session" : "Session", lang === "zh" ? "配置、身份、工作区" : "Config, identity, workspace", 350, 110, "architecture"],
+    ["context", lang === "zh" ? "Context Pack" : "Context pack", lang === "zh" ? "检索、压缩、预算" : "Retrieve, compact, budget", 630, 110, "modelContext"],
+    ["sample", lang === "zh" ? "模型采样" : "Model sample", lang === "zh" ? "下一步 / tool call" : "Next step / tool call", 910, 110, "cloud"],
+    ["decision", lang === "zh" ? "继续？" : "Continue?", lang === "zh" ? "stop / retry / tool" : "stop / retry / tool", 1190, 110, "decision"],
+    ["policy", lang === "zh" ? "审批 / Policy" : "Approval / policy", lang === "zh" ? "允许、拒绝、询问" : "Allow, deny, ask", 1190, 360, "security"],
+    ["effect", lang === "zh" ? "Tool Effect" : "Tool effect", lang === "zh" ? "文件、shell、网络" : "Files, shell, network", 910, 360, "effect"],
+    ["receipt", lang === "zh" ? "回执 / Event" : "Receipt / event", lang === "zh" ? "结果写回日志" : "Result appended to log", 630, 360, "observability"],
+    ["recover", lang === "zh" ? "恢复 / Compact" : "Recover / compact", lang === "zh" ? "失败、压缩、重试" : "Failure, compact, retry", 350, 360, "recovery"],
+    ["next", lang === "zh" ? "下一轮" : "Next turn", lang === "zh" ? "回到 Context Pack" : "Back to context pack", 70, 360, "loop"]
+  ];
+  const firstCommand = commandInventory(project, lang)[0];
+  const commandLabel = firstCommand?.label || (lang === "zh" ? "指令" : "command");
+  const commandNodes = [
+    ["command", `${lang === "zh" ? "指令" : "Command"} / ${commandLabel}`, lang === "zh" ? "文本、slash、argv" : "Text, slash, argv", 70, 110, "commands"],
+    ["parser", lang === "zh" ? "Parser" : "Parser", lang === "zh" ? "拆 token / 参数" : "Split token / args", 350, 110, "architecture"],
+    ["registry", lang === "zh" ? "Registry" : "Registry", lang === "zh" ? "找到 handler" : "Find handler", 630, 110, "extensions"],
+    ["instructions", lang === "zh" ? "Instructions" : "Instructions", lang === "zh" ? "system / user / workspace" : "system / user / workspace", 910, 110, "instructions"],
+    ["loop", lang === "zh" ? "Agent Loop" : "Agent loop", lang === "zh" ? "创建 turn / step" : "Create turn / step", 1190, 110, "loop"],
+    ["context", lang === "zh" ? "Context" : "Context", lang === "zh" ? "加载会话与上下文" : "Load session/context", 1190, 360, "modelContext"],
+    ["policy", lang === "zh" ? "Policy / Approval" : "Policy / approval", lang === "zh" ? "检查副作用" : "Check side effects", 910, 360, "security"],
+    ["tool", lang === "zh" ? "Tool / Effect" : "Tool / effect", lang === "zh" ? "执行内置工具" : "Run built-in tool", 630, 360, "tools"],
+    ["receipt", lang === "zh" ? "Receipt" : "Receipt", lang === "zh" ? "结果、错误、事件" : "Result, error, event", 350, 360, "observability"],
+    ["branch", lang === "zh" ? "Branch" : "Branch", lang === "zh" ? "继续 / 停止 / 重试" : "Continue / stop / retry", 70, 360, "recovery"]
+  ];
+  const authored = type === "sequence" ? sequenceNodes : type === "capability" ? capabilityNodes : type === "loop" ? loopNodes : type === "commands" ? commandNodes : architectureNodes;
   const width = type === "sequence" ? 1320 : 1480;
   const height = 820;
   const nodes = authored.map(([id, label, sublabel, x, y, dimension]) => {
@@ -720,9 +849,13 @@ function archifySvg(project, lang, type) {
   }).join("");
   const edgePairs = type === "sequence"
     ? [["user", "entry", "goal"], ["entry", "session", "create"], ["session", "context", "load"], ["context", "model", "prompt"], ["model", "policy", "call"], ["policy", "tools", "allow"], ["tools", "effect", "invoke"], ["effect", "store", "receipt"], ["store", "decision", "branch"], ["decision", "recovery", "retry"], ["recovery", "artifact", "deliver"]]
-    : type === "architecture"
+      : type === "architecture"
       ? [["entry", "session", "input"], ["session", "context", "prepare"], ["context", "loop", "route"], ["loop", "provider", "sample"], ["provider", "tools", "call"], ["tools", "policy", "gate"], ["policy", "sandbox", "allow"], ["sandbox", "store", "receipt"], ["store", "recovery", "resume"], ["recovery", "loop", "continue"], ["tools", "agents", "delegate"], ["agents", "artifact", "handoff"], ["store", "artifact", "publish"], ["extensions", "provider", "extend"]]
-      : [["entry", "loop", "core"], ["loop", "provider", "sample"], ["provider", "tools", "call"], ["tools", "security", "gate"], ["security", "sandbox", "isolate"], ["extensions", "commands", "register"], ["commands", "loop", "trigger"], ["context", "store", "remember"], ["store", "agents", "delegate"], ["agents", "recovery", "resume"], ["recovery", "loop", "continue"]];
+      : type === "loop"
+        ? [["goal", "session", "open"], ["session", "context", "pack"], ["context", "sample", "prompt"], ["sample", "decision", "next"], ["decision", "policy", "effect?"], ["policy", "effect", "allow"], ["effect", "receipt", "result"], ["receipt", "recover", "persist"], ["recover", "next", "resume"], ["next", "context", "loop"]]
+        : type === "commands"
+          ? [["command", "parser", "parse"], ["parser", "registry", "route"], ["registry", "instructions", "assemble"], ["instructions", "loop", "start"], ["loop", "context", "load"], ["context", "policy", "guard"], ["policy", "tool", "allow"], ["tool", "receipt", "execute"], ["receipt", "branch", "return"], ["branch", "loop", "continue"]]
+          : [["entry", "loop", "core"], ["loop", "provider", "sample"], ["provider", "tools", "call"], ["tools", "security", "gate"], ["security", "sandbox", "isolate"], ["extensions", "commands", "register"], ["commands", "loop", "trigger"], ["context", "store", "remember"], ["store", "agents", "delegate"], ["agents", "recovery", "resume"], ["recovery", "loop", "continue"]];
   const positionById = new Map(authored.map(([id, , , x, y]) => [id, { x, y }]));
   const edges = edgePairs.map(([from, to, label], index) => {
     const a = positionById.get(from); const b = positionById.get(to); if (!a || !b) return "";
@@ -741,6 +874,16 @@ function archifySvg(project, lang, type) {
 
 function archifyViews(project, lang, type) {
   const zh = lang === "zh";
+  if (type === "loop") return [
+    { id: "start", label: zh ? "接收目标" : "Accept goal", focus: ["goal", "session", "context"], note: zh ? "入口先创建会话并准备上下文，不会直接把原始输入丢给模型。" : "The entry creates a session and prepares context before sampling." },
+    { id: "act", label: zh ? "采样与副作用" : "Sample and effect", focus: ["sample", "decision", "policy", "effect"], note: zh ? "模型提出下一步，策略决定能否产生真实副作用。" : "The model proposes the next step; policy decides whether an external effect may run." },
+    { id: "close", label: zh ? "回执与回环" : "Receipt and loop", focus: ["receipt", "recover", "next"], note: zh ? "回执落账后，系统继续、重试、压缩或结束。" : "After the receipt, the harness continues, retries, compacts, or stops." }
+  ];
+  if (type === "commands") return [
+    { id: "parse", label: zh ? "解析指令" : "Parse command", focus: ["command", "parser", "registry"], note: zh ? "把 /goal、CLI 参数或快捷命令变成明确的 handler 调用。" : "Turn /goal, CLI flags, or shortcuts into an explicit handler call." },
+    { id: "run", label: zh ? "进入运行时" : "Enter runtime", focus: ["instructions", "loop", "context", "policy"], note: zh ? "命令不是终点：它要装配指令、上下文并经过策略门禁。" : "A command is not the finish line; it assembles instructions/context and crosses policy gates." },
+    { id: "receipt", label: zh ? "回执与分支" : "Receipt and branch", focus: ["tool", "receipt", "branch", "loop"], note: zh ? "执行结果、错误和下一步写回会话，决定继续、停止或重试。" : "Results, errors, and the next step return to the session and decide continue, stop, or retry." }
+  ];
   if (type === "sequence") return [
     { id: "prepare", label: zh ? "准备上下文" : "Prepare context", focus: ["user", "entry", "session", "context"], note: zh ? "入口创建会话，工作区和上下文预算随后进入主循环。" : "Entry creates the session; workspace and context budget feed the loop." },
     { id: "sample", label: zh ? "模型与工具" : "Model and tools", focus: ["loop", "model", "policy", "tools", "effect"], note: zh ? "采样、审批与真实副作用发生在同一条链上。" : "Sampling, approval, and side effects share one chain." },
@@ -768,22 +911,31 @@ function archifyDiagram(project, lang, type) {
   // project-local URL is a tiny light-first wrapper, so iframes and direct
   // links still land on the full guided reader without duplicating ~600 KB of
   // inline CSS/JS for every language and diagram slot.
-  if (project.legacy && fs.existsSync(legacyFile)) {
+  if (["architecture", "sequence", "capability"].includes(type) && project.legacy && fs.existsSync(legacyFile)) {
     const target = `../../../../legacy/diagrams/${project.slug}-${legacyType}.html?theme=light`;
     const title = `${project.name} · ${legacyType}`;
     return `<!doctype html><html lang="${lang === "zh" ? "zh-CN" : "en"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0;url=${target}"><title>${esc(title)}</title></head><body data-archify-wrapper="true"><p>ARCHIFY-READY · ${esc(title)}</p><p><a href="${target}">Open the full guided Archify map ↗</a></p></body></html>`;
   }
-  const templateFile = path.join(siteRoot, "legacy", "diagrams", `goose-${legacyType}.html`);
+  const templateType = ["architecture", "sequence", "capability"].includes(type) ? legacyType : "architecture";
+  const templateFile = path.join(siteRoot, "legacy", "diagrams", `goose-${templateType}.html`);
   if (!fs.existsSync(templateFile)) return richDiagram(project, lang, type);
   let html = fs.readFileSync(templateFile, "utf8");
   const title = lang === "zh"
-    ? `${project.name} · ${type === "architecture" ? "Harness 架构" : type === "sequence" ? "单轮技术链路" : "能力与风险边界"}`
-    : `${project.name} · ${type === "architecture" ? "Harness architecture" : type === "sequence" ? "Turn sequence" : "Capability and boundaries"}`;
+    ? `${project.name} · ${type === "architecture" ? "Harness 架构" : type === "sequence" ? "单轮技术链路" : type === "capability" ? "能力与风险边界" : type === "loop" ? "主循环与回执" : "指令执行链路"}`
+    : `${project.name} · ${type === "architecture" ? "Harness architecture" : type === "sequence" ? "Turn sequence" : type === "capability" ? "Capability and boundaries" : type === "loop" ? "Control loop and receipts" : "Command execution flow"}`;
   html = html.replace(/<h1>[^<]*<\/h1>/, `<h1>${esc(title)}</h1>`).replace(/<p class="subtitle">[^<]*<\/p>/, `<p class="subtitle">${esc(lang === "zh" ? `基于固定提交 ${project.commit.slice(0, 8)} 的源码证据图` : `Source evidence map from pinned commit ${project.commit.slice(0, 8)}`)}</p>`);
   html = html.replace(/(<script id="archify-guided-views-data"[^>]*>)[\s\S]*?(<\/script>)/, `$1${JSON.stringify(archifyViews(project, lang, type))}$2`);
   const evidence = `<script id="archify-source-evidence-data" type="application/json">${JSON.stringify(archifyEvidence(project, lang))}</script>`;
   if (html.includes("id=\"archify-source-evidence-data\"")) html = html.replace(/<script id="archify-source-evidence-data"[^>]*>[\s\S]*?<\/script>/, evidence);
   else html = html.replace(/(<script id="archify-guided-views-data"[^>]*>[\s\S]*?<\/script>)/, `$1\n    ${evidence}`);
+  if (type === "commands") {
+    const commandData = commandInventory(project, lang).map((command) => ({ label: command.label, kind: command.kind, path: command.path, line: command.line, start: command.start, end: command.end, href: sourceUrlAtCommit(project, command.path, command.start, command.end, project.commit) }));
+    const selector = `<section id="command-flow" class="command-switcher" aria-label="${esc(lang === "zh" ? "选择指令" : "Choose a command")}"><span>${esc(lang === "zh" ? "当前指令" : "CURRENT COMMAND")}</span><select id="command-select">${commandData.map((command) => `<option value="${esc(command.label)}">${esc(command.label)}</option>`).join("")}</select><a id="command-source" target="_blank" rel="noreferrer">${esc(lang === "zh" ? "打开源码行" : "Open source lines")} ↗</a></section>`;
+    const commandScript = `<script id="archify-command-data" type="application/json">${JSON.stringify(commandData)}</script><script>(function(){const data=JSON.parse(document.getElementById('archify-command-data').textContent||'[]');const select=document.getElementById('command-select');const source=document.getElementById('command-source');const node=document.querySelector('[data-node-id="command"]');const title=node?.querySelector('[data-detail-anchor]');const sub=node?.querySelector('[data-detail]');function sync(){const item=data.find(x=>x.label===select.value)||data[0];if(!item)return;if(title)title.textContent='${esc(lang === "zh" ? "指令" : "Command")} / '+item.label;if(sub)sub.textContent=item.kind+' · '+item.path+':'+item.line;if(node){node.dataset.nodeLabel=item.label;node.dataset.nodeContext='commands';node.dataset.commandHref=item.href}if(source){source.href=item.href}try{history.replaceState(null,'',location.pathname+'?command='+encodeURIComponent(item.label)+'#command-flow')}catch(_){}}const initial=new URLSearchParams(location.search).get('command');if(initial&&data.some(x=>x.label===initial))select.value=initial;select?.addEventListener('change',sync);sync()})();</script>`;
+    html = html.replace(/(<body[^>]*>)/, `$1${selector}`);
+    html = html.replace(/(<\/body>)/, `${commandScript}$1`);
+    html = html.replace(/<\/style>/, `</style><style>.command-switcher{display:flex;align-items:center;gap:.75rem;padding:12px 16px;margin:12px 0;border:1px solid var(--toolbar-border);background:var(--panel);font:12px monospace;color:var(--text-muted)}.command-switcher select{min-width:220px;padding:8px;border:1px solid var(--toolbar-border);background:var(--toolbar-bg);color:var(--toolbar-text);font:12px monospace}.command-switcher a{color:var(--arrow-emphasis)}@media(max-width:720px){.command-switcher{flex-wrap:wrap}.command-switcher select{width:100%}}</style>`);
+  }
   const diagramStart = html.indexOf('<div class="diagram-container"');
   const svgStart = html.indexOf("<svg ", diagramStart);
   const svgEnd = html.indexOf("</svg>", svgStart) + 6;
@@ -831,9 +983,10 @@ function richAnalysis(project, lang) {
     ["architecture", lang === "zh" ? "分层架构与所有权" : "Layered architecture", lang === "zh" ? "入口、插件树、主循环、工具和状态事实源" : "Entry, plugin tree, loop, tools, and durable facts"],
     ["sequence", lang === "zh" ? "单轮执行时序" : "Turn sequence", lang === "zh" ? "从 inbox 到模型、工具、回写与恢复" : "Inbox to model, tools, receipts, and recovery"],
     ["capability", lang === "zh" ? "能力与风险边界" : "Capability and risk map", lang === "zh" ? "哪些是能力、哪些是策略、哪些是隔离" : "Capability, policy, and enforcement layers"],
+    ["loop", lang === "zh" ? "主循环与回执闭环" : "Control loop and receipts", lang === "zh" ? "目标、上下文、采样、策略、副作用、回执与下一轮" : "Goal, context, sampling, policy, effects, receipts, and the next turn"],
+    ["commands", lang === "zh" ? "指令执行链路" : "Command execution flow", lang === "zh" ? "从 /goal、CLI 参数或快捷命令到 parser、registry、tool 和回执" : "From /goal, CLI flags, or shortcuts to parser, registry, tools, and receipts"],
   ].map(([type, title, description], mapIndex) => `<figure class="diagram-figure map-figure map-${type}" data-map-index="${mapIndex + 1}"><figcaption><span>FIGURE ${String(mapIndex + 1).padStart(2, "0")} · ${esc(type.toUpperCase())}</span><b>${esc(title)}</b><a href="${esc(rel(file, path.join(diagramRoot, `${type}.html`)))}">${lang === "zh" ? "打开交互图" : "Open interactive map"} ↗</a></figcaption><p>${esc(description)}</p><iframe src="${esc(rel(file, path.join(diagramRoot, `${type}.html`)))}" title="${esc(title)}" loading="lazy"></iframe></figure>`).join("");
-  const legacyReference = project.legacy ? `<section class="prose reference-note"><div class="section-head"><span>HISTORICAL REFERENCE</span><h2>${lang === "zh" ? "旧版长报告与 Archify 图仍可逐页复核" : "The prior long report and Archify maps remain available"}</h2></div><p>${lang === "zh" ? "本页把旧版 finding 账本重新拆成可导航章节，同时保留旧版的完整报告和交互图作为历史参照。历史 finding 的提交号会在每条卡片中显式标注，避免把旧证据冒充当前 HEAD。" : "This page reshapes the prior finding ledger into navigable chapters while preserving the old full report and interactive maps. Historical commit ids are shown on each card so old evidence is not mistaken for the current HEAD."}</p><a class="legacy-report-link" href="${esc(rel(file, path.join(siteRoot, "legacy", "reports", `${project.slug}.html`)))}">${lang === "zh" ? "打开旧版完整报告" : "Open historical full report"} ↗</a></section>` : "";
-  const body = `${legacyReference}<section class="report-hero-v2"><div class="hero-topline"><span>CODING AGENT HARNESS · SOURCE AUDIT</span><span>${esc(project.commit.slice(0, 12))}</span></div><div class="hero-grid"><div><div class="hero-index">${esc(project.name.slice(0, 2).toUpperCase())}</div><h1>${esc(project.name)}<br><em>${lang === "zh" ? "从源码看 Harness" : "Harness, from source"}</em></h1><p class="hero-thesis">${esc(text(project, lang, "thesis"))}</p><div class="hero-tags"><span>${esc(project.language)}</span><span>${esc(project.kind)}</span><span>${esc(project.branch)}</span></div></div><aside class="snapshot-card"><dl><div><dt>Repository</dt><dd>${esc(project.repo)}</dd></div><div><dt>Commit</dt><dd><code>${esc(project.commit)}</code></dd></div><div><dt>Findings</dt><dd>${findings.length}</dd></div><div><dt>Citations</dt><dd>${citations.size}</dd></div><div><dt>Coverage</dt><dd>${coverage.length} ${lang === "zh" ? "维度" : "dimensions"}</dd></div></dl></aside></div><div class="hero-actions"><a href="${esc(`https://github.com/${project.repo}/tree/${project.commit}`)}" target="_blank" rel="noreferrer">${lang === "zh" ? "固定源码快照" : "Pinned source snapshot"} ↗</a><a href="${esc(rel(file, path.join(siteRoot, "projects", project.slug, lang, "tutorial", "index.html")))}">${lang === "zh" ? "进入章节教程" : "Enter chapter course"} →</a><a href="${esc(rel(file, path.join(siteRoot, `${lang}/index.html`)))}#matrix">${lang === "zh" ? "查看总览矩阵" : "View matrix"}</a></div></section><section class="chapter executive-v2"><div class="chapter-kicker">EXECUTIVE READING</div><h2>${lang === "zh" ? "先给结论，再进入源码" : "Thesis before source"}</h2><div class="executive-grid"><div class="thesis-card"><span>${lang === "zh" ? "核心机制" : "CONTROL LOOP"}</span><p>${esc(text(project, lang, "lesson"))}</p></div><div class="thesis-card"><span>${lang === "zh" ? "证据规模" : "EVIDENCE"}</span><p>${findings.length} ${lang === "zh" ? "条 finding / " : "findings / "}${citations.size} ${lang === "zh" ? "处引用" : "citations"}</p></div><div class="thesis-card risk-tone"><span>${lang === "zh" ? "主要边界" : "BOUNDARY"}</span><p>${esc(project[lang].limits[0] || "Review the limitation cards below.")}</p></div><div class="thesis-card"><span>${lang === "zh" ? "适用建设" : "BUILDING FIT"}</span><p>${esc(project[lang].strengths[0] || text(project, lang, "lesson"))}</p></div></div><div class="pros-cons"><div><h3>${lang === "zh" ? "值得借鉴" : "BORROW"}</h3><ul>${project[lang].strengths.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div><div><h3>${lang === "zh" ? "需要警惕" : "WATCH"}</h3><ul>${project[lang].limits.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div><div><h3>${lang === "zh" ? "阅读方式" : "READING MODE"}</h3><ul><li>${lang === "zh" ? "先看固定提交，再看调用链" : "Pin the commit before tracing the call chain"}</li><li>${lang === "zh" ? "事实、推断、风险分栏" : "Separate facts, inferences, and risks"}</li><li>${lang === "zh" ? "每条 finding 可回到源码" : "Every finding returns to code"}</li></ul></div></div></section><section class="chapter methodology"><div class="chapter-kicker">00 · METHOD</div><h2>${lang === "zh" ? "研究口径：不是 README 摘要" : "Method: not a README summary"}</h2><div class="method-grid"><div><span>README POLICY</span><p>${lang === "zh" ? "README 只定位入口和产品命名；实现结论必须回到运行时代码、契约或测试。" : "README locates entrypoints and naming; implementation claims return to runtime code, contracts, or tests."}</p></div><div><span>FACT POLICY</span><p>${lang === "zh" ? "L1 运行代码优先，L2 类型/事件契约补足，L3/L4 交叉验证，L5 推断单独标记。" : "L1 runtime code leads; L2 contracts and L3/L4 evidence cross-check; L5 inferences stay explicit."}</p></div><div><span>SNAPSHOT</span><p>${esc(project.repo)} @ ${esc(project.commit)} · ${findings.length} findings · ${citations.size} citations</p></div></div></section><section class="chapter diagrams-v2"><div class="chapter-kicker">01 · TECHNICAL MAPS</div><h2>${lang === "zh" ? "三张逐张展开的源码证据图" : "Three source-backed maps, one at a time"}</h2><p class="chapter-deck">${lang === "zh" ? "每张图独占一段，节点来自 finding 的源码路径；点击节点可查看事实、固定提交和行号，搜索、缩放、主题切换均在图内完成。" : "Each map gets its own full-width panel. Nodes are derived from finding source paths; click a node for its fact, pinned commit, and line range."}</p><div class="diagram-stack">${diagrams}</div></section><section class="chapter coverage-v2"><div class="chapter-kicker">02 · COVERAGE MAP</div><h2>${lang === "zh" ? "覆盖维度与证据等级" : "Coverage and evidence levels"}</h2><div class="coverage-table">${coverageRows}</div></section><section class="chapter course-v2"><div class="chapter-kicker">03 · COURSE ROUTE</div><h2>${lang === "zh" ? "十章教程不是摘要，而是源码阅读路线" : "Ten chapters are a source-reading route, not summaries"}</h2><p class="chapter-deck">${lang === "zh" ? "每章会从本项目的多个 finding 中挑出证据，先讲问题，再给比喻，然后把实现、边界、图谱和练习串起来。" : "Each chapter selects multiple project findings, then connects the question, analogy, implementation, boundary, map, and exercise."}</p><div class="analysis-grid">${chapterCards}</div></section>${findingSections}<footer class="report-footer"><span>${esc(project.repo)} · ${esc(project.commit)}</span><nav><a href="${esc(rel(file, path.join(siteRoot, `${lang}/index.html`)))}">${lang === "zh" ? "回到总览" : "Back to atlas"}</a><a href="${esc(rel(file, path.join(siteRoot, "projects", project.slug, lang, "tutorial", "index.html")))}">${lang === "zh" ? "进入教程" : "Course"}</a></nav></footer>`;
+  const body = `<section class="report-hero-v2"><div class="hero-topline"><span>CODING AGENT HARNESS · SOURCE AUDIT</span><span>${esc(project.commit.slice(0, 12))}</span></div><div class="hero-grid"><div><div class="hero-index">${esc(project.name.slice(0, 2).toUpperCase())}</div><h1>${esc(project.name)}<br><em>${lang === "zh" ? "从源码看 Harness" : "Harness, from source"}</em></h1><p class="hero-thesis">${esc(text(project, lang, "thesis"))}</p><div class="hero-tags"><span>${esc(project.language)}</span><span>${esc(project.kind)}</span><span>${esc(project.branch)}</span></div></div><aside class="snapshot-card"><dl><div><dt>Repository</dt><dd>${esc(project.repo)}</dd></div><div><dt>Commit</dt><dd><code>${esc(project.commit)}</code></dd></div><div><dt>Findings</dt><dd>${findings.length}</dd></div><div><dt>Citations</dt><dd>${citations.size}</dd></div><div><dt>Coverage</dt><dd>${coverage.length} ${lang === "zh" ? "维度" : "dimensions"}</dd></div></dl></aside></div><div class="hero-actions"><a href="${esc(`https://github.com/${project.repo}/tree/${project.commit}`)}" target="_blank" rel="noreferrer">${lang === "zh" ? "固定源码快照" : "Pinned source snapshot"} ↗</a><a href="${esc(rel(file, path.join(siteRoot, "projects", project.slug, lang, "tutorial", "index.html")))}">${lang === "zh" ? "进入章节教程" : "Enter chapter course"} →</a><a href="${esc(rel(file, path.join(siteRoot, `${lang}/index.html`)))}#matrix">${lang === "zh" ? "查看总览矩阵" : "View matrix"}</a></div></section><section class="chapter executive-v2"><div class="chapter-kicker">EXECUTIVE READING</div><h2>${lang === "zh" ? "先给结论，再进入源码" : "Thesis before source"}</h2><div class="executive-grid"><div class="thesis-card"><span>${lang === "zh" ? "核心机制" : "CONTROL LOOP"}</span><p>${esc(text(project, lang, "lesson"))}</p></div><div class="thesis-card"><span>${lang === "zh" ? "证据规模" : "EVIDENCE"}</span><p>${findings.length} ${lang === "zh" ? "条 finding / " : "findings / "}${citations.size} ${lang === "zh" ? "处引用" : "citations"}</p></div><div class="thesis-card risk-tone"><span>${lang === "zh" ? "主要边界" : "BOUNDARY"}</span><p>${esc(project[lang].limits[0] || "Review the limitation cards below.")}</p></div><div class="thesis-card"><span>${lang === "zh" ? "适用建设" : "BUILDING FIT"}</span><p>${esc(project[lang].strengths[0] || text(project, lang, "lesson"))}</p></div></div><div class="pros-cons"><div><h3>${lang === "zh" ? "值得借鉴" : "BORROW"}</h3><ul>${project[lang].strengths.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div><div><h3>${lang === "zh" ? "需要警惕" : "WATCH"}</h3><ul>${project[lang].limits.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div><div><h3>${lang === "zh" ? "阅读方式" : "READING MODE"}</h3><ul><li>${lang === "zh" ? "先看固定提交，再看调用链" : "Pin the commit before tracing the call chain"}</li><li>${lang === "zh" ? "事实、推断、风险分栏" : "Separate facts, inferences, and risks"}</li><li>${lang === "zh" ? "每条 finding 可回到源码" : "Every finding returns to code"}</li></ul></div></div></section><section class="chapter methodology"><div class="chapter-kicker">00 · METHOD</div><h2>${lang === "zh" ? "研究口径：不是 README 摘要" : "Method: not a README summary"}</h2><div class="method-grid"><div><span>README POLICY</span><p>${lang === "zh" ? "README 只定位入口和产品命名；实现结论必须回到运行时代码、契约或测试。" : "README locates entrypoints and naming; implementation claims return to runtime code, contracts, or tests."}</p></div><div><span>FACT POLICY</span><p>${lang === "zh" ? "L1 运行代码优先，L2 类型/事件契约补足，L3/L4 交叉验证，L5 推断单独标记。" : "L1 runtime code leads; L2 contracts and L3/L4 evidence cross-check; L5 inferences stay explicit."}</p></div><div><span>SNAPSHOT</span><p>${esc(project.repo)} @ ${esc(project.commit)} · ${findings.length} findings · ${citations.size} citations</p></div></div></section><section class="chapter diagrams-v2"><div class="chapter-kicker">01 · TECHNICAL MAPS</div><h2>${lang === "zh" ? "五张逐张展开的源码证据图" : "Five source-backed maps, one at a time"}</h2><p class="chapter-deck">${lang === "zh" ? "架构、时序、能力、主循环和指令执行图都独占一段；节点来自源码 finding 与指令线索，点击节点可查看固定提交、行号和执行语义。" : "Architecture, sequence, capability, loop, and command maps each get a full-width panel. Nodes come from source findings and command clues; click one for the pinned lines and execution semantics."}</p><div class="diagram-stack">${diagrams}</div></section><section class="chapter coverage-v2"><div class="chapter-kicker">02 · COVERAGE MAP</div><h2>${lang === "zh" ? "覆盖维度与证据等级" : "Coverage and evidence levels"}</h2><div class="coverage-table">${coverageRows}</div></section>${commandExecutionSection(project, lang)}<section class="chapter course-v2"><div class="chapter-kicker">03 · COURSE ROUTE</div><h2>${lang === "zh" ? "十一章教程不是摘要，而是源码阅读路线" : "Eleven chapters are a source-reading route, not summaries"}</h2><p class="chapter-deck">${lang === "zh" ? "每章会从本项目的多个 finding 中挑出证据，先讲问题，再给比喻，然后把实现、边界、图谱和执行语义串起来。" : "Each chapter selects multiple project findings, then connects the question, analogy, implementation, boundary, maps, and execution semantics."}</p><div class="analysis-grid">${chapterCards}</div></section>${findingSections}<footer class="report-footer"><span>${esc(project.repo)} · ${esc(project.commit)}</span><nav><a href="${esc(rel(file, path.join(siteRoot, `${lang}/index.html`)))}">${lang === "zh" ? "回到总览" : "Back to atlas"}</a><a href="${esc(rel(file, path.join(siteRoot, "projects", project.slug, lang, "tutorial", "index.html")))}">${lang === "zh" ? "进入教程" : "Course"}</a></nav></footer>`;
   const enrichedBody = body.replace('<section class="chapter diagrams-v2">', `${implementationInventory(project, lang)}${conceptAudit(project, lang)}<section class="chapter diagrams-v2">`);
   return pageShell({ title: `${project.name} · ${lang === "zh" ? "深度源码分析" : "Deep source analysis"}`, description: text(project, lang, "thesis"), lang, project, current: "analysis", body: enrichedBody });
 }
@@ -844,7 +997,7 @@ function chapterPage(project, lang, chapter, index) {
   const next = chapterDefs[index + 1];
   const prev = chapterDefs[index - 1];
   const sourceLinkRelative = sourceUrl(project, citation.path, citation.start, citation.end);
-  const diagramName = index % 3 === 0 ? "architecture" : index % 3 === 1 ? "sequence" : "capability";
+  const diagramName = chapter.id === "loop" ? "loop" : chapter.id === "commands" ? "commands" : index % 3 === 0 ? "architecture" : index % 3 === 1 ? "sequence" : "capability";
   const diagramFile = path.join(siteRoot, "projects", project.slug, lang, "diagrams", `${diagramName}.html`);
   const exercise = lang === "zh"
     ? `打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。`
@@ -870,21 +1023,19 @@ function richChapterPage(project, lang, chapter, index) {
   const next = chapterDefs[index + 1];
   const prev = chapterDefs[index - 1];
   const findings = findingsForChapter(project, lang, chapter);
-  const diagramName = index % 3 === 0 ? "architecture" : index % 3 === 1 ? "sequence" : "capability";
+  const diagramName = chapter.id === "loop" ? "loop" : chapter.id === "commands" ? "commands" : index % 3 === 0 ? "architecture" : index % 3 === 1 ? "sequence" : "capability";
   const diagramFile = path.join(siteRoot, "projects", project.slug, lang, "diagrams", `${diagramName}.html`);
   const evidenceBoard = findings.map((finding, findingIndex) => findingCard(project, lang, finding, findingIndex, true)).join("");
-  const exercise = lang === "zh"
-    ? "把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。"
-    : "Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.";
-  const body = `<section class="chapter-hero"><p class="eyebrow">M${chapter.number} · ${esc(project.name)} · ${esc(project.commit.slice(0, 12))}</p><h1>${esc(chapter.title[lang])}</h1><p class="lede">${esc(chapter.question[lang])}</p><div class="chapter-meta"><span>${lang === "zh" ? `第 ${index + 1} / ${chapterDefs.length} 章` : `Chapter ${index + 1} / ${chapterDefs.length}`}</span><span>${findings.length} ${lang === "zh" ? "条源码 finding" : "source findings"}</span><span>${esc(project.branch)}</span></div></section><section class="lesson prose"><div class="lesson-route"><span>${lang === "zh" ? "本章路线" : "ROUTE"}</span><b>${lang === "zh" ? "问题" : "Question"}</b><i>→</i><b>${lang === "zh" ? "比喻" : "Analogy"}</b><i>→</i><b>${lang === "zh" ? "多条源码证据" : "Evidence board"}</b><i>→</i><b>${lang === "zh" ? "四问" : "Four questions"}</b><i>→</i><b>${lang === "zh" ? "源码目录" : "Source map"}</b><i>→</i><b>${lang === "zh" ? "交互图" : "Map"}</b><i>→</i><b>${lang === "zh" ? "练习" : "Exercise"}</b></div><div class="callout"><b>${lang === "zh" ? "先用一个生活比喻" : "Start with a concrete analogy"}</b><p>${esc(analogies[lang][chapter.id])}</p></div><h2>${lang === "zh" ? "先回答本章问题" : "Answer the chapter question first"}</h2><p>${esc(chapter.question[lang])} ${esc(text(project, lang, "lesson"))}</p><h2>${lang === "zh" ? `本章证据板：${findings.length} 条 finding` : `Evidence board: ${findings.length} findings`}</h2><p>${lang === "zh" ? "不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。" : "Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source."}</p><div class="finding-stack">${evidenceBoard}</div><h2>${lang === "zh" ? "四问：从代码追到执行语义" : "Four questions: from code to execution semantics"}</h2>${chapterDeepDive(project, lang, chapter, findings)}<h2>${lang === "zh" ? "本章源码地图：不要只读一个文件" : "Source map: do not stop at one file"}</h2>${sourceReadingMap(project, lang, chapter)}<h2>${lang === "zh" ? "把证据放回全链路" : "Place the evidence on the full chain"}</h2><div class="flow-strip"><span>${lang === "zh" ? "输入 / 事件" : "Input / event"}</span><i>→</i><span>${lang === "zh" ? "规则 / 状态" : "Rules / state"}</span><i>→</i><span>${lang === "zh" ? "模型 / 工具" : "Model / tool"}</span><i>→</i><span>${lang === "zh" ? "回执 / 持久化" : "Receipt / persistence"}</span><i>→</i><span>${lang === "zh" ? "恢复 / 下一步" : "Recovery / next"}</span></div><iframe class="diagram-frame diagram-frame-rich" src="${esc(rel(file, diagramFile))}" title="${esc(project.name)} ${esc(diagramName)}" loading="lazy"></iframe><h2>${lang === "zh" ? "小白练习：不要只会复述" : "Exercise: do more than repeat"}</h2><div class="exercise"><p>${esc(exercise)}</p><details><summary>${lang === "zh" ? "查看提示" : "Show hint"}</summary><ul><li>${lang === "zh" ? "先找输入和状态，不要先找函数名。" : "Find inputs and state before function names."}</li><li>${lang === "zh" ? "把 policy / approval / sandbox 分开写。" : "Keep policy, approval, and sandbox separate."}</li><li>${lang === "zh" ? "如果引用来自历史账本，记得查看卡片里的历史 commit 标识。" : "If a claim comes from a historical ledger, check the historical commit marker on the card."}</li></ul></details></div></section><footer class="chapter-footer"><a href="${prev ? esc(`ch${prev.number}-${prev.id}.html`) : esc("index.html")}">← ${prev ? esc(prev.title[lang]) : lang === "zh" ? "课程目录" : "Course index"}</a><a href="${next ? esc(`ch${next.number}-${next.id}.html`) : esc("index.html")}">${next ? esc(next.title[lang]) : lang === "zh" ? "回到课程目录" : "Course index"} →</a></footer>`;
+  const commandSection = chapter.id === "commands" ? commandExecutionSection(project, lang, file) : "";
+  const body = `<section class="chapter-hero"><p class="eyebrow">M${chapter.number} · ${esc(project.name)} · ${esc(project.commit.slice(0, 12))}</p><h1>${esc(chapter.title[lang])}</h1><p class="lede">${esc(chapter.question[lang])}</p><div class="chapter-meta"><span>${lang === "zh" ? `第 ${index + 1} / ${chapterDefs.length} 章` : `Chapter ${index + 1} / ${chapterDefs.length}`}</span><span>${findings.length} ${lang === "zh" ? "条源码 finding" : "source findings"}</span><span>${esc(project.branch)}</span></div></section><section class="lesson prose"><div class="lesson-route"><span>${lang === "zh" ? "本章路线" : "ROUTE"}</span><b>${lang === "zh" ? "问题" : "Question"}</b><i>→</i><b>${lang === "zh" ? "比喻" : "Analogy"}</b><i>→</i><b>${lang === "zh" ? "多条源码证据" : "Evidence board"}</b><i>→</i><b>${lang === "zh" ? "四问" : "Four questions"}</b><i>→</i><b>${lang === "zh" ? "源码目录" : "Source map"}</b><i>→</i><b>${lang === "zh" ? "交互图" : "Map"}</b><i>→</i><b>${lang === "zh" ? "逐行翻译" : "Line reading"}</b></div><div class="callout"><b>${lang === "zh" ? "先用一个生活比喻" : "Start with a concrete analogy"}</b><p>${esc(analogies[lang][chapter.id])}</p></div><h2>${lang === "zh" ? "先回答本章问题" : "Answer the chapter question first"}</h2><p>${esc(chapter.question[lang])} ${esc(text(project, lang, "lesson"))}</p><h2>${lang === "zh" ? `本章证据板：${findings.length} 条 finding` : `Evidence board: ${findings.length} findings`}</h2><p>${lang === "zh" ? "不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。" : "Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source."}</p><div class="finding-stack">${evidenceBoard}</div>${commandSection}<h2>${lang === "zh" ? "四问：从代码追到执行语义" : "Four questions: from code to execution semantics"}</h2>${chapterDeepDive(project, lang, chapter, findings)}<h2>${lang === "zh" ? "本章源码地图：不要只读一个文件" : "Source map: do not stop at one file"}</h2>${sourceReadingMap(project, lang, chapter)}<h2>${lang === "zh" ? "把证据放回全链路" : "Place the evidence on the full chain"}</h2><div class="flow-strip"><span>${lang === "zh" ? "输入 / 事件" : "Input / event"}</span><i>→</i><span>${lang === "zh" ? "规则 / 状态" : "Rules / state"}</span><i>→</i><span>${lang === "zh" ? "模型 / 工具" : "Model / tool"}</span><i>→</i><span>${lang === "zh" ? "回执 / 持久化" : "Receipt / persistence"}</span><i>→</i><span>${lang === "zh" ? "恢复 / 下一步" : "Recovery / next"}</span></div><iframe class="diagram-frame diagram-frame-rich" src="${esc(rel(file, diagramFile))}" title="${esc(project.name)} ${esc(diagramName)}" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="${prev ? esc(`ch${prev.number}-${prev.id}.html`) : esc("index.html")}">← ${prev ? esc(prev.title[lang]) : lang === "zh" ? "课程目录" : "Course index"}</a><a href="${next ? esc(`ch${next.number}-${next.id}.html`) : esc("index.html")}">${next ? esc(next.title[lang]) : lang === "zh" ? "回到课程目录" : "Course index"} →</a></footer>`;
   return pageShell({ title: `${project.name} · M${chapter.number} · ${chapter.title[lang]}`, description: chapter.question[lang], lang, project, current: `ch${chapter.number}-${chapter.id}`, body });
 }
 
 function tutorialIndex(project, lang) {
   const file = path.join(siteRoot, "projects", project.slug, lang, "tutorial", "index.html");
   const cards = chapterDefs.map((chapter) => `<a class="chapter-card" href="ch${chapter.number}-${chapter.id}.html"><span>M${chapter.number}</span><div><h3>${esc(chapter.title[lang])}</h3><p>${esc(chapter.question[lang])}</p><small>${lang === "zh" ? "进入本章" : "Open chapter"} →</small></div></a>`).join("");
-  const body = `<section class="course-hero"><p class="eyebrow">${esc(project.name)} · ${lang === "zh" ? "小白源码教程" : "BEGINNER SOURCE COURSE"}</p><h1>${lang === "zh" ? "从第一张地图读到最后一个证据" : "From the first map to the last receipt"}</h1><p class="lede">${esc(text(project, lang, "thesis"))}</p><div class="version-line"><span>${esc(project.repo)}</span><code>${esc(project.branch)} @ ${esc(project.commit)}</code><a href="https://github.com/${esc(project.repo)}/tree/${esc(project.commit)}" target="_blank" rel="noreferrer">${lang === "zh" ? "打开固定源码" : "Open pinned source"} ↗</a><a href="../analysis.html">${lang === "zh" ? "先看单页技术分析" : "Read the single-page analysis"} ↗</a></div></section><section class="prose course-intro"><div class="section-head"><span>COURSE CONTRACT</span><h2>${lang === "zh" ? "每章都按同一套阅读动作" : "Every chapter follows the same reading moves"}</h2></div><p>${lang === "zh" ? "先提出一个普通人会问的问题，再给生活比喻，然后展示固定提交的真实代码、架构/时序/能力图和一个练习。你可以把章节当作独立页面读，也可以用左侧目录连续学习。" : "Start with a beginner's question, use a concrete analogy, inspect a real code range from the pinned commit, view an architecture/sequence/capability map, and finish with an exercise. Each chapter stands alone or forms a continuous course."}</p><div class="course-stats"><b>10</b><span>${lang === "zh" ? "独立章节" : "chapters"}</span><b>${esc(project.commit.slice(0, 8))}</b><span>${lang === "zh" ? "固定源码" : "pinned source"}</span></div></section><section class="chapter-list prose"><div class="section-head"><span>01—10</span><h2>${lang === "zh" ? "章节目录" : "Chapter index"}</h2></div><div class="chapter-grid">${cards}</div></section><footer class="site-footer"><a href="../analysis.html">← ${lang === "zh" ? "技术分析单页" : "Technical analysis"}</a><a href="${esc(rel(file, path.join(siteRoot, "index.html")))}">${lang === "zh" ? "回到总览" : "Back to atlas"} →</a></footer>`;
-  return pageShell({ title: `${project.name} · ${lang === "zh" ? "小白教程目录" : "Beginner course"}`, description: text(project, lang, "thesis"), lang, project, current: null, body });
+  const body = `<section class="course-hero"><p class="eyebrow">${esc(project.name)} · ${lang === "zh" ? "源码阅读教程" : "SOURCE READING COURSE"}</p><h1>${lang === "zh" ? "从第一张地图读到最后一个回执" : "From the first map to the last receipt"}</h1><p class="lede">${esc(text(project, lang, "thesis"))}</p><div class="version-line"><span>${esc(project.repo)}</span><code>${esc(project.branch)} @ ${esc(project.commit)}</code><a href="https://github.com/${esc(project.repo)}/tree/${esc(project.commit)}" target="_blank" rel="noreferrer">${lang === "zh" ? "打开固定源码" : "Open pinned source"} ↗</a><a href="../analysis.html">${lang === "zh" ? "先看单页技术分析" : "Read the single-page analysis"} ↗</a></div></section><section class="prose course-intro"><div class="section-head"><span>COURSE CONTRACT</span><h2>${lang === "zh" ? "每章都按同一套源码阅读动作" : "Every chapter follows the same source-reading moves"}</h2></div><p>${lang === "zh" ? "每章先提出一个问题，再给生活比喻，随后展示固定提交的真实代码、逐行翻译、源码地图和交互执行图。章节可以独立阅读，也可以用左侧目录连续追踪。" : "Each chapter starts with a question and analogy, then shows real code from the pinned commit, line-by-line translation, a source map, and an interactive execution diagram. Read chapters alone or follow the sidebar route."}</p><div class="course-stats"><b>${chapterDefs.length}</b><span>${lang === "zh" ? "独立章节" : "chapters"}</span><b>${esc(project.commit.slice(0, 8))}</b><span>${lang === "zh" ? "固定源码" : "pinned source"}</span></div></section><section class="chapter-list prose"><div class="section-head"><span>01—${String(chapterDefs.length).padStart(2, "0")}</span><h2>${lang === "zh" ? "章节目录" : "Chapter index"}</h2></div><div class="chapter-grid">${cards}</div></section><footer class="site-footer"><a href="../analysis.html">← ${lang === "zh" ? "技术分析单页" : "Technical analysis"}</a><a href="${esc(rel(file, path.join(siteRoot, "index.html")))}">${lang === "zh" ? "回到总览" : "Back to atlas"} →</a></footer>`;
+  return pageShell({ title: `${project.name} · ${lang === "zh" ? "源码教程目录" : "Source course"}`, description: text(project, lang, "thesis"), lang, project, current: null, body });
 }
 
 function matrixDimensionText(project, lang, dimension, fallback) {
@@ -944,10 +1095,10 @@ function scenarioComparison(projectsForPage, lang) {
 function indexPageDetailed(lang) {
   const projectCount = projects.length;
   const chapterCount = projects.length * chapterDefs.length;
-  const mapCount = projects.length * 3;
+  const mapCount = projects.length * 5;
   const cards = projects.map((p, i) => {
     const count = projectFindings(p, lang).length;
-    return "<article class=\"atlas-card\"><div class=\"atlas-num\">" + String(i + 1).padStart(2, "0") + "</div><div><p class=\"eyebrow\">" + esc(p.kind) + "</p><h2>" + esc(p.name) + "</h2><p>" + esc(text(p, lang, "thesis")) + "</p><div class=\"atlas-actions\"><a href=\"../projects/" + p.slug + "/" + lang + "/analysis.html\">" + (lang === "zh" ? "技术分析" : "Analysis") + " ↗</a><a href=\"../projects/" + p.slug + "/" + lang + "/tutorial/index.html\">" + (lang === "zh" ? "小白教程" : "Tutorial") + " ↗</a><span>" + count + " findings · " + esc(p.commit.slice(0, 12)) + "</span></div></div></article>";
+    return "<article class=\"atlas-card\"><div class=\"atlas-num\">" + String(i + 1).padStart(2, "0") + "</div><div><p class=\"eyebrow\">" + esc(p.kind) + "</p><h2>" + esc(p.name) + "</h2><p>" + esc(text(p, lang, "thesis")) + "</p><div class=\"atlas-actions\"><a href=\"../projects/" + p.slug + "/" + lang + "/analysis.html\">" + (lang === "zh" ? "技术分析" : "Analysis") + " ↗</a><a href=\"../projects/" + p.slug + "/" + lang + "/tutorial/index.html\">" + (lang === "zh" ? "源码教程" : "Source course") + " ↗</a><span>" + count + " findings · " + esc(p.commit.slice(0, 12)) + "</span></div></div></article>";
   }).join("");
   const fallback = lang === "zh" ? "该维度的源码 finding 已在项目单页展开。" : "The project page expands this dimension with source findings.";
   const matrix = projects.map((p) => {
@@ -958,14 +1109,14 @@ function indexPageDetailed(lang) {
     ["01 · LOOP", "循环决定上限", "真正拉开差距的不是工具数量，而是 turn/step、取消、重试、回执和下一步决策有没有成为显式状态机。"],
     ["02 · CONTEXT", "上下文是工作台，不是 prompt 字符串", "成熟实现会把检索、压缩、预算、快照、持久化和可重建性拆开；上下文越长，越需要事实源和淘汰策略。"],
     ["03 · BOUNDARY", "能力、策略、隔离必须分栏", "MCP/插件是能力入口，approval/permission 是策略，sandbox/runner 才是执行隔离；把三者混在一起会制造虚假的安全感。"],
-    ["04 · EVIDENCE", "版本锁定决定结论能否复核", "每个单页都带 branch、commit、日期、文件和行号；历史账本与当前刷新源码分开标识，不把旧 finding 冒充 HEAD。"],
+    ["04 · EVIDENCE", "版本锁定决定结论能否复核", "每个单页都带 branch、commit、日期、文件和行号；所有结论都回到当前固定提交，不把未经定位的功能描述当作事实。"],
     ["05 · COLLAB", "子 Agent 要有交付物和预算", "委派不是多开几个模型，而是独立 session、深度上限、取消、汇报、合并与失败语义。"],
     ["06 · RECOVERY", "恢复路径比 happy path 更能说明工程成熟度", "事件日志、checkpoint、replay、幂等、压缩和回放测试决定系统断电、超时或工具失败后能不能接着做。"]
   ] : [
     ["01 · LOOP", "The loop sets the ceiling", "The differentiator is not tool count but explicit turn/step state, cancellation, retries, receipts, and next-step decisions."],
     ["02 · CONTEXT", "Context is a workbench, not a string", "Mature systems separate retrieval, compaction, budgets, snapshots, persistence, and reconstructability."],
     ["03 · BOUNDARY", "Capability, policy, and isolation are different", "MCP/plugins expose capability, approval/permission is policy, and sandbox/runner is enforcement."],
-    ["04 · EVIDENCE", "Pinned versions make claims replayable", "Every page records branch, commit, date, file, and line; historical ledgers are never presented as current HEAD."],
+    ["04 · EVIDENCE", "Pinned versions make claims replayable", "Every page records branch, commit, date, file, and line; claims stay tied to the checked-out commit."],
     ["05 · COLLAB", "Sub-agents need an artifact and a budget", "Delegation requires an independent session, depth limit, cancellation, reporting, merge, and failure semantics."],
     ["06 · RECOVERY", "Recovery reveals engineering maturity", "Logs, checkpoints, replay, idempotence, compaction, and failure tests define whether work can continue after interruption."]
   ];
@@ -977,15 +1128,15 @@ function indexPageDetailed(lang) {
   ];
   const blueprint = blueprintData.map(([number, heading, copy]) => "<div class=\"blueprint-step\"><span>" + number + "</span><b>" + esc(heading) + "</b><p>" + esc(copy) + "</p></div>").join("");
   const scenarioSection = scenarioComparison(projects, lang);
-  const heroCopy = lang === "zh" ? "每个项目都有单页技术分析、10 章小白教程、固定提交源码链接、架构/时序/能力图和源码证据板。所有结论从可定位的源码或明确标注日期的 finding 账本开始，而不是从 README 猜出来。" : "Every project has a single-page analysis, a ten-chapter beginner course, pinned-source links, architecture/sequence/capability maps, and a source evidence board. Claims start from locatable code or an explicitly dated finding ledger, not README guesses.";
+  const heroCopy = lang === "zh" ? "每个项目都有单页技术分析、源码章节、固定提交源码链接、架构/时序/能力/主循环/指令执行图和源码证据板。所有结论从可定位的源码或明确标注日期的 finding 账本开始，而不是从 README 猜出来。" : "Every project has a single-page analysis, source chapters, pinned-source links, architecture/sequence/capability/loop/command maps, and a source evidence board. Claims start from locatable code or an explicitly dated finding ledger, not README guesses.";
   const hero = "<section class=\"atlas-hero\"><p class=\"eyebrow\">OPEN-SOURCE AGENT HARNESS ATLAS · " + (lang === "zh" ? "独立重建版" : "INDEPENDENT REBUILD") + "</p><h1>" + (lang === "zh" ? projectCount + " 个开源 Harness，<em>逐层读懂</em>" : projectCount + " open harnesses,<br><em>read layer by layer</em>") + "</h1><p class=\"lede\">" + heroCopy + "</p><div class=\"atlas-metrics\"><span><b>" + projectCount + "</b>" + (lang === "zh" ? "项目" : "projects") + "</span><span><b>" + chapterCount + "</b>" + (lang === "zh" ? "章节 / 语言" : "chapters / language") + "</span><span><b>" + mapCount + "</b>" + (lang === "zh" ? "交互图" : "interactive maps") + "</span><span><b>HEAD</b>" + (lang === "zh" ? "版本锁定" : "pinned") + "</span></div></section>";
-  const method = "<section class=\"prose atlas-intro\"><div class=\"section-head\"><span>METHOD</span><h2>" + (lang === "zh" ? "先看版本，再看调用链" : "Version first, call chain second") + "</h2></div><p>" + (lang === "zh" ? "每次项目更新都可能改变功能，所以本合集把 branch、commit、提交时间和 GitHub 行号写在页面上。教程中的‘它支持什么’必须能回到文件和行号；‘适合我们怎么借鉴’则单独标成迁移判断。横向矩阵用于定位路线，单项目报告用于逐条复核源码。" : "Every update can change behavior, so each page records branch, commit, date, and line ranges. What it supports must return to a file and line; how to borrow it is kept as a separate migration judgment. The matrix locates a route; the project report replays the code.") + "</p></section>";
+  const method = "<section class=\"prose atlas-intro\"><div class=\"section-head\"><span>METHOD</span><h2>" + (lang === "zh" ? "先看版本，再看调用链" : "Version first, call chain second") + "</h2></div><p>" + (lang === "zh" ? "每次项目更新都可能改变功能，所以本合集把 branch、commit、提交时间和 GitHub 行号写在页面上。教程中的‘它支持什么’必须能回到文件和行号；‘适合我们怎么借鉴’则单独标成工程判断。横向矩阵用于定位路线，单项目报告用于逐条复核源码。" : "Every update can change behavior, so each page records branch, commit, date, and line ranges. What it supports must return to a file and line; engineering judgments are kept separate. The matrix locates a route; the project report replays the code.") + "</p></section>";
   const synthesisSection = "<section class=\"prose\"><div class=\"section-head\"><span>00 · SYNTHESIS</span><h2>" + (lang === "zh" ? "先给建设 Harness 的六条共同规律" : "Six cross-project laws for building a harness") + "</h2></div><div class=\"matrix-synthesis\">" + synthesisMarkup + "</div></section>";
   const blueprintSection = "<section class=\"prose\"><div class=\"section-head\"><span>01 · BLUEPRINT</span><h2>" + (lang === "zh" ? "建议自研的需求交付闭环" : "A buildable delivery loop") + "</h2></div><p class=\"atlas-matrix-intro\">" + (lang === "zh" ? "把每个 Agent 放回一条完整交付链：入口不是终点，工具调用不是交付，知识回写才让下一轮变得更快。" : "Place every agent in a complete delivery chain: entry is not the finish, tool calls are not delivery, and knowledge writeback is what makes the next run faster.") + "</p><div class=\"blueprint\">" + blueprint + "</div></section>";
   const projectSection = "<section class=\"atlas-list prose\"><div class=\"section-head\"><span>02 · PROJECTS</span><h2>" + (lang === "zh" ? projectCount + " 条实现路线" : projectCount + " implementation paths") + "</h2></div>" + cards + "</section>";
   const matrixHeaders = lang === "zh" ? ["Agent / 类型", "主循环", "上下文", "工具执行", "执行环境", "安全与沙箱", "连接器 / 插件", "协作 / 子 Agent", "观测 / 持久化", "优势", "劣势 / 边界", "版本 / Commit"] : ["Agent / type", "Main loop", "Context", "Tool execution", "Execution", "Security / sandbox", "Connectors / plugins", "Collab / sub-agents", "Observability / persistence", "Strengths", "Limits", "Version / commit"];
   const matrixHeaderMarkup = matrixHeaders.map((heading) => "<th scope=\"col\">" + heading + "</th>").join("");
-  const matrixSection = "<section class=\"matrix prose\" id=\"matrix\"><div class=\"section-head\"><span>03 · IMPLEMENTATION MATRIX</span><h2>" + (lang === "zh" ? "十四种以上实现路径，逐维对照" : "Implementation paths, dimension by dimension") + "</h2><p class=\"atlas-matrix-intro\">" + (lang === "zh" ? "横向滚动查看。每个单元格是该项目对应维度的源码 finding 压缩摘要；点击 Agent 名称进入带固定提交、源码摘录和交互图的完整报告。" : "Scroll horizontally. Each cell compresses a source finding for that dimension; click the agent name for the full report with pinned excerpts and interactive maps.") + "</p></div><div class=\"matrix-wrap\" tabindex=\"0\" aria-label=\"" + (lang === "zh" ? "可横向滚动的实现对照表" : "Horizontally scrollable implementation matrix") + "\"><table class=\"comparison-matrix\"><thead><tr>" + matrixHeaderMarkup + "</tr></thead><tbody>" + matrix + "</tbody></table></div></section>";
+  const matrixSection = "<section class=\"matrix prose\" id=\"matrix\"><div class=\"section-head\"><span>03 · IMPLEMENTATION MATRIX</span><h2>" + (lang === "zh" ? "逐维对照：从循环、上下文到指令执行" : "Dimension-by-dimension implementation matrix") + "</h2><p class=\"atlas-matrix-intro\">" + (lang === "zh" ? "横向滚动查看。每个单元格是该项目对应维度的源码 finding 压缩摘要；点击 Agent 名称进入带固定提交、源码摘录和五张交互图的完整报告。" : "Scroll horizontally. Each cell compresses a source finding for that dimension; click the agent name for the full report with pinned excerpts and five interactive maps.") + "</p></div><div class=\"matrix-wrap\" tabindex=\"0\" aria-label=\"" + (lang === "zh" ? "可横向滚动的实现对照表" : "Horizontally scrollable implementation matrix") + "\"><table class=\"comparison-matrix\"><thead><tr>" + matrixHeaderMarkup + "</tr></thead><tbody>" + matrix + "</tbody></table></div></section>";
   const footer = "<footer class=\"site-footer\"><span>Superkimi/awesome-harness · " + (lang === "zh" ? "独立项目" : "independent project") + "</span><a href=\"" + (lang === "zh" ? "../en/index.html" : "../zh/index.html") + "\">" + (lang === "zh" ? "English version →" : "中文版 →") + "</a></footer>";
   return pageShell({ title: lang === "zh" ? "Awesome Harness · 开源 Agent Harness 教程合集" : "Awesome Harness · Open-source agent harness atlas", description: lang === "zh" ? projectCount + " 个开源 Agent Harness 的双语技术分析与章节教程" : "Bilingual technical analyses and chapter courses for " + projectCount + " open-source agent harnesses", lang, body: hero + method + synthesisSection + blueprintSection + scenarioSection + projectSection + matrixSection + footer, atlasPage: true });
 }
@@ -994,8 +1145,8 @@ function indexPage(lang) {
   const file = path.join(siteRoot, `${lang}/index.html`);
   const projectCount = projects.length;
   const chapterCount = projects.length * chapterDefs.length;
-  const mapCount = projects.length * 3;
-  const cards = projects.map((p, i) => `<article class="atlas-card"><div class="atlas-num">${String(i + 1).padStart(2, "0")}</div><div><p class="eyebrow">${esc(p.kind)}</p><h2>${esc(p.name)}</h2><p>${esc(text(p, lang, "thesis"))}</p><div class="atlas-actions"><a href="../projects/${p.slug}/${lang}/analysis.html">${lang === "zh" ? "技术分析" : "Analysis"} ↗</a><a href="../projects/${p.slug}/${lang}/tutorial/index.html">${lang === "zh" ? "小白教程" : "Tutorial"} ↗</a><span>${esc(p.commit.slice(0, 12))}</span></div></div></article>`).join("");
+  const mapCount = projects.length * 5;
+  const cards = projects.map((p, i) => `<article class="atlas-card"><div class="atlas-num">${String(i + 1).padStart(2, "0")}</div><div><p class="eyebrow">${esc(p.kind)}</p><h2>${esc(p.name)}</h2><p>${esc(text(p, lang, "thesis"))}</p><div class="atlas-actions"><a href="../projects/${p.slug}/${lang}/analysis.html">${lang === "zh" ? "技术分析" : "Analysis"} ↗</a><a href="../projects/${p.slug}/${lang}/tutorial/index.html">${lang === "zh" ? "源码教程" : "Source course"} ↗</a><span>${esc(p.commit.slice(0, 12))}</span></div></div></article>`).join("");
   const matrix = projects.map((p) => `<tr><th>${esc(p.name)}<small>${esc(p.language)}</small></th><td>${esc(p[lang].strengths[0])}</td><td>${esc(p[lang].strengths[1])}</td><td>${esc(p[lang].limits[0])}</td><td>${esc(p.branch)}<br><code>${esc(p.commit.slice(0, 12))}</code></td></tr>`).join("");
   const body = `<section class="atlas-hero"><p class="eyebrow">OPEN-SOURCE AGENT HARNESS ATLAS · ${lang === "zh" ? "独立重建版" : "INDEPENDENT REBUILD"}</p><h1>${lang === "zh" ? `${projectCount} 个开源 Harness，<em>逐层读懂</em>` : `${projectCount} open harnesses,<br><em>read layer by layer</em>`}</h1><p class="lede">${lang === "zh" ? "每个项目都有单页技术分析、10 章小白教程、固定提交源码链接、架构/时序/能力图。所有结论从最新拉取的源码开始，而不是从 README 猜出来。" : "Every project has a single-page analysis, a ten-chapter beginner course, pinned-source links, architecture/sequence/capability maps. Claims start from freshly cloned source or a pinned audit ledger, not README guesses."}</p><div class="atlas-metrics"><span><b>${projectCount}</b>${lang === "zh" ? "项目" : "projects"}</span><span><b>${chapterCount}</b>${lang === "zh" ? "章节 / 语言" : "chapters / language"}</span><span><b>${mapCount}</b>${lang === "zh" ? "交互图" : "interactive maps"}</span><span><b>${lang === "zh" ? "HEAD" : "HEAD"}</b>${lang === "zh" ? "版本锁定" : "pinned"}</span></div></section><section class="prose atlas-intro"><div class="section-head"><span>METHOD</span><h2>${lang === "zh" ? "先看版本，再看调用链" : "Version first, call chain second"}</h2></div><p>${lang === "zh" ? "每次项目更新都可能改变功能，所以本合集把 branch、commit、提交时间和 GitHub 行号写在页面上。教程中的“它支持什么”必须能回到文件和行号；“适合我们怎么借鉴”则单独标成迁移判断。" : "Every update can change behavior, so each page records branch, commit, date, and GitHub line ranges. “What it supports” must return to a file and line; “how to borrow the idea” is kept as a separate migration judgment."}</p></section><section class="atlas-list prose"><div class="section-head"><span>01 · PROJECTS</span><h2>${lang === "zh" ? `${projectCount} 条实现路线` : `${projectCount} implementation paths`}</h2></div>${cards}</section><section class="matrix prose"><div class="section-head"><span>02 · MATRIX</span><h2>${lang === "zh" ? "优势与边界横向对照" : "Strengths and boundaries"}</h2></div><div class="matrix-wrap" tabindex="0"><table><thead><tr><th>${lang === "zh" ? "项目" : "Project"}</th><th>${lang === "zh" ? "优势 1" : "Strength 1"}</th><th>${lang === "zh" ? "优势 2" : "Strength 2"}</th><th>${lang === "zh" ? "主要边界" : "Main boundary"}</th><th>${lang === "zh" ? "版本" : "Version"}</th></tr></thead><tbody>${matrix}</tbody></table></div></section><footer class="site-footer"><span>Superkimi/awesome-harness · ${lang === "zh" ? "独立项目" : "independent project"}</span><a href="${lang === "zh" ? "../en/index.html" : "../zh/index.html"}">${lang === "zh" ? "English version →" : "中文版 →"}</a></footer>`;
   return pageShell({ title: lang === "zh" ? "Awesome Harness · 开源 Agent Harness 教程合集" : "Awesome Harness · Open-source agent harness atlas", description: lang === "zh" ? `${projectCount} 个开源 Agent Harness 的双语技术分析与章节教程` : `Bilingual technical analyses and chapter courses for ${projectCount} open-source agent harnesses`, lang, body, atlasPage: true });
@@ -1013,12 +1164,13 @@ const sourceMapCss = `.source-reading-map{margin:26px 0 8px;padding:18px 0;borde
 const inventoryCss = `.implementation-inventory{padding:52px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto;background:rgba(226,216,193,.2)}.inventory-head{display:flex;justify-content:space-between;gap:15px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.inventory-head b{color:var(--ink);font:15px Georgia,serif;letter-spacing:0}.implementation-inventory>p{max-width:980px;color:var(--muted);font-size:14px}.inventory-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}.inventory-card{min-width:0;border:1px solid var(--line);background:rgba(246,241,227,.62);padding:13px}.inventory-card>span{color:var(--red);font:9px "SFMono-Regular",monospace;letter-spacing:.08em}.inventory-card>p{margin:7px 0;color:var(--muted);font-size:11px;line-height:1.5}.inventory-card ul{display:grid;gap:6px;margin:0;padding:0;list-style:none}.inventory-card li{display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:6px}.inventory-card a,.inventory-card code{color:var(--ink);font:10px/1.4 "SFMono-Regular",monospace;overflow-wrap:anywhere}.inventory-card li small{color:var(--muted);font:9px monospace;white-space:nowrap}@media(max-width:1050px){.inventory-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.inventory-grid{grid-template-columns:1fr}.implementation-inventory{padding:42px 18px}}`;
 const conceptCss = `.concept-audit{padding:52px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto}.concept-audit-head{display:flex;justify-content:space-between;gap:15px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.concept-audit-head b{color:var(--ink);font:15px Georgia,serif;letter-spacing:0}.concept-audit>p{max-width:1050px;color:var(--muted);font-size:14px}.concept-audit-wrap{overflow:auto;border:1px solid var(--ink);box-shadow:var(--shadow)}.concept-audit table{border-collapse:collapse;width:100%;min-width:880px;background:rgba(246,241,227,.45);font-size:12px}.concept-audit th,.concept-audit td{padding:10px 12px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);vertical-align:top;text-align:left}.concept-audit thead th{background:var(--ink);color:var(--paper);font:9px "SFMono-Regular",monospace}.concept-audit tbody th{width:240px;color:var(--ink)}.concept-audit tbody th b{display:block;font-size:13px}.concept-audit tbody th small{display:block;margin-top:3px;color:var(--muted);font:10px/1.45 "SFMono-Regular",monospace}.concept-audit td:nth-child(2){width:150px}.concept-audit td small{display:block;margin-top:5px;color:var(--muted);font:9px monospace}.concept-audit td a{color:var(--red);font:10px/1.5 "SFMono-Regular",monospace;overflow-wrap:anywhere}.concept-audit td em{color:var(--muted);font-size:11px}.concept-status{display:inline-block;padding:3px 6px;border:1px solid currentColor;font:9px "SFMono-Regular",monospace}.concept-found{color:#087f69}.concept-missing{color:var(--red)}@media(max-width:760px){.concept-audit{padding:42px 18px}}`;
 const diagramCss = `.diagrams-v2{background:rgba(226,216,193,.12)}.diagram-stack{display:grid;grid-template-columns:1fr;gap:30px}.map-figure{scroll-margin-top:82px;background:rgba(246,241,227,.62);box-shadow:var(--shadow)}.map-figure figcaption{padding:18px 20px;background:rgba(235,227,209,.34)}.map-figure figcaption>b{font-size:25px}.map-figure>p{min-height:0;margin:0;padding:0 20px 18px;max-width:1000px;font-size:14px;line-height:1.65}.map-figure iframe{height:720px;background:#f5f1e6}.map-figure::after{content:"SOURCE-BACKED MAP · CLICK A NODE FOR EVIDENCE";display:block;padding:10px 20px;border-top:1px solid var(--line);color:var(--muted);font:9px "SFMono-Regular",monospace;letter-spacing:.08em}@media(max-width:1100px){.map-figure iframe{height:680px}}@media(max-width:760px){.map-figure iframe{height:560px}.map-figure figcaption>b{font-size:21px}}`;
+const commandCss = `.command-execution{padding:62px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto;background:rgba(226,216,193,.16)}.command-head{display:flex;justify-content:space-between;gap:16px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.command-head b{color:var(--ink);font:16px Georgia,serif;letter-spacing:0}.command-execution>p{max-width:980px;color:var(--muted);font-size:14px}.command-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:22px}.command-card{border:1px solid var(--line);background:rgba(246,241,227,.72);box-shadow:var(--shadow);min-width:0}.command-card header{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-bottom:1px solid var(--line)}.command-card header>span{color:var(--red);font:12px monospace}.command-card header>div{min-width:0;flex:1}.command-card h3{margin:0;color:var(--ink);font:600 18px Georgia,serif}.command-card h3 code{font:inherit;overflow-wrap:anywhere}.command-card header small{display:block;margin-top:4px;color:var(--muted);font:9px/1.4 monospace;overflow-wrap:anywhere}.command-card header>a{color:var(--red);font:9px monospace;white-space:nowrap}.command-card>p{padding:0 15px;color:var(--muted);font-size:12px;min-height:52px}.command-card pre{margin:0 12px 12px;max-height:230px;overflow:auto;background:#172e47;color:#ede5d4;padding:11px;font:9px/1.5 monospace}.command-map-link{display:block;padding:11px 15px;border-top:1px solid var(--line);color:var(--red);font:10px monospace}@media(max-width:900px){.command-grid{grid-template-columns:1fr}}`;
 const lineAnnotCss = `.line-by-line{border-top:1px solid #536a7c}.line-by-line summary{cursor:pointer;padding:9px 13px;color:#c4d1d8;font:9px "SFMono-Regular",monospace}.line-by-line-scroll{max-height:370px;overflow:auto}.line-by-line table{border-collapse:collapse;width:100%;min-width:680px;font:9px/1.45 "SFMono-Regular",monospace}.line-by-line th,.line-by-line td{padding:6px 8px;border-right:1px solid #536a7c;border-bottom:1px solid #536a7c;text-align:left;vertical-align:top}.line-by-line thead th{position:sticky;top:0;background:#0d2238;color:#c4d1d8}.line-by-line tbody td:first-child{width:52px;color:#c4d1d8;text-align:right}.line-by-line tbody th{width:70px}.line-by-line tbody td:nth-child(3){min-width:320px;color:#ede5d4;white-space:pre-wrap}.line-by-line tbody td:nth-child(4){color:#c4d1d8;min-width:210px}.line-kind-input,.line-kind-state,.line-kind-branch,.line-kind-effect,.line-kind-return,.line-kind-flow{display:inline-block;padding:2px 4px;border:1px solid currentColor}.line-kind-input{color:#8fd3c5}.line-kind-state{color:#c2a4f5}.line-kind-branch{color:#f5b45d}.line-kind-effect{color:#ff9580}.line-kind-return{color:#84b8ff}.line-kind-flow{color:#b8c4cc}`;
 
 const js = `const bar=document.getElementById('reading-progress');const update=()=>{const max=document.documentElement.scrollHeight-innerHeight;bar&&(bar.style.width=(max?scrollY/max*100:0)+'%')};addEventListener('scroll',update,{passive:true});addEventListener('load',update);update();document.querySelector('[data-menu]')?.addEventListener('click',()=>document.querySelector('[data-side]')?.classList.toggle('open'));`;
 
 const matrixCss = ".matrix-wrap{position:relative;max-height:78vh;overflow:auto;overscroll-behavior:contain}.comparison-matrix{min-width:2600px!important;width:2600px!important;table-layout:fixed}.comparison-matrix thead{position:sticky;top:0;z-index:5}.comparison-matrix thead th{position:static;min-width:205px}.comparison-matrix thead th:first-child{position:sticky;left:0;z-index:7;min-width:245px}.comparison-matrix tbody th{position:sticky;left:0;z-index:3;min-width:245px;background:var(--paper2);box-shadow:7px 0 0 rgba(24,56,95,.04)}.comparison-matrix tbody th a{color:var(--ink)}.comparison-matrix td{min-width:205px;font-size:12px;line-height:1.55}.comparison-matrix td strong{color:var(--ink)}.comparison-matrix small{display:block;margin-top:5px;color:var(--muted);font:9px \"SFMono-Regular\",monospace}.comparison-matrix code{font:9px \"SFMono-Regular\",monospace}.matrix-wrap:focus{outline:2px solid var(--red);outline-offset:3px}@media(max-width:760px){.matrix-wrap{max-height:70vh}.comparison-matrix{min-width:2450px!important;width:2450px!important}.comparison-matrix thead th,.comparison-matrix tbody th,.comparison-matrix td{min-width:190px}.comparison-matrix thead th:first-child,.comparison-matrix tbody th{min-width:220px}}";
-write(path.join(siteRoot, "assets/harness.css"), css + supplementalCss + richCss + matrixCss + legacyCss + detailCss + sourceMapCss + inventoryCss + conceptCss + diagramCss + lineAnnotCss);
+write(path.join(siteRoot, "assets/harness.css"), css + supplementalCss + richCss + matrixCss + legacyCss + detailCss + sourceMapCss + inventoryCss + conceptCss + diagramCss + commandCss + lineAnnotCss);
 write(path.join(siteRoot, "assets/harness.js"), js);
 write(path.join(siteRoot, "zh/index.html"), indexPageDetailed("zh"));
 write(path.join(siteRoot, "en/index.html"), indexPageDetailed("en"));
@@ -1030,7 +1182,7 @@ for (const project of projects) {
     write(path.join(projectRoot, "analysis.html"), richAnalysis(project, lang));
     write(path.join(projectRoot, "tutorial/index.html"), tutorialIndex(project, lang));
     for (const [index, chapterDef] of chapterDefs.entries()) write(path.join(projectRoot, "tutorial", `ch${chapterDef.number}-${chapterDef.id}.html`), richChapterPage(project, lang, chapterDef, index));
-    for (const type of ["architecture", "sequence", "capability"]) write(path.join(projectRoot, "diagrams", `${type}.html`), archifyDiagram(project, lang, type));
+    for (const type of ["architecture", "sequence", "capability", "loop", "commands"]) write(path.join(projectRoot, "diagrams", `${type}.html`), archifyDiagram(project, lang, type));
   }
 }
 
@@ -1039,23 +1191,22 @@ write(path.join(siteRoot, "data/versions.json"), `${JSON.stringify({ generatedAt
 write(path.join(root, "README.zh.md"), [
   "# Awesome Harness",
   "",
-  `独立维护的开源 Agent Harness 教程合集。当前包含 ${projects.filter((p) => !p.legacy).length} 个本轮源码快照，以及 ${projects.filter((p) => p.legacy).length} 个已刷新到当前远端分支 HEAD 的项目。legacy 项目沿用了上一轮 finding 账本的审计结构，但源码摘录、commit、行号和链接已重新生成；页面明确区分“重新拉取源码”和“历史 finding 仍需语义复核”。`,
+  `独立维护的开源 Agent Harness 源码教程合集。当前包含 ${projects.length} 个固定提交的项目，每个项目都从本地拉取的源码、测试与事件契约生成页面。`,
   "",
   "- 中文/English 单页技术分析",
-  "- 10 章独立小白教程页面",
-  "- 架构图、时序图、能力图（可点击节点）",
+  "- 11 章独立源码阅读页面（含指令执行章）",
+  "- 架构图、时序图、能力图、主循环图、指令执行图（可点击节点）",
   "- 每章源码地图：本地仓库命中的 6 个真实文件与固定提交短段",
   "- 单页实现面清单：入口、manifest、插件/MCP、测试、命令线索",
   "- 21 项概念审计：session log、approval、projection、jobs、transaction、queues、parallelism 等",
   "- 固定 commit、源码行号和 GitHub 跳转",
   "- 本仓库只发布图文教程、源码证据和交互图；视频单独维护在 video 仓库",
-  "- 旧 finding 的完整长报告保留在 site/legacy/reports/，新入口统一拆成十章教程",
   "",
   "站点入口：site/zh/index.html。版本账本：site/data/versions.json。",
   "",
   "sources/ 是本地审计输入，不提交到仓库；需要复现源码摘录时先运行 node scripts/fetch-sources.mjs，它会按 data/projects.mjs 中的 commit checkout。然后运行 node scripts/generate-site.mjs，最后运行 node scripts/validate-site.mjs。",
   "",
-  "注意：Diagram Design 是一个图形生成 Skill/Harness，不是可执行 Agent runtime；报告会把它放在同一横向矩阵里，但不会把它冒充成沙箱执行器。data/legacy/ 是历史 finding 与当前源码版本账本；运行 npm run refresh-legacy 可重新拉取/刷新 legacy 项目的版本和代码摘录。",
+  "注意：Diagram Design 是一个图形生成 Skill/Harness，不是可执行 Agent runtime；报告会把它放在同一横向矩阵里，但不会把它冒充成沙箱执行器。",
   "",
   "> 生成页面：node scripts/generate-site.mjs",
   ""
@@ -1063,25 +1214,24 @@ write(path.join(root, "README.zh.md"), [
 write(path.join(root, "README.en.md"), [
   "# Awesome Harness",
   "",
-  `An independently maintained bilingual atlas of open-source Agent Harness projects. The current release contains ${projects.filter((p) => !p.legacy).length} source snapshots plus ${projects.filter((p) => p.legacy).length} projects refreshed to their current remote branch HEAD. Legacy projects retain the previous finding ledger structure, but source excerpts, commits, line ranges, and links were regenerated; the pages distinguish “source refreshed” from “historical finding still requiring semantic re-review.” Every project includes:`,
+  `An independently maintained bilingual atlas of open-source Agent Harness projects. The current release contains ${projects.length} fixed source snapshots. Every page is generated from locally cloned source, tests, and event contracts:`,
   "",
   "- Chinese and English single-page technical analysis",
-  "- Ten standalone beginner tutorial chapters",
-  "- Clickable architecture, sequence, and capability maps",
+  "- Eleven standalone source-reading chapters, including command execution",
+  "- Clickable architecture, sequence, capability, loop, and command maps",
   "- Per-chapter source maps with six real local files and pinned passages",
   "- Per-project implementation dossier for entrypoints, manifests, plugins/MCP, tests, and commands",
   "- A 21-concept source audit covering logs, approvals, projections, jobs, transactions, queues, parallelism, and more",
   "- Pinned commits, line ranges, and GitHub links",
   "- This repository ships only text tutorials, source evidence, and interactive maps; video releases live in the separate video repository",
-  "- Preserved long-form prior-finding audits under site/legacy/reports/, alongside the common ten-chapter entrypoint",
   "",
   "Site entry: site/en/index.html. Version ledger: site/data/versions.json.",
   "",
   "sources/ is local audit input and is intentionally not committed. To reproduce source excerpts, run node scripts/fetch-sources.mjs; it checks out the commits recorded in data/projects.mjs. Then run node scripts/generate-site.mjs and node scripts/validate-site.mjs.",
   "",
-  "Note: Diagram Design is a diagram-generation Skill/Harness, not an executable agent runtime. The matrix compares it as a harness specimen without claiming it is an execution sandbox. data/legacy/ contains historical findings plus the current source version ledger; run npm run refresh-legacy to refresh the legacy repositories and their code excerpts.",
+  "Note: Diagram Design is a diagram-generation Skill/Harness, not an executable agent runtime. The matrix compares it as a harness specimen without claiming it is an execution sandbox.",
   "",
   "> Generate pages with: node scripts/generate-site.mjs",
   ""
 ].join("\n"));
-console.log(JSON.stringify({ projects: projects.length, languages: 2, chaptersPerProject: chapterDefs.length, pages: projects.length * 2 * (1 + 1 + chapterDefs.length + 3) + 3 }));
+console.log(JSON.stringify({ projects: projects.length, languages: 2, chaptersPerProject: chapterDefs.length, pages: projects.length * 2 * (1 + 1 + chapterDefs.length + 5) + 3 }));

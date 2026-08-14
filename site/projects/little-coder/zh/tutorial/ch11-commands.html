@@ -1,0 +1,1593 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="一个内置指令如何被解析、路由、执行并写回会话？"><title>Little Coder · M11 · 指令执行：从 /goal 到回执</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Little Coder · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">源码教程</a><a href="ch11-commands.html">中</a><a href="../../en/tutorial/ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Little Coder</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><a class="active" href="ch11-commands.html"><span>M11</span>指令执行：从 /goal 到回执</a><div class="side-foot">main<br>0b7234031aab</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Little Coder · 0b7234031aab</p><h1>指令执行：从 /goal 到回执</h1><p class="lede">一个内置指令如何被解析、路由、执行并写回会话？</p><div class="chapter-meta"><span>第 11 / 11 章</span><span>7 条源码 finding</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>逐行翻译</b></div><div class="callout"><b>先用一个生活比喻</b><p>指令像机场值机单：先认出航班，再检查登机规则，交给正确柜台执行，最后把登机和到达状态写回系统。</p></div><h2>先回答本章问题</h2><p>一个内置指令如何被解析、路由、执行并写回会话？ 可以把它理解成给 pi 装了一套“小模型护栏与外挂”，对话循环、会话和基础工具仍由 pi 驱动。</p><h2>本章证据板：7 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="little-extensions-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · 扩展来源分层，默认固定集合，pi 生态桥显式 opt-in</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>launcher 按 bundled、LITTLE_CODER_EXTRA_EXTENSIONS、用户扩展目录的顺序加载，后者可覆盖前者；默认传 --no-extensions 禁止 pi 自动发现，只有 --with-pi-extensions 才开启且由 pi 对项目扩展做 trust prompt。</p></section><section><span>白话解释</span><p>默认追求可预测：装哪些插件是确定的；想接入 pi 大生态可以开开关，但会牺牲冷启动上下文和固定能力面。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>这是“小模型少即是多”的插件治理取舍。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>157–186</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>187–217</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · e758baa38f6f · <a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/bin/little-coder.mjs#L157-L217" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>bin/little-coder.mjs:157–217</span><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/bin/little-coder.mjs#L157-L217" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  157  // ---- 4. Auto-discover bundled extensions ----
+  158  // Load order matters: bundled first, then the env var, then the user
+  159  // directory. pi applies later `--extension` flags after earlier ones, so a
+  160  // user extension can override bundled behavior rather than being shadowed by
+  161  // it. The three sources are recorded in LITTLE_CODER_EXTENSION_MANIFEST below
+  162  // so the `/extensions` command can tell the user where each one came from.
+  163  const extDir = join(pkgRoot, &quot;.pi&quot;, &quot;extensions&quot;);
+  164  const extArgs = [];
+  165  const loadedBundled = [];
+  166  if (existsSync(extDir)) {
+  167    for (const name of readdirSync(extDir).sort()) {
+  168      const subdir = join(extDir, name);
+  169      const idx = join(subdir, &quot;index.ts&quot;);
+  170      try {
+  171        if (statSync(subdir).isDirectory() &amp;&amp; existsSync(idx)) {
+  172          extArgs.push(&quot;--extension&quot;, idx);
+  173          loadedBundled.push(idx);
+  174        }
+  175      } catch {
+  176        // skip unreadable entries
+  177      }
+  178    }
+  179  }
+  180
+  181  // ---- 4b. Third-party extensions via LITTLE_CODER_EXTRA_EXTENSIONS ----
+  182  // Path-delimited list (`:` on POSIX, `;` on Windows — node:path.delimiter)
+  183  // of extra extension paths to load alongside the bundled ones. Each entry can
+  184  // be either a direct file path (e.g. a pi-ponytail-style `extensions/ponytail.js`)
+  185  // or a directory containing `index.ts` / `index.js`. Survives upgrades and
+  186  // avoids the &quot;fork the installed npm package&quot; workaround that issue #46 hit.
+  187  // Parsing rules — ~/ expansion, directory-with-index resolution, one-line
+  188  // warning for missing/unusable entries — live in ./extras.mjs so they&#39;re
+  189  // unit-testable in isolation.
+  190  const loadedFromEnv = [];
+  191  {
+  192    const { entries, warnings } = parseExtraExtensions(process.env.LITTLE_CODER_EXTRA_EXTENSIONS);
+  193    for (const w of warnings) console.error(w);
+  194    for (const entry of entries) {
+  195      extArgs.push(&quot;--extension&quot;, entry);
+  196      loadedFromEnv.push(entry);
+  197    }
+  198  }
+  199
+  200  // ---- 4c. User extension directory (issues #67, #69) ----
+  201  // ~/.config/little-coder/extensions (or $LITTLE_CODER_EXTENSIONS_DIR). Loaded
+  202  // if it exists, ignored if it doesn&#39;t — an install that never creates it
+  203  // behaves exactly as before. This is the discoverable version of 4b: no env
+  204  // var to remember, and it survives `npm install -g little-coder@latest`.
+  205  const loadedFromUserDir = [];
+  206  let userExtensionsDir;
+  207  let userExtensionWarnings = [];
+  208  {
+  209    const discovered = discoverUserExtensions(process.env);
+  210    userExtensionsDir = discovered.dir;
+  211    userExtensionWarnings = discovered.warnings;
+  212    for (const w of discovered.warnings) console.error(w);
+  213    for (const entry of discovered.entries) {
+  214      extArgs.push(&quot;--extension&quot;, entry);
+  215      loadedFromUserDir.push(entry);
+  216    }
+  217  }
+  218
+  219  // ---- 4d. Opt-in pi-ecosystem bridge (issue #67) ----
+  220  // Off by default, deliberately. `--no-extensions` is why &quot;exactly this set
+  221  // loads&quot; holds, and that predictability is a feature on small models. But
+  222  // wanting the pi ecosystem too is legitimate, so it&#39;s one flag away: with it,
+  223  // pi discovers its own extensions from ~/.pi/agent/extensions and
+  224  // &lt;cwd&gt;/.pi/extensions as it normally would. Project-local extensions still go
+  225  // through pi&#39;s own trust prompt before anything runs.
+  226  const withPiExtensions =
+  227    process.argv.includes(&quot;--with-pi-extensions&quot;) || process.env.LITTLE_CODER_PI_EXTENSIONS === &quot;1&quot;;
+  228
+  229  // ---- 5. Update check (best-effort, blocks on TTY prompt only) ----
+  230  let currentVersion = &quot;0.0.0&quot;;
+  231  try {
+  232    const pkgJson = JSON.parse(readFileSync(join(pkgRoot, &quot;package.json&quot;), &quot;utf-8&quot;));
+  233    if (typeof pkgJson?.version === &quot;string&quot;) currentVersion = pkgJson.version;
+  234  } catch {
+  235    // ignore — update-check just won&#39;t fire if we can&#39;t read the version
+  236  }
+  237  if (!isSubagent) {
+  238    const forceUpdate = process.argv.includes(&quot;--update&quot;);
+  239    const exitAfterCheck = await checkForUpdate(currentVersion, { force: forceUpdate });
+  240    if (exitAfterCheck) {
+  241      // A successful update just replaced the on-disk launcher with the new
+  242      // version. Instead of exiting and making the user re-type `little-coder`
+  243      // (issue #66), re-exec THIS same launcher path under the current Node — the
+  244      // file on disk is now the updated one, so it loads the new code — passing
+  245      // the user&#39;s original args through so they land straight in the new
+  246      // version. We add --no-update-check so the child doesn&#39;t re-poll the
+  247      // registry (it&#39;s already the latest), which also rules out any relaunch
+  248      // loop. Best-effort: if the re-exec can&#39;t start, we fall back to exiting
+  249      // with the manual-relaunch hint that checkForUpdate already printed.
+  250      const passthrough = process.argv
+  251        .slice(2)
+  252        .filter((a) =&gt; a !== &quot;--update&quot; &amp;&amp; a !== &quot;--no-update-check&quot;);
+  253      process.stderr.write(&quot;   Relaunching little-coder…\n\n&quot;);
+  254      try {
+  255        const relaunch = spawn(
+  256          process.execPath,
+  257          [process.argv[1], &quot;--no-update-check&quot;, ...passthrough],
+  258          { stdio: &quot;inherit&quot;, cwd: process.cwd(), env: process.env },
+  259        );
+  260        relaunch.on(&quot;exit&quot;, (code, signal) =&gt; {
+  261          if (signal) process.kill(process.pid, signal);
+  262          else process.exit(code ?? 0);
+  263        });
+  264        relaunch.on(&quot;error&quot;, (err) =&gt; {
+  265          process.stderr.write(
+  266            `   Could not relaunch automatically (${err.message}). ` +
+  267              &quot;Run `little-coder` to start the new version.\n&quot;,
+  268          );
+  269          process.exit(0);
+  270        });
+  271      } catch (err) {
+  272        process.stderr.write(
+  273          `   Could not relaunch automatically (${err?.message ?? err}). ` +
+  274            &quot;Run `little-coder` to start the new version.\n&quot;,
+  275        );
+  276        process.exit(0);
+  277      }
+  278      // Do not fall through to spawning pi from the just-replaced (old) process;
+  279      // the relaunched child owns the session now.
+  280    } else {
+  281      // no update — continue into the normal launch path below
+  282    }
+  283  }
+  284
+  285  // ---- 6. Compose pi argv ----
+  286  // --no-context-files : ignore the user&#39;s AGENTS.md / CLAUDE.md so OURS wins
+  287  // --no-extensions    : skip pi&#39;s auto-discovery from cwd; explicit -e flags still
+  288  //                      load. Omitted when --with-pi-extensions is on (step 4d).</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>157</td><th><span class="line-kind-flow">流转</span></th><td><code>// ---- 4. Auto-discover bundled extensions ----</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>158</td><th><span class="line-kind-input">输入</span></th><td><code>// Load order matters: bundled first, then the env var, then the user</code></td><td>接收参数、事件或配置</td></tr><tr><td>159</td><th><span class="line-kind-flow">流转</span></th><td><code>// directory. pi applies later `--extension` flags after earlier ones, so a</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>160</td><th><span class="line-kind-flow">流转</span></th><td><code>// user extension can override bundled behavior rather than being shadowed by</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>161</td><th><span class="line-kind-flow">流转</span></th><td><code>// it. The three sources are recorded in LITTLE_CODER_EXTENSION_MANIFEST below</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>162</td><th><span class="line-kind-flow">流转</span></th><td><code>// so the `/extensions` command can tell the user where each one came from.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>163</td><th><span class="line-kind-input">输入</span></th><td><code>const extDir = join(pkgRoot, &quot;.pi&quot;, &quot;extensions&quot;);</code></td><td>接收参数、事件或配置</td></tr><tr><td>164</td><th><span class="line-kind-input">输入</span></th><td><code>const extArgs = [];</code></td><td>接收参数、事件或配置</td></tr><tr><td>165</td><th><span class="line-kind-input">输入</span></th><td><code>const loadedBundled = [];</code></td><td>接收参数、事件或配置</td></tr><tr><td>166</td><th><span class="line-kind-branch">分支</span></th><td><code>if (existsSync(extDir)) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>167</td><th><span class="line-kind-branch">分支</span></th><td><code>  for (const name of readdirSync(extDir).sort()) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>168</td><th><span class="line-kind-input">输入</span></th><td><code>    const subdir = join(extDir, name);</code></td><td>接收参数、事件或配置</td></tr><tr><td>169</td><th><span class="line-kind-input">输入</span></th><td><code>    const idx = join(subdir, &quot;index.ts&quot;);</code></td><td>接收参数、事件或配置</td></tr><tr><td>170</td><th><span class="line-kind-branch">分支</span></th><td><code>    try {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>171</td><th><span class="line-kind-branch">分支</span></th><td><code>      if (statSync(subdir).isDirectory() &amp;&amp; existsSync(idx)) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>172</td><th><span class="line-kind-state">状态</span></th><td><code>        extArgs.push(&quot;--extension&quot;, idx);</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>173</td><th><span class="line-kind-state">状态</span></th><td><code>        loadedBundled.push(idx);</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>174</td><th><span class="line-kind-flow">流转</span></th><td><code>      }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>175</td><th><span class="line-kind-branch">分支</span></th><td><code>    } catch {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>176</td><th><span class="line-kind-flow">流转</span></th><td><code>      // skip unreadable entries</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>177</td><th><span class="line-kind-flow">流转</span></th><td><code>    }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>178</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>179</td><th><span class="line-kind-flow">流转</span></th><td><code>}</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>180</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>181</td><th><span class="line-kind-flow">流转</span></th><td><code>// ---- 4b. Third-party extensions via LITTLE_CODER_EXTRA_EXTENSIONS ----</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>182</td><th><span class="line-kind-flow">流转</span></th><td><code>// Path-delimited list (`:` on POSIX, `;` on Windows — node:path.delimiter)</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>183</td><th><span class="line-kind-flow">流转</span></th><td><code>// of extra extension paths to load alongside the bundled ones. Each entry can</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>184</td><th><span class="line-kind-flow">流转</span></th><td><code>// be either a direct file path (e.g. a pi-ponytail-style `extensions/ponytail.js`)</code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>bin/little-coder.mjs · 0b7234031aab</span><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/bin/little-coder.mjs#L157-L217" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  157  // ---- 4. Auto-discover bundled extensions ----
+  158  // Load order matters: bundled first, then the env var, then the user
+  159  // directory. pi applies later `--extension` flags after earlier ones, so a
+  160  // user extension can override bundled behavior rather than being shadowed by
+  161  // it. The three sources are recorded in LITTLE_CODER_EXTENSION_MANIFEST below
+  162  // so the `/extensions` command can tell the user where each one came from.
+  163  const extDir = join(pkgRoot, &quot;.pi&quot;, &quot;extensions&quot;);
+  164  const extArgs = [];
+  165  const loadedBundled = [];
+  166  if (existsSync(extDir)) {
+  167    for (const name of readdirSync(extDir).sort()) {
+  168      const subdir = join(extDir, name);
+  169      const idx = join(subdir, &quot;index.ts&quot;);
+  170      try {
+  171        if (statSync(subdir).isDirectory() &amp;&amp; existsSync(idx)) {
+  172          extArgs.push(&quot;--extension&quot;, idx);
+  173          loadedBundled.push(idx);
+  174        }
+  175      } catch {
+  176        // skip unreadable entries
+  177      }
+  178    }
+  179  }
+  180
+  181  // ---- 4b. Third-party extensions via LITTLE_CODER_EXTRA_EXTENSIONS ----
+  182  // Path-delimited list (`:` on POSIX, `;` on Windows — node:path.delimiter)
+  183  // of extra extension paths to load alongside the bundled ones. Each entry can
+  184  // be either a direct file path (e.g. a pi-ponytail-style `extensions/ponytail.js`)
+  185  // or a directory containing `index.ts` / `index.js`. Survives upgrades and
+  186  // avoids the &quot;fork the installed npm package&quot; workaround that issue #46 hit.
+  187  // Parsing rules — ~/ expansion, directory-with-index resolution, one-line
+  188  // warning for missing/unusable entries — live in ./extras.mjs so they&#39;re
+  189  // unit-testable in isolation.
+  190  const loadedFromEnv = [];
+  191  {
+  192    const { entries, warnings } = parseExtraExtensions(process.env.LITTLE_CODER_EXTRA_EXTENSIONS);
+  193    for (const w of warnings) console.error(w);
+  194    for (const entry of entries) {
+  195      extArgs.push(&quot;--extension&quot;, entry);
+  196      loadedFromEnv.push(entry);
+  197    }
+  198  }
+  199
+  200  // ---- 4c. User extension directory (issues #67, #69) ----
+  201  // ~/.config/little-coder/extensions (or $LITTLE_CODER_EXTENSIONS_DIR). Loaded
+  202  // if it exists, ignored if it doesn&#39;t — an install that never creates it
+  203  // behaves exactly as before. This is the discoverable version of 4b: no env
+  204  // var to remember, and it survives `npm install -g little-coder@latest`.
+  205  const loadedFromUserDir = [];
+  206  let userExtensionsDir;
+  207  let userExtensionWarnings = [];
+  208  {
+  209    const discovered = discoverUserExtensions(process.env);
+  210    userExtensionsDir = discovered.dir;
+  211    userExtensionWarnings = discovered.warnings;
+  212    for (const w of discovered.warnings) console.error(w);
+  213    for (const entry of discovered.entries) {
+  214      extArgs.push(&quot;--extension&quot;, entry);
+  215      loadedFromUserDir.push(entry);
+  216    }
+  217  }
+  218
+  219  // ---- 4d. Opt-in pi-ecosystem bridge (issue #67) ----
+  220  // Off by default, deliberately. `--no-extensions` is why &quot;exactly this set
+  221  // loads&quot; holds, and that predictability is a feature on small models. But
+  222  // wanting the pi ecosystem too is legitimate, so it&#39;s one flag away: with it,
+  223  // pi discovers its own extensions from ~/.pi/agent/extensions and
+  224  // &lt;cwd&gt;/.pi/extensions as it normally would. Project-local extensions still go
+  225  // through pi&#39;s own trust prompt before anything runs.
+  226  const withPiExtensions =
+  227    process.argv.includes(&quot;--with-pi-extensions&quot;) || process.env.LITTLE_CODER_PI_EXTENSIONS === &quot;1&quot;;
+  228
+  229  // Start the interactive session already in plan mode (issue #84). The flag is
+  230  // stripped from the args forwarded to pi (below); the plan-mode extension reads
+  231  // LITTLE_CODER_PLAN_MODE from the env at session_start. Not for sub-coder runs,
+  232  // which set their own args and must not inherit plan mode.
+  233  const startInPlanMode =
+  234    !isSubagent &amp;&amp;
+  235    (process.argv.includes(&quot;--plan-mode&quot;) || process.env.LITTLE_CODER_PLAN_MODE === &quot;1&quot;);
+  236  if (startInPlanMode) process.env.LITTLE_CODER_PLAN_MODE = &quot;1&quot;;
+  237
+  238  // ---- 5. Update check (best-effort, blocks on TTY prompt only) ----
+  239  let currentVersion = &quot;0.0.0&quot;;
+  240  try {
+  241    const pkgJson = JSON.parse(readFileSync(join(pkgRoot, &quot;package.json&quot;), &quot;utf-8&quot;));
+  242    if (typeof pkgJson?.version === &quot;string&quot;) currentVersion = pkgJson.version;
+  243  } catch {
+  244    // ignore — update-check just won&#39;t fire if we can&#39;t read the version
+  245  }
+  246  if (!isSubagent) {
+  247    const forceUpdate = process.argv.includes(&quot;--update&quot;);
+  248    const exitAfterCheck = await checkForUpdate(currentVersion, { force: forceUpdate });
+  249    if (exitAfterCheck) {
+  250      // A successful update just replaced the on-disk launcher with the new
+  251      // version. Instead of exiting and making the user re-type `little-coder`
+  252      // (issue #66), re-exec THIS same launcher path under the current Node — the
+  253      // file on disk is now the updated one, so it loads the new code — passing
+  254      // the user&#39;s original args through so they land straight in the new
+  255      // version. We add --no-update-check so the child doesn&#39;t re-poll the
+  256      // registry (it&#39;s already the latest), which also rules out any relaunch
+  257      // loop. Best-effort: if the re-exec can&#39;t start, we fall back to exiting
+  258      // with the manual-relaunch hint that checkForUpdate already printed.
+  259      const passthrough = process.argv
+  260        .slice(2)
+  261        .filter((a) =&gt; a !== &quot;--update&quot; &amp;&amp; a !== &quot;--no-update-check&quot;);
+  262      process.stderr.write(&quot;   Relaunching little-coder…\n\n&quot;);
+  263      try {
+  264        const relaunch = spawn(
+  265          process.execPath,
+  266          [process.argv[1], &quot;--no-update-check&quot;, ...passthrough],
+  267          { stdio: &quot;inherit&quot;, cwd: process.cwd(), env: process.env },
+  268        );
+  269        relaunch.on(&quot;exit&quot;, (code, signal) =&gt; {
+  270          if (signal) process.kill(process.pid, signal);
+  271          else process.exit(code ?? 0);
+  272        });
+  273        relaunch.on(&quot;error&quot;, (err) =&gt; {
+  274          process.stderr.write(
+  275            `   Could not relaunch automatically (${err.message}). ` +
+  276              &quot;Run `little-coder` to start the new version.\n&quot;,
+  277          );
+  278          process.exit(0);
+  279        });
+  280      } catch (err) {
+  281        process.stderr.write(
+  282          `   Could not relaunch automatically (${err?.message ?? err}). ` +
+  283            &quot;Run `little-coder` to start the new version.\n&quot;,
+  284        );
+  285        process.exit(0);
+  286      }
+  287      // Do not fall through to spawning pi from the just-replaced (old) process;
+  288      // the relaunched child owns the session now.</code></pre></details></div></div></article><article class="finding-card compact" id="little-prompt-001" data-finding-dimension="instructions"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>02 · 动态知识放在对话尾部，保护 KV cache</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>技能、知识、计划与研究 brief 默认作为隐藏 custom message 放在用户消息后，而不是改 system prompt；字节相同的块不重复注入。可用环境变量切回旧 system 模式。</p></section><section><span>白话解释</span><p>固定的历史前缀不动，只在最末尾塞这轮真正需要的小纸条，本地模型就不用每轮重算十几万 token 的缓存。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>对本地推理，prompt 稳定性本身就是性能架构。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–13</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>14–27</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · e758baa38f6f · <a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/_shared/inject.ts#L1-L27" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>.pi/extensions/_shared/inject.ts:1–27</span><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/_shared/inject.ts#L1-L27" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  // Where little-coder&#39;s per-turn context augmentation lands (issue #73).
+    2  //
+    3  // Four extensions add a block of guidance to a turn: skill-inject (tool skill
+    4  // cards + the research directive), knowledge-inject (algorithm reference
+    5  // entries), plan-mode (planning instructions + research), and deep-research
+    6  // (the report brief). All four used to append to the SYSTEM PROMPT.
+    7  //
+    8  // That destroyed the KV cache. The system prompt is the first thing in the
+    9  // request, so changing it invalidates the entire cached prefix — and these
+   10  // blocks are recomputed per turn from the user&#39;s prompt, so they changed
+   11  // almost every turn. manueloverride caught it with `cache-hunter`: llama.cpp
+   12  // re-churning 120k of message history &quot;for no reason&quot; mid-conversation.
+   13  //
+   14  // pi already has the right hook. `before_agent_start` may return a `message`
+   15  // instead of a `systemPrompt` (core/extensions/types.d.ts::
+   16  // BeforeAgentStartEventResult); pi appends it AFTER the user&#39;s message
+   17  // (core/agent-session.js) and converts `role: &quot;custom&quot;` to a `user` message on
+   18  // the way to the provider (core/messages.js::convertToLlm). So the block lands
+   19  // at the TAIL of the conversation with every preceding byte untouched — the
+   20  // prefix stays cached and only the new tokens are processed.
+   21  //
+   22  // The recency argument that put these blocks last in the system prompt gets
+   23  // stronger, not weaker: small models weight the end of the context most, and
+   24  // the conversation tail is as late as it gets.
+   25  //
+   26  // `LITTLE_CODER_INJECT_MODE=system` restores the old system-prompt behavior,
+   27  // which is what the whitepaper scaffold reproduction was measured against.
+   28
+   29  export type InjectMode = &quot;message&quot; | &quot;system&quot;;
+   30
+   31  /** Shape of what a `before_agent_start` handler may return. */
+   32  export interface InjectionResult {
+   33    systemPrompt?: string;
+   34    message?: {
+   35      customType: string;
+   36      content: string;
+   37      /** false → carried in context but not rendered in the transcript. */
+   38      display: boolean;
+   39    };
+   40  }
+   41
+   42  export function injectMode(env: NodeJS.ProcessEnv = process.env): InjectMode {
+   43    return env.LITTLE_CODER_INJECT_MODE === &quot;system&quot; ? &quot;system&quot; : &quot;message&quot;;
+   44  }
+   45
+   46  /**
+   47   * Build the `before_agent_start` return value for a block of injected guidance.
+   48   *
+   49   * @param customType  Stable id for this injector (`lc-skills`, `lc-knowledge`,
+   50   *                    …) so the blocks are distinguishable in the session log.
+   51   * @param block       The text to inject. Returns undefined when empty.
+   52   * @param systemPrompt The turn&#39;s system prompt — only read in `system` mode.
+   53   */
+   54  export function injectionResult(
+   55    customType: string,
+   56    block: string,
+   57    systemPrompt = &quot;&quot;,
+   58    env: NodeJS.ProcessEnv = process.env,
+   59  ): InjectionResult | undefined {
+   60    if (!block) return undefined;
+   61    if (injectMode(env) === &quot;system&quot;) {
+   62      return { systemPrompt: systemPrompt + block };
+   63    }
+   64    return { message: { customType, content: block, display: false } };
+   65  }
+   66
+   67  /**
+   68   * Suppress a block that is byte-identical to the one this injector added last.
+   69   *
+   70   * A tail message persists in the conversation, unlike a system prompt that is
+   71   * rebuilt each turn — so re-sending the same skill cards every turn would pile
+   72   * up duplicate copies and spend context for nothing. The previous copy is
+   73   * still there and still visible to the model, so skipping is free.
+   74   *
+   75   * Returns a `shouldInject` predicate that remembers the last block it accepted.
+   76   * In `system` mode it always returns true: there the block is rebuilt from
+   77   * scratch each turn and skipping it would drop the guidance entirely.
+   78   */
+   79  export function makeDedupe(env: NodeJS.ProcessEnv = process.env): (block: string) =&gt; boolean {
+   80    let last: string | null = null;
+   81    return (block: string): boolean =&gt; {
+   82      if (injectMode(env) === &quot;system&quot;) return true;
+   83      if (block === last) return false;
+   84      last = block;
+   85      return true;
+   86    };
+   87  }
+   88</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>1</td><th><span class="line-kind-state">状态</span></th><td><code>// Where little-coder&#39;s per-turn context augmentation lands (issue #73).</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>2</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>3</td><th><span class="line-kind-flow">流转</span></th><td><code>// Four extensions add a block of guidance to a turn: skill-inject (tool skill</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>4</td><th><span class="line-kind-flow">流转</span></th><td><code>// cards + the research directive), knowledge-inject (algorithm reference</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>5</td><th><span class="line-kind-flow">流转</span></th><td><code>// entries), plan-mode (planning instructions + research), and deep-research</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>6</td><th><span class="line-kind-flow">流转</span></th><td><code>// (the report brief). All four used to append to the SYSTEM PROMPT.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>7</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>8</td><th><span class="line-kind-flow">流转</span></th><td><code>// That destroyed the KV cache. The system prompt is the first thing in the</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>9</td><th><span class="line-kind-input">输入</span></th><td><code>// request, so changing it invalidates the entire cached prefix — and these</code></td><td>接收参数、事件或配置</td></tr><tr><td>10</td><th><span class="line-kind-flow">流转</span></th><td><code>// blocks are recomputed per turn from the user&#39;s prompt, so they changed</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>11</td><th><span class="line-kind-flow">流转</span></th><td><code>// almost every turn. manueloverride caught it with `cache-hunter`: llama.cpp</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>12</td><th><span class="line-kind-branch">分支</span></th><td><code>// re-churning 120k of message history &quot;for no reason&quot; mid-conversation.</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>13</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>14</td><th><span class="line-kind-return">回执</span></th><td><code>// pi already has the right hook. `before_agent_start` may return a `message`</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>15</td><th><span class="line-kind-flow">流转</span></th><td><code>// instead of a `systemPrompt` (core/extensions/types.d.ts::</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>16</td><th><span class="line-kind-input">输入</span></th><td><code>// BeforeAgentStartEventResult); pi appends it AFTER the user&#39;s message</code></td><td>接收参数、事件或配置</td></tr><tr><td>17</td><th><span class="line-kind-state">状态</span></th><td><code>// (core/agent-session.js) and converts `role: &quot;custom&quot;` to a `user` message on</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>18</td><th><span class="line-kind-flow">流转</span></th><td><code>// the way to the provider (core/messages.js::convertToLlm). So the block lands</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>19</td><th><span class="line-kind-flow">流转</span></th><td><code>// at the TAIL of the conversation with every preceding byte untouched — the</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>20</td><th><span class="line-kind-flow">流转</span></th><td><code>// prefix stays cached and only the new tokens are processed.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>21</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>22</td><th><span class="line-kind-flow">流转</span></th><td><code>// The recency argument that put these blocks last in the system prompt gets</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>23</td><th><span class="line-kind-state">状态</span></th><td><code>// stronger, not weaker: small models weight the end of the context most, and</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>24</td><th><span class="line-kind-flow">流转</span></th><td><code>// the conversation tail is as late as it gets.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>25</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>26</td><th><span class="line-kind-flow">流转</span></th><td><code>// `LITTLE_CODER_INJECT_MODE=system` restores the old system-prompt behavior,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>27</td><th><span class="line-kind-flow">流转</span></th><td><code>// which is what the whitepaper scaffold reproduction was measured against.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>28</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="little-skills-001" data-finding-dimension="instructions"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>03 · 技能选择按失败恢复、近期工具、当前意图排序</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>skills/tools/*.md 带 target_tool 和 token_cost；每轮在默认 300 token 内先放上次失败工具，再放近期工具，最后按用户关键词预测，并过滤当前 allowed-tools。研究任务额外注入 browse→EvidenceAdd→再写的指令。</p></section><section><span>白话解释</span><p>它不会把整本工具手册都塞给小模型，只给最可能马上用到的几张卡；刚失败过的工具优先补课。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>技能是按预算路由的运行时知识，而非全量静态 prompt。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>8–18</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>19–31</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · e758baa38f6f · <a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/skill-inject/index.ts#L8-L31" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>.pi/extensions/skill-inject/index.ts:8–31</span><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/skill-inject/index.ts#L8-L31" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    8  // ── Tool-skill registry ─────────────────────────────────────────────────
+    9  // Port of local/skill_augment.py. Loads skills/tools/*.md once, hooks
+   10  // `before_agent_start` to add a `## Tool Usage Guidance` block to the turn.
+   11  // Per-user-prompt selection using the whitepaper&#39;s 3-priority algorithm
+   12  // (error recovery &gt; recency &gt; intent). Budget-guarded, cached.
+   13  //
+   14  // The block is delivered as a tail message rather than appended to the system
+   15  // prompt — see _shared/inject.ts for why (issue #73: it was invalidating the
+   16  // KV cache on every turn).
+   17
+   18  interface ToolSkill {
+   19    targetTool: string;
+   20    body: string;
+   21    tokenCost: number;
+   22  }
+   23
+   24  const skills = new Map&lt;string, ToolSkill&gt;();
+   25  const selectionCache = new Map&lt;string, string&gt;();
+   26  let loaded = false;
+   27
+   28  // State tracked across the session so we have error-recovery + recency
+   29  // signals by the time the next `before_agent_start` fires.
+   30  const recentToolCalls: string[] = []; // most-recent-first, capped at 8
+   31  let lastFailedTool: string | null = null;
+   32
+   33  // ── Intent keywords → likely tools ──────────────────────────────────────
+   34  const INTENT_MAP: Record&lt;string, string[]&gt; = {
+   35    read: [&quot;Read&quot;], show: [&quot;Read&quot;], view: [&quot;Read&quot;], cat: [&quot;Read&quot;],
+   36    write: [&quot;Write&quot;], create: [&quot;Write&quot;, &quot;Bash&quot;],
+   37    implement: [&quot;Write&quot;, &quot;Read&quot;], code: [&quot;Write&quot;, &quot;Read&quot;],
+   38    function: [&quot;Write&quot;, &quot;Edit&quot;], class: [&quot;Write&quot;, &quot;Edit&quot;],
+   39    edit: [&quot;Edit&quot;], change: [&quot;Edit&quot;], modify: [&quot;Edit&quot;],
+   40    fix: [&quot;Edit&quot;], update: [&quot;Edit&quot;], replace: [&quot;Edit&quot;],
+   41    add: [&quot;Edit&quot;, &quot;Write&quot;], refactor: [&quot;Edit&quot;, &quot;Read&quot;],
+   42    run: [&quot;Bash&quot;], execute: [&quot;Bash&quot;], install: [&quot;Bash&quot;],
+   43    build: [&quot;Bash&quot;], test: [&quot;Bash&quot;],
+   44    find: [&quot;Glob&quot;, &quot;Grep&quot;], search: [&quot;Grep&quot;],
+   45    grep: [&quot;Grep&quot;], glob: [&quot;Glob&quot;],
+   46    fetch: [&quot;WebFetch&quot;], download: [&quot;WebFetch&quot;], url: [&quot;WebFetch&quot;],
+   47    web: [&quot;WebSearch&quot;],
+   48    // Research / browser / evidence
+   49    research: [&quot;BrowserNavigate&quot;, &quot;BrowserExtract&quot;, &quot;EvidenceAdd&quot;],
+   50    researching: [&quot;BrowserNavigate&quot;, &quot;BrowserExtract&quot;, &quot;EvidenceAdd&quot;],
+   51    wikipedia: [&quot;BrowserNavigate&quot;, &quot;BrowserExtract&quot;, &quot;EvidenceAdd&quot;],
+   52    article: [&quot;BrowserNavigate&quot;, &quot;BrowserExtract&quot;, &quot;EvidenceAdd&quot;],
+   53    citation: [&quot;EvidenceAdd&quot;, &quot;BrowserExtract&quot;],
+   54    cite: [&quot;EvidenceAdd&quot;],
+   55    source: [&quot;EvidenceAdd&quot;, &quot;BrowserExtract&quot;],
+   56    fact: [&quot;EvidenceAdd&quot;],
+   57    factcheck: [&quot;EvidenceAdd&quot;, &quot;BrowserExtract&quot;],
+   58    question: [&quot;EvidenceAdd&quot;, &quot;BrowserExtract&quot;],
+   59    answer: [&quot;EvidenceAdd&quot;, &quot;EvidenceList&quot;],
+   60    navigate: [&quot;BrowserNavigate&quot;],
+   61    browse: [&quot;BrowserNavigate&quot;, &quot;BrowserExtract&quot;],
+   62    page: [&quot;BrowserExtract&quot;],
+   63    click: [&quot;BrowserClick&quot;],
+   64    // Sub-coder delegation
+   65    delegate: [&quot;dispatch&quot;], dispatch: [&quot;dispatch&quot;], subagent: [&quot;dispatch&quot;],
+   66    investigate: [&quot;dispatch&quot;], parallel: [&quot;dispatch&quot;],
+   67  };
+   68
+   69  function skillsDir(): string {
+   70    // Extension lives at .pi/extensions/skill-inject/, repo root is 3 levels up
+   71    const here = dirname(fileURLToPath(import.meta.url));
+   72    return join(here, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;, &quot;skills&quot;, &quot;tools&quot;);
+   73  }
+   74
+   75  function loadSkills(): void {
+   76    if (loaded) return;
+   77    loaded = true;
+   78    const dir = skillsDir();
+   79    if (!existsSync(dir)) return;
+   80    for (const file of readdirSync(dir)) {
+   81      if (!file.endsWith(&quot;.md&quot;)) continue;
+   82      const parsed = parseSkillFile(readFileSync(join(dir, file), &quot;utf-8&quot;));
+   83      if (!parsed) continue;
+   84      const target = parsed.frontmatter.target_tool;
+   85      if (typeof target !== &quot;string&quot; || !target) continue;
+   86      const cost = typeof parsed.frontmatter.token_cost === &quot;number&quot;
+   87        ? parsed.frontmatter.token_cost
+   88        : 150;
+   89      skills.set(target, { targetTool: target, body: parsed.body, tokenCost: cost });
+   90    }
+   91  }
+   92
+   93  function predictTools(userText: string): string[] {
+   94    const words = new Set(userText.toLowerCase().split(/\s+/).filter(Boolean));
+   95    const predicted: string[] = [];
+   96    for (const [kw, toolNames] of Object.entries(INTENT_MAP)) {
+   97      if (!words.has(kw)) continue;
+   98      for (const tn of toolNames) if (!predicted.includes(tn)) predicted.push(tn);
+   99    }
+  100    return predicted;
+  101  }
+  102</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>8</td><th><span class="line-kind-flow">流转</span></th><td><code>// ── Tool-skill registry ─────────────────────────────────────────────────</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>9</td><th><span class="line-kind-flow">流转</span></th><td><code>// Port of local/skill_augment.py. Loads skills/tools/*.md once, hooks</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>10</td><th><span class="line-kind-flow">流转</span></th><td><code>// `before_agent_start` to add a `## Tool Usage Guidance` block to the turn.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>11</td><th><span class="line-kind-flow">流转</span></th><td><code>// Per-user-prompt selection using the whitepaper&#39;s 3-priority algorithm</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>12</td><th><span class="line-kind-flow">流转</span></th><td><code>// (error recovery &gt; recency &gt; intent). Budget-guarded, cached.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>13</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>14</td><th><span class="line-kind-input">输入</span></th><td><code>// The block is delivered as a tail message rather than appended to the system</code></td><td>接收参数、事件或配置</td></tr><tr><td>15</td><th><span class="line-kind-branch">分支</span></th><td><code>// prompt — see _shared/inject.ts for why (issue #73: it was invalidating the</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>16</td><th><span class="line-kind-flow">流转</span></th><td><code>// KV cache on every turn).</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>17</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>18</td><th><span class="line-kind-flow">流转</span></th><td><code>interface ToolSkill {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>19</td><th><span class="line-kind-flow">流转</span></th><td><code>  targetTool: string;</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>20</td><th><span class="line-kind-flow">流转</span></th><td><code>  body: string;</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>21</td><th><span class="line-kind-flow">流转</span></th><td><code>  tokenCost: number;</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>22</td><th><span class="line-kind-flow">流转</span></th><td><code>}</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>23</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>24</td><th><span class="line-kind-input">输入</span></th><td><code>const skills = new Map&lt;string, ToolSkill&gt;();</code></td><td>接收参数、事件或配置</td></tr><tr><td>25</td><th><span class="line-kind-input">输入</span></th><td><code>const selectionCache = new Map&lt;string, string&gt;();</code></td><td>接收参数、事件或配置</td></tr><tr><td>26</td><th><span class="line-kind-input">输入</span></th><td><code>let loaded = false;</code></td><td>接收参数、事件或配置</td></tr><tr><td>27</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>28</td><th><span class="line-kind-state">状态</span></th><td><code>// State tracked across the session so we have error-recovery + recency</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>29</td><th><span class="line-kind-flow">流转</span></th><td><code>// signals by the time the next `before_agent_start` fires.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>30</td><th><span class="line-kind-input">输入</span></th><td><code>const recentToolCalls: string[] = []; // most-recent-first, capped at 8</code></td><td>接收参数、事件或配置</td></tr><tr><td>31</td><th><span class="line-kind-input">输入</span></th><td><code>let lastFailedTool: string | null = null;</code></td><td>接收参数、事件或配置</td></tr><tr><td>32</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>33</td><th><span class="line-kind-flow">流转</span></th><td><code>// ── Intent keywords → likely tools ──────────────────────────────────────</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>34</td><th><span class="line-kind-input">输入</span></th><td><code>const INTENT_MAP: Record&lt;string, string[]&gt; = {</code></td><td>接收参数、事件或配置</td></tr><tr><td>35</td><th><span class="line-kind-flow">流转</span></th><td><code>  read: [&quot;Read&quot;], show: [&quot;Read&quot;], view: [&quot;Read&quot;], cat: [&quot;Read&quot;],</code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="little-knowledge-001" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · 算法知识以关键词打分并反向声明所需工具</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>skills/knowledge 与 skills/protocols 条目按单词 1 分、短语 2 分打分，低于 2 不选，单条最多 150 token、总预算默认 200；当系统 prompt 已超过窗口 40% 或为 subtask 时不注入，并将 requires_tools 发布给 skill injector。</p></section><section><span>白话解释</span><p>题目像动态规划才临时塞动态规划小抄；而且小抄若要求某工具，会顺带保证那张工具说明也进来。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>知识选择与工具可用性形成联动，但关键词法的召回精度有限。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>8–20</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>21–35</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · e758baa38f6f · <a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/knowledge-inject/index.ts#L8-L35" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>.pi/extensions/knowledge-inject/index.ts:8–35</span><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/knowledge-inject/index.ts#L8-L35" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    8  // ── Knowledge-entry registry ────────────────────────────────────────────
+    9  // Port of local/knowledge_augment.py. Loads skills/knowledge/*.md plus the
+   10  // three root-level protocol skills (skills/protocols/*.md). Scores entries
+   11  // against the user&#39;s prompt, selects top within budget, publishes
+   12  // `requires_tools` on systemPromptOptions so skill-inject can include them.
+   13  //
+   14  // Like skill-inject, the selected entries ride in as a tail message rather
+   15  // than a system-prompt append (issue #73 — see _shared/inject.ts).
+   16
+   17  interface KnowledgeEntry {
+   18    topic: string;
+   19    body: string;
+   20    tokenCost: number;
+   21    keywords: string[];
+   22    requiresTools: string[];
+   23  }
+   24
+   25  const entries = new Map&lt;string, KnowledgeEntry&gt;();
+   26  const cache = new Map&lt;string, string&gt;();
+   27  let loaded = false;
+   28
+   29  const MIN_SCORE_THRESHOLD = 2.0;
+   30  const PER_ENTRY_CAP = 150;
+   31
+   32  function dirs(): string[] {
+   33    const here = dirname(fileURLToPath(import.meta.url));
+   34    const repo = join(here, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;);
+   35    return [join(repo, &quot;skills&quot;, &quot;knowledge&quot;), join(repo, &quot;skills&quot;, &quot;protocols&quot;)];
+   36  }
+   37
+   38  function loadEntries(): void {
+   39    if (loaded) return;
+   40    loaded = true;
+   41    for (const dir of dirs()) {
+   42      if (!existsSync(dir)) continue;
+   43      for (const file of readdirSync(dir)) {
+   44        if (!file.endsWith(&quot;.md&quot;)) continue;
+   45        const parsed = parseSkillFile(readFileSync(join(dir, file), &quot;utf-8&quot;));
+   46        if (!parsed) continue;
+   47        const fm = parsed.frontmatter;
+   48        const topic = (typeof fm.topic === &quot;string&quot; ? fm.topic : &quot;&quot;) ||
+   49                      (typeof fm.name === &quot;string&quot; ? fm.name : &quot;&quot;);
+   50        if (!topic || !parsed.body) continue;
+   51        let cost = typeof fm.token_cost === &quot;number&quot; ? fm.token_cost : 150;
+   52        if (cost &gt; PER_ENTRY_CAP) cost = PER_ENTRY_CAP;
+   53        const keywords = Array.isArray(fm.keywords)
+   54          ? (fm.keywords as string[]).map((k) =&gt; k.toLowerCase())
+   55          : [];
+   56        const requiresTools = Array.isArray(fm.requires_tools)
+   57          ? (fm.requires_tools as string[])
+   58          : [];
+   59        entries.set(topic, { topic, body: parsed.body, tokenCost: cost, keywords, requiresTools });
+   60      }
+   61    }
+   62  }
+   63
+   64  // ── Scoring (word=1.0, bigram/phrase=2.0) ───────────────────────────────
+   65  function scoreEntry(userText: string, e: KnowledgeEntry): number {
+   66    if (e.keywords.length === 0) return 0;
+   67    const textLower = userText.toLowerCase();
+   68    const words = new Set(textLower.split(/\s+/).filter(Boolean));
+   69    let score = 0;
+   70    for (const kw of e.keywords) {
+   71      if (kw.includes(&quot; &quot;)) {
+   72        if (textLower.includes(kw)) score += 2.0;
+   73      } else {
+   74        if (words.has(kw)) score += 1.0;
+   75      }
+   76    }
+   77    return score;
+   78  }
+   79
+   80  function estimateTokens(text: string): number {
+   81    return Math.ceil(text.length / 3.5);
+   82  }
+   83
+   84  function buildBlock(selected: KnowledgeEntry[]): string {
+   85    let out = &quot;\n\n## Algorithm Reference\n&quot;;
+   86    for (const e of selected) out += `\n### ${e.topic}\n${e.body}\n`;
+   87    return out;
+   88  }
+   89
+   90  export default function (pi: ExtensionAPI) {
+   91    const shouldInject = makeDedupe();
+   92
+   93    pi.on(&quot;before_agent_start&quot;, async (event, ctx) =&gt; {
+   94      loadEntries();
+   95      if (entries.size === 0) return;
+   96
+   97      const opts: any = (event as any).systemPromptOptions ?? {};
+   98      const lc = opts.littleCoder ?? {};
+   99      const budget: number = lc.knowledgeTokenBudget ?? 200;
+  100      if (budget &lt;= 0) return;
+  101      if (lc.isSubtask) return;
+  102
+  103      const base = event.systemPrompt ?? &quot;&quot;;
+  104      const contextLimit: number = lc.contextLimit ?? 8192;
+  105      if (estimateTokens(base) &gt; contextLimit * 0.4) return;
+  106</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>8</td><th><span class="line-kind-flow">流转</span></th><td><code>// ── Knowledge-entry registry ────────────────────────────────────────────</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>9</td><th><span class="line-kind-flow">流转</span></th><td><code>// Port of local/knowledge_augment.py. Loads skills/knowledge/*.md plus the</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>10</td><th><span class="line-kind-flow">流转</span></th><td><code>// three root-level protocol skills (skills/protocols/*.md). Scores entries</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>11</td><th><span class="line-kind-flow">流转</span></th><td><code>// against the user&#39;s prompt, selects top within budget, publishes</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>12</td><th><span class="line-kind-flow">流转</span></th><td><code>// `requires_tools` on systemPromptOptions so skill-inject can include them.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>13</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>14</td><th><span class="line-kind-input">输入</span></th><td><code>// Like skill-inject, the selected entries ride in as a tail message rather</code></td><td>接收参数、事件或配置</td></tr><tr><td>15</td><th><span class="line-kind-flow">流转</span></th><td><code>// than a system-prompt append (issue #73 — see _shared/inject.ts).</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>16</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>17</td><th><span class="line-kind-flow">流转</span></th><td><code>interface KnowledgeEntry {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>18</td><th><span class="line-kind-flow">流转</span></th><td><code>  topic: string;</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>19</td><th><span class="line-kind-flow">流转</span></th><td><code>  body: string;</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>20</td><th><span class="line-kind-flow">流转</span></th><td><code>  tokenCost: number;</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>21</td><th><span class="line-kind-flow">流转</span></th><td><code>  keywords: string[];</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>22</td><th><span class="line-kind-flow">流转</span></th><td><code>  requiresTools: string[];</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>23</td><th><span class="line-kind-flow">流转</span></th><td><code>}</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>24</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>25</td><th><span class="line-kind-input">输入</span></th><td><code>const entries = new Map&lt;string, KnowledgeEntry&gt;();</code></td><td>接收参数、事件或配置</td></tr><tr><td>26</td><th><span class="line-kind-input">输入</span></th><td><code>const cache = new Map&lt;string, string&gt;();</code></td><td>接收参数、事件或配置</td></tr><tr><td>27</td><th><span class="line-kind-input">输入</span></th><td><code>let loaded = false;</code></td><td>接收参数、事件或配置</td></tr><tr><td>28</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>29</td><th><span class="line-kind-input">输入</span></th><td><code>const MIN_SCORE_THRESHOLD = 2.0;</code></td><td>接收参数、事件或配置</td></tr><tr><td>30</td><th><span class="line-kind-input">输入</span></th><td><code>const PER_ENTRY_CAP = 150;</code></td><td>接收参数、事件或配置</td></tr><tr><td>31</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>32</td><th><span class="line-kind-flow">流转</span></th><td><code>function dirs(): string[] {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>33</td><th><span class="line-kind-input">输入</span></th><td><code>  const here = dirname(fileURLToPath(import.meta.url));</code></td><td>接收参数、事件或配置</td></tr><tr><td>34</td><th><span class="line-kind-input">输入</span></th><td><code>  const repo = join(here, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;);</code></td><td>接收参数、事件或配置</td></tr><tr><td>35</td><th><span class="line-kind-return">回执</span></th><td><code>  return [join(repo, &quot;skills&quot;, &quot;knowledge&quot;), join(repo, &quot;skills&quot;, &quot;protocols&quot;)];</code></td><td>把结果、错误或下一步交回调用者</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="little-edit-001" data-finding-dimension="tools"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>05 · 禁止整文件覆写是跨 Write 与 shell 的不变量</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>write tool_call 被原地规范路径；已有文件或 Windows 保留设备名会被拒并给出 Edit recipe。shell 的 &gt;、heredoc、tee 等写目标也用同一 verdict 检查，append 例外。</p></section><section><span>白话解释</span><p>小模型想偷懒把整个文件重写，换成 `cat &gt; file` 也绕不过去；它被迫做小块精确修改。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>安全/质量不变量应按“副作用”覆盖所有等价工具，而不是只拦一个工具名。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>35–54</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>55–75</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · e758baa38f6f · <a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/write-guard/index.ts#L35-L75" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>.pi/extensions/write-guard/index.ts:35–75</span><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/write-guard/index.ts#L35-L75" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   35   * Resolve a write `path` argument to a concrete on-disk path.
+   36   *
+   37   * Two deterministic rewrites:
+   38   *
+   39   * 1. `&quot;/&lt;single-segment&gt;&quot;` (e.g. `/foo.md`) → `&lt;cwd&gt;/&lt;single-segment&gt;`.
+   40   *    Background: the model has been seen to anchor at filesystem root when
+   41   *    given an &quot;Absolute file path&quot; schema and no obvious directory context.
+   42   *    Genuine system-path writes always include at least one intermediate
+   43   *    directory (`/etc/X`, `/tmp/Y/Z`), so a root + bare filename is almost
+   44   *    always a mistake. Rewriting to cwd matches user intent and avoids
+   45   *    accidentally writing to `/`.
+   46   *
+   47   * 2. Bare filename / relative path (no leading slash) → resolved against cwd.
+   48   *
+   49   * Anything else (absolute path with at least one intermediate directory) is
+   50   * left untouched.
+   51   */
+   52  export function normalizeWritePath(
+   53    filePath: string,
+   54    cwd: string = process.cwd(),
+   55  ): { path: string; rewrittenFrom?: string } {
+   56    if (/^\/[^/]+$/.test(filePath)) {
+   57      return { path: join(cwd, filePath.slice(1)), rewrittenFrom: filePath };
+   58    }
+   59    if (!isAbsolute(filePath)) {
+   60      return { path: join(cwd, filePath) };
+   61    }
+   62    return { path: filePath };
+   63  }
+   64
+   65  // Read whichever key carries the destination path. pi&#39;s built-in `write` uses
+   66  // `path`; older little-coder builds and some prompts use `file_path`. We accept
+   67  // both so the guard is independent of which write implementation is in play.
+   68  function pathKey(input: Record&lt;string, unknown&gt;): &quot;path&quot; | &quot;file_path&quot; | undefined {
+   69    if (typeof input.path === &quot;string&quot;) return &quot;path&quot;;
+   70    if (typeof input.file_path === &quot;string&quot;) return &quot;file_path&quot;;
+   71    return undefined;
+   72  }
+   73
+   74  // Tools that hand a string to a shell, and so can reach the filesystem without
+   75  // going anywhere near the `write` tool (issue #70).
+   76  const SHELL_TOOLS = new Set([&quot;bash&quot;, &quot;Bash&quot;, &quot;ShellSession&quot;]);
+   77
+   78  function editRecipe(resolved: string): string {
+   79    return (
+   80      `Write refused — ${resolved} already exists.\n` +
+   81      `\n` +
+   82      `Write is for creating NEW files only. To change an existing file, use Edit:\n` +
+   83      `  {&quot;name&quot;: &quot;edit&quot;, &quot;input&quot;: {&quot;path&quot;: &quot;${resolved}&quot;, ` +
+   84      `&quot;edits&quot;: [{&quot;oldText&quot;: &quot;&lt;exact text currently in the file&gt;&quot;, ` +
+   85      `&quot;newText&quot;: &quot;&lt;replacement text&gt;&quot;}]}}\n` +
+   86      `\n` +
+   87      `If you do not already know the file&#39;s current content, Read it first to get the ` +
+   88      `exact text for oldText (whitespace and indentation must match). Include enough ` +
+   89      `surrounding context (2-3 lines) to make oldText unique in the file.\n` +
+   90      `\n` +
+   91      `For multiple changes, pass multiple entries in edits[] — one per location. Do NOT ` +
+   92      `retry Write; it will be refused again.`
+   93    );
+   94  }
+   95
+   96  // Port of tools.py::_write&#39;s guard. The whitepaper&#39;s benchmark result depends
+   97  // on Write refusing whole-file rewrites of existing files (fires on ~57% of
+   98  // Polyglot exercises). The earlier implementation registered a *custom* `write`
+   99  // tool to enforce this — but pi ships its own built-in `write`
+  100  // (`core/tools/write.js`, &quot;overwrites if it does&quot;) which shadowed the custom
+  101  // one, so on current pi the guard never fired and existing files were silently
+  102  // rewritten. We now enforce at the `tool_call` event instead, which fires for
+  103  // whichever `write` implementation runs and lets us both normalize the path in
+  104  // place and block the call before it executes.
+  105  /** A refusal, or null when the destination is fine to write. */
+  106  export interface WriteVerdict {
+  107    reason: string;
+  108    /** What to surface on the single &quot;harness intervention: …&quot; line. */
+  109    intervention: string;
+  110  }
+  111
+  112  /**
+  113   * Decide whether `resolved` (an already-normalized absolute path) may be
+  114   * written. Shared by the `write` tool and the shell guard so both refuse the
+  115   * same destinations for the same reasons.
+  116   *
+  117   * @param truncates whether the operation replaces existing content. A shell
+  118   *   append (`&gt;&gt;`) doesn&#39;t destroy anything, so it isn&#39;t the whole-file-rewrite
+  119   *   failure mode this guard exists to prevent; a reserved device name is still
+  120   *   refused either way.
+  121   */
+  122  export function writeVerdict(resolved: string, truncates = true): WriteVerdict | null {
+  123    // Reserved Windows device name (nul, con, com1, …): refuse outright. On
+  124    // Windows this would create an undeletable device-named file (issue #60);
+  125    // everywhere it&#39;s a near-certain mistake. Check before existsSync — a
+  126    // reserved name should never be written regardless.
+  127    if (isReservedDeviceName(resolved)) {
+  128      return {
+  129        intervention: `blocked a write to the reserved device name &quot;${basename(resolved)}&quot;.`,
+  130        reason:
+  131          `Write refused — &quot;${basename(resolved)}&quot; is a reserved Windows device name ` +
+  132          `(CON, PRN, AUX, NUL, COM1-9, LPT1-9). Writing it creates an undeletable ` +
+  133          `junk file on Windows and is almost never intended.\n` +
+  134          `\n` +
+  135          `If you wanted to discard output, don&#39;t write a file at all. If you wanted a ` +
+  136          `real file, choose a normal name (e.g. &quot;notes.txt&quot;, &quot;output.log&quot;).`,
+  137      };
+  138    }
+  139
+  140    if (!truncates) return null; // append — nothing is lost
+  141    if (!existsSync(resolved)) return null; // new file — allow it through
+  142
+  143    return {
+  144      intervention: &quot;small models can&#39;t rewrite whole files — redirected the model to Edit.&quot;,
+  145      reason: editRecipe(resolved),
+  146    };</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>35</td><th><span class="line-kind-effect">副作用</span></th><td><code> * Resolve a write `path` argument to a concrete on-disk path.</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>36</td><th><span class="line-kind-flow">流转</span></th><td><code> *</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>37</td><th><span class="line-kind-flow">流转</span></th><td><code> * Two deterministic rewrites:</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>38</td><th><span class="line-kind-flow">流转</span></th><td><code> *</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>39</td><th><span class="line-kind-flow">流转</span></th><td><code> * 1. `&quot;/&lt;single-segment&gt;&quot;` (e.g. `/foo.md`) → `&lt;cwd&gt;/&lt;single-segment&gt;`.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>40</td><th><span class="line-kind-flow">流转</span></th><td><code> *    Background: the model has been seen to anchor at filesystem root when</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>41</td><th><span class="line-kind-state">状态</span></th><td><code> *    given an &quot;Absolute file path&quot; schema and no obvious directory context.</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>42</td><th><span class="line-kind-flow">流转</span></th><td><code> *    Genuine system-path writes always include at least one intermediate</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>43</td><th><span class="line-kind-flow">流转</span></th><td><code> *    directory (`/etc/X`, `/tmp/Y/Z`), so a root + bare filename is almost</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>44</td><th><span class="line-kind-flow">流转</span></th><td><code> *    always a mistake. Rewriting to cwd matches user intent and avoids</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>45</td><th><span class="line-kind-flow">流转</span></th><td><code> *    accidentally writing to `/`.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>46</td><th><span class="line-kind-flow">流转</span></th><td><code> *</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>47</td><th><span class="line-kind-flow">流转</span></th><td><code> * 2. Bare filename / relative path (no leading slash) → resolved against cwd.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>48</td><th><span class="line-kind-flow">流转</span></th><td><code> *</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>49</td><th><span class="line-kind-branch">分支</span></th><td><code> * Anything else (absolute path with at least one intermediate directory) is</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>50</td><th><span class="line-kind-flow">流转</span></th><td><code> * left untouched.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>51</td><th><span class="line-kind-flow">流转</span></th><td><code> */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>52</td><th><span class="line-kind-flow">流转</span></th><td><code>export function normalizeWritePath(</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>53</td><th><span class="line-kind-flow">流转</span></th><td><code>  filePath: string,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>54</td><th><span class="line-kind-flow">流转</span></th><td><code>  cwd: string = process.cwd(),</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>55</td><th><span class="line-kind-flow">流转</span></th><td><code>): { path: string; rewrittenFrom?: string } {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>56</td><th><span class="line-kind-branch">分支</span></th><td><code>  if (/^\/[^/]+$/.test(filePath)) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>57</td><th><span class="line-kind-return">回执</span></th><td><code>    return { path: join(cwd, filePath.slice(1)), rewrittenFrom: filePath };</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>58</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>59</td><th><span class="line-kind-branch">分支</span></th><td><code>  if (!isAbsolute(filePath)) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>60</td><th><span class="line-kind-return">回执</span></th><td><code>    return { path: join(cwd, filePath) };</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>61</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>62</td><th><span class="line-kind-return">回执</span></th><td><code>  return { path: filePath };</code></td><td>把结果、错误或下一步交回调用者</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="little-edit-002" data-finding-dimension="tools"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>06 · Edit 强制先 Read，成功 Write/Edit 也更新已知文件集</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>每会话维护 canonicalized readFiles；只有成功的 read/edit/write tool_result 才加入，未读文件的 edit 在执行前阻断，新会话清空。</p></section><section><span>白话解释</span><p>模型不能凭印象猜 oldText；先亲眼看过文件，才有资格改。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>把编辑前置条件做成运行时门禁，比仅写进提示词可靠。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>4–15</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>16–29</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · e758baa38f6f · <a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/read-guard-edit/index.ts#L4-L29" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>.pi/extensions/read-guard-edit/index.ts:4–29</span><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/read-guard-edit/index.ts#L4-L29" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    4
+    5  // Read-before-edit guard.
+    6  //
+    7  // Small models routinely fire `edit` with an `oldText` they never actually saw
+    8  // — guessing at the current file contents — which either fails the exact-match
+    9  // requirement (wasting a turn) or, worse, matches the wrong span. Editors the
+   10  // user is used to (Claude Code et al.) enforce a simple invariant: a file must
+   11  // be Read before it can be Edited. We reproduce that here.
+   12  //
+   13  // Mechanism mirrors write-guard: we don&#39;t own pi&#39;s built-in `read`/`edit`
+   14  // tools, so we enforce at the event layer. We remember every file that was
+   15  // successfully `read` this session (`tool_result`, !isError), and block any
+   16  // `edit` whose target hasn&#39;t been read, redirecting the model to Read first.
+   17  //
+   18  // Why a separate extension from `read-guard`: read-guard trims an oversized
+   19  // read so it can&#39;t overflow a small context window — a different concern from
+   20  // the read-before-edit invariant. Keeping them apart keeps each single-purpose.
+   21  //
+   22  // A successful `edit` or `write` also marks the path as known: an edit only
+   23  // succeeds when the file was already read (we&#39;d have blocked it otherwise), and
+   24  // a write means the model authored the file&#39;s contents, so a follow-up edit to
+   25  // either is legitimate without a re-read.
+   26
+   27  // Files read (or authored) in the current session. Module-scoped: one pi
+   28  // process drives one session at a time, and we clear on session_start.
+   29  export const readFiles = new Set&lt;string&gt;();
+   30
+   31  // pi&#39;s built-in tools use `path`; some prompts/older builds use `file_path`.
+   32  // Accept both so the guard is independent of which key the model emits.
+   33  export function resolveToolPath(
+   34    input: Record&lt;string, unknown&gt;,
+   35    cwd: string,
+   36  ): string | undefined {
+   37    const raw =
+   38      typeof input.path === &quot;string&quot;
+   39        ? input.path
+   40        : typeof input.file_path === &quot;string&quot;
+   41          ? input.file_path
+   42          : undefined;
+   43    if (!raw) return undefined;
+   44    return normalizeWritePath(raw, cwd).path;
+   45  }
+   46
+   47  export function editBeforeReadReason(resolved: string): string {
+   48    return (
+   49      `File must be read first before edit — ${resolved} has not been read in ` +
+   50      `this session.\n` +
+   51      `\n` +
+   52      `Read ${resolved} first to get the exact current text for oldText ` +
+   53      `(whitespace and indentation must match exactly), then issue the Edit. ` +
+   54      `Reading also lets you include enough surrounding context (2-3 lines) to ` +
+   55      `make oldText unique in the file. Do NOT guess the file&#39;s contents.`
+   56    );
+   57  }
+   58
+   59  export default function (pi: ExtensionAPI) {
+   60    // New session (startup, /clear, /resume, reload) is a clean slate — what was
+   61    // read in a previous session says nothing about the current one.
+   62    pi.on(&quot;session_start&quot;, async () =&gt; {
+   63      readFiles.clear();
+   64    });
+   65
+   66    // Record successful reads (and authored files) as &quot;known&quot;.
+   67    pi.on(&quot;tool_result&quot;, async (event, ctx) =&gt; {
+   68      const name = String((event as any).toolName ?? &quot;&quot;).toLowerCase();
+   69      if (name !== &quot;read&quot; &amp;&amp; name !== &quot;edit&quot; &amp;&amp; name !== &quot;write&quot;) return;
+   70      if ((event as any).isError) return;
+   71      const p = resolveToolPath(((event as any).input ?? {}) as Record&lt;string, unknown&gt;, ctx.cwd);
+   72      if (p) readFiles.add(p);
+   73    });
+   74
+   75    // Block edits to files that were never read.
+   76    pi.on(&quot;tool_call&quot;, async (event, ctx) =&gt; {
+   77      if (String((event as any).toolName ?? &quot;&quot;).toLowerCase() !== &quot;edit&quot;) return;
+   78      const input = ((event as any).input ?? {}) as Record&lt;string, unknown&gt;;
+   79      const p = resolveToolPath(input, ctx.cwd);
+   80      if (!p) return; // no resolvable path — let the edit tool surface its own error
+   81      if (readFiles.has(p)) return; // already read this session — allow
+   82
+   83      harnessIntervention(
+   84        ctx,
+   85        &quot;the model tried to edit a file it hadn&#39;t read — redirected it to Read first.&quot;,
+   86      );
+   87      return { block: true, reason: editBeforeReadReason(p) };
+   88    });
+   89  }
+   90</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>4</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>5</td><th><span class="line-kind-flow">流转</span></th><td><code>// Read-before-edit guard.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>6</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>7</td><th><span class="line-kind-flow">流转</span></th><td><code>// Small models routinely fire `edit` with an `oldText` they never actually saw</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>8</td><th><span class="line-kind-branch">分支</span></th><td><code>// — guessing at the current file contents — which either fails the exact-match</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>9</td><th><span class="line-kind-flow">流转</span></th><td><code>// requirement (wasting a turn) or, worse, matches the wrong span. Editors the</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>10</td><th><span class="line-kind-flow">流转</span></th><td><code>// user is used to (Claude Code et al.) enforce a simple invariant: a file must</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>11</td><th><span class="line-kind-flow">流转</span></th><td><code>// be Read before it can be Edited. We reproduce that here.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>12</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>13</td><th><span class="line-kind-effect">副作用</span></th><td><code>// Mechanism mirrors write-guard: we don&#39;t own pi&#39;s built-in `read`/`edit`</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>14</td><th><span class="line-kind-input">输入</span></th><td><code>// tools, so we enforce at the event layer. We remember every file that was</code></td><td>接收参数、事件或配置</td></tr><tr><td>15</td><th><span class="line-kind-state">状态</span></th><td><code>// successfully `read` this session (`tool_result`, !isError), and block any</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>16</td><th><span class="line-kind-flow">流转</span></th><td><code>// `edit` whose target hasn&#39;t been read, redirecting the model to Read first.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>17</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>18</td><th><span class="line-kind-flow">流转</span></th><td><code>// Why a separate extension from `read-guard`: read-guard trims an oversized</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>19</td><th><span class="line-kind-state">状态</span></th><td><code>// read so it can&#39;t overflow a small context window — a different concern from</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>20</td><th><span class="line-kind-flow">流转</span></th><td><code>// the read-before-edit invariant. Keeping them apart keeps each single-purpose.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>21</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>22</td><th><span class="line-kind-effect">副作用</span></th><td><code>// A successful `edit` or `write` also marks the path as known: an edit only</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>23</td><th><span class="line-kind-flow">流转</span></th><td><code>// succeeds when the file was already read (we&#39;d have blocked it otherwise), and</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>24</td><th><span class="line-kind-effect">副作用</span></th><td><code>// a write means the model authored the file&#39;s contents, so a follow-up edit to</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>25</td><th><span class="line-kind-flow">流转</span></th><td><code>// either is legitimate without a re-read.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>26</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>27</td><th><span class="line-kind-state">状态</span></th><td><code>// Files read (or authored) in the current session. Module-scoped: one pi</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>28</td><th><span class="line-kind-state">状态</span></th><td><code>// process drives one session at a time, and we clear on session_start.</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>29</td><th><span class="line-kind-flow">流转</span></th><td><code>export const readFiles = new Set&lt;string&gt;();</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>30</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>31</td><th><span class="line-kind-flow">流转</span></th><td><code>// pi&#39;s built-in tools use `path`; some prompts/older builds use `file_path`.</code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="little-output-001" data-finding-dimension="tools"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>tools</span></div><h3>07 · 文本化 tool call 只能纠偏，不能由扩展代执行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>turn_end 检测 fenced/XML/bare JSON 调用后发送 follow-up，Liquid Pythonic 格式只提示服务端启用匹配 --jinja；源码明确指出 pi ExtensionAPI 无法执行解析出的调用并合成 tool_result。</p></section><section><span>白话解释</span><p>它能看出模型把工具调用写成了普通文字，但没法替模型按下执行键，只能让模型重发，或要求修服务器模板。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>对弱模型的协议容错受上游 ExtensionAPI 能力上限约束。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>5–11</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>12–20</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · e758baa38f6f · <a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/output-parser/index.ts#L5-L20" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>.pi/extensions/output-parser/index.ts:5–20</span><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/output-parser/index.ts#L5-L20" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    5  // Detects malformed/fenced tool calls in assistant text and nudges the model
+    6  // back onto native tool-calling. Active-repair (executing extracted calls
+    7  // and synthesizing tool_result messages) is intentionally not attempted on
+    8  // the headline Qwen3.6-35B-A3B path, which uses native tool calling. When
+    9  // extracted calls ARE detected, we log them via ctx.ui.notify and queue a
+   10  // follow-up nudge for the next turn.
+   11  //
+   12  // One format is handled differently: LFM2/Liquid &quot;Pythonic&quot; tool calls
+   13  // (`&lt;|tool_call_start|&gt;[Read(path=&#39;…&#39;)]&lt;|tool_call_end|&gt;`, issue #42). Pythonic
+   14  // IS that model&#39;s native channel, so a &quot;use native tool calls&quot; nudge can&#39;t move
+   15  // it to another format — it would just re-emit the same text every turn and
+   16  // loop. little-coder also can&#39;t execute the calls itself (pi exposes no
+   17  // extension API to run a tool + synthesize its result). So for that format we
+   18  // surface a single, accurate diagnostic pointing at the real fix — serving
+   19  // llama.cpp with `--jinja` and the model&#39;s chat template, which parses the
+   20  // calls into native tool_calls upstream — instead of looping a futile nudge.
+   21
+   22  function extractAssistantText(message: any): string {
+   23    if (!message) return &quot;&quot;;
+   24    const content = message.content;
+   25    if (typeof content === &quot;string&quot;) return content;
+   26    if (Array.isArray(content)) {
+   27      return content.filter((c) =&gt; c?.type === &quot;text&quot;).map((c) =&gt; c.text).join(&quot;\n&quot;);
+   28    }
+   29    return &quot;&quot;;
+   30  }
+   31
+   32  function hasNativeToolCalls(message: any): boolean {
+   33    const content = message?.content;
+   34    if (!Array.isArray(content)) return false;
+   35    return content.some((c: any) =&gt; c?.type === &quot;toolCall&quot;);
+   36  }
+   37
+   38  export default function (pi: ExtensionAPI) {
+   39    // The --jinja diagnostic is shown once per session — every LFM2 turn would
+   40    // otherwise repeat it, which is noise once the user knows.
+   41    let liquidNotified = false;
+   42
+   43    pi.on(&quot;turn_end&quot;, async (event, ctx) =&gt; {
+   44      const message = (event as any).message;
+   45      if (!message) return;
+   46      // If pi already detected native tool calls, nothing to rescue.
+   47      if (hasNativeToolCalls(message)) return;
+   48      const text = extractAssistantText(message);
+   49      if (!text) return;
+   50
+   51      const calls = parseTextToolCalls(text);
+   52      if (calls.length === 0) return;
+   53
+   54      const liquidCalls = calls.filter((c) =&gt; c.format === &quot;liquid&quot;);
+   55      const otherCalls = calls.filter((c) =&gt; c.format !== &quot;liquid&quot;);
+   56
+   57      // LFM2/Liquid Pythonic format: inform once, don&#39;t nudge (see header note).
+   58      if (liquidCalls.length &gt; 0 &amp;&amp; !liquidNotified) {
+   59        liquidNotified = true;
+   60        const names = liquidCalls.map((c) =&gt; c.name).join(&quot;, &quot;);
+   61        harnessIntervention(
+   62          ctx,
+   63          `the model emitted ${liquidCalls.length} Pythonic tool call(s) as text [${names}] (LFM2/Liquid format). ` +
+   64            `little-coder can&#39;t execute these directly — serve llama.cpp with \`--jinja\` and the model&#39;s MATCHING ` +
+   65            `chat template (not the GGUF&#39;s embedded one) so tool calls parse into native tool_calls. ` +
+   66            `See README troubleshooting / issue #42.`,
+   67        );
+   68      }
+   69
+   70      // Fenced / &lt;tool_call&gt; / bare-JSON formats: nudge the model back to native
+   71      // tool calling (it has a native channel; this format was a slip).
+   72      if (otherCalls.length &gt; 0) {
+   73        const names = otherCalls.map((c) =&gt; c.name).join(&quot;, &quot;);
+   74        harnessIntervention(
+   75          ctx,
+   76          `the model wrote ${otherCalls.length} tool call(s) as text [${names}] — nudging it back to native tool calls.`,
+   77        );
+   78        pi.sendUserMessage(
+   79          &quot;Your previous response embedded tool calls inside text (e.g. fenced ```tool blocks, &lt;tool_call&gt; tags, or bare JSON). &quot; +
+   80            &quot;Please re-issue them as NATIVE tool calls. If the intended calls were: &quot; +
+   81            otherCalls.map((c) =&gt; `${c.name}(${JSON.stringify(c.input)})`).join(&quot;; &quot;) +
+   82            &quot; — please execute them now using your tool-call channel, not text.&quot;,
+   83          { deliverAs: &quot;followUp&quot; },
+   84        );
+   85      }
+   86    });
+   87  }
+   88</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>5</td><th><span class="line-kind-flow">流转</span></th><td><code>// Detects malformed/fenced tool calls in assistant text and nudges the model</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>6</td><th><span class="line-kind-flow">流转</span></th><td><code>// back onto native tool-calling. Active-repair (executing extracted calls</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>7</td><th><span class="line-kind-flow">流转</span></th><td><code>// and synthesizing tool_result messages) is intentionally not attempted on</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>8</td><th><span class="line-kind-flow">流转</span></th><td><code>// the headline Qwen3.6-35B-A3B path, which uses native tool calling. When</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>9</td><th><span class="line-kind-state">状态</span></th><td><code>// extracted calls ARE detected, we log them via ctx.ui.notify and queue a</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>10</td><th><span class="line-kind-branch">分支</span></th><td><code>// follow-up nudge for the next turn.</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>11</td><th><span class="line-kind-flow">流转</span></th><td><code>//</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>12</td><th><span class="line-kind-flow">流转</span></th><td><code>// One format is handled differently: LFM2/Liquid &quot;Pythonic&quot; tool calls</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>13</td><th><span class="line-kind-flow">流转</span></th><td><code>// (`&lt;|tool_call_start|&gt;[Read(path=&#39;…&#39;)]&lt;|tool_call_end|&gt;`, issue #42). Pythonic</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>14</td><th><span class="line-kind-flow">流转</span></th><td><code>// IS that model&#39;s native channel, so a &quot;use native tool calls&quot; nudge can&#39;t move</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>15</td><th><span class="line-kind-flow">流转</span></th><td><code>// it to another format — it would just re-emit the same text every turn and</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>16</td><th><span class="line-kind-effect">副作用</span></th><td><code>// loop. little-coder also can&#39;t execute the calls itself (pi exposes no</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>17</td><th><span class="line-kind-branch">分支</span></th><td><code>// extension API to run a tool + synthesize its result). So for that format we</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>18</td><th><span class="line-kind-flow">流转</span></th><td><code>// surface a single, accurate diagnostic pointing at the real fix — serving</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>19</td><th><span class="line-kind-flow">流转</span></th><td><code>// llama.cpp with `--jinja` and the model&#39;s chat template, which parses the</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>20</td><th><span class="line-kind-flow">流转</span></th><td><code>// calls into native tool_calls upstream — instead of looping a futile nudge.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>21</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>22</td><th><span class="line-kind-input">输入</span></th><td><code>function extractAssistantText(message: any): string {</code></td><td>接收参数、事件或配置</td></tr><tr><td>23</td><th><span class="line-kind-return">回执</span></th><td><code>  if (!message) return &quot;&quot;;</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>24</td><th><span class="line-kind-input">输入</span></th><td><code>  const content = message.content;</code></td><td>接收参数、事件或配置</td></tr><tr><td>25</td><th><span class="line-kind-return">回执</span></th><td><code>  if (typeof content === &quot;string&quot;) return content;</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>26</td><th><span class="line-kind-branch">分支</span></th><td><code>  if (Array.isArray(content)) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>27</td><th><span class="line-kind-return">回执</span></th><td><code>    return content.filter((c) =&gt; c?.type === &quot;text&quot;).map((c) =&gt; c.text).join(&quot;\n&quot;);</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>28</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>29</td><th><span class="line-kind-return">回执</span></th><td><code>  return &quot;&quot;;</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>30</td><th><span class="line-kind-flow">流转</span></th><td><code>}</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>31</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>32</td><th><span class="line-kind-input">输入</span></th><td><code>function hasNativeToolCalls(message: any): boolean {</code></td><td>接收参数、事件或配置</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 条指令线索</b></div><p>指令不是 UI 文案列表：每条线索都来自本地源码中的注册器、参数解析器或 slash token。点击源码行号，再用执行图查看从解析到回执的完整路径；未定位项会明确标注，不会被包装成事实。</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>clear</code></h3><small>registered · .pi/extensions/clear-command/index.ts:18</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/clear-command/index.ts#L13-L30" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。</p><pre><code>   13  //     (quality-monitor counters, evidence store, etc.).
+   14  //
+   15  // pi already ships `/new` for this; we register `/clear` as an alias so the
+   16  // muscle-memory command works, and so the help/branding line can advertise it.
+   17  export default function (pi: ExtensionAPI) {
+   18    pi.registerCommand(&quot;clear&quot;, {
+   19      description: &quot;Start a fresh session — clears history and reloads context, like relaunching&quot;,
+   20      handler: async (_args, ctx) =&gt; {
+   21        // newSession() handles the confirm/cancel flow and the full lifecycle.
+   22        // Returns { cancelled } if the user backed out; nothing else to do here.
+   23        await ctx.newSession();
+   24      },
+   25    });
+   26  }
+   27</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=clear#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>02</span><div><h3><code>/clear</code></h3><small>slash · .pi/extensions/clear-command/index.ts:3</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/clear-command/index.ts#L1-L15" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>    1  import type { ExtensionAPI } from &quot;@earendil-works/pi-coding-agent&quot;;
+    2
+    3  // Adds a `/clear` command (the name users expect from other coding agents) that
+    4  // resets the session as if little-coder had been closed and relaunched.
+    5  //
+    6  // `ctx.newSession()` drives pi&#39;s full session-replacement lifecycle:
+    7  //   session_before_switch → session_shutdown → session_start{reason:&quot;new&quot;}
+    8  //   → resources_discover{reason:&quot;startup&quot;-equivalent}
+    9  // which:
+   10  //   - re-renders little-coder&#39;s branding header (branding ext hooks session_start),
+   11  //   - rebuilds the harness system prompt / AGENTS.md context from scratch,
+   12  //   - resets every session_start-scoped extension&#39;s module state
+   13  //     (quality-monitor counters, evidence store, etc.).
+   14  //
+   15  // pi already ships `/new` for this; we register `/clear` as an alias so the
+   16  // muscle-memory command works, and so the help/branding line can advertise it.
+   17  export default function (pi: ExtensionAPI) {
+   18    pi.registerCommand(&quot;clear&quot;, {
+   19      description: &quot;Start a fresh session — clears history and reloads context, like relaunching&quot;,
+   20      handler: async (_args, ctx) =&gt; {
+   21        // newSession() handles the confirm/cancel flow and the full lifecycle.
+   22        // Returns { cancelled } if the user backed out; nothing else to do here.
+   23        await ctx.newSession();
+   24      },
+   25    });
+   26  }
+   27</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fclear#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--verbose</code></h3><small>flag · .pi/extensions/branding/index.ts:16</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/branding/index.ts#L11-L28" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   11  // little-coder&#39;s own identity using the public ExtensionUIContext hooks.
+   12  //
+   13  // Pairs with `.pi/settings.json` setting `&quot;quietStartup&quot;: true`, which
+   14  // suppresses pi&#39;s built-in header AND the loaded-resources dump (the long
+   15  // list of extension paths, skills, prompts, themes that used to flood the
+   16  // screen on launch). Power users can still run `little-coder --verbose` to
+   17  // override quietStartup and see the resource list.
+   18  //
+   19  // Implementation pattern follows the bundled pi example at
+   20  // `node_modules/@earendil-works/pi-coding-agent/examples/extensions/custom-header.ts` —
+   21  // the factory returns a duck-typed Component (`render(width): string[]` +
+   22  // `invalidate()`), so no deep imports from pi-tui are needed.
+   23
+   24  const TAGLINE = &quot;A coding agent tuned for small local models&quot;;
+   25
+   26  // Brand accent — &quot;honey&quot; #E15A1F from the brand book (v1.0). Emitted as a
+   27  // 24-bit truecolor SGR so the cursor matches the documented hex exactly,
+   28  // independent of the active pi theme&#39;s named &quot;accent&quot; colour. \x1b[39m resets
+   29  // only the foreground, leaving any surrounding bold/style intact.
+   30  const HONEY = &quot;\x1b[38;2;225;90;31m&quot;;
+   31  const honeyFg = (s: string): string =&gt; `${HONEY}${s}\x1b[39m`;
+   32
+   33  function readVersion(): string {
+   34    // .pi/extensions/branding/index.ts → up 3 → package root (where package.json lives).
+   35    // The same path math works in the local checkout (loaded via tsx) and in the
+   36    // installed npm package layout (node_modules/little-coder/.pi/extensions/branding/).
+   37    try {
+   38      const here = dirname(fileURLToPath(import.meta.url));
+   39      const pkgPath = join(here, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;, &quot;package.json&quot;);
+   40      const pkg = JSON.parse(readFileSync(pkgPath, &quot;utf-8&quot;));
+   41      if (typeof pkg?.version === &quot;string&quot; &amp;&amp; pkg.version.length &gt; 0) return pkg.version;
+   42    } catch {
+   43      // best-effort; fall through
+   44    }
+   45    return &quot;0.0.0&quot;;
+   46  }
+   47
+   48  const VERSION = readVersion();
+   49
+   50  // Exported for tests: the hint row is the first thing every user reads, so a
+   51  // key listed here that isn&#39;t actually bound is a real defect (issue #74).
+   52  export function buildHeader(theme: Theme, width: number): string[] {
+   53    // Brand-book &quot;prompt lockup&quot; (the variant the brand reserves for terminals
+   54    // and dark surfaces): a honey prompt caret, the wordmark in the foreground,
+   55    // and the honey block cursor — &quot;lc▌&quot;&#39;s ready-to-type punchline, applied to
+   56    // the full wordmark. Honey stays the only accent, well under the brand&#39;s
+   57    // ~10%-of-layout cap.
+   58    const logo =
+   59      honeyFg(&quot;&gt; &quot;) +
+   60      theme.bold(&quot;little-coder&quot;) +
+   61      honeyFg(&quot;▌&quot;) +
+   62      theme.fg(&quot;dim&quot;, ` v${VERSION}`);
+   63    const tagline = theme.fg(&quot;muted&quot;, TAGLINE);
+   64    const dim = (s: string) =&gt; theme.fg(&quot;dim&quot;, s);
+   65    const sep = theme.fg(&quot;muted&quot;, &quot; · &quot;);
+   66    // Every key here must be one that actually does something at the prompt.
+   67    // `ctrl-r` used to sit where `ctrl-o` is now: pi binds &quot;expand / more&quot; to
+   68    // `app.tools.expand` (= ctrl+o), and ctrl+r is only bound inside the session
+   69    // tree overlay, so the hint pointed at a key that did nothing (issue #74).</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--verbose#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>04</span><div><h3><code>/resume</code></h3><small>slash · .pi/extensions/branding/index.ts:104</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/branding/index.ts#L99-L116" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>   99    const words = allWords.slice(0, 4);
+  100    return allWords.length &gt; words.length ? `${words.join(&quot; &quot;)}…` : words.join(&quot; &quot;);
+  101  }
+  102
+  103  // Title shows the session&#39;s name once it has one, else the cwd basename — so a
+  104  // `/resume`d or `/name`d session is identifiable in the terminal tab, and
+  105  // switching sessions updates the tab (session_start re-asserts on resume).
+  106  function setTitle(setter: (t: string) =&gt; void, cwd: string, sessionName?: string): void {
+  107    const label = sessionName &amp;&amp; sessionName.length &gt; 0 ? sessionName : basename(cwd);
+  108    setter(`little-coder · ${label}`);
+  109  }
+  110
+  111  export default function (pi: ExtensionAPI) {
+  112    // session_start fires on initial load AND on every session switch.
+  113    // Pi&#39;s updateTerminalTitle() runs in init() *after* session_start, so our
+  114    // setTitle here gets clobbered back to &quot;π - &lt;cwd&gt;&quot;. We reassert the title
+  115    // on turn_start and turn_end too — pi calls updateTerminalTitle at the same
+  116    // points (interactive-mode.js:1179, 1346, 3971), so re-setting on every
+  117    // turn keeps our &quot;little-coder - &lt;cwd&gt;&quot; winning for the duration of a
+  118    // session.
+  119    const reassertTitle = (ctx: { hasUI: boolean; cwd: string; ui: { setTitle: (t: string) =&gt; void } }) =&gt; {
+  120      if (!ctx.hasUI) return;
+  121      setTitle(ctx.ui.setTitle.bind(ctx.ui), ctx.cwd, safeGetSessionName(pi));
+  122    };
+  123
+  124    pi.on(&quot;session_start&quot;, async (_event, ctx) =&gt; {
+  125      if (!ctx.hasUI) return;
+  126
+  127      ctx.ui.setHeader((_tui, theme) =&gt; ({
+  128        render(width: number): string[] {
+  129          return buildHeader(theme, width);
+  130        },
+  131        invalidate() {},
+  132      }));
+  133
+  134      reassertTitle(ctx);
+  135    });
+  136
+  137    // Auto-name an as-yet-unnamed session after the user&#39;s first real prompt, so
+  138    // it&#39;s identifiable in `/resume` and the tab title without anyone running
+  139    // `/name`. Only genuine interactive typing names a session — never the
+  140    // benchmark RPC path or programmatic follow-ups (thinking-budget nudges,
+  141    // plan-mode synthesis). `/name` still overrides at any time.
+  142    pi.on(&quot;input&quot;, async (event, ctx) =&gt; {
+  143      if ((event as any).source !== &quot;interactive&quot;) return;
+  144      if (safeGetSessionName(pi)) return; // already named (auto or via /name)
+  145      const name = deriveSessionName(String((event as any).text ?? &quot;&quot;));
+  146      if (!name) return;
+  147      try {
+  148        pi.setSessionName(name);
+  149      } catch {
+  150        // older SDK without setSessionName — title still falls back to cwd
+  151      }
+  152      reassertTitle(ctx);
+  153    });
+  154
+  155    // Pi calls updateTerminalTitle() at turn boundaries (interactive-mode.js),
+  156    // which would clobber ours back to &quot;π - &lt;cwd&gt;&quot;; re-assert at the same points.
+  157    pi.on(&quot;turn_start&quot;, async (_event, ctx) =&gt; reassertTitle(ctx));</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fresume#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>05</span><div><h3><code>/name</code></h3><small>slash · .pi/extensions/branding/index.ts:104</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/branding/index.ts#L99-L116" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>   99    const words = allWords.slice(0, 4);
+  100    return allWords.length &gt; words.length ? `${words.join(&quot; &quot;)}…` : words.join(&quot; &quot;);
+  101  }
+  102
+  103  // Title shows the session&#39;s name once it has one, else the cwd basename — so a
+  104  // `/resume`d or `/name`d session is identifiable in the terminal tab, and
+  105  // switching sessions updates the tab (session_start re-asserts on resume).
+  106  function setTitle(setter: (t: string) =&gt; void, cwd: string, sessionName?: string): void {
+  107    const label = sessionName &amp;&amp; sessionName.length &gt; 0 ? sessionName : basename(cwd);
+  108    setter(`little-coder · ${label}`);
+  109  }
+  110
+  111  export default function (pi: ExtensionAPI) {
+  112    // session_start fires on initial load AND on every session switch.
+  113    // Pi&#39;s updateTerminalTitle() runs in init() *after* session_start, so our
+  114    // setTitle here gets clobbered back to &quot;π - &lt;cwd&gt;&quot;. We reassert the title
+  115    // on turn_start and turn_end too — pi calls updateTerminalTitle at the same
+  116    // points (interactive-mode.js:1179, 1346, 3971), so re-setting on every
+  117    // turn keeps our &quot;little-coder - &lt;cwd&gt;&quot; winning for the duration of a
+  118    // session.
+  119    const reassertTitle = (ctx: { hasUI: boolean; cwd: string; ui: { setTitle: (t: string) =&gt; void } }) =&gt; {
+  120      if (!ctx.hasUI) return;
+  121      setTitle(ctx.ui.setTitle.bind(ctx.ui), ctx.cwd, safeGetSessionName(pi));
+  122    };
+  123
+  124    pi.on(&quot;session_start&quot;, async (_event, ctx) =&gt; {
+  125      if (!ctx.hasUI) return;
+  126
+  127      ctx.ui.setHeader((_tui, theme) =&gt; ({
+  128        render(width: number): string[] {
+  129          return buildHeader(theme, width);
+  130        },
+  131        invalidate() {},
+  132      }));
+  133
+  134      reassertTitle(ctx);
+  135    });
+  136
+  137    // Auto-name an as-yet-unnamed session after the user&#39;s first real prompt, so
+  138    // it&#39;s identifiable in `/resume` and the tab title without anyone running
+  139    // `/name`. Only genuine interactive typing names a session — never the
+  140    // benchmark RPC path or programmatic follow-ups (thinking-budget nudges,
+  141    // plan-mode synthesis). `/name` still overrides at any time.
+  142    pi.on(&quot;input&quot;, async (event, ctx) =&gt; {
+  143      if ((event as any).source !== &quot;interactive&quot;) return;
+  144      if (safeGetSessionName(pi)) return; // already named (auto or via /name)
+  145      const name = deriveSessionName(String((event as any).text ?? &quot;&quot;));
+  146      if (!name) return;
+  147      try {
+  148        pi.setSessionName(name);
+  149      } catch {
+  150        // older SDK without setSessionName — title still falls back to cwd
+  151      }
+  152      reassertTitle(ctx);
+  153    });
+  154
+  155    // Pi calls updateTerminalTitle() at turn boundaries (interactive-mode.js),
+  156    // which would clobber ours back to &quot;π - &lt;cwd&gt;&quot;; re-assert at the same points.
+  157    pi.on(&quot;turn_start&quot;, async (_event, ctx) =&gt; reassertTitle(ctx));</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fname#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>06</span><div><h3><code>deep-research</code></h3><small>registered · .pi/extensions/deep-research/index.ts:295</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/deep-research/index.ts#L290-L307" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。</p><pre><code>  290        ctx.ui?.notify?.(deepResearchOn ? &quot;deep research on — submit a topic&quot; : &quot;deep research off&quot;, &quot;info&quot;);
+  291      },
+  292    });
+  293
+  294    // /deep-research [topic] — run directly with the topic, or arm the mode.
+  295    pi.registerCommand(&quot;deep-research&quot;, {
+  296      description: &quot;Deep research: scope → research → one-shot cited report&quot;,
+  297      handler: async (args: string, ctx: any) =&gt; {
+  298        const topic = (args ?? &quot;&quot;).trim();
+  299        if (topic) {
+  300          startRun(pi, ctx, topic);
+  301        } else {
+  302          deepResearchOn = true;
+  303          setIndicator(ctx, true);
+  304          ctx.ui?.notify?.(&quot;deep research on — submit a topic&quot;, &quot;info&quot;);
+  305        }
+  306      },
+  307    });
+  308
+  309    // Intercept a submitted prompt while the mode is on and run the research flow
+  310    // instead of a normal coding turn.
+  311    pi.on(&quot;input&quot;, async (event, ctx) =&gt; {
+  312      if (!deepResearchOn) return;
+  313      if ((event as any).source !== &quot;interactive&quot;) return;
+  314      const text = String((event as any).text ?? &quot;&quot;).trim();
+  315      if (!text || text.startsWith(&quot;/&quot;) || text.startsWith(&quot;!&quot;)) return;
+  316      if (orchestrating) {
+  317        (ctx as any).ui?.notify?.(&quot;a research run is already in progress…&quot;, &quot;warning&quot;);
+  318        return { action: &quot;handled&quot; as const };
+  319      }
+  320      startRun(pi, ctx as any, text);
+  321      return { action: &quot;handled&quot; as const };
+  322    });
+  323
+  324    // Inject the report-writing instructions + brief + findings into the write
+  325    // turn, hidden from the transcript so the chat shows only the topic and the
+  326    // model&#39;s report. Delivered as a tail message rather than a system-prompt
+  327    // append (issue #73 — see _shared/inject.ts); for a findings digest this
+  328    // size, rewriting the system prompt meant reprocessing the whole context.
+  329    pi.on(&quot;before_agent_start&quot;, async (event) =&gt; {
+  330      if (!pendingReport) return;
+  331      const { topic, brief, digest, failedCount } = pendingReport;
+  332      pendingReport = null;
+  333      return injectionResult(
+  334        &quot;lc-research&quot;,
+  335        writeInstructionBlock(topic, brief, digest, failedCount),
+  336        (event as any).systemPrompt ?? &quot;&quot;,
+  337      );
+  338    });
+  339
+  340    // Block edit/write/bash during the write turn — deep research produces a report
+  341    // as text (we save it ourselves in agent_end); the write agent must not touch
+  342    // the working tree (bash included, so it can&#39;t scaffold/compile either).
+  343    pi.on(&quot;tool_call&quot;, async (event, ctx) =&gt; {
+  344      if (!reportGuardActive) return;
+  345      const name = String((event as any).toolName ?? &quot;&quot;).toLowerCase();
+  346      if (name !== &quot;edit&quot; &amp;&amp; name !== &quot;write&quot; &amp;&amp; name !== &quot;bash&quot;) return;
+  347      (ctx as any).ui?.notify?.(&quot;harness intervention: deep research — emit the report as text.&quot;, &quot;info&quot;);
+  348      return {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=deep-research#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>07</span><div><h3><code>/deep-research</code></h3><small>slash · .pi/extensions/deep-research/index.ts:20</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/deep-research/index.ts#L15-L32" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>   15  import { runResearchPhases, type Question } from &quot;./pipeline.ts&quot;;
+   16
+   17  // Deep Research — a Scope → Research → Write flow, sibling to plan mode.
+   18  //
+   19  // f2 toggles deep-research mode (an indicator appears below the input); the next
+   20  // submitted prompt becomes the research TOPIC. `/deep-research &lt;topic&gt;` is an
+   21  // equivalent entry (and a reliable fallback where a terminal doesn&#39;t deliver f2).
+   22  // While a run is active the extension orchestrates, from the parent process:
+   23  //   0. ask the user a max-agents cap M (1-10),
+   24  //   1. Scope: 1-4 clarifying questions → a compressed research brief (north star),
+   25  //   2. Lead: split the brief into wave-1 research subtopics (the &quot;1 agent&quot;),
+   26  //   3. Research: dispatch read-only research sub-coders (isolated context; only
+   27  //      their concise findings survive), shown as a rectangle PROGRESS BAR — not
+   28  //      the per-child subagent view,
+   29  //   4. Gap-fill: the lead reviews wave-1 findings and, if needed, spawns 1-2 more,
+   30  //   5. Write: the MAIN agent writes ONE cited markdown report from brief + findings
+   31  //      (a sub-coder&#39;s report is capped at 2000 chars — too small for a report),
+   32  //   6. save the report to deep-research-&lt;slug&gt;-&lt;ts&gt;.md and exit the mode.
+   33  //
+   34  // f2 is decoded by pi-tui (f1-f12) and is claimed by neither pi&#39;s app keybindings,
+   35  // the emacs-style editor, nor another extension (plan-mode owns ctrl+q,
+   36  // shortcuts-help owns ctrl+h — and every other ctrl+&lt;letter&gt; is taken by the app
+   37  // or the editor), so it binds cleanly without a conflict warning.
+   38
+   39  const honey = (s: string) =&gt; `\x1b[38;2;225;90;31m${s}\x1b[39m`;
+   40  const gray = (s: string) =&gt; `\x1b[90m${s}\x1b[39m`;
+   41  const INDICATOR_KEY = &quot;deep-research-mode&quot;;
+   42  const OTHER_SENTINEL = &quot;✎ Other (type my own answer)&quot;;
+   43
+   44  let deepResearchOn = false;
+   45  let orchestrating = false;
+   46  let currentAbort: AbortController | null = null;
+   47  // Set just before the write turn; consumed by before_agent_start to inject the
+   48  // brief + findings + report instructions into the system prompt (kept out of the
+   49  // visible chat). Null at all other times.
+   50  let pendingReport: { topic: string; brief: string; digest: string; failedCount: number } | null = null;
+   51  // Set alongside pendingReport so agent_end can name + place the saved file.
+   52  let reportTopic = &quot;&quot;;
+   53  let reportCwd = &quot;&quot;;
+   54  // True while the write turn is in flight — its agent_end saves the report file.
+   55  let writeReportActive = false;
+   56  // True during the write turn — blocks edit/write so the report is text, not files.
+   57  let reportGuardActive = false;
+   58
+   59  // ---- config -----------------------------------------------------------------
+   60
+   61  let maxDefault = MAX_AGENTS;
+   62  let settingsLoaded = false;
+   63
+   64  function repoRoot(): string {
+   65    const here = dirname(fileURLToPath(import.meta.url));
+   66    return join(here, &quot;..&quot;, &quot;..&quot;, &quot;..&quot;);
+   67  }
+   68
+   69  function loadMaxDefault(): number {
+   70    if (settingsLoaded) return maxDefault;
+   71    settingsLoaded = true;
+   72    let settings: { deep_research?: { default_max_subagents?: number } } | null = null;
+   73    const candidates = [</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fdeep-research#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>08</span><div><h3><code>extensions</code></h3><small>registered · .pi/extensions/extensions-info/index.ts:41</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/extensions-info/index.ts#L36-L53" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。</p><pre><code>   36      : undefined;
+   37    ctx.ui.setWidget(WIDGET_KEY, content, { placement: &quot;belowEditor&quot; });
+   38  }
+   39
+   40  export default function (pi: ExtensionAPI) {
+   41    pi.registerCommand(&quot;extensions&quot;, {
+   42      description: &quot;Show loaded extensions, where each came from, and any load errors&quot;,
+   43      handler: async (_args: string, ctx: any) =&gt; {
+   44        panelOn = !panelOn;
+   45        setPanel(ctx, panelOn);
+   46      },
+   47    });
+   48
+   49    pi.on(&quot;session_start&quot;, async (_event, ctx) =&gt; {
+   50      // Default hidden so a resumed session doesn&#39;t surface a stale panel.
+   51      panelOn = false;
+   52      setPanel(ctx, false);
+   53
+   54      // Surface load failures unprompted — the launcher&#39;s stderr warning has
+   55      // already been painted over by the time the user can read anything.
+   56      const { warnings } = parseManifest(process.env.LITTLE_CODER_EXTENSION_MANIFEST);
+   57      if (!ctx.hasUI) return;
+   58      for (const w of warnings) {
+   59        ctx.ui.notify(`extensions: ${w.replace(/^little-coder:\s*/, &quot;&quot;)}`, &quot;warning&quot;);
+   60      }
+   61    });
+   62  }
+   63</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=extensions#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--extension</code></h3><small>flag · .pi/extensions/extensions-info/index.ts:20</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/extensions-info/index.ts#L15-L32" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   15  // 2. Silent failures. A user extension that doesn&#39;t resolve warns once on
+   16  //    stderr, moments before the TUI paints over it. Those warnings now also
+   17  //    fire as a notification at session start and stay visible in this panel.
+   18  //
+   19  // The launcher is the only component that knows the provenance of each path —
+   20  // pi just receives a flat list of `--extension` flags — so it serializes an
+   21  // inventory into LITTLE_CODER_EXTENSION_MANIFEST and this reads it back.
+   22  //
+   23  // It renders as a toggling widget rather than a transcript message on purpose:
+   24  // a custom message would be converted to a user-role message and sent to the
+   25  // model (core/messages.js::convertToLlm), spending context on a diagnostic the
+   26  // model has no use for.
+   27
+   28  const WIDGET_KEY = &quot;extensions-info&quot;;
+   29
+   30  let panelOn = false;
+   31
+   32  function setPanel(ctx: any, on: boolean): void {
+   33    if (!ctx?.hasUI) return;
+   34    const content = on
+   35      ? panelLines(parseManifest(process.env.LITTLE_CODER_EXTENSION_MANIFEST), terminalColumns())
+   36      : undefined;
+   37    ctx.ui.setWidget(WIDGET_KEY, content, { placement: &quot;belowEditor&quot; });
+   38  }
+   39
+   40  export default function (pi: ExtensionAPI) {
+   41    pi.registerCommand(&quot;extensions&quot;, {
+   42      description: &quot;Show loaded extensions, where each came from, and any load errors&quot;,
+   43      handler: async (_args: string, ctx: any) =&gt; {
+   44        panelOn = !panelOn;
+   45        setPanel(ctx, panelOn);
+   46      },
+   47    });
+   48
+   49    pi.on(&quot;session_start&quot;, async (_event, ctx) =&gt; {
+   50      // Default hidden so a resumed session doesn&#39;t surface a stale panel.
+   51      panelOn = false;
+   52      setPanel(ctx, false);
+   53
+   54      // Surface load failures unprompted — the launcher&#39;s stderr warning has
+   55      // already been painted over by the time the user can read anything.
+   56      const { warnings } = parseManifest(process.env.LITTLE_CODER_EXTENSION_MANIFEST);
+   57      if (!ctx.hasUI) return;
+   58      for (const w of warnings) {
+   59        ctx.ui.notify(`extensions: ${w.replace(/^little-coder:\s*/, &quot;&quot;)}`, &quot;warning&quot;);
+   60      }
+   61    });
+   62  }
+   63</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--extension#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--with-pi-extensions</code></h3><small>flag · .pi/extensions/extensions-info/manifest.ts:19</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/extensions-info/manifest.ts#L14-L31" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   14    /** Where that directory is (or would be), even if it doesn&#39;t exist yet. */
+   15    userDir: string | null;
+   16    userDirExists: boolean;
+   17    /** Entries the launcher could not resolve. */
+   18    warnings: string[];
+   19    /** Whether pi&#39;s own extension discovery was enabled (--with-pi-extensions). */
+   20    piDiscovery: boolean;
+   21  }
+   22
+   23  const EMPTY: ExtensionManifest = {
+   24    bundled: [],
+   25    env: [],
+   26    user: [],
+   27    userDir: null,
+   28    userDirExists: false,
+   29    warnings: [],
+   30    piDiscovery: false,
+   31  };
+   32
+   33  function stringArray(value: unknown): string[] {
+   34    return Array.isArray(value) ? value.filter((v): v is string =&gt; typeof v === &quot;string&quot;) : [];
+   35  }
+   36
+   37  /**
+   38   * Read the launcher&#39;s serialized inventory. Returns an empty manifest for any
+   39   * malformed or absent value — `/extensions` reporting &quot;nothing recorded&quot; beats
+   40   * it throwing inside the TUI.
+   41   */
+   42  export function parseManifest(raw: string | undefined): ExtensionManifest {
+   43    if (!raw) return { ...EMPTY };
+   44    try {
+   45      const parsed = JSON.parse(raw);
+   46      if (!parsed || typeof parsed !== &quot;object&quot;) return { ...EMPTY };
+   47      return {
+   48        bundled: stringArray(parsed.bundled),
+   49        env: stringArray(parsed.env),
+   50        user: stringArray(parsed.user),
+   51        userDir: typeof parsed.userDir === &quot;string&quot; ? parsed.userDir : null,
+   52        userDirExists: parsed.userDirExists === true,
+   53        warnings: stringArray(parsed.warnings),
+   54        piDiscovery: parsed.piDiscovery === true,
+   55      };
+   56    } catch {
+   57      return { ...EMPTY };
+   58    }
+   59  }
+   60
+   61  /** `.pi/extensions/foo/index.ts` → `foo`; a bare file → its filename. */
+   62  export function extensionLabel(path: string): string {
+   63    const base = basename(path);
+   64    if (base === &quot;index.ts&quot; || base === &quot;index.js&quot;) return basename(dirname(path));
+   65    return base;
+   66  }
+   67
+   68  /** Replace the home prefix with `~` so paths fit and read cleanly. */
+   69  export function tildify(path: string, home: string | undefined): string {
+   70    if (home &amp;&amp; home.length &gt; 1 &amp;&amp; path.startsWith(home)) return `~${path.slice(home.length)}`;
+   71    return path;
+   72  }</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--with-pi-extensions#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--jinja</code></h3><small>flag · .pi/extensions/output-parser/index.ts:19</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/output-parser/index.ts#L14-L31" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   14  // IS that model&#39;s native channel, so a &quot;use native tool calls&quot; nudge can&#39;t move
+   15  // it to another format — it would just re-emit the same text every turn and
+   16  // loop. little-coder also can&#39;t execute the calls itself (pi exposes no
+   17  // extension API to run a tool + synthesize its result). So for that format we
+   18  // surface a single, accurate diagnostic pointing at the real fix — serving
+   19  // llama.cpp with `--jinja` and the model&#39;s chat template, which parses the
+   20  // calls into native tool_calls upstream — instead of looping a futile nudge.
+   21
+   22  function extractAssistantText(message: any): string {
+   23    if (!message) return &quot;&quot;;
+   24    const content = message.content;
+   25    if (typeof content === &quot;string&quot;) return content;
+   26    if (Array.isArray(content)) {
+   27      return content.filter((c) =&gt; c?.type === &quot;text&quot;).map((c) =&gt; c.text).join(&quot;\n&quot;);
+   28    }
+   29    return &quot;&quot;;
+   30  }
+   31
+   32  function hasNativeToolCalls(message: any): boolean {
+   33    const content = message?.content;
+   34    if (!Array.isArray(content)) return false;
+   35    return content.some((c: any) =&gt; c?.type === &quot;toolCall&quot;);
+   36  }
+   37
+   38  export default function (pi: ExtensionAPI) {
+   39    // The --jinja diagnostic is shown once per session — every LFM2 turn would
+   40    // otherwise repeat it, which is noise once the user knows.
+   41    let liquidNotified = false;
+   42
+   43    pi.on(&quot;turn_end&quot;, async (event, ctx) =&gt; {
+   44      const message = (event as any).message;
+   45      if (!message) return;
+   46      // If pi already detected native tool calls, nothing to rescue.
+   47      if (hasNativeToolCalls(message)) return;
+   48      const text = extractAssistantText(message);
+   49      if (!text) return;
+   50
+   51      const calls = parseTextToolCalls(text);
+   52      if (calls.length === 0) return;
+   53
+   54      const liquidCalls = calls.filter((c) =&gt; c.format === &quot;liquid&quot;);
+   55      const otherCalls = calls.filter((c) =&gt; c.format !== &quot;liquid&quot;);
+   56
+   57      // LFM2/Liquid Pythonic format: inform once, don&#39;t nudge (see header note).
+   58      if (liquidCalls.length &gt; 0 &amp;&amp; !liquidNotified) {
+   59        liquidNotified = true;
+   60        const names = liquidCalls.map((c) =&gt; c.name).join(&quot;, &quot;);
+   61        harnessIntervention(
+   62          ctx,
+   63          `the model emitted ${liquidCalls.length} Pythonic tool call(s) as text [${names}] (LFM2/Liquid format). ` +
+   64            `little-coder can&#39;t execute these directly — serve llama.cpp with \`--jinja\` and the model&#39;s MATCHING ` +
+   65            `chat template (not the GGUF&#39;s embedded one) so tool calls parse into native tool_calls. ` +
+   66            `See README troubleshooting / issue #42.`,
+   67        );
+   68      }
+   69
+   70      // Fenced / &lt;tool_call&gt; / bare-JSON formats: nudge the model back to native
+   71      // tool calling (it has a native channel; this format was a slip).
+   72      if (otherCalls.length &gt; 0) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--jinja#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--head</code></h3><small>flag · .pi/extensions/permission-gate/index.ts:29</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/permission-gate/index.ts#L24-L41" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   24    &quot;git remote&quot;, &quot;git stash list&quot;, &quot;git tag&quot;,
+   25    &quot;find &quot;, &quot;grep &quot;, &quot;rg &quot;, &quot;ag &quot;, &quot;fd &quot;, &quot;sed &quot;,
+   26    &quot;python &quot;, &quot;python3 &quot;, &quot;node &quot;, &quot;ruby &quot;, &quot;perl &quot;,
+   27    &quot;pip show&quot;, &quot;pip list&quot;, &quot;npm list&quot;, &quot;cargo metadata&quot;,
+   28    &quot;df &quot;, &quot;du &quot;, &quot;free &quot;, &quot;top -bn&quot;, &quot;ps &quot;,
+   29    &quot;curl -I&quot;, &quot;curl --head&quot;,
+   30    // Routine filesystem scaffolding. Trailing space = word boundary, so
+   31    // &quot;cp &quot; matches &quot;cp a b&quot; but not &quot;cpufetch&quot;. rm stays off the list by
+   32    // design; use LITTLE_CODER_BASH_ALLOW=rm if a deployment needs it.
+   33    &quot;cp &quot;, &quot;mv &quot;, &quot;mkdir &quot;, &quot;touch &quot;,
+   34  ];
+   35
+   36  // Trailing whitespace is meaningful — it acts as a word boundary in startsWith
+   37  // matching (&quot;find &quot; refuses &quot;findbug&quot;). We only strip leading whitespace so
+   38  // callers retain control over that boundary.
+   39  export function parseExtraPrefixes(raw: string | undefined): string[] {
+   40    if (!raw) return [];
+   41    return raw
+   42      .split(&quot;,&quot;)
+   43      .map((s) =&gt; s.trimStart())
+   44      .map((s) =&gt; (s.length &gt; 0 &amp;&amp; s !== &quot; &quot;.repeat(s.length) ? s : &quot;&quot;))
+   45      .filter((s) =&gt; s.length &gt; 0);
+   46  }
+   47
+   48  export function getSafePrefixes(): string[] {
+   49    return [...BUILTIN_SAFE_PREFIXES, ...parseExtraPrefixes(process.env.LITTLE_CODER_BASH_ALLOW)];
+   50  }
+   51
+   52  /**
+   53   * True when EVERY command in `command` is whitelisted and none of them writes.
+   54   *
+   55   * Two hardenings over the original `startsWith` check, both from issue #70:
+   56   *
+   57   * 1. **Judge every segment.** The check ran on the raw string, so only the
+   58   *    first command was ever inspected — `ls &amp;&amp; rm -rf /` was &quot;safe&quot; because it
+   59   *    starts with `ls`. Each segment of a `&amp;&amp;`/`||`/`;`/`|` chain now has to
+   60   *    match on its own.
+   61   * 2. **A write is never safe.** `cat` is whitelisted, so
+   62   *    `cat &gt; backend/main.py &lt;&lt; &#39;ENDOFFILE&#39;` passed the prefix test outright.
+   63   *    Any command carrying a redirect/tee/dd target is refused regardless of
+   64   *    which binary it starts with; write-guard then decides whether that
+   65   *    particular path may be written.
+   66   */
+   67  export function isSafeBash(command: string, prefixes: readonly string[] = getSafePrefixes()): boolean {
+   68    if (detectWriteTargets(command).length &gt; 0) return false;
+   69    const segments = splitCommandChain(command);
+   70    if (segments.length === 0) return false;
+   71    return segments.every((segment) =&gt; prefixes.some((p) =&gt; segment.startsWith(p)));
+   72  }
+   73
+   74  // Tools that hand a string to a shell. `ShellSessionCwd` / `ShellSessionReset`
+   75  // take no command (they run a fixed `pwd` / are a no-op) and stay ungated.
+   76  const SHELL_TOOLS = new Set([&quot;bash&quot;, &quot;Bash&quot;, &quot;ShellSession&quot;]);
+   77
+   78  function getPermissionMode(): &quot;auto&quot; | &quot;accept-all&quot; | &quot;manual&quot; {
+   79    const v = process.env.LITTLE_CODER_PERMISSION_MODE;
+   80    if (v === &quot;accept-all&quot; || v === &quot;manual&quot;) return v;
+   81    return &quot;auto&quot;;
+   82  }</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--head#command-flow">打开这条指令的执行图 →</a></article></div></section><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>launcher 按 bundled、LITTLE_CODER_EXTRA_EXTENSIONS、用户扩展目录的顺序加载，后者可覆盖前者；默认传 --no-extensions 禁止 pi 自动发现，只有 --with-pi-extensions 才开启且由 pi 对项目扩展做 trust prompt。</blockquote><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/bin/little-coder.mjs#L157-L217" target="_blank" rel="noreferrer">bin/little-coder.mjs:157–217 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>技能、知识、计划与研究 brief 默认作为隐藏 custom message 放在用户消息后，而不是改 system prompt；字节相同的块不重复注入。可用环境变量切回旧 system 模式。</blockquote><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/_shared/inject.ts#L1-L27" target="_blank" rel="noreferrer">.pi/extensions/_shared/inject.ts:1–27 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>skills/tools/*.md 带 target_tool 和 token_cost；每轮在默认 300 token 内先放上次失败工具，再放近期工具，最后按用户关键词预测，并过滤当前 allowed-tools。研究任务额外注入 browse→EvidenceAdd→再写的指令。</blockquote><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/skill-inject/index.ts#L8-L31" target="_blank" rel="noreferrer">.pi/extensions/skill-inject/index.ts:8–31 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>skills/knowledge 与 skills/protocols 条目按单词 1 分、短语 2 分打分，低于 2 不选，单条最多 150 token、总预算默认 200；当系统 prompt 已超过窗口 40% 或为 subtask 时不注入，并将 requires_tools 发布给 skill injector。</blockquote><a href="https://github.com/itayinbarr/little-coder/blob/e758baa38f6f28adefadd567077b05f68a05d6fa/.pi/extensions/knowledge-inject/index.ts#L8-L35" target="_blank" rel="noreferrer">.pi/extensions/knowledge-inject/index.ts:8–35 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>.pi/extensions/plan-mode/plan-mode.test.ts</b><small>3312 bytes · .ts</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/plan-mode/plan-mode.test.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>1. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    8    const origArgv = process.argv;
+    9    afterEach(() =&gt; {
+   10      if (origEnv === undefined) delete process.env.LITTLE_CODER_PLAN_MODE;
+   11      else process.env.LITTLE_CODER_PLAN_MODE = origEnv;
+   12      if (origSub === undefined) delete process.env.LITTLE_CODER_SUBAGENT;
+   13      else process.env.LITTLE_CODER_SUBAGENT = origSub;
+   14      process.argv = origArgv;
+   15    });
+   16
+   17    it(&quot;is off when the env flag is unset&quot;, () =&gt; {
+   18      delete process.env.LITTLE_CODER_PLAN_MODE;
+   19      delete process.env.LITTLE_CODER_SUBAGENT;
+   20      process.argv = [&quot;node&quot;, &quot;pi&quot;];
+   21      expect(wantsPlanModeAtStart()).toBe(false);
+   22    });
+   23    it(&quot;is on for an interactive session with the flag set&quot;, () =&gt; {
+   24      process.env.LITTLE_CODER_PLAN_MODE = &quot;1&quot;;
+   25      delete process.env.LITTLE_CODER_SUBAGENT;
+   26      process.argv = [&quot;node&quot;, &quot;pi&quot;];
+   27      expect(wantsPlanModeAtStart()).toBe(true);
+   28    });
+   29    it(&quot;stays off for a headless run even with the flag set&quot;, () =&gt; {
+   30      process.env.LITTLE_CODER_PLAN_MODE = &quot;1&quot;;
+   31      delete process.env.LITTLE_CODER_SUBAGENT;
+   32      process.argv = [&quot;node&quot;, &quot;pi&quot;, &quot;--mode&quot;, &quot;json&quot;, &quot;-p&quot;];
+   33      expect(wantsPlanModeAtStart()).toBe(false);
+   34    });
+   35    it(&quot;stays off in a sub-coder that inherited the env flag&quot;, () =&gt; {
+   36      process.env.LITTLE_CODER_PLAN_MODE = &quot;1&quot;;
+   37      process.env.LITTLE_CODER_SUBAGENT = &quot;1&quot;;
+   38      process.argv = [&quot;node&quot;, &quot;pi&quot;];
+   39      expect(wantsPlanModeAtStart()).toBe(false);
+   40    });</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>.pi/extensions/shell-session/helpers.test.ts</b><small>2339 bytes · .ts</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/shell-session/helpers.test.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>2. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2  import { stripAnsi, dedupLines, truncateLines, formatOutput } from &quot;./helpers.ts&quot;;
+    3
+    4  describe(&quot;stripAnsi&quot;, () =&gt; {
+    5    it(&quot;removes SGR sequences&quot;, () =&gt; {
+    6      expect(stripAnsi(&quot;\x1b[31mred\x1b[0m text&quot;)).toBe(&quot;red text&quot;);
+    7    });
+    8    it(&quot;passes through ansi-free text&quot;, () =&gt; {
+    9      expect(stripAnsi(&quot;hello&quot;)).toBe(&quot;hello&quot;);
+   10    });
+   11  });
+   12
+   13  describe(&quot;dedupLines&quot;, () =&gt; {
+   14    it(&quot;collapses consecutive duplicates&quot;, () =&gt; {
+   15      const out = dedupLines([&quot;a&quot;, &quot;b&quot;, &quot;b&quot;, &quot;b&quot;, &quot;c&quot;]);
+   16      expect(out).toEqual([&quot;a&quot;, &quot;b&quot;, &quot;  [... 2 duplicate line(s) collapsed ...]&quot;, &quot;c&quot;]);
+   17    });
+   18    it(&quot;handles trailing duplicates&quot;, () =&gt; {
+   19      const out = dedupLines([&quot;a&quot;, &quot;a&quot;, &quot;a&quot;]);
+   20      expect(out).toEqual([&quot;a&quot;, &quot;  [... 2 duplicate line(s) collapsed ...]&quot;]);
+   21    });
+   22  });
+   23
+   24  describe(&quot;truncateLines&quot;, () =&gt; {
+   25    it(&quot;passes through short output&quot;, () =&gt; {
+   26      const { lines, truncated } = truncateLines([&quot;a&quot;, &quot;b&quot;], 10);
+   27      expect(lines).toEqual([&quot;a&quot;, &quot;b&quot;]);
+   28      expect(truncated).toBe(false);
+   29    });
+   30    it(&quot;truncates long output with head/tail&quot;, () =&gt; {
+   31      const input = Array.from({ length: 20 }, (_, i) =&gt; `line${i}`);
+   32      const { lines, truncated } = truncateLines(input, 8);
+   33      expect(truncated).toBe(true);
+   34      // cap=8 → head=4, tail=2, skipped=14</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>.pi/extensions/shortcuts-help/shortcuts-help.test.ts</b><small>3255 bytes · .ts</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/shortcuts-help/shortcuts-help.test.ts#L10-L25" target="_blank" rel="noreferrer">L10–25 ↗</a></header><p>3. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   10      expect(text).toContain(&quot;ctrl-q&quot;); // plan mode (little-coder)
+   11      expect(text).toContain(&quot;ctrl-h&quot;); // this panel (little-coder)
+   12      expect(text).toContain(&quot;/hotkeys&quot;); // pointer to the authoritative list
+   13    });
+   14
+   15    it(&quot;lists f2 for deep research (issue #74)&quot;, () =&gt; {
+   16      // The panel exists to make hotkeys discoverable, and deep research — the
+   17      // one flow people ask about — was the one key missing from it.
+   18      const text = panelLines(80).join(&quot;\n&quot;);
+   19      expect(text).toContain(&quot;f2&quot;);
+   20      expect(text).toContain(&quot;deep research&quot;);
+   21    });
+   22
+   23    it(&quot;does not advertise ctrl-r, which is unbound at the prompt (issue #74)&quot;, () =&gt; {
+   24      // pi binds &quot;expand / more&quot; to app.tools.expand (ctrl+o); ctrl+r is only
+   25      // bound inside the session tree overlay.
+   26      const text = panelLines(80).join(&quot;\n&quot;);
+   27      expect(text).not.toContain(&quot;ctrl-r&quot;);
+   28      expect(text).toContain(&quot;ctrl-o&quot;);
+   29    });
+   30
+   31    it(&quot;fits inside pi&#39;s 10-line widget cap, so no row is silently eaten&quot;, () =&gt; {
+   32      // pi slices a widget to MAX_WIDGET_LINES=10 and appends &quot;... (widget
+   33      // truncated)&quot;. A one-per-line panel overflowed that and quietly dropped the
+   34      // last rows — including `/hotkeys`, the pointer to the full reference.
+   35      for (const width of [60, 80, 120, 200]) {
+   36        expect(panelLines(width).length, `width ${width}`).toBeLessThanOrEqual(10);
+   37      }
+   38    });
+   39
+   40    it(&quot;still shows every shortcut at a normal width, via two columns&quot;, () =&gt; {
+   41      const text = panelLines(120).join(&quot;\n&quot;);
+   42      for (const key of [&quot;ctrl-q&quot;, &quot;f2&quot;, &quot;ctrl-h&quot;, &quot;shift-tab&quot;, &quot;ctrl-p&quot;, &quot;ctrl-t&quot;, &quot;ctrl-o&quot;, &quot;esc&quot;, &quot;/hotkeys&quot;]) {</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>.pi/extensions/deep-research/helpers.ts</b><small>3801 bytes · .ts</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/deep-research/helpers.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>4. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    8  // can fall back to a default. Same contract as plan-mode&#39;s extractJsonArray.
+    9  export function extractJsonArray(text: string): any[] {
+   10    const start = text.indexOf(&quot;[&quot;);
+   11    const end = text.lastIndexOf(&quot;]&quot;);
+   12    if (start &lt; 0 || end &lt;= start) return [];
+   13    try {
+   14      const v = JSON.parse(text.slice(start, end + 1));
+   15      return Array.isArray(v) ? v : [];
+   16    } catch {
+   17      return [];
+   18    }
+   19  }
+   20
+   21  // Pull the first balanced JSON OBJECT out of a model reply (sibling to
+   22  // extractJsonArray, for the rubric judge which returns an object). Returns null
+   23  // on failure so callers can fall back.
+   24  export function extractJsonObject(text: string): any | null {
+   25    const start = text.indexOf(&quot;{&quot;);
+   26    const end = text.lastIndexOf(&quot;}&quot;);
+   27    if (start &lt; 0 || end &lt;= start) return null;
+   28    try {
+   29      const v = JSON.parse(text.slice(start, end + 1));
+   30      return v &amp;&amp; typeof v === &quot;object&quot; &amp;&amp; !Array.isArray(v) ? v : null;
+   31    } catch {
+   32      return null;
+   33    }
+   34  }
+   35
+   36  // A filesystem-safe slug for the report filename, derived from the topic.
+   37  export function slugify(topic: string): string {
+   38    const s = (topic || &quot;&quot;)
+   39      .toLowerCase()
+   40      .replace(/[^a-z0-9]+/g, &quot;-&quot;)</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>.pi/extensions/shell-session/helpers.ts</b><small>1897 bytes · .ts</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/.pi/extensions/shell-session/helpers.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>5. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  // Shared output-formatting helpers for ShellSession. Mirrors
+    2  // local/tools/shell_session.py&#39;s _strip_ansi / _dedup_lines / _truncate_lines
+    3  // so output reaches the model in the same format across backends.
+    4
+    5  const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+    6  export const MAX_LINES = 200;
+    7  export const DEFAULT_TIMEOUT = 30;
+    8
+    9  export function stripAnsi(s: string): string {
+   10    return s.replace(ANSI_RE, &quot;&quot;);
+   11  }
+   12
+   13  export function dedupLines(lines: string[]): string[] {
+   14    const out: string[] = [];
+   15    let last: string | null = null;
+   16    let dup = 0;
+   17    for (const ln of lines) {
+   18      if (ln === last) {
+   19        dup++;
+   20        continue;
+   21      }
+   22      if (dup &gt; 0) out.push(`  [... ${dup} duplicate line(s) collapsed ...]`);
+   23      dup = 0;
+   24      out.push(ln);
+   25      last = ln;
+   26    }
+   27    if (dup &gt; 0) out.push(`  [... ${dup} duplicate line(s) collapsed ...]`);
+   28    return out;
+   29  }
+   30
+   31  export function truncateLines(lines: string[], cap = MAX_LINES): { lines: string[]; truncated: boolean } {
+   32    if (lines.length &lt;= cap) return { lines, truncated: false };
+   33    const head = Math.floor(cap / 2);</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>skills/tools/dispatch.md</b><small>1564 bytes · .md</small></div><a href="https://github.com/itayinbarr/little-coder/blob/0b7234031aabe56163e345792ce7a6ea05af321a/skills/tools/dispatch.md#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>6. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    2  name: dispatch-guidance
+    3  type: tool-guidance
+    4  target_tool: dispatch
+    5  priority: 6
+    6  token_cost: 140
+    7  user-invocable: false
+    8  ---
+    9  ## Dispatch Tool (sub-coders)
+   10  Delegate focused research to isolated child little-coder sessions (&quot;sub-coders&quot;).
+   11  Each runs in its own context window, can READ the repo and BROWSE online
+   12  (read, grep, glob, webfetch, websearch, browser, read-only bash) but CANNOT
+   13  edit or write files. Each returns a concise report. Use this to gather
+   14  information without filling your own context with raw file dumps or web pages.
+   15
+   16  SINGLE: `task` (string) — one research question.
+   17  PARALLEL: `tasks` — array of `{label, task}`, up to 4, run concurrently.
+   18  OPTIONAL: `cwd` (defaults to the current working directory).
+   19
+   20  RULES:
+   21  - Give each parallel task a short, distinct `label` — it shows in the live tracker.
+   22  - Ask narrow, answerable questions (&quot;how does auth work in this repo?&quot;, not &quot;do everything&quot;).
+   23  - You receive only each sub-coder&#39;s short report; the full transcript stays in the
+   24    tool&#39;s details (not in your context). Act on the reports.
+   25  - Sub-coders can&#39;t change files — do the editing yourself after they report back.
+   26
+   27  EXAMPLE (single):
+   28  ```tool
+   29  {&quot;name&quot;: &quot;dispatch&quot;, &quot;input&quot;: {&quot;task&quot;: &quot;Find where sessions are persisted in this repo and summarize the format.&quot;}}
+   30  ```
+   31
+   32  EXAMPLE (parallel):
+   33  ```tool
+   34  {&quot;name&quot;: &quot;dispatch&quot;, &quot;input&quot;: {&quot;tasks&quot;: [</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Little Coder commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← 证据与取舍：把源码结论带回自研</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

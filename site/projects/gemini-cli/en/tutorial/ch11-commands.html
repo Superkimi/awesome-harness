@@ -1,0 +1,2137 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>Gemini CLI · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Gemini CLI · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Gemini CLI</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>1ac337739586</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Gemini CLI · 1ac337739586</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>8 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 8 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="gemini-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。</p></section><section><span>PLAIN LANGUAGE</span><p>一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>控制流直观，递归路径共享 prompt_id 和 hook state，需要严格做 activeCalls 记账。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>79–94</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>95–111</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:79–111</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   79  const MAX_TURNS = 100;
+   80
+   81  type BeforeAgentHookReturn =
+   82    | {
+   83        type: GeminiEventType.AgentExecutionStopped;
+   84        value: { reason: string; systemMessage?: string };
+   85      }
+   86    | {
+   87        type: GeminiEventType.AgentExecutionBlocked;
+   88        value: { reason: string; systemMessage?: string };
+   89      }
+   90    | { additionalContext: string | undefined }
+   91    | undefined;
+   92
+   93  export class GeminiClient {
+   94    private chat?: GeminiChat;
+   95    private sessionTurnCount = 0;
+   96
+   97    private readonly loopDetector: LoopDetectionService;
+   98    private readonly compressionService: ChatCompressionService;
+   99    private readonly agentHistoryProvider: AgentHistoryProvider;
+  100    private readonly toolOutputMaskingService: ToolOutputMaskingService;
+  101    private contextManager?: ContextManager;
+  102    private lastPromptId: string;
+  103    private currentSequenceModel: string | null = null;
+  104    private lastSentIdeContext: IdeContext | undefined;
+  105    private forceFullIdeContext = true;
+  106
+  107    /**
+  108     * At any point in this conversation, was compression triggered without
+  109     * being forced and did it fail?
+  110     */
+  111    private hasFailedCompressionAttempt = false;
+  112
+  113    constructor(private readonly context: AgentLoopContext) {
+  114      this.loopDetector = new LoopDetectionService(this.config);
+  115      this.compressionService = new ChatCompressionService();
+  116      this.agentHistoryProvider = new AgentHistoryProvider(
+  117        this.config.agentHistoryProviderConfig,
+  118        this.config,
+  119      );
+  120      this.toolOutputMaskingService = new ToolOutputMaskingService();
+  121      this.lastPromptId = this.config.getSessionId();
+  122
+  123      coreEvents.on(CoreEvent.ModelChanged, this.handleModelChanged);
+  124      coreEvents.on(CoreEvent.MemoryChanged, this.handleMemoryChanged);
+  125      coreEvents.on(
+  126        CoreEvent.ApprovalModeChanged,
+  127        this.handleApprovalModeChanged,
+  128      );
+  129    }
+  130
+  131    private get config(): Config {
+  132      return this.context.config;
+  133    }
+  134
+  135    private handleModelChanged = () =&gt; {
+  136      this.currentSequenceModel = null;
+  137    };
+  138
+  139    private handleMemoryChanged = () =&gt; {
+  140      this.updateSystemInstruction();
+  141    };
+  142
+  143    private handleApprovalModeChanged = (payload: ApprovalModeChangedPayload) =&gt; {
+  144      if (payload.sessionId === this.config.getSessionId()) {
+  145        this.updateSystemInstruction();
+  146      }
+  147    };
+  148
+  149    clearCurrentSequenceModel(): void {
+  150      this.currentSequenceModel = null;
+  151    }
+  152
+  153    // Hook state to deduplicate BeforeAgent calls and track response for
+  154    // AfterAgent
+  155    private hookStateMap = new Map&lt;
+  156      string,
+  157      {
+  158        hasFiredBeforeAgent: boolean;
+  159        cumulativeResponse: string;
+  160        activeCalls: number;
+  161        originalRequest: PartListUnion;
+  162      }
+  163    &gt;();
+  164
+  165    private async fireBeforeAgentHookSafe(
+  166      request: PartListUnion,
+  167      prompt_id: string,
+  168    ): Promise&lt;BeforeAgentHookReturn&gt; {
+  169      let hookState = this.hookStateMap.get(prompt_id);
+  170      if (!hookState) {
+  171        hookState = {
+  172          hasFiredBeforeAgent: false,
+  173          cumulativeResponse: &#39;&#39;,
+  174          activeCalls: 0,
+  175          originalRequest: request,
+  176        };
+  177        this.hookStateMap.set(prompt_id, hookState);
+  178      }
+  179
+  180      // Increment active calls for this prompt_id
+  181      // This is called at the start of sendMessageStream, so it acts as an entry
+  182      // counter. We increment here, assuming this helper is ALWAYS called at</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>79</td><th><span class="line-kind-input">INPUT</span></th><td><code>const MAX_TURNS = 100;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>80</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>81</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type BeforeAgentHookReturn =</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>82</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  | {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>83</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      type: GeminiEventType.AgentExecutionStopped;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>84</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      value: { reason: string; systemMessage?: string };</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>85</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>86</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  | {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>87</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      type: GeminiEventType.AgentExecutionBlocked;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>88</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      value: { reason: string; systemMessage?: string };</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>89</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>90</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  | { additionalContext: string | undefined }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>91</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  | undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>92</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>93</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export class GeminiClient {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>94</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private chat?: GeminiChat;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>95</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private sessionTurnCount = 0;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>96</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>97</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private readonly loopDetector: LoopDetectionService;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>98</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private readonly compressionService: ChatCompressionService;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>99</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private readonly agentHistoryProvider: AgentHistoryProvider;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>100</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private readonly toolOutputMaskingService: ToolOutputMaskingService;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>101</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private contextManager?: ContextManager;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>102</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private lastPromptId: string;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>103</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private currentSequenceModel: string | null = null;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>104</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private lastSentIdeContext: IdeContext | undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>105</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private forceFullIdeContext = true;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>106</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="gemini-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。</p></section><section><span>PLAIN LANGUAGE</span><p>开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文与模型选择顺序清楚，工具描述可随模型变化且同一 sequence 保持模型粘性。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>614–663</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>664–715</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:614–715</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  614    private async *processTurn(
+  615      request: PartListUnion,
+  616      signal: AbortSignal,
+  617      prompt_id: string,
+  618      boundedTurns: number,
+  619      displayContent?: PartListUnion,
+  620    ): AsyncGenerator&lt;ServerGeminiStreamEvent, Turn&gt; {
+  621      // Re-initialize turn (it was empty before if in loop, or new instance)
+  622      let turn = new Turn(this.getChat(), prompt_id);
+  623
+  624      this.sessionTurnCount++;
+  625      if (
+  626        this.config.getMaxSessionTurns() &gt; 0 &amp;&amp;
+  627        this.sessionTurnCount &gt; this.config.getMaxSessionTurns()
+  628      ) {
+  629        yield { type: GeminiEventType.MaxSessionTurns };
+  630        return turn;
+  631      }
+  632
+  633      if (!boundedTurns) {
+  634        return turn;
+  635      }
+  636
+  637      // Check for context window overflow
+  638      const modelForLimitCheck = this._getActiveModelForCurrentTurn();
+  639
+  640      let currentBaseUnits = 0;
+  641      let apiHistoryOverride: Content[] | undefined = undefined;
+  642
+  643      if (this.config.getContextManagementConfig().enabled) {
+  644        if (this.contextManager) {
+  645          const rawPendingRequest = createUserContent(request);
+  646          const pendingRequest = {
+  647            id: randomUUID(),
+  648            content: rawPendingRequest,
+  649          };
+  650          const {
+  651            history: newHistory,
+  652            apiHistory,
+  653            pendingApiHistory,
+  654            baseUnits,
+  655          } = await this.contextManager.renderHistory(
+  656            pendingRequest,
+  657            undefined,
+  658            signal,
+  659          );
+  660
+  661          currentBaseUnits = baseUnits;
+  662
+  663          // Use the PROCESSED pending content if available (e.g. if cleaned or distilled)
+  664          const finalPendingContent =
+  665            pendingApiHistory.length &gt; 0
+  666              ? pendingApiHistory[0]
+  667              : rawPendingRequest;
+  668
+  669          // Late-bind the prompt: Append the active request to the managed history
+  670          // only for the purpose of the upcoming API call.
+  671          apiHistoryOverride = [...apiHistory, finalPendingContent];
+  672
+  673          this.getChat().setHistory(newHistory);
+  674
+  675          // Use the original request for display/recording,
+  676          // but the processed one for the API and durable history.
+  677          displayContent = rawPendingRequest.parts || [];
+  678          request = finalPendingContent.parts || [];
+  679        } else {
+  680          const newHistory = await this.agentHistoryProvider.manageHistory(
+  681            this.getHistory(),
+  682            signal,
+  683          );
+  684          if (newHistory.length !== this.getHistory().length) {
+  685            this.getChat().setHistory(newHistory);
+  686          }
+  687        }
+  688      } else {
+  689        const compressed = await this.tryCompressChat(prompt_id, false, signal);
+  690
+  691        if (compressed.compressionStatus === CompressionStatus.COMPRESSED) {
+  692          yield { type: GeminiEventType.ChatCompressed, value: compressed };
+  693        }
+  694      }
+  695
+  696      const remainingTokenCount =
+  697        tokenLimit(modelForLimitCheck) - this.getChat().getLastPromptTokenCount();
+  698
+  699      await this.tryMaskToolOutputs(this.getHistory());
+  700
+  701      // Estimate tokens. For text-only requests, we estimate based on character length.
+  702      // For requests with non-text parts (like images, tools), we use the countTokens API.
+  703      const estimatedRequestTokenCount = await calculateRequestTokenCount(
+  704        request,
+  705        this.getContentGeneratorOrFail(),
+  706        modelForLimitCheck,
+  707      );
+  708
+  709      if (estimatedRequestTokenCount &gt; remainingTokenCount) {
+  710        yield {
+  711          type: GeminiEventType.ContextWindowWillOverflow,
+  712          value: { estimatedRequestTokenCount, remainingTokenCount },
+  713        };
+  714        return turn;
+  715      }
+  716
+  717      // Prevent context updates from being sent while a tool call is
+  718      // waiting for a response. The Gemini API requires that a functionResponse
+  719      // part from the user immediately follows a functionCall part from the model
+  720      // in the conversation history . The IDE context is not discarded; it will
+  721      // be included in the next regular message sent to the model.
+  722      const history = this.getHistory();
+  723      const lastMessage =
+  724        history.length &gt; 0 ? history[history.length - 1] : undefined;
+  725      const hasPendingToolCall =
+  726        !!lastMessage &amp;&amp;
+  727        lastMessage.role === &#39;model&#39; &amp;&amp;
+  728        (lastMessage.parts?.some((p) =&gt; &#39;functionCall&#39; in p) || false);
+  729
+  730      if (this.config.getIdeMode() &amp;&amp; !hasPendingToolCall) {
+  731        const { contextParts, newIdeContext } = this.getIdeContextParts(
+  732          this.forceFullIdeContext || history.length === 0,
+  733        );
+  734        if (contextParts.length &gt; 0) {
+  735          this.getChat().addHistory({
+  736            role: &#39;user&#39;,
+  737            parts: [{ text: contextParts.join(&#39;\n&#39;) }],
+  738          });
+  739        }
+  740        this.lastSentIdeContext = newIdeContext;
+  741        this.forceFullIdeContext = false;
+  742      }
+  743
+  744      // Re-initialize turn with fresh history
+  745      turn = new Turn(this.getChat(), prompt_id);
+  746
+  747      const loopResult = await this.loopDetector.turnStarted(signal);
+  748      if (loopResult.count &gt; 1) {
+  749        yield { type: GeminiEventType.LoopDetected };
+  750        return turn;
+  751      } else if (loopResult.count === 1) {
+  752        if (boundedTurns &lt;= 1) {
+  753          yield { type: GeminiEventType.MaxSessionTurns };
+  754          return turn;
+  755        }
+  756        return yield* this._recoverFromLoop(
+  757          loopResult,
+  758          signal,
+  759          prompt_id,
+  760          boundedTurns,
+  761          displayContent,
+  762        );
+  763      }
+  764
+  765      const routingContext: RoutingContext = {
+  766        history: this.getChat().getHistory(/*curated=*/ true),
+  767        request,
+  768        signal,
+  769        requestedModel: this.config.getModel(),
+  770      };
+  771
+  772      let modelToUse: string;
+  773
+  774      // Determine Model (Stickiness vs. Routing)
+  775      if (this.currentSequenceModel) {
+  776        modelToUse = this.currentSequenceModel;
+  777      } else {
+  778        const router = this.config.getModelRouterService();
+  779        const decision = await router.route(routingContext);
+  780        modelToUse = decision.model;
+  781      }
+  782
+  783      // availability logic
+  784      const modelConfigKey: ModelConfigKey = {
+  785        model: modelToUse,
+  786        isChatModel: true,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>614</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private async *processTurn(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>615</td><th><span class="line-kind-input">INPUT</span></th><td><code>    request: PartListUnion,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>616</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    signal: AbortSignal,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>617</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    prompt_id: string,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>618</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    boundedTurns: number,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>619</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    displayContent?: PartListUnion,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>620</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  ): AsyncGenerator&lt;ServerGeminiStreamEvent, Turn&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>621</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    // Re-initialize turn (it was empty before if in loop, or new instance)</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>622</td><th><span class="line-kind-input">INPUT</span></th><td><code>    let turn = new Turn(this.getChat(), prompt_id);</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>623</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>624</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    this.sessionTurnCount++;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>625</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    if (</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>626</td><th><span class="line-kind-input">INPUT</span></th><td><code>      this.config.getMaxSessionTurns() &gt; 0 &amp;&amp;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>627</td><th><span class="line-kind-input">INPUT</span></th><td><code>      this.sessionTurnCount &gt; this.config.getMaxSessionTurns()</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>628</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    ) {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>629</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      yield { type: GeminiEventType.MaxSessionTurns };</code></td><td>Returns a result, error, or next step</td></tr><tr><td>630</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return turn;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>631</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>632</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>633</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    if (!boundedTurns) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>634</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return turn;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>635</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>636</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>637</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    // Check for context window overflow</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>638</td><th><span class="line-kind-input">INPUT</span></th><td><code>    const modelForLimitCheck = this._getActiveModelForCurrentTurn();</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>639</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>640</td><th><span class="line-kind-input">INPUT</span></th><td><code>    let currentBaseUnits = 0;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>641</td><th><span class="line-kind-input">INPUT</span></th><td><code>    let apiHistoryOverride: Content[] | undefined = undefined;</code></td><td>Receives arguments, events, or configuration</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="gemini-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 循环检测能先恢复一次，再判定硬循环</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</p></section><section><span>PLAIN LANGUAGE</span><p>第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>比仅靠 turn 上限更早止损，并保留一次自恢复空间。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>744–752</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>753–763</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:744–763</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  744      // Re-initialize turn with fresh history
+  745      turn = new Turn(this.getChat(), prompt_id);
+  746
+  747      const loopResult = await this.loopDetector.turnStarted(signal);
+  748      if (loopResult.count &gt; 1) {
+  749        yield { type: GeminiEventType.LoopDetected };
+  750        return turn;
+  751      } else if (loopResult.count === 1) {
+  752        if (boundedTurns &lt;= 1) {
+  753          yield { type: GeminiEventType.MaxSessionTurns };
+  754          return turn;
+  755        }
+  756        return yield* this._recoverFromLoop(
+  757          loopResult,
+  758          signal,
+  759          prompt_id,
+  760          boundedTurns,
+  761          displayContent,
+  762        );
+  763      }
+  764
+  765      const routingContext: RoutingContext = {
+  766        history: this.getChat().getHistory(/*curated=*/ true),
+  767        request,
+  768        signal,
+  769        requestedModel: this.config.getModel(),
+  770      };
+  771
+  772      let modelToUse: string;
+  773
+  774      // Determine Model (Stickiness vs. Routing)
+  775      if (this.currentSequenceModel) {
+  776        modelToUse = this.currentSequenceModel;
+  777      } else {
+  778        const router = this.config.getModelRouterService();
+  779        const decision = await router.route(routingContext);
+  780        modelToUse = decision.model;
+  781      }
+  782
+  783      // availability logic
+  784      const modelConfigKey: ModelConfigKey = {
+  785        model: modelToUse,
+  786        isChatModel: true,
+  787      };
+  788      const { model: finalModel } = applyModelSelection(
+  789        this.config,
+  790        modelConfigKey,
+  791        { consumeAttempt: false },
+  792      );
+  793      modelToUse = finalModel;
+  794
+  795      if (!signal.aborted &amp;&amp; !this.currentSequenceModel) {
+  796        yield { type: GeminiEventType.ModelInfo, value: modelToUse };
+  797      }
+  798      this.currentSequenceModel = modelToUse;
+  799
+  800      // Update tools with the final modelId to ensure model-dependent descriptions are used.
+  801      await this.setTools(modelToUse);
+  802
+  803      const resultStream = turn.run(modelConfigKey, request, signal, {
+  804        displayContent,
+  805        role: LlmRole.MAIN,
+  806        apiHistoryOverride,
+  807      });
+  808      let isError = false;
+  809
+  810      let loopDetectedAbort = false;
+  811      let loopRecoverResult: { detail?: string } | undefined;
+  812      for await (const event of resultStream) {
+  813        const loopResult = this.loopDetector.addAndCheck(event);
+  814        if (loopResult.count &gt; 1) {
+  815          yield { type: GeminiEventType.LoopDetected };
+  816          loopDetectedAbort = true;
+  817          break;
+  818        } else if (loopResult.count === 1) {
+  819          if (boundedTurns &lt;= 1) {
+  820            yield { type: GeminiEventType.MaxSessionTurns };
+  821            loopDetectedAbort = true;
+  822            break;
+  823          }
+  824          loopRecoverResult = loopResult;
+  825          break;
+  826        }
+  827        yield event;
+  828
+  829        if (event.type === GeminiEventType.Finished &amp;&amp; this.contextManager) {
+  830          const usageMetadata = event.value.usageMetadata;
+  831          if (usageMetadata &amp;&amp; usageMetadata.promptTokenCount !== undefined) {
+  832            this.contextManager.getEnvironment().eventBus.emitTokenGroundTruth({
+  833              actualTokens: usageMetadata.promptTokenCount,
+  834              promptBaseUnits: currentBaseUnits,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>744</td><th><span class="line-kind-state">STATE</span></th><td><code>    // Re-initialize turn with fresh history</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>745</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    turn = new Turn(this.getChat(), prompt_id);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>746</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>747</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    const loopResult = await this.loopDetector.turnStarted(signal);</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>748</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    if (loopResult.count &gt; 1) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>749</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      yield { type: GeminiEventType.LoopDetected };</code></td><td>Returns a result, error, or next step</td></tr><tr><td>750</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return turn;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>751</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    } else if (loopResult.count === 1) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>752</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>      if (boundedTurns &lt;= 1) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>753</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>        yield { type: GeminiEventType.MaxSessionTurns };</code></td><td>Returns a result, error, or next step</td></tr><tr><td>754</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>        return turn;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>755</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>756</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return yield* this._recoverFromLoop(</code></td><td>Returns a result, error, or next step</td></tr><tr><td>757</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        loopResult,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>758</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        signal,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>759</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        prompt_id,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>760</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        boundedTurns,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>761</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        displayContent,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>762</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      );</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>763</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>764</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>765</td><th><span class="line-kind-input">INPUT</span></th><td><code>    const routingContext: RoutingContext = {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>766</td><th><span class="line-kind-state">STATE</span></th><td><code>      history: this.getChat().getHistory(/*curated=*/ true),</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>767</td><th><span class="line-kind-input">INPUT</span></th><td><code>      request,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>768</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      signal,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>769</td><th><span class="line-kind-input">INPUT</span></th><td><code>      requestedModel: this.config.getModel(),</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>770</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    };</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>771</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="gemini-tools-001" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · Turn 只解析模型流，工具执行交给独立 event-driven Scheduler</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Turn 从 generateContentStream 收集 text、thought、functionCall、usage 和 finish reason，将 functionCall 放进 pendingToolCalls；主/子 Agent 再以各自 registry、message bus、sandbox manager 创建 Scheduler 批量执行。</p></section><section><span>PLAIN LANGUAGE</span><p>模型流负责开任务单，调度器负责审批、排队、执行和回执；两者不是揉在一个 switch 里。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>主 Agent 和子 Agent 能复用同一工具治理链，同时各自限定工具集。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>236–277</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>278–320</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/turn.ts#L236-L320" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/turn.ts:236–320</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/turn.ts#L236-L320" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  236    | ServerGeminiModelInfoEvent
+  237    | ServerGeminiAgentExecutionStoppedEvent
+  238    | ServerGeminiAgentExecutionBlockedEvent;
+  239
+  240  // A turn manages the agentic loop turn within the server context.
+  241  export class Turn {
+  242    private callCounter = 0;
+  243
+  244    readonly pendingToolCalls: ToolCallRequestInfo[] = [];
+  245    private debugResponses: GenerateContentResponse[] = [];
+  246    private pendingCitations = new Set&lt;string&gt;();
+  247    private cachedResponseText: string | undefined = undefined;
+  248    finishReason: FinishReason | undefined = undefined;
+  249    private hasLoggedRagTrace = false;
+  250
+  251    constructor(
+  252      private readonly chat: GeminiChat,
+  253      private readonly prompt_id: string,
+  254    ) {}
+  255
+  256    // The run method yields simpler events suitable for server logic
+  257    async *run(
+  258      modelConfigKey: ModelConfigKey,
+  259      req: PartListUnion,
+  260      signal: AbortSignal,
+  261      options: {
+  262        displayContent?: PartListUnion;
+  263        role?: LlmRole;
+  264        apiHistoryOverride?: Content[];
+  265      } = {},
+  266    ): AsyncGenerator&lt;ServerGeminiStreamEvent&gt; {
+  267      const { displayContent, role = LlmRole.MAIN, apiHistoryOverride } = options;
+  268      try {
+  269        // Note: This assumes `sendMessageStream` yields events like
+  270        // { type: StreamEventType.RETRY } or { type: StreamEventType.CHUNK, value: GenerateContentResponse }
+  271        const responseStream = await this.chat.sendMessageStream(
+  272          modelConfigKey,
+  273          req,
+  274          this.prompt_id,
+  275          signal,
+  276          role,
+  277          displayContent,
+  278          apiHistoryOverride,
+  279        );
+  280
+  281        for await (const streamEvent of responseStream) {
+  282          if (signal?.aborted) {
+  283            yield { type: GeminiEventType.UserCancelled };
+  284            return;
+  285          }
+  286
+  287          // Handle the new RETRY event
+  288          if (streamEvent.type === &#39;retry&#39;) {
+  289            yield { type: GeminiEventType.Retry };
+  290            continue; // Skip to the next event in the stream
+  291          }
+  292
+  293          if (streamEvent.type === &#39;agent_execution_stopped&#39;) {
+  294            yield {
+  295              type: GeminiEventType.AgentExecutionStopped,
+  296              value: { reason: streamEvent.reason },
+  297            };
+  298            return;
+  299          }
+  300
+  301          if (streamEvent.type === &#39;agent_execution_blocked&#39;) {
+  302            yield {
+  303              type: GeminiEventType.AgentExecutionBlocked,
+  304              value: { reason: streamEvent.reason },
+  305            };
+  306            continue;
+  307          }
+  308
+  309          // Assuming other events are chunks with a `value` property
+  310          const resp = streamEvent.value;
+  311          if (!resp) continue; // Skip if there&#39;s no response body
+  312
+  313          // Log RAG trace if enabled (only once per turn to avoid log bloat on streams)
+  314          if (
+  315            !this.hasLoggedRagTrace &amp;&amp;
+  316            this.chat.context.config.getLogRagSnippets?.()
+  317          ) {
+  318            let ragStatus: string | undefined;
+  319            let snippets: RagSnippet[] | undefined;
+  320
+  321            if (
+  322              typeof resp === &#39;object&#39; &amp;&amp;
+  323              resp !== null &amp;&amp;
+  324              &#39;metadata&#39; in resp &amp;&amp;
+  325              typeof resp.metadata === &#39;object&#39; &amp;&amp;
+  326              resp.metadata !== null
+  327            ) {
+  328              const metadata = resp.metadata as {
+  329                ragStatus?: string;
+  330                snippets?: RagSnippet[];
+  331              };
+  332              ragStatus = metadata.ragStatus;
+  333              snippets = metadata.snippets;
+  334            }
+  335
+  336            if (ragStatus || snippets) {
+  337              ragLogger.log({
+  338                sessionId: this.chat.context.config.getSessionId(),
+  339                ragStatus: ragStatus ?? &#39;UNKNOWN&#39;,
+  340                snippets: snippets ?? [],
+  341              });
+  342              this.hasLoggedRagTrace = true;
+  343            }
+  344          }
+  345
+  346          this.debugResponses.push(resp);
+  347
+  348          const traceId = resp.responseId;
+  349
+  350          const parts = resp.candidates?.[0]?.content?.parts ?? [];
+  351          for (const part of parts) {
+  352            if (part.thought) {
+  353              const thought = parseThought(part.text ?? &#39;&#39;);
+  354              yield {
+  355                type: GeminiEventType.Thought,
+  356                value: thought,
+  357                traceId,
+  358              };
+  359            }
+  360          }
+  361
+  362          const text = getResponseText(resp);
+  363          if (text) {
+  364            yield { type: GeminiEventType.Content, value: text, traceId };
+  365          }
+  366
+  367          // Handle function calls (requesting tool execution)
+  368          const functionCalls = resp.functionCalls ?? [];
+  369          for (const fnCall of functionCalls) {
+  370            const event = this.handlePendingFunctionCall(fnCall, traceId);
+  371            if (event) {
+  372              yield event;
+  373            }
+  374          }
+  375
+  376          for (const citation of getCitations(resp)) {
+  377            this.pendingCitations.add(citation);
+  378          }
+  379
+  380          // Check if response was truncated or stopped for various reasons
+  381          const finishReason = resp.candidates?.[0]?.finishReason;
+  382
+  383          // This is the key change: Only yield &#39;Finished&#39; if there is a finishReason.
+  384          if (finishReason) {
+  385            if (this.pendingCitations.size &gt; 0) {
+  386              yield {
+  387                type: GeminiEventType.Citation,
+  388                value: `Citations:\n${[...this.pendingCitations].sort().join(&#39;\n&#39;)}`,
+  389              };
+  390              this.pendingCitations.clear();
+  391            }</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>236</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  | ServerGeminiModelInfoEvent</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>237</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  | ServerGeminiAgentExecutionStoppedEvent</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>238</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  | ServerGeminiAgentExecutionBlockedEvent;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>239</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>240</td><th><span class="line-kind-state">STATE</span></th><td><code>// A turn manages the agentic loop turn within the server context.</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>241</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export class Turn {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>242</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private callCounter = 0;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>243</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>244</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  readonly pendingToolCalls: ToolCallRequestInfo[] = [];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>245</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private debugResponses: GenerateContentResponse[] = [];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>246</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private pendingCitations = new Set&lt;string&gt;();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>247</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private cachedResponseText: string | undefined = undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>248</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  finishReason: FinishReason | undefined = undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>249</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  private hasLoggedRagTrace = false;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>250</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>251</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  constructor(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>252</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    private readonly chat: GeminiChat,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>253</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    private readonly prompt_id: string,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>254</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  ) {}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>255</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>256</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  // The run method yields simpler events suitable for server logic</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>257</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  async *run(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>258</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    modelConfigKey: ModelConfigKey,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>259</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    req: PartListUnion,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>260</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    signal: AbortSignal,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>261</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    options: {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>262</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      displayContent?: PartListUnion;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>263</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      role?: LlmRole;</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>packages/core/src/core/turn.ts · 1ac337739586</span><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/core/src/core/turn.ts#L236-L320" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  236    | ServerGeminiContentEvent
+  237    | ServerGeminiErrorEvent
+  238    | ServerGeminiFinishedEvent
+  239    | ServerGeminiLoopDetectedEvent
+  240    | ServerGeminiMaxSessionTurnsEvent
+  241    | ServerGeminiThoughtEvent
+  242    | ServerGeminiToolCallConfirmationEvent
+  243    | ServerGeminiToolCallRequestEvent
+  244    | ServerGeminiToolCallResponseEvent
+  245    | ServerGeminiUserCancelledEvent
+  246    | ServerGeminiRetryEvent
+  247    | ServerGeminiContextWindowWillOverflowEvent
+  248    | ServerGeminiInvalidStreamEvent
+  249    | ServerGeminiModelInfoEvent
+  250    | ServerGeminiAgentExecutionStoppedEvent
+  251    | ServerGeminiAgentExecutionBlockedEvent;
+  252
+  253  // A turn manages the agentic loop turn within the server context.
+  254  export class Turn {
+  255    private callCounter = 0;
+  256
+  257    readonly pendingToolCalls: ToolCallRequestInfo[] = [];
+  258    private debugResponses: GenerateContentResponse[] = [];
+  259    private pendingCitations = new Set&lt;string&gt;();
+  260    private cachedResponseText: string | undefined = undefined;
+  261    finishReason: FinishReason | undefined = undefined;
+  262    private hasLoggedRagTrace = false;
+  263
+  264    constructor(
+  265      private readonly chat: GeminiChat,
+  266      private readonly prompt_id: string,
+  267    ) {}
+  268
+  269    // The run method yields simpler events suitable for server logic
+  270    async *run(
+  271      modelConfigKey: ModelConfigKey,
+  272      req: PartListUnion,
+  273      signal: AbortSignal,
+  274      options: {
+  275        displayContent?: PartListUnion;
+  276        role?: LlmRole;
+  277        apiHistoryOverride?: Content[];
+  278      } = {},
+  279    ): AsyncGenerator&lt;ServerGeminiStreamEvent&gt; {
+  280      const { displayContent, role = LlmRole.MAIN, apiHistoryOverride } = options;
+  281      try {
+  282        // Note: This assumes `sendMessageStream` yields events like
+  283        // { type: StreamEventType.RETRY } or { type: StreamEventType.CHUNK, value: GenerateContentResponse }
+  284        const responseStream = await this.chat.sendMessageStream(
+  285          modelConfigKey,
+  286          req,
+  287          this.prompt_id,
+  288          signal,
+  289          role,
+  290          displayContent,
+  291          apiHistoryOverride,
+  292        );
+  293
+  294        for await (const streamEvent of responseStream) {
+  295          if (signal?.aborted) {
+  296            yield { type: GeminiEventType.UserCancelled };
+  297            return;
+  298          }
+  299
+  300          // Handle the new RETRY event
+  301          if (streamEvent.type === &#39;retry&#39;) {
+  302            yield { type: GeminiEventType.Retry };
+  303            continue; // Skip to the next event in the stream
+  304          }
+  305
+  306          if (streamEvent.type === &#39;agent_execution_stopped&#39;) {
+  307            yield {
+  308              type: GeminiEventType.AgentExecutionStopped,
+  309              value: { reason: streamEvent.reason },
+  310            };
+  311            return;
+  312          }
+  313
+  314          if (streamEvent.type === &#39;agent_execution_blocked&#39;) {
+  315            yield {
+  316              type: GeminiEventType.AgentExecutionBlocked,
+  317              value: { reason: streamEvent.reason },
+  318            };
+  319            continue;
+  320          }
+  321
+  322          // Assuming other events are chunks with a `value` property
+  323          const resp = streamEvent.value;
+  324          if (!resp) continue; // Skip if there&#39;s no response body
+  325
+  326          // Log RAG trace if enabled (only once per turn to avoid log bloat on streams)
+  327          if (
+  328            !this.hasLoggedRagTrace &amp;&amp;
+  329            this.chat.context.config.getLogRagSnippets?.()
+  330          ) {
+  331            let ragStatus: string | undefined;
+  332            let snippets: RagSnippet[] | undefined;
+  333
+  334            if (
+  335              typeof resp === &#39;object&#39; &amp;&amp;
+  336              resp !== null &amp;&amp;
+  337              &#39;metadata&#39; in resp &amp;&amp;
+  338              typeof resp.metadata === &#39;object&#39; &amp;&amp;
+  339              resp.metadata !== null
+  340            ) {
+  341              const metadata = resp.metadata as {
+  342                ragStatus?: string;
+  343                snippets?: RagSnippet[];
+  344              };
+  345              ragStatus = metadata.ragStatus;
+  346              snippets = metadata.snippets;
+  347            }
+  348
+  349            if (ragStatus || snippets) {
+  350              ragLogger.log({
+  351                sessionId: this.chat.context.config.getSessionId(),
+  352                ragStatus: ragStatus ?? &#39;UNKNOWN&#39;,
+  353                snippets: snippets ?? [],
+  354              });
+  355              this.hasLoggedRagTrace = true;
+  356            }
+  357          }
+  358
+  359          this.debugResponses.push(resp);
+  360
+  361          const traceId = resp.responseId;
+  362
+  363          const parts = resp.candidates?.[0]?.content?.parts ?? [];
+  364          for (const part of parts) {
+  365            if (part.thought) {
+  366              const thought = parseThought(part.text ?? &#39;&#39;);
+  367              yield {
+  368                type: GeminiEventType.Thought,
+  369                value: thought,
+  370                traceId,
+  371              };
+  372            }
+  373          }
+  374
+  375          const text = getResponseText(resp);
+  376          if (text) {
+  377            yield { type: GeminiEventType.Content, value: text, traceId };
+  378          }
+  379
+  380          // Handle function calls (requesting tool execution)
+  381          const functionCalls = resp.functionCalls ?? [];
+  382          for (const fnCall of functionCalls) {
+  383            const event = this.handlePendingFunctionCall(fnCall, traceId);
+  384            if (event) {
+  385              yield event;
+  386            }
+  387          }
+  388
+  389          for (const citation of getCitations(resp)) {
+  390            this.pendingCitations.add(citation);
+  391          }</code></pre></details></div></div></article><article class="finding-card compact" id="gemini-tools-002" data-finding-dimension="tools"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>05 · 超大工具结果在调度阶段落盘，取消也返回合法 functionResponse</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ToolExecutor 对超过阈值的文本写入项目临时目录并替换为截断文本；取消时若已有部分输出仍先截断/保存，再构造带 error 的 functionResponse，保持 Gemini 协议配对。</p></section><section><span>PLAIN LANGUAGE</span><p>工具被叫停也必须交一张正式回执；已经产生的大输出不会硬塞回上下文。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>失败/取消不会破坏下一轮历史，且原始输出可从文件追查。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>250–272</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>273–297</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/scheduler/tool-executor.ts#L250-L297" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/scheduler/tool-executor.ts:250–297</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/scheduler/tool-executor.ts#L250-L297" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  250        content.length === 1 &amp;&amp;
+  251        &#39;tool&#39; in call &amp;&amp;
+  252        call.tool instanceof DiscoveredMCPTool
+  253      ) {
+  254        const firstPart = content[0];
+  255        if (typeof firstPart === &#39;object&#39; &amp;&amp; typeof firstPart.text === &#39;string&#39;) {
+  256          const textContent = firstPart.text;
+  257          const threshold = this.config.getTruncateToolOutputThreshold();
+  258
+  259          if (threshold &gt; 0 &amp;&amp; textContent.length &gt; threshold) {
+  260            const originalContentLength = textContent.length;
+  261            const { outputFile: savedPath } = await saveTruncatedToolOutput(
+  262              textContent,
+  263              toolName,
+  264              callId,
+  265              this.config.storage.getProjectTempDir(),
+  266              this.context.promptId,
+  267            );
+  268            outputFile = savedPath;
+  269            const truncatedText = formatTruncatedToolOutput(
+  270              textContent,
+  271              outputFile,
+  272              threshold,
+  273            );
+  274
+  275            // We need to return a NEW array to avoid mutating the original toolResult if it matters,
+  276            // though here we are creating the response so it&#39;s probably fine to mutate or return new.
+  277            const truncatedContent: Part[] = [
+  278              { ...firstPart, text: truncatedText },
+  279            ];
+  280
+  281            logToolOutputTruncated(
+  282              this.config,
+  283              new ToolOutputTruncatedEvent(call.request.prompt_id, {
+  284                toolName,
+  285                originalContentLength,
+  286                truncatedContentLength: truncatedText.length,
+  287                threshold,
+  288              }),
+  289            );
+  290
+  291            return { truncatedContent, outputFile };
+  292          }
+  293        }
+  294      }
+  295
+  296      return { truncatedContent: content, outputFile };
+  297    }
+  298
+  299    private async createCancelledResult(
+  300      call: ToolCall,
+  301      reason: string,
+  302      toolResult?: ToolResult,
+  303    ): Promise&lt;CancelledToolCall&gt; {
+  304      const errorMessage = `[Operation Cancelled] ${reason}`;
+  305      const startTime = &#39;startTime&#39; in call ? call.startTime : undefined;
+  306
+  307      if (!(&#39;tool&#39; in call) || !(&#39;invocation&#39; in call)) {
+  308        // This should effectively never happen in execution phase, but we handle
+  309        // it safely
+  310        throw new Error(&#39;Cancelled tool call missing tool/invocation references&#39;);
+  311      }
+  312
+  313      let responseParts: Part[] = [];
+  314      let outputFile: string | undefined;
+  315
+  316      if (toolResult?.llmContent) {
+  317        // Attempt to truncate and save output if we have content, even in cancellation case
+  318        // This is to handle cases where the tool may have produced output before cancellation
+  319        const { truncatedContent: output, outputFile: truncatedOutputFile } =
+  320          await this.truncateOutputIfNeeded(call, toolResult?.llmContent);
+  321
+  322        outputFile = truncatedOutputFile;
+  323        responseParts = convertToFunctionResponse(
+  324          call.request.originalRequestName ?? call.request.name,
+  325          call.request.callId,
+  326          output,
+  327          this.config.getActiveModel(),
+  328          this.config,
+  329        );
+  330
+  331        // Inject the cancellation error into the response object
+  332        const mainPart = responseParts[0];
+  333        if (mainPart?.functionResponse?.response) {
+  334          const respObj = mainPart.functionResponse.response;
+  335          respObj[&#39;error&#39;] = errorMessage;
+  336        }
+  337      } else {
+  338        responseParts = [
+  339          {
+  340            functionResponse: {
+  341              id: call.request.callId,
+  342              name: call.request.originalRequestName ?? call.request.name,
+  343              response: { error: errorMessage },
+  344            },
+  345          },
+  346        ];
+  347      }
+  348
+  349      return {
+  350        status: CoreToolCallStatus.Cancelled,
+  351        request: call.request,
+  352        response: {
+  353          callId: call.request.callId,
+  354          responseParts,
+  355          display: toolResult?.display,
+  356          resultDisplay: toolResult?.returnDisplay,
+  357          error: undefined,
+  358          errorType: undefined,
+  359          outputFile,
+  360          contentLength: JSON.stringify(responseParts).length,
+  361        },
+  362        tool: call.tool,
+  363        invocation: call.invocation,
+  364        durationMs: startTime ? Date.now() - startTime : undefined,
+  365        startTime,
+  366        endTime: Date.now(),
+  367        outcome: call.outcome,
+  368      };</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>250</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      content.length === 1 &amp;&amp;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>251</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      &#39;tool&#39; in call &amp;&amp;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>252</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      call.tool instanceof DiscoveredMCPTool</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>253</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    ) {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>254</td><th><span class="line-kind-input">INPUT</span></th><td><code>      const firstPart = content[0];</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>255</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>      if (typeof firstPart === &#39;object&#39; &amp;&amp; typeof firstPart.text === &#39;string&#39;) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>256</td><th><span class="line-kind-input">INPUT</span></th><td><code>        const textContent = firstPart.text;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>257</td><th><span class="line-kind-input">INPUT</span></th><td><code>        const threshold = this.config.getTruncateToolOutputThreshold();</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>258</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>259</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if (threshold &gt; 0 &amp;&amp; textContent.length &gt; threshold) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>260</td><th><span class="line-kind-input">INPUT</span></th><td><code>          const originalContentLength = textContent.length;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>261</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>          const { outputFile: savedPath } = await saveTruncatedToolOutput(</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>262</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            textContent,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>263</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            toolName,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>264</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            callId,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>265</td><th><span class="line-kind-input">INPUT</span></th><td><code>            this.config.storage.getProjectTempDir(),</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>266</td><th><span class="line-kind-state">STATE</span></th><td><code>            this.context.promptId,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>267</td><th><span class="line-kind-flow">FLOW</span></th><td><code>          );</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>268</td><th><span class="line-kind-flow">FLOW</span></th><td><code>          outputFile = savedPath;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>269</td><th><span class="line-kind-input">INPUT</span></th><td><code>          const truncatedText = formatTruncatedToolOutput(</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>270</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            textContent,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>271</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            outputFile,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>272</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            threshold,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>273</td><th><span class="line-kind-flow">FLOW</span></th><td><code>          );</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>274</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>275</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>          // We need to return a NEW array to avoid mutating the original toolResult if it matters,</code></td><td>Returns a result, error, or next step</td></tr><tr><td>276</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>          // though here we are creating the response so it&#39;s probably fine to mutate or return new.</code></td><td>Returns a result, error, or next step</td></tr><tr><td>277</td><th><span class="line-kind-input">INPUT</span></th><td><code>          const truncatedContent: Part[] = [</code></td><td>Receives arguments, events, or configuration</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="gemini-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>06 · MCP 支持 stdio、Streamable HTTP、SSE fallback、OAuth、动态目录刷新和 progress</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>McpClient 连接后发现 tools/prompts/resources 并注册，监听 listChanged；网络 transport 首选 HTTP，失败可回退 SSE，401 仅在显式 oauth.enabled 时发现/认证并重试；调用有 timeout、abort 与 progress token 路由。</p></section><section><span>PLAIN LANGUAGE</span><p>本地子进程和远程服务都能接；服务器换工具会热刷新，远程登录不是自动偷偷弹出，必须配置允许 OAuth。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>连接器成熟，且认证意图边界清楚；热刷新仍需依赖 registry sort 与 policy validation。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>188–239</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>240–292</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/tools/mcp-client.ts#L188-L292" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/tools/mcp-client.ts:188–292</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/tools/mcp-client.ts#L188-L292" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  188    async connect(): Promise&lt;void&gt; {
+  189      if (this.status !== MCPServerStatus.DISCONNECTED) {
+  190        throw new Error(
+  191          `Can only connect when the client is disconnected, current state is ${this.status}`,
+  192        );
+  193      }
+  194      this.updateStatus(MCPServerStatus.CONNECTING);
+  195      try {
+  196        this.client = await connectToMcpServer(
+  197          this.clientVersion,
+  198          this.serverName,
+  199          this.serverConfig,
+  200          this.debugMode,
+  201          this.workspaceContext,
+  202          this.cliConfig,
+  203        );
+  204
+  205        this.registerNotificationHandlers();
+  206
+  207        const originalOnError = this.client.onerror;
+  208        this.client.onerror = (error) =&gt; {
+  209          if (this.status !== MCPServerStatus.CONNECTED) {
+  210            return;
+  211          }
+  212          if (originalOnError) originalOnError(error);
+  213          this.cliConfig.emitMcpDiagnostic(
+  214            &#39;error&#39;,
+  215            `MCP ERROR (${this.serverName})`,
+  216            error,
+  217            this.serverName,
+  218          );
+  219          this.updateStatus(MCPServerStatus.DISCONNECTED);
+  220        };
+  221        this.updateStatus(MCPServerStatus.CONNECTED);
+  222      } catch (error) {
+  223        this.updateStatus(MCPServerStatus.DISCONNECTED);
+  224        throw error;
+  225      }
+  226    }
+  227
+  228    /**
+  229     * Discovers tools and prompts from the MCP server into the specified registries.
+  230     */
+  231    async discoverInto(
+  232      cliConfig: McpContext,
+  233      registries: RegistrySet,
+  234    ): Promise&lt;void&gt; {
+  235      this.assertConnected();
+  236      this.registeredRegistries.add(registries);
+  237
+  238      const prompts = await this.fetchPrompts();
+  239      const tools = await this.discoverTools(
+  240        cliConfig,
+  241        registries.toolRegistry.getMessageBus(),
+  242      );
+  243      const resources = await this.discoverResources();
+  244      this.updateResourceRegistry(resources, registries.resourceRegistry);
+  245
+  246      if (prompts.length === 0 &amp;&amp; tools.length === 0 &amp;&amp; resources.length === 0) {
+  247        throw new Error(&#39;No prompts, tools, or resources found on the server.&#39;);
+  248      }
+  249
+  250      for (const prompt of prompts) {
+  251        registries.promptRegistry.registerPrompt(prompt);
+  252      }
+  253      for (const tool of tools) {
+  254        registries.toolRegistry.registerTool(tool);
+  255      }
+  256      registries.toolRegistry.sortTools();
+  257
+  258      // Validate MCP tool names in policy rules against discovered tools
+  259      try {
+  260        const discoveredToolNames = tools.map((t) =&gt; t.serverToolName);
+  261        const policyRules = cliConfig.getPolicyEngine?.()?.getRules() ?? [];
+  262        const warnings = validateMcpPolicyToolNames(
+  263          this.serverName,
+  264          discoveredToolNames,
+  265          policyRules,
+  266        );
+  267        for (const warning of warnings) {
+  268          coreEvents.emitFeedback(&#39;warning&#39;, warning);
+  269        }
+  270      } catch {
+  271        // Policy engine may not be available in all contexts (e.g. tests).
+  272        // Validation is best-effort; skip silently if unavailable.
+  273      }
+  274    }
+  275
+  276    /**
+  277     * Unregisters registries so this client will no longer update them when it receives
+  278     * list_changed notifications from the server.
+  279     */
+  280    removeRegistries(registries: RegistrySet): void {
+  281      this.registeredRegistries.delete(registries);
+  282    }
+  283
+  284    /**
+  285     * Disconnects from the MCP server.
+  286     */
+  287    async disconnect(): Promise&lt;void&gt; {
+  288      if (this.status !== MCPServerStatus.CONNECTED) {
+  289        return;
+  290      }
+  291      for (const registries of this.registeredRegistries) {
+  292        registries.toolRegistry.removeMcpToolsByServer(this.serverName);
+  293        registries.promptRegistry.removePromptsByServer(this.serverName);
+  294        registries.resourceRegistry.removeResourcesByServer(this.serverName);
+  295      }
+  296      this.updateStatus(MCPServerStatus.DISCONNECTING);
+  297      const client = this.client;
+  298      this.client = undefined;
+  299      if (this.transport) {
+  300        await this.transport.close();
+  301      }
+  302      if (client) {
+  303        await client.close();
+  304      }
+  305      this.updateStatus(MCPServerStatus.DISCONNECTED);
+  306    }
+  307
+  308    /**
+  309     * Returns the current status of the client.
+  310     */
+  311    getStatus(): MCPServerStatus {
+  312      return this.status;
+  313    }
+  314
+  315    private updateStatus(status: MCPServerStatus): void {
+  316      this.status = status;
+  317      updateMCPServerStatus(this.serverName, status);
+  318    }
+  319
+  320    private assertConnected(): void {
+  321      if (this.status !== MCPServerStatus.CONNECTED) {
+  322        throw new Error(
+  323          `Client is not connected, must connect before interacting with the server. Current state is ${this.status}`,
+  324        );
+  325      }
+  326    }
+  327
+  328    private async discoverTools(
+  329      cliConfig: McpContext,
+  330      messageBus: MessageBus,
+  331      options?: { timeout?: number; signal?: AbortSignal },
+  332    ): Promise&lt;DiscoveredMCPTool[]&gt; {
+  333      this.assertConnected();
+  334      return discoverTools(
+  335        this.serverName,
+  336        this.serverConfig,
+  337        this.client!,
+  338        cliConfig,
+  339        messageBus,
+  340        {
+  341          ...(options ?? {
+  342            timeout: this.serverConfig.timeout ?? MCP_DEFAULT_TIMEOUT_MSEC,
+  343          }),
+  344          progressReporter: this,
+  345        },
+  346      );
+  347    }
+  348
+  349    private async fetchPrompts(options?: {
+  350      signal?: AbortSignal;
+  351    }): Promise&lt;DiscoveredMCPPrompt[]&gt; {
+  352      this.assertConnected();
+  353      return discoverPrompts(
+  354        this.serverName,
+  355        this.client!,
+  356        this.cliConfig,
+  357        options,
+  358      );
+  359    }
+  360
+  361    private async discoverResources(): Promise&lt;Resource[]&gt; {
+  362      this.assertConnected();
+  363      return discoverResources(this.serverName, this.client!, this.cliConfig);</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>188</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  async connect(): Promise&lt;void&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>189</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    if (this.status !== MCPServerStatus.DISCONNECTED) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>190</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      throw new Error(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>191</td><th><span class="line-kind-state">STATE</span></th><td><code>        `Can only connect when the client is disconnected, current state is ${this.status}`,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>192</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      );</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>193</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>194</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    this.updateStatus(MCPServerStatus.CONNECTING);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>195</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    try {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>196</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>      this.client = await connectToMcpServer(</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>197</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.clientVersion,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>198</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.serverName,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>199</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.serverConfig,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>200</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.debugMode,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>201</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.workspaceContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>202</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.cliConfig,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>203</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      );</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>204</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>205</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      this.registerNotificationHandlers();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>206</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>207</td><th><span class="line-kind-input">INPUT</span></th><td><code>      const originalOnError = this.client.onerror;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>208</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>      this.client.onerror = (error) =&gt; {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>209</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if (this.status !== MCPServerStatus.CONNECTED) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>210</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>          return;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>211</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>212</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if (originalOnError) originalOnError(error);</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>213</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.cliConfig.emitMcpDiagnostic(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>214</td><th><span class="line-kind-flow">FLOW</span></th><td><code>          &#39;error&#39;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>215</td><th><span class="line-kind-flow">FLOW</span></th><td><code>          `MCP ERROR (${this.serverName})`,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="gemini-extension-001" data-finding-dimension="connectors"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>07 · 扩展是能力包：MCP、policy/checker、context、commands、hooks、agents 与 skills 可成组热装卸</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ExtensionLoader 启动扩展时连接 MCP、刷新工具、注册 rules/checkers；批次完成后统一 refresh memory/system prompt/hooks/agent registry/skills。停止时按 source 移除政策并做同样刷新。</p></section><section><span>PLAIN LANGUAGE</span><p>扩展不是单个脚本，而是一箱可协同变化的工具、规则、记忆、钩子和 Agent。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>扩展卸载能回收治理状态；批量刷新减少 prompt cache 抖动。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>31–69</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>70–110</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/extensionLoader.ts#L31-L110" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/utils/extensionLoader.ts:31–110</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/extensionLoader.ts#L31-L110" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   31    /**
+   32     * Fully initializes all active extensions.
+   33     *
+   34     * Called within `Config.initialize`, which must already have an
+   35     * McpClientManager, PromptRegistry, and GeminiChat set up.
+   36     */
+   37    async start(config: Config): Promise&lt;void&gt; {
+   38      this.isStarting = true;
+   39      try {
+   40        if (!this.config) {
+   41          this.config = config;
+   42        } else {
+   43          throw new Error(&#39;Already started, you may only call `start` once.&#39;);
+   44        }
+   45        await Promise.all(
+   46          this.getExtensions()
+   47            .filter((e) =&gt; e.isActive)
+   48            .map(this.startExtension.bind(this)),
+   49        );
+   50      } finally {
+   51        this.isStarting = false;
+   52      }
+   53    }
+   54
+   55    /**
+   56     * Unconditionally starts an `extension` and loads all its MCP servers,
+   57     * context, custom commands, etc. Assumes that `start` has already been called
+   58     * and we have a Config object.
+   59     *
+   60     * This should typically only be called from `start`, most other calls should
+   61     * go through `maybeStartExtension` which will only start the extension if
+   62     * extension reloading is enabled and the `config` object is initialized.
+   63     */
+   64    protected async startExtension(extension: GeminiCLIExtension) {
+   65      if (!this.config) {
+   66        throw new Error(&#39;Cannot call `startExtension` prior to calling `start`.&#39;);
+   67      }
+   68      this.startingCount++;
+   69      this.eventEmitter?.emit(&#39;extensionsStarting&#39;, {
+   70        total: this.startingCount,
+   71        completed: this.startCompletedCount,
+   72      });
+   73      try {
+   74        await this.config.getMcpClientManager()!.startExtension(extension);
+   75        await this.maybeRefreshGeminiTools(extension);
+   76
+   77        // Register policy rules and checkers
+   78        if (extension.rules || extension.checkers) {
+   79          const policyEngine = this.config.getPolicyEngine();
+   80          if (extension.rules) {
+   81            for (const rule of extension.rules) {
+   82              policyEngine.addRule(rule);
+   83            }
+   84          }
+   85          if (extension.checkers) {
+   86            for (const checker of extension.checkers) {
+   87              policyEngine.addChecker(checker);
+   88            }
+   89          }
+   90        }
+   91
+   92        // Note: Context files are loaded only once all extensions are done
+   93        // loading/unloading to reduce churn, see the `maybeRefreshMemories` call
+   94        // below.
+   95
+   96        // TODO: Update custom command updating away from the event based system
+   97        // and call directly into a custom command manager here. See the
+   98        // useSlashCommandProcessor hook which responds to events fired here today.
+   99      } finally {
+  100        this.startCompletedCount++;
+  101        this.eventEmitter?.emit(&#39;extensionsStarting&#39;, {
+  102          total: this.startingCount,
+  103          completed: this.startCompletedCount,
+  104        });
+  105        if (this.startingCount === this.startCompletedCount) {
+  106          this.startingCount = 0;
+  107          this.startCompletedCount = 0;
+  108        }
+  109        await this.maybeRefreshMemories();
+  110      }
+  111    }
+  112
+  113    private async maybeRefreshMemories(): Promise&lt;void&gt; {
+  114      if (!this.config) {
+  115        throw new Error(
+  116          &#39;Cannot refresh gemini memories prior to calling `start`.&#39;,
+  117        );
+  118      }
+  119      if (
+  120        !this.isStarting &amp;&amp; // Don&#39;t refresh memories on the first call to `start`.
+  121        this.startingCount === this.startCompletedCount &amp;&amp;
+  122        this.stoppingCount === this.stopCompletedCount
+  123      ) {
+  124        // Wait until all extensions are done starting and stopping before we
+  125        // reload memory, this is somewhat expensive and also busts the context
+  126        // cache, we want to only do it once.
+  127        await this.config.getMemoryContextManager()?.refresh();
+  128        this.config.getGeminiClient().updateSystemInstruction();
+  129        await this.config.getHookSystem()?.initialize();
+  130        await this.config.getAgentRegistry().reload();
+  131        await this.config.reloadSkills();
+  132      }
+  133    }
+  134
+  135    /**
+  136     * Refreshes the gemini tools list if it is initialized and the extension has
+  137     * any excludeTools settings.
+  138     */
+  139    private async maybeRefreshGeminiTools(
+  140      extension: GeminiCLIExtension,
+  141    ): Promise&lt;void&gt; {
+  142      if (extension.excludeTools &amp;&amp; extension.excludeTools.length &gt; 0) {
+  143        const geminiClient = this.config?.geminiClient;
+  144        if (geminiClient?.isInitialized()) {
+  145          await geminiClient.setTools();
+  146        }
+  147      }
+  148    }
+  149
+  150    /**
+  151     * If extension reloading is enabled and `start` has already been called,
+  152     * then calls `startExtension` to include all extension features into the
+  153     * program.
+  154     */
+  155    protected async maybeStartExtension(
+  156      extension: GeminiCLIExtension,
+  157    ): Promise&lt;void&gt; {
+  158      if (this.config &amp;&amp; this.config.getEnableExtensionReloading()) {
+  159        await this.startExtension(extension);
+  160      }
+  161    }
+  162
+  163    /**
+  164     * Unconditionally stops an `extension` and unloads all its MCP servers,
+  165     * context, custom commands, etc. Assumes that `start` has already been called
+  166     * and we have a Config object.
+  167     *
+  168     * Most calls should go through `maybeStopExtension` which will only stop the
+  169     * extension if extension reloading is enabled and the `config` object is
+  170     * initialized.
+  171     */
+  172    protected async stopExtension(extension: GeminiCLIExtension) {
+  173      if (!this.config) {
+  174        throw new Error(&#39;Cannot call `stopExtension` prior to calling `start`.&#39;);
+  175      }
+  176      this.stoppingCount++;
+  177      this.eventEmitter?.emit(&#39;extensionsStopping&#39;, {
+  178        total: this.stoppingCount,
+  179        completed: this.stopCompletedCount,
+  180      });
+  181</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>31</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  /**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>32</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   * Fully initializes all active extensions.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>33</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>34</td><th><span class="line-kind-input">INPUT</span></th><td><code>   * Called within `Config.initialize`, which must already have an</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>35</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   * McpClientManager, PromptRegistry, and GeminiChat set up.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>36</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>37</td><th><span class="line-kind-input">INPUT</span></th><td><code>  async start(config: Config): Promise&lt;void&gt; {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    this.isStarting = true;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    try {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>40</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>      if (!this.config) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>41</td><th><span class="line-kind-input">INPUT</span></th><td><code>        this.config = config;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>42</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>      } else {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>43</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        throw new Error(&#39;Already started, you may only call `start` once.&#39;);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>44</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>45</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>      await Promise.all(</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>46</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        this.getExtensions()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>47</td><th><span class="line-kind-flow">FLOW</span></th><td><code>          .filter((e) =&gt; e.isActive)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>48</td><th><span class="line-kind-flow">FLOW</span></th><td><code>          .map(this.startExtension.bind(this)),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>49</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      );</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>50</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    } finally {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>51</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      this.isStarting = false;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>52</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>53</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>54</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>55</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  /**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>56</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   * Unconditionally starts an `extension` and loads all its MCP servers,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>57</td><th><span class="line-kind-state">STATE</span></th><td><code>   * context, custom commands, etc. Assumes that `start` has already been called</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>58</td><th><span class="line-kind-input">INPUT</span></th><td><code>   * and we have a Config object.</code></td><td>Receives arguments, events, or configuration</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="gemini-memory-001" data-finding-dimension="connectors"><header><span class="finding-index">08</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>08 · GEMINI.md/Memory 分 global、user-project、extension、project，并支持受信目录 JIT 加载</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>memory discovery 分类别收集并串联；环境 memory 从 trusted root 向上到 git root；工具触达子目录时，只有目标处于 trusted root 才 JIT 搜索并按 inode/device 去重。</p></section><section><span>PLAIN LANGUAGE</span><p>常驻规章分层保存，走进更深目录时才加载当地规则；不受信目录不会因为读一个文件就注入它的说明。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>兼顾大仓库按需上下文与 prompt injection 边界。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>383–417</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>418–454</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/memoryDiscovery.ts#L383-L454" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/utils/memoryDiscovery.ts:383–454</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/utils/memoryDiscovery.ts#L383-L454" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  383  export function getExtensionMemoryPaths(
+  384    extensionLoader: ExtensionLoader,
+  385  ): string[] {
+  386    const extensionPaths = extensionLoader
+  387      .getExtensions()
+  388      .filter((ext) =&gt; ext.isActive)
+  389      .flatMap((ext) =&gt; ext.contextFiles)
+  390      .map((p) =&gt; toAbsolutePath(p));
+  391
+  392    // Deduplicate case-insensitively (so macOS/Windows don&#39;t keep two casings of
+  393    // the same file) while preserving the first encountered casing for display.
+  394    const seenKeys = new Set&lt;string&gt;();
+  395    const unique: string[] = [];
+  396    for (const p of extensionPaths) {
+  397      const key = normalizePath(p);
+  398      if (seenKeys.has(key)) continue;
+  399      seenKeys.add(key);
+  400      unique.push(p);
+  401    }
+  402    return unique.sort();
+  403  }
+  404
+  405  export async function getEnvironmentMemoryPaths(
+  406    trustedRoots: string[],
+  407    boundaryMarkers: readonly string[] = [&#39;.git&#39;],
+  408  ): Promise&lt;string[]&gt; {
+  409    // Trusted Roots Upward Traversal (Parallelized)
+  410    const traversalPromises = trustedRoots.map(async (root) =&gt; {
+  411      const resolvedRoot = toAbsolutePath(root);
+  412      const gitRoot = await findProjectRoot(resolvedRoot, boundaryMarkers);
+  413      const ceiling = gitRoot ?? resolvedRoot;
+  414      debugLogger.debug(
+  415        &#39;[DEBUG] [MemoryDiscovery] Loading environment memory for trusted root:&#39;,
+  416        resolvedRoot,
+  417        &#39;(Stopping at&#39;,
+  418        gitRoot
+  419          ? `git root: ${ceiling})`
+  420          : `trusted root: ${ceiling} — no git root found)`,
+  421      );
+  422      return findUpwardGeminiFiles(resolvedRoot, ceiling);
+  423    });
+  424
+  425    const pathArrays = await Promise.all(traversalPromises);
+  426
+  427    const { paths: unique } = await deduplicatePathsByFileIdentity(
+  428      pathArrays.flat(),
+  429    );
+  430    return unique.sort();
+  431  }
+  432
+  433  export function categorizeAndConcatenate(
+  434    paths: {
+  435      global: string[];
+  436      extension: string[];
+  437      project: string[];
+  438      userProjectMemory?: string[];
+  439    },
+  440    contentsMap: Map&lt;string, GeminiFileContent&gt;,
+  441  ): HierarchicalMemory {
+  442    const getConcatenated = (pList: string[]) =&gt;
+  443      concatenateInstructions(
+  444        pList
+  445          .map((p) =&gt; contentsMap.get(p))
+  446          .filter((c): c is GeminiFileContent =&gt; !!c),
+  447      );
+  448
+  449    return {
+  450      global: getConcatenated(paths.global),
+  451      extension: getConcatenated(paths.extension),
+  452      project: getConcatenated(paths.project),
+  453      userProjectMemory: getConcatenated(paths.userProjectMemory ?? []),
+  454    };
+  455  }
+  456
+  457  /**
+  458   * Traverses upward from startDir to stopDir, finding all GEMINI.md variants.
+  459   *
+  460   * Files are ordered by directory level (root to leaf), with all filename
+  461   * variants grouped together per directory.
+  462   */
+  463  async function findUpwardGeminiFiles(
+  464    startDir: string,
+  465    stopDir: string,
+  466  ): Promise&lt;string[]&gt; {
+  467    const upwardPaths: string[] = [];
+  468    let currentDir = toAbsolutePath(startDir);
+  469    const resolvedStopDirKey = normalizePath(stopDir);
+  470    const geminiMdFilenames = getAllGeminiMdFilenames();
+  471    const globalGeminiDirKey = normalizePath(path.join(homedir(), GEMINI_DIR));
+  472
+  473    debugLogger.debug(
+  474      &#39;[DEBUG] [MemoryDiscovery] Starting upward search from&#39;,
+  475      currentDir,
+  476      &#39;stopping at&#39;,
+  477      stopDir,
+  478    );
+  479
+  480    while (true) {
+  481      if (normalizePath(currentDir) === globalGeminiDirKey) {
+  482        break;
+  483      }
+  484
+  485      // Parallelize checks for all filename variants in the current directory
+  486      const accessChecks = geminiMdFilenames.map(async (filename) =&gt; {
+  487        const potentialPath = toAbsolutePath(path.join(currentDir, filename));
+  488        try {
+  489          await fs.access(potentialPath, fsSync.constants.R_OK);
+  490          return potentialPath;
+  491        } catch {
+  492          return null;
+  493        }
+  494      });
+  495
+  496      const foundPathsInDir = (await Promise.all(accessChecks)).filter(
+  497        (p): p is string =&gt; p !== null,
+  498      );
+  499
+  500      upwardPaths.unshift(...foundPathsInDir);
+  501
+  502      const parentDir = path.dirname(currentDir);
+  503      const currentKey = normalizePath(currentDir);
+  504      if (currentKey === resolvedStopDirKey || currentDir === parentDir) {
+  505        break;
+  506      }
+  507      currentDir = parentDir;
+  508    }
+  509    return upwardPaths;
+  510  }
+  511
+  512  export async function loadJitSubdirectoryMemory(
+  513    targetPath: string,
+  514    trustedRoots: string[],
+  515    alreadyLoadedPaths: Set&lt;string&gt;,
+  516    alreadyLoadedIdentities?: Set&lt;string&gt;,
+  517    boundaryMarkers: readonly string[] = [&#39;.git&#39;],
+  518  ): Promise&lt;MemoryLoadResult&gt; {
+  519    const resolvedTarget = toAbsolutePath(targetPath);
+  520    let bestRoot: string | null = null;
+  521    let bestRootKeyLength = -1;
+  522
+  523    // Find the deepest trusted root that contains the target path
+  524    for (const root of trustedRoots) {
+  525      if (isSubpath(root, targetPath)) {</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>383</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export function getExtensionMemoryPaths(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>384</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  extensionLoader: ExtensionLoader,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>385</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): string[] {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>386</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const extensionPaths = extensionLoader</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>387</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    .getExtensions()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>388</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    .filter((ext) =&gt; ext.isActive)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>389</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    .flatMap((ext) =&gt; ext.contextFiles)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>390</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    .map((p) =&gt; toAbsolutePath(p));</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>391</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>392</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  // Deduplicate case-insensitively (so macOS/Windows don&#39;t keep two casings of</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>393</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  // the same file) while preserving the first encountered casing for display.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>394</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const seenKeys = new Set&lt;string&gt;();</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>395</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const unique: string[] = [];</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>396</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  for (const p of extensionPaths) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>397</td><th><span class="line-kind-input">INPUT</span></th><td><code>    const key = normalizePath(p);</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>398</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>    if (seenKeys.has(key)) continue;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>399</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    seenKeys.add(key);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>400</td><th><span class="line-kind-state">STATE</span></th><td><code>    unique.push(p);</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>401</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>402</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>  return unique.sort();</code></td><td>Returns a result, error, or next step</td></tr><tr><td>403</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>404</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>405</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export async function getEnvironmentMemoryPaths(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>406</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  trustedRoots: string[],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>407</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  boundaryMarkers: readonly string[] = [&#39;.git&#39;],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>408</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): Promise&lt;string[]&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>409</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // Trusted Roots Upward Traversal (Parallelized)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>410</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  const traversalPromises = trustedRoots.map(async (root) =&gt; {</code></td><td>Chooses continue, stop, retry, or another path</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--max-old-space-size</code></h3><small>flag · packages/cli/index.ts:77</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/index.ts#L72-L89" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   72        heapStats.heap_size_limit / 1024 / 1024,
+   73      );
+   74      const targetMaxOldSpaceSizeInMB = Math.floor(totalMemoryMB * 0.5);
+   75
+   76      if (targetMaxOldSpaceSizeInMB &gt; currentMaxOldSpaceSizeMb) {
+   77        return [`--max-old-space-size=${targetMaxOldSpaceSizeInMB}`];
+   78      }
+   79    }
+   80
+   81    return [];
+   82  }
+   83
+   84  async function run() {
+   85    if (!process.env[&#39;GEMINI_CLI_NO_RELAUNCH&#39;] &amp;&amp; !process.env[&#39;SANDBOX&#39;]) {
+   86      // --- Lightweight Parent Process / Daemon ---
+   87      // We avoid importing heavy dependencies here to save ~1.5s of startup time.
+   88
+   89      const scriptArgs = getScriptArgs();
+   90      const memoryArgs = await getMemoryNodeArgs();
+   91      const { spawnArgs, env: newEnv } = getSpawnConfig(memoryArgs, scriptArgs);
+   92
+   93      let latestAdminSettings: unknown = undefined;
+   94
+   95      // Prevent the parent process from exiting prematurely on signals.
+   96      // The child process will receive the same signals and handle its own cleanup.
+   97      for (const sig of [&#39;SIGINT&#39;, &#39;SIGTERM&#39;, &#39;SIGHUP&#39;]) {
+   98        process.on(sig as NodeJS.Signals, () =&gt; {});
+   99      }
+  100
+  101      const runner = () =&gt; {
+  102        process.stdin.pause();
+  103
+  104        const child = spawn(process.execPath, spawnArgs, {
+  105          stdio: [&#39;inherit&#39;, &#39;inherit&#39;, &#39;inherit&#39;, &#39;ipc&#39;],
+  106          env: newEnv,
+  107        });
+  108
+  109        if (latestAdminSettings) {
+  110          child.send({ type: &#39;admin-settings&#39;, settings: latestAdminSettings });
+  111        }
+  112
+  113        child.on(&#39;message&#39;, (msg: { type?: string; settings?: unknown }) =&gt; {
+  114          if (msg.type === &#39;admin-settings-update&#39; &amp;&amp; msg.settings) {
+  115            latestAdminSettings = msg.settings;
+  116          }
+  117        });
+  118
+  119        return new Promise&lt;number&gt;((resolve) =&gt; {
+  120          child.on(&#39;error&#39;, (err) =&gt; {
+  121            process.stderr.write(
+  122              &#39;Error: Failed to start child process: &#39; + err.message + &#39;\n&#39;,
+  123            );
+  124            resolve(1);
+  125          });
+  126          child.on(&#39;close&#39;, (code) =&gt; {
+  127            process.stdin.resume();
+  128            resolve(code ?? 1);
+  129          });
+  130        });</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--max-old-space-size#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--inspect-brk</code></h3><small>flag · packages/cli/package.json:18</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/package.json#L13-L30" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   13      &quot;gemini&quot;: &quot;dist/index.js&quot;
+   14    },
+   15    &quot;scripts&quot;: {
+   16      &quot;build&quot;: &quot;node ../../scripts/build_package.js&quot;,
+   17      &quot;start&quot;: &quot;node dist/index.js&quot;,
+   18      &quot;debug&quot;: &quot;node --inspect-brk dist/index.js&quot;,
+   19      &quot;lint&quot;: &quot;eslint . --ext .ts,.tsx&quot;,
+   20      &quot;format&quot;: &quot;prettier --write .&quot;,
+   21      &quot;test&quot;: &quot;vitest run&quot;,
+   22      &quot;test:ci&quot;: &quot;vitest run&quot;,
+   23      &quot;posttest&quot;: &quot;npm run build&quot;,
+   24      &quot;typecheck&quot;: &quot;tsc --noEmit&quot;
+   25    },
+   26    &quot;files&quot;: [
+   27      &quot;dist&quot;
+   28    ],
+   29    &quot;config&quot;: {
+   30      &quot;sandboxImageUri&quot;: &quot;us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:0.56.0-nightly.20260806.g761f604c1&quot;
+   31    },
+   32    &quot;dependencies&quot;: {
+   33      &quot;@agentclientprotocol/sdk&quot;: &quot;0.16.1&quot;,
+   34      &quot;@google/gemini-cli-core&quot;: &quot;file:../core&quot;,
+   35      &quot;@google/genai&quot;: &quot;1.30.0&quot;,
+   36      &quot;@iarna/toml&quot;: &quot;2.2.5&quot;,
+   37      &quot;@modelcontextprotocol/sdk&quot;: &quot;1.23.0&quot;,
+   38      &quot;ansi-escapes&quot;: &quot;7.3.0&quot;,
+   39      &quot;ansi-regex&quot;: &quot;6.2.2&quot;,
+   40      &quot;chalk&quot;: &quot;4.1.2&quot;,
+   41      &quot;cli-spinners&quot;: &quot;2.9.2&quot;,
+   42      &quot;clipboardy&quot;: &quot;5.2.0&quot;,
+   43      &quot;color-convert&quot;: &quot;2.0.1&quot;,
+   44      &quot;command-exists&quot;: &quot;1.2.9&quot;,
+   45      &quot;comment-json&quot;: &quot;4.2.5&quot;,
+   46      &quot;diff&quot;: &quot;8.0.3&quot;,
+   47      &quot;dotenv&quot;: &quot;17.1.0&quot;,
+   48      &quot;extract-zip&quot;: &quot;2.0.1&quot;,
+   49      &quot;fzf&quot;: &quot;0.5.2&quot;,
+   50      &quot;glob&quot;: &quot;12.0.0&quot;,
+   51      &quot;highlight.js&quot;: &quot;11.11.1&quot;,
+   52      &quot;ink&quot;: &quot;npm:@jrichman/ink@6.6.9&quot;,
+   53      &quot;ink-gradient&quot;: &quot;3.0.0&quot;,
+   54      &quot;ink-spinner&quot;: &quot;5.0.0&quot;,
+   55      &quot;latest-version&quot;: &quot;9.0.0&quot;,
+   56      &quot;lowlight&quot;: &quot;3.3.0&quot;,
+   57      &quot;mnemonist&quot;: &quot;0.40.3&quot;,
+   58      &quot;open&quot;: &quot;10.1.2&quot;,
+   59      &quot;prompts&quot;: &quot;2.4.2&quot;,
+   60      &quot;proper-lockfile&quot;: &quot;4.1.2&quot;,
+   61      &quot;react&quot;: &quot;19.2.4&quot;,
+   62      &quot;shell-quote&quot;: &quot;1.8.3&quot;,
+   63      &quot;simple-git&quot;: &quot;3.28.0&quot;,
+   64      &quot;string-width&quot;: &quot;8.1.0&quot;,
+   65      &quot;strip-ansi&quot;: &quot;7.1.0&quot;,
+   66      &quot;strip-json-comments&quot;: &quot;3.1.1&quot;,
+   67      &quot;tar&quot;: &quot;7.5.8&quot;,
+   68      &quot;tinygradient&quot;: &quot;1.1.5&quot;,
+   69      &quot;undici&quot;: &quot;7.10.0&quot;,
+   70      &quot;ws&quot;: &quot;8.16.0&quot;,
+   71      &quot;yargs&quot;: &quot;17.7.2&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--inspect-brk#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--ext</code></h3><small>flag · packages/cli/package.json:19</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/package.json#L14-L31" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   14    },
+   15    &quot;scripts&quot;: {
+   16      &quot;build&quot;: &quot;node ../../scripts/build_package.js&quot;,
+   17      &quot;start&quot;: &quot;node dist/index.js&quot;,
+   18      &quot;debug&quot;: &quot;node --inspect-brk dist/index.js&quot;,
+   19      &quot;lint&quot;: &quot;eslint . --ext .ts,.tsx&quot;,
+   20      &quot;format&quot;: &quot;prettier --write .&quot;,
+   21      &quot;test&quot;: &quot;vitest run&quot;,
+   22      &quot;test:ci&quot;: &quot;vitest run&quot;,
+   23      &quot;posttest&quot;: &quot;npm run build&quot;,
+   24      &quot;typecheck&quot;: &quot;tsc --noEmit&quot;
+   25    },
+   26    &quot;files&quot;: [
+   27      &quot;dist&quot;
+   28    ],
+   29    &quot;config&quot;: {
+   30      &quot;sandboxImageUri&quot;: &quot;us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:0.56.0-nightly.20260806.g761f604c1&quot;
+   31    },
+   32    &quot;dependencies&quot;: {
+   33      &quot;@agentclientprotocol/sdk&quot;: &quot;0.16.1&quot;,
+   34      &quot;@google/gemini-cli-core&quot;: &quot;file:../core&quot;,
+   35      &quot;@google/genai&quot;: &quot;1.30.0&quot;,
+   36      &quot;@iarna/toml&quot;: &quot;2.2.5&quot;,
+   37      &quot;@modelcontextprotocol/sdk&quot;: &quot;1.23.0&quot;,
+   38      &quot;ansi-escapes&quot;: &quot;7.3.0&quot;,
+   39      &quot;ansi-regex&quot;: &quot;6.2.2&quot;,
+   40      &quot;chalk&quot;: &quot;4.1.2&quot;,
+   41      &quot;cli-spinners&quot;: &quot;2.9.2&quot;,
+   42      &quot;clipboardy&quot;: &quot;5.2.0&quot;,
+   43      &quot;color-convert&quot;: &quot;2.0.1&quot;,
+   44      &quot;command-exists&quot;: &quot;1.2.9&quot;,
+   45      &quot;comment-json&quot;: &quot;4.2.5&quot;,
+   46      &quot;diff&quot;: &quot;8.0.3&quot;,
+   47      &quot;dotenv&quot;: &quot;17.1.0&quot;,
+   48      &quot;extract-zip&quot;: &quot;2.0.1&quot;,
+   49      &quot;fzf&quot;: &quot;0.5.2&quot;,
+   50      &quot;glob&quot;: &quot;12.0.0&quot;,
+   51      &quot;highlight.js&quot;: &quot;11.11.1&quot;,
+   52      &quot;ink&quot;: &quot;npm:@jrichman/ink@6.6.9&quot;,
+   53      &quot;ink-gradient&quot;: &quot;3.0.0&quot;,
+   54      &quot;ink-spinner&quot;: &quot;5.0.0&quot;,
+   55      &quot;latest-version&quot;: &quot;9.0.0&quot;,
+   56      &quot;lowlight&quot;: &quot;3.3.0&quot;,
+   57      &quot;mnemonist&quot;: &quot;0.40.3&quot;,
+   58      &quot;open&quot;: &quot;10.1.2&quot;,
+   59      &quot;prompts&quot;: &quot;2.4.2&quot;,
+   60      &quot;proper-lockfile&quot;: &quot;4.1.2&quot;,
+   61      &quot;react&quot;: &quot;19.2.4&quot;,
+   62      &quot;shell-quote&quot;: &quot;1.8.3&quot;,
+   63      &quot;simple-git&quot;: &quot;3.28.0&quot;,
+   64      &quot;string-width&quot;: &quot;8.1.0&quot;,
+   65      &quot;strip-ansi&quot;: &quot;7.1.0&quot;,
+   66      &quot;strip-json-comments&quot;: &quot;3.1.1&quot;,
+   67      &quot;tar&quot;: &quot;7.5.8&quot;,
+   68      &quot;tinygradient&quot;: &quot;1.1.5&quot;,
+   69      &quot;undici&quot;: &quot;7.10.0&quot;,
+   70      &quot;ws&quot;: &quot;8.16.0&quot;,
+   71      &quot;yargs&quot;: &quot;17.7.2&quot;,
+   72      &quot;zod&quot;: &quot;3.25.76&quot;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--ext#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--write</code></h3><small>flag · packages/cli/package.json:20</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/package.json#L15-L32" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   15    &quot;scripts&quot;: {
+   16      &quot;build&quot;: &quot;node ../../scripts/build_package.js&quot;,
+   17      &quot;start&quot;: &quot;node dist/index.js&quot;,
+   18      &quot;debug&quot;: &quot;node --inspect-brk dist/index.js&quot;,
+   19      &quot;lint&quot;: &quot;eslint . --ext .ts,.tsx&quot;,
+   20      &quot;format&quot;: &quot;prettier --write .&quot;,
+   21      &quot;test&quot;: &quot;vitest run&quot;,
+   22      &quot;test:ci&quot;: &quot;vitest run&quot;,
+   23      &quot;posttest&quot;: &quot;npm run build&quot;,
+   24      &quot;typecheck&quot;: &quot;tsc --noEmit&quot;
+   25    },
+   26    &quot;files&quot;: [
+   27      &quot;dist&quot;
+   28    ],
+   29    &quot;config&quot;: {
+   30      &quot;sandboxImageUri&quot;: &quot;us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:0.56.0-nightly.20260806.g761f604c1&quot;
+   31    },
+   32    &quot;dependencies&quot;: {
+   33      &quot;@agentclientprotocol/sdk&quot;: &quot;0.16.1&quot;,
+   34      &quot;@google/gemini-cli-core&quot;: &quot;file:../core&quot;,
+   35      &quot;@google/genai&quot;: &quot;1.30.0&quot;,
+   36      &quot;@iarna/toml&quot;: &quot;2.2.5&quot;,
+   37      &quot;@modelcontextprotocol/sdk&quot;: &quot;1.23.0&quot;,
+   38      &quot;ansi-escapes&quot;: &quot;7.3.0&quot;,
+   39      &quot;ansi-regex&quot;: &quot;6.2.2&quot;,
+   40      &quot;chalk&quot;: &quot;4.1.2&quot;,
+   41      &quot;cli-spinners&quot;: &quot;2.9.2&quot;,
+   42      &quot;clipboardy&quot;: &quot;5.2.0&quot;,
+   43      &quot;color-convert&quot;: &quot;2.0.1&quot;,
+   44      &quot;command-exists&quot;: &quot;1.2.9&quot;,
+   45      &quot;comment-json&quot;: &quot;4.2.5&quot;,
+   46      &quot;diff&quot;: &quot;8.0.3&quot;,
+   47      &quot;dotenv&quot;: &quot;17.1.0&quot;,
+   48      &quot;extract-zip&quot;: &quot;2.0.1&quot;,
+   49      &quot;fzf&quot;: &quot;0.5.2&quot;,
+   50      &quot;glob&quot;: &quot;12.0.0&quot;,
+   51      &quot;highlight.js&quot;: &quot;11.11.1&quot;,
+   52      &quot;ink&quot;: &quot;npm:@jrichman/ink@6.6.9&quot;,
+   53      &quot;ink-gradient&quot;: &quot;3.0.0&quot;,
+   54      &quot;ink-spinner&quot;: &quot;5.0.0&quot;,
+   55      &quot;latest-version&quot;: &quot;9.0.0&quot;,
+   56      &quot;lowlight&quot;: &quot;3.3.0&quot;,
+   57      &quot;mnemonist&quot;: &quot;0.40.3&quot;,
+   58      &quot;open&quot;: &quot;10.1.2&quot;,
+   59      &quot;prompts&quot;: &quot;2.4.2&quot;,
+   60      &quot;proper-lockfile&quot;: &quot;4.1.2&quot;,
+   61      &quot;react&quot;: &quot;19.2.4&quot;,
+   62      &quot;shell-quote&quot;: &quot;1.8.3&quot;,
+   63      &quot;simple-git&quot;: &quot;3.28.0&quot;,
+   64      &quot;string-width&quot;: &quot;8.1.0&quot;,
+   65      &quot;strip-ansi&quot;: &quot;7.1.0&quot;,
+   66      &quot;strip-json-comments&quot;: &quot;3.1.1&quot;,
+   67      &quot;tar&quot;: &quot;7.5.8&quot;,
+   68      &quot;tinygradient&quot;: &quot;1.1.5&quot;,
+   69      &quot;undici&quot;: &quot;7.10.0&quot;,
+   70      &quot;ws&quot;: &quot;8.16.0&quot;,
+   71      &quot;yargs&quot;: &quot;17.7.2&quot;,
+   72      &quot;zod&quot;: &quot;3.25.76&quot;
+   73    },</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--write#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--noEmit</code></h3><small>flag · packages/cli/package.json:24</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/package.json#L19-L36" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   19      &quot;lint&quot;: &quot;eslint . --ext .ts,.tsx&quot;,
+   20      &quot;format&quot;: &quot;prettier --write .&quot;,
+   21      &quot;test&quot;: &quot;vitest run&quot;,
+   22      &quot;test:ci&quot;: &quot;vitest run&quot;,
+   23      &quot;posttest&quot;: &quot;npm run build&quot;,
+   24      &quot;typecheck&quot;: &quot;tsc --noEmit&quot;
+   25    },
+   26    &quot;files&quot;: [
+   27      &quot;dist&quot;
+   28    ],
+   29    &quot;config&quot;: {
+   30      &quot;sandboxImageUri&quot;: &quot;us-docker.pkg.dev/gemini-code-dev/gemini-cli/sandbox:0.56.0-nightly.20260806.g761f604c1&quot;
+   31    },
+   32    &quot;dependencies&quot;: {
+   33      &quot;@agentclientprotocol/sdk&quot;: &quot;0.16.1&quot;,
+   34      &quot;@google/gemini-cli-core&quot;: &quot;file:../core&quot;,
+   35      &quot;@google/genai&quot;: &quot;1.30.0&quot;,
+   36      &quot;@iarna/toml&quot;: &quot;2.2.5&quot;,
+   37      &quot;@modelcontextprotocol/sdk&quot;: &quot;1.23.0&quot;,
+   38      &quot;ansi-escapes&quot;: &quot;7.3.0&quot;,
+   39      &quot;ansi-regex&quot;: &quot;6.2.2&quot;,
+   40      &quot;chalk&quot;: &quot;4.1.2&quot;,
+   41      &quot;cli-spinners&quot;: &quot;2.9.2&quot;,
+   42      &quot;clipboardy&quot;: &quot;5.2.0&quot;,
+   43      &quot;color-convert&quot;: &quot;2.0.1&quot;,
+   44      &quot;command-exists&quot;: &quot;1.2.9&quot;,
+   45      &quot;comment-json&quot;: &quot;4.2.5&quot;,
+   46      &quot;diff&quot;: &quot;8.0.3&quot;,
+   47      &quot;dotenv&quot;: &quot;17.1.0&quot;,
+   48      &quot;extract-zip&quot;: &quot;2.0.1&quot;,
+   49      &quot;fzf&quot;: &quot;0.5.2&quot;,
+   50      &quot;glob&quot;: &quot;12.0.0&quot;,
+   51      &quot;highlight.js&quot;: &quot;11.11.1&quot;,
+   52      &quot;ink&quot;: &quot;npm:@jrichman/ink@6.6.9&quot;,
+   53      &quot;ink-gradient&quot;: &quot;3.0.0&quot;,
+   54      &quot;ink-spinner&quot;: &quot;5.0.0&quot;,
+   55      &quot;latest-version&quot;: &quot;9.0.0&quot;,
+   56      &quot;lowlight&quot;: &quot;3.3.0&quot;,
+   57      &quot;mnemonist&quot;: &quot;0.40.3&quot;,
+   58      &quot;open&quot;: &quot;10.1.2&quot;,
+   59      &quot;prompts&quot;: &quot;2.4.2&quot;,
+   60      &quot;proper-lockfile&quot;: &quot;4.1.2&quot;,
+   61      &quot;react&quot;: &quot;19.2.4&quot;,
+   62      &quot;shell-quote&quot;: &quot;1.8.3&quot;,
+   63      &quot;simple-git&quot;: &quot;3.28.0&quot;,
+   64      &quot;string-width&quot;: &quot;8.1.0&quot;,
+   65      &quot;strip-ansi&quot;: &quot;7.1.0&quot;,
+   66      &quot;strip-json-comments&quot;: &quot;3.1.1&quot;,
+   67      &quot;tar&quot;: &quot;7.5.8&quot;,
+   68      &quot;tinygradient&quot;: &quot;1.1.5&quot;,
+   69      &quot;undici&quot;: &quot;7.10.0&quot;,
+   70      &quot;ws&quot;: &quot;8.16.0&quot;,
+   71      &quot;yargs&quot;: &quot;17.7.2&quot;,
+   72      &quot;zod&quot;: &quot;3.25.76&quot;
+   73    },
+   74    &quot;devDependencies&quot;: {
+   75      &quot;@google/gemini-cli-test-utils&quot;: &quot;file:../test-utils&quot;,
+   76      &quot;@types/command-exists&quot;: &quot;1.2.3&quot;,
+   77      &quot;@types/hast&quot;: &quot;3.0.4&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--noEmit#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--scope</code></h3><small>flag · packages/cli/src/acp/commands/extensions.ts:93</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/acp/commands/extensions.ts#L88-L105" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   88      };
+   89    }
+   90
+   91    if (args.length === 0) {
+   92      return {
+   93        error: `Usage: /extensions ${invocationName} &lt;extension&gt; [--scope=&lt;user|workspace|session&gt;]`,
+   94      };
+   95    }
+   96
+   97    let scope = SettingScope.User;
+   98    if (args.includes(&#39;--scope=workspace&#39;) || args.includes(&#39;workspace&#39;)) {
+   99      scope = SettingScope.Workspace;
+  100    } else if (args.includes(&#39;--scope=session&#39;) || args.includes(&#39;session&#39;)) {
+  101      scope = SettingScope.Session;
+  102    }
+  103
+  104    const name = args.filter(
+  105      (a) =&gt;
+  106        !a.startsWith(&#39;--scope&#39;) &amp;&amp; ![&#39;user&#39;, &#39;workspace&#39;, &#39;session&#39;].includes(a),
+  107    )[0];
+  108
+  109    let names: string[] = [];
+  110    if (name === &#39;--all&#39;) {
+  111      let extensions = extensionManager.getExtensions();
+  112      if (invocationName === &#39;enable&#39;) {
+  113        extensions = extensions.filter((ext) =&gt; !ext.isActive);
+  114      }
+  115      if (invocationName === &#39;disable&#39;) {
+  116        extensions = extensions.filter((ext) =&gt; ext.isActive);
+  117      }
+  118      names = extensions.map((ext) =&gt; ext.name);
+  119    } else if (name) {
+  120      names = [name];
+  121    } else {
+  122      return { error: &#39;No extension name provided.&#39; };
+  123    }
+  124
+  125    return { extensionManager, names, scope };
+  126  }
+  127
+  128  export class EnableExtensionCommand implements Command {
+  129    readonly name = &#39;extensions enable&#39;;
+  130    readonly description = &#39;Enable an extension.&#39;;
+  131
+  132    async execute(
+  133      context: CommandContext,
+  134      args: string[],
+  135    ): Promise&lt;CommandExecutionResponse&gt; {
+  136      const enableContext = getEnableDisableContext(
+  137        context.agentContext.config,
+  138        args,
+  139        &#39;enable&#39;,
+  140      );
+  141      if (&#39;error&#39; in enableContext) {
+  142        return { name: this.name, data: enableContext.error };
+  143      }
+  144
+  145      const { names, scope, extensionManager } = enableContext;
+  146      const output: string[] = [];</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--scope#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--all</code></h3><small>flag · packages/cli/src/acp/commands/extensions.ts:110</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/acp/commands/extensions.ts#L105-L122" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  105      (a) =&gt;
+  106        !a.startsWith(&#39;--scope&#39;) &amp;&amp; ![&#39;user&#39;, &#39;workspace&#39;, &#39;session&#39;].includes(a),
+  107    )[0];
+  108
+  109    let names: string[] = [];
+  110    if (name === &#39;--all&#39;) {
+  111      let extensions = extensionManager.getExtensions();
+  112      if (invocationName === &#39;enable&#39;) {
+  113        extensions = extensions.filter((ext) =&gt; !ext.isActive);
+  114      }
+  115      if (invocationName === &#39;disable&#39;) {
+  116        extensions = extensions.filter((ext) =&gt; ext.isActive);
+  117      }
+  118      names = extensions.map((ext) =&gt; ext.name);
+  119    } else if (name) {
+  120      names = [name];
+  121    } else {
+  122      return { error: &#39;No extension name provided.&#39; };
+  123    }
+  124
+  125    return { extensionManager, names, scope };
+  126  }
+  127
+  128  export class EnableExtensionCommand implements Command {
+  129    readonly name = &#39;extensions enable&#39;;
+  130    readonly description = &#39;Enable an extension.&#39;;
+  131
+  132    async execute(
+  133      context: CommandContext,
+  134      args: string[],
+  135    ): Promise&lt;CommandExecutionResponse&gt; {
+  136      const enableContext = getEnableDisableContext(
+  137        context.agentContext.config,
+  138        args,
+  139        &#39;enable&#39;,
+  140      );
+  141      if (&#39;error&#39; in enableContext) {
+  142        return { name: this.name, data: enableContext.error };
+  143      }
+  144
+  145      const { names, scope, extensionManager } = enableContext;
+  146      const output: string[] = [];
+  147
+  148      for (const name of names) {
+  149        try {
+  150          await extensionManager.enableExtension(name, scope);
+  151          output.push(`Extension &quot;${name}&quot; enabled for scope &quot;${scope}&quot;.`);
+  152
+  153          const extension = extensionManager
+  154            .getExtensions()
+  155            .find((e) =&gt; e.name === name);
+  156
+  157          if (extension?.mcpServers) {
+  158            const mcpEnablementManager = McpServerEnablementManager.getInstance();
+  159            const mcpClientManager =
+  160              context.agentContext.config.getMcpClientManager();
+  161            const enabledServers = await mcpEnablementManager.autoEnableServers(
+  162              Object.keys(extension.mcpServers),
+  163            );</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--all#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--auto-update</code></h3><small>flag · packages/cli/src/commands/extensions/install.ts:173</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/commands/extensions/install.ts#L168-L185" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  168      process.exit(1);
+  169    }
+  170  }
+  171
+  172  export const installCommand: CommandModule = {
+  173    command: &#39;install &lt;source&gt; [--auto-update] [--pre-release]&#39;,
+  174    describe: &#39;Installs an extension from a git repository URL or a local path.&#39;,
+  175    builder: (yargs) =&gt;
+  176      yargs
+  177        .positional(&#39;source&#39;, {
+  178          describe: &#39;The github URL or local path of the extension to install.&#39;,
+  179          type: &#39;string&#39;,
+  180          demandOption: true,
+  181        })
+  182        .option(&#39;ref&#39;, {
+  183          describe: &#39;The git ref to install from.&#39;,
+  184          type: &#39;string&#39;,
+  185        })
+  186        .option(&#39;auto-update&#39;, {
+  187          describe: &#39;Enable auto-update for this extension.&#39;,
+  188          type: &#39;boolean&#39;,
+  189        })
+  190        .option(&#39;pre-release&#39;, {
+  191          describe: &#39;Enable pre-release versions for this extension.&#39;,
+  192          type: &#39;boolean&#39;,
+  193        })
+  194        .option(&#39;consent&#39;, {
+  195          describe:
+  196            &#39;Acknowledge the security risks of installing an extension and skip the confirmation prompt.&#39;,
+  197          type: &#39;boolean&#39;,
+  198          default: false,
+  199        })
+  200        .option(&#39;skip-settings&#39;, {
+  201          describe: &#39;Skip the configuration on install process.&#39;,
+  202          type: &#39;boolean&#39;,
+  203          default: false,
+  204        })
+  205        .check((argv) =&gt; {
+  206          if (!argv.source) {
+  207            throw new Error(&#39;The source argument must be provided.&#39;);
+  208          }
+  209          return true;
+  210        }),
+  211    handler: async (argv) =&gt; {
+  212      await handleInstall({
+  213        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  214        source: argv[&#39;source&#39;] as string,
+  215        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  216        ref: argv[&#39;ref&#39;] as string | undefined,
+  217        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  218        autoUpdate: argv[&#39;auto-update&#39;] as boolean | undefined,
+  219        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  220        allowPreRelease: argv[&#39;pre-release&#39;] as boolean | undefined,
+  221        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  222        consent: argv[&#39;consent&#39;] as boolean | undefined,
+  223        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  224        skipSettings: argv[&#39;skip-settings&#39;] as boolean | undefined,
+  225      });
+  226      await exitCli();</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--auto-update#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--pre-release</code></h3><small>flag · packages/cli/src/commands/extensions/install.ts:173</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/commands/extensions/install.ts#L168-L185" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  168      process.exit(1);
+  169    }
+  170  }
+  171
+  172  export const installCommand: CommandModule = {
+  173    command: &#39;install &lt;source&gt; [--auto-update] [--pre-release]&#39;,
+  174    describe: &#39;Installs an extension from a git repository URL or a local path.&#39;,
+  175    builder: (yargs) =&gt;
+  176      yargs
+  177        .positional(&#39;source&#39;, {
+  178          describe: &#39;The github URL or local path of the extension to install.&#39;,
+  179          type: &#39;string&#39;,
+  180          demandOption: true,
+  181        })
+  182        .option(&#39;ref&#39;, {
+  183          describe: &#39;The git ref to install from.&#39;,
+  184          type: &#39;string&#39;,
+  185        })
+  186        .option(&#39;auto-update&#39;, {
+  187          describe: &#39;Enable auto-update for this extension.&#39;,
+  188          type: &#39;boolean&#39;,
+  189        })
+  190        .option(&#39;pre-release&#39;, {
+  191          describe: &#39;Enable pre-release versions for this extension.&#39;,
+  192          type: &#39;boolean&#39;,
+  193        })
+  194        .option(&#39;consent&#39;, {
+  195          describe:
+  196            &#39;Acknowledge the security risks of installing an extension and skip the confirmation prompt.&#39;,
+  197          type: &#39;boolean&#39;,
+  198          default: false,
+  199        })
+  200        .option(&#39;skip-settings&#39;, {
+  201          describe: &#39;Skip the configuration on install process.&#39;,
+  202          type: &#39;boolean&#39;,
+  203          default: false,
+  204        })
+  205        .check((argv) =&gt; {
+  206          if (!argv.source) {
+  207            throw new Error(&#39;The source argument must be provided.&#39;);
+  208          }
+  209          return true;
+  210        }),
+  211    handler: async (argv) =&gt; {
+  212      await handleInstall({
+  213        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  214        source: argv[&#39;source&#39;] as string,
+  215        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  216        ref: argv[&#39;ref&#39;] as string | undefined,
+  217        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  218        autoUpdate: argv[&#39;auto-update&#39;] as boolean | undefined,
+  219        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  220        allowPreRelease: argv[&#39;pre-release&#39;] as boolean | undefined,
+  221        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  222        consent: argv[&#39;consent&#39;] as boolean | undefined,
+  223        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  224        skipSettings: argv[&#39;skip-settings&#39;] as boolean | undefined,
+  225      });
+  226      await exitCli();</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--pre-release#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--lines</code></h3><small>flag · packages/cli/src/commands/gemma/logs.ts:137</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/commands/gemma/logs.ts#L132-L149" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  132        })
+  133        .option(&#39;follow&#39;, {
+  134          alias: &#39;f&#39;,
+  135          type: &#39;boolean&#39;,
+  136          description:
+  137            &#39;Follow log output (defaults to true when --lines is omitted)&#39;,
+  138        }),
+  139    handler: async (argv) =&gt; {
+  140      const logPath = getLogFilePath();
+  141
+  142      try {
+  143        await fs.promises.access(logPath, fs.constants.F_OK);
+  144      } catch {
+  145        debugLogger.log(`No log file found at ${logPath}`);
+  146        debugLogger.log(
+  147          &#39;Is the LiteRT server running? Start it with: gemini gemma start&#39;,
+  148        );
+  149        await exitCli(1);
+  150        return;
+  151      }
+  152
+  153      const lines = argv.lines;
+  154      const follow = argv.follow ?? lines === undefined;
+  155      const requestedLines = lines ?? 20;
+  156
+  157      if (follow &amp;&amp; process.platform === &#39;win32&#39;) {
+  158        debugLogger.log(
+  159          &#39;Live log following is not supported on Windows. Use --lines N to view recent logs.&#39;,
+  160        );
+  161        await exitCli(1);
+  162        return;
+  163      }
+  164
+  165      if (process.platform === &#39;win32&#39;) {
+  166        process.stdout.write(await readLastLines(logPath, requestedLines));
+  167        await exitCli(0);
+  168        return;
+  169      }
+  170
+  171      try {
+  172        if (follow) {
+  173          debugLogger.log(`Tailing ${logPath} (Ctrl+C to stop)\n`);
+  174        }
+  175        const exitCode = await runTail(logPath, requestedLines, follow);
+  176        await exitCli(exitCode);
+  177      } catch (error) {
+  178        if (
+  179          error instanceof Error &amp;&amp;
+  180          &#39;code&#39; in error &amp;&amp;
+  181          error.code === &#39;ENOENT&#39;
+  182        ) {
+  183          if (!follow) {
+  184            process.stdout.write(await readLastLines(logPath, requestedLines));
+  185            await exitCli(0);
+  186          } else {
+  187            debugLogger.error(
+  188              &#39;&quot;tail&quot; command not found. Use --lines N to view recent logs without tail.&#39;,
+  189            );
+  190            await exitCli(1);</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--lines#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--port</code></h3><small>flag · packages/cli/src/commands/gemma/platform.ts:276</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/commands/gemma/platform.ts#L271-L288" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  271      return false;
+  272    }
+  273
+  274    if (
+  275      options.port !== undefined &amp;&amp;
+  276      !normalizedCommandLine.includes(`--port=${options.port}`)
+  277    ) {
+  278      return false;
+  279    }
+  280
+  281    if (!options.binaryPath) {
+  282      return true;
+  283    }
+  284
+  285    const normalizedBinaryPath = normalizeProcessValue(options.binaryPath);
+  286    const normalizedBinaryName = normalizeProcessValue(
+  287      path.basename(options.binaryPath),
+  288    );
+  289    return (
+  290      normalizedCommandLine.includes(normalizedBinaryPath) ||
+  291      normalizedCommandLine.includes(normalizedBinaryName)
+  292    );
+  293  }
+  294
+  295  export function isExpectedLiteRtServerProcess(
+  296    pid: number,
+  297    options: {
+  298      binaryPath?: string | null;
+  299      port?: number;
+  300    },
+  301  ): boolean {
+  302    const commandLine = readProcessCommandLine(pid);
+  303    if (!commandLine) {
+  304      return false;
+  305    }
+  306    return isExpectedLiteRtServerCommand(commandLine, options);
+  307  }
+  308
+  309  export function isProcessRunning(pid: number): boolean {
+  310    try {
+  311      process.kill(pid, 0);
+  312      return true;
+  313    } catch {
+  314      return false;
+  315    }
+  316  }
+  317</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--port#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--verbose</code></h3><small>flag · packages/cli/src/commands/gemma/start.ts:47</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/commands/gemma/start.ts#L42-L59" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   42    fs.mkdirSync(tmpDir, { recursive: true });
+   43
+   44    const logFd = fs.openSync(logPath, &#39;a&#39;);
+   45
+   46    try {
+   47      const child = spawn(binaryPath, [&#39;serve&#39;, `--port=${port}`, &#39;--verbose&#39;], {
+   48        detached: true,
+   49        stdio: [&#39;ignore&#39;, logFd, logFd],
+   50      });
+   51
+   52      if (child.pid) {
+   53        writeServerProcessInfo({
+   54          pid: child.pid,
+   55          binaryPath,
+   56          port,
+   57        });
+   58      }
+   59
+   60      child.unref();
+   61    } finally {
+   62      fs.closeSync(logFd);
+   63    }
+   64
+   65    await new Promise((resolve) =&gt; setTimeout(resolve, SERVER_START_WAIT_MS));
+   66    return isServerRunning(port);
+   67  }
+   68
+   69  export const startCommand: CommandModule = {
+   70    command: &#39;start&#39;,
+   71    describe: &#39;Start the LiteRT-LM server&#39;,
+   72    builder: (yargs) =&gt;
+   73      yargs.option(&#39;port&#39;, {
+   74        type: &#39;number&#39;,
+   75        description: &#39;Port for the LiteRT server&#39;,
+   76      }),
+   77    handler: async (argv) =&gt; {
+   78      let port: number | undefined;
+   79      if (argv[&#39;port&#39;] !== undefined) {
+   80        port = Number(argv[&#39;port&#39;]);
+   81      }
+   82
+   83      if (!port) {
+   84        const { configuredPort } = resolveGemmaConfig(DEFAULT_PORT);
+   85        port = configuredPort;
+   86      }
+   87
+   88      const binaryPath = getBinaryPath();
+   89      if (!binaryPath || !isBinaryInstalled(binaryPath)) {
+   90        debugLogger.error(
+   91          chalk.red(
+   92            &#39;LiteRT-LM binary not found. Run &quot;gemini gemma setup&quot; first.&#39;,
+   93          ),
+   94        );
+   95        await exitCli(1);
+   96        return;
+   97      }
+   98
+   99      const alreadyRunning = await isServerRunning(port);
+  100      if (alreadyRunning) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--verbose#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:79–111 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:614–715 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:744–763 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>Turn 从 generateContentStream 收集 text、thought、functionCall、usage 和 finish reason，将 functionCall 放进 pendingToolCalls；主/子 Agent 再以各自 registry、message bus、sandbox manager 创建 Scheduler 批量执行。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/turn.ts#L236-L320" target="_blank" rel="noreferrer">packages/core/src/core/turn.ts:236–320 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>packages/cli/src/services/SlashCommandConflictHandler.test.ts</b><small>5323 bytes · .ts</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/services/SlashCommandConflictHandler.test.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    8  import { SlashCommandConflictHandler } from &#39;./SlashCommandConflictHandler.js&#39;;
+    9  import {
+   10    coreEvents,
+   11    CoreEvent,
+   12    type SlashCommandConflictsPayload,
+   13    type SlashCommandConflict,
+   14  } from &#39;@google/gemini-cli-core&#39;;
+   15  import { CommandKind } from &#39;../ui/commands/types.js&#39;;
+   16
+   17  vi.mock(&#39;@google/gemini-cli-core&#39;, async (importOriginal) =&gt; {
+   18    const actual =
+   19      await importOriginal&lt;typeof import(&#39;@google/gemini-cli-core&#39;)&gt;();
+   20    return {
+   21      ...actual,
+   22      coreEvents: {
+   23        on: vi.fn(),
+   24        off: vi.fn(),
+   25        emitFeedback: vi.fn(),
+   26      },
+   27    };
+   28  });
+   29
+   30  describe(&#39;SlashCommandConflictHandler&#39;, () =&gt; {
+   31    let handler: SlashCommandConflictHandler;
+   32
+   33    /**
+   34     * Helper to find and invoke the registered conflict event listener.
+   35     */
+   36    const simulateEvent = (conflicts: SlashCommandConflict[]) =&gt; {
+   37      const callback = vi
+   38        .mocked(coreEvents.on)
+   39        .mock.calls.find(
+   40          (call) =&gt; call[0] === CoreEvent.SlashCommandConflicts,</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>packages/cli/src/services/SlashCommandResolver.test.ts</b><small>8052 bytes · .ts</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/services/SlashCommandResolver.test.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    8  import { SlashCommandResolver } from &#39;./SlashCommandResolver.js&#39;;
+    9  import { CommandKind, type SlashCommand } from &#39;../ui/commands/types.js&#39;;
+   10
+   11  const createMockCommand = (name: string, kind: CommandKind): SlashCommand =&gt; ({
+   12    name,
+   13    description: `Description for ${name}`,
+   14    kind,
+   15    action: vi.fn(),
+   16  });
+   17
+   18  describe(&#39;SlashCommandResolver&#39;, () =&gt; {
+   19    describe(&#39;resolve&#39;, () =&gt; {
+   20      it(&#39;should return all commands when there are no conflicts&#39;, () =&gt; {
+   21        const cmdA = createMockCommand(&#39;a&#39;, CommandKind.BUILT_IN);
+   22        const cmdB = createMockCommand(&#39;b&#39;, CommandKind.USER_FILE);
+   23
+   24        const { finalCommands, conflicts } = SlashCommandResolver.resolve([
+   25          cmdA,
+   26          cmdB,
+   27        ]);
+   28
+   29        expect(finalCommands).toHaveLength(2);
+   30        expect(conflicts).toHaveLength(0);
+   31      });
+   32
+   33      it(&#39;should rename extension commands when they conflict with built-in&#39;, () =&gt; {
+   34        const builtin = createMockCommand(&#39;deploy&#39;, CommandKind.BUILT_IN);
+   35        const extension = {
+   36          ...createMockCommand(&#39;deploy&#39;, CommandKind.EXTENSION_FILE),
+   37          extensionName: &#39;firebase&#39;,
+   38        };
+   39
+   40        const { finalCommands, conflicts } = SlashCommandResolver.resolve([</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>packages/cli/src/ui/commands/helpCommand.test.ts</b><small>4719 bytes · .ts</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/ui/commands/helpCommand.test.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    8  import { helpCommand } from &#39;./helpCommand.js&#39;;
+    9  import { CommandKind, type CommandContext } from &#39;./types.js&#39;;
+   10  import { createMockCommandContext } from &#39;../../test-utils/mockCommandContext.js&#39;;
+   11  import { MessageType } from &#39;../types.js&#39;;
+   12
+   13  describe(&#39;helpCommand&#39;, () =&gt; {
+   14    let mockContext: CommandContext;
+   15    const originalPlatform = process.platform;
+   16    const action = helpCommand.action;
+   17
+   18    if (!action) {
+   19      throw new Error(&#39;Help command has no action&#39;);
+   20    }
+   21
+   22    beforeEach(() =&gt; {
+   23      mockContext = createMockCommandContext({
+   24        ui: {
+   25          addItem: vi.fn(),
+   26        },
+   27      } as unknown as CommandContext);
+   28    });
+   29
+   30    afterEach(() =&gt; {
+   31      Object.defineProperty(process, &#39;platform&#39;, { value: originalPlatform });
+   32      vi.unstubAllEnvs();
+   33      vi.clearAllMocks();
+   34    });
+   35
+   36    it(&#39;should add a help message to the UI history by default&#39;, async () =&gt; {
+   37      await action(mockContext, &#39;&#39;);
+   38
+   39      expect(mockContext.ui.addItem).toHaveBeenCalledWith(
+   40        expect.objectContaining({</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>packages/cli/src/ui/commands/planCommand.test.ts</b><small>6527 bytes · .ts</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/ui/commands/planCommand.test.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    8  import { planCommand } from &#39;./planCommand.js&#39;;
+    9  import { type CommandContext } from &#39;./types.js&#39;;
+   10  import { createMockCommandContext } from &#39;../../test-utils/mockCommandContext.js&#39;;
+   11  import { MessageType } from &#39;../types.js&#39;;
+   12  import {
+   13    ApprovalMode,
+   14    coreEvents,
+   15    processSingleFileContent,
+   16    type ProcessedFileReadResult,
+   17    readFileWithEncoding,
+   18  } from &#39;@google/gemini-cli-core&#39;;
+   19  import { copyToClipboard } from &#39;../utils/commandUtils.js&#39;;
+   20
+   21  vi.mock(&#39;@google/gemini-cli-core&#39;, async (importOriginal) =&gt; {
+   22    const actual =
+   23      await importOriginal&lt;typeof import(&#39;@google/gemini-cli-core&#39;)&gt;();
+   24    return {
+   25      ...actual,
+   26      coreEvents: {
+   27        emitFeedback: vi.fn(),
+   28      },
+   29      processSingleFileContent: vi.fn(),
+   30      readFileWithEncoding: vi.fn(),
+   31      partToString: vi.fn((val) =&gt; val),
+   32    };
+   33  });
+   34
+   35  vi.mock(&#39;node:path&#39;, async (importOriginal) =&gt; {
+   36    const actual = await importOriginal&lt;typeof import(&#39;node:path&#39;)&gt;();
+   37    return {
+   38      ...actual,
+   39      default: { ...actual },
+   40      join: vi.fn((...args) =&gt; args.join(&#39;/&#39;)),</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>packages/cli/src/ui/hooks/slashCommandProcessor.test.tsx</b><small>36304 bytes · .tsx</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/ui/hooks/slashCommandProcessor.test.tsx#L11-L26" target="_blank" rel="noreferrer">L11–26 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   11  import { useSlashCommandProcessor } from &#39;./slashCommandProcessor.js&#39;;
+   12  import { CommandKind, type SlashCommand } from &#39;../commands/types.js&#39;;
+   13  import type { LoadedSettings } from &#39;../../config/settings.js&#39;;
+   14  import { MessageType } from &#39;../types.js&#39;;
+   15  import { BuiltinCommandLoader } from &#39;../../services/BuiltinCommandLoader.js&#39;;
+   16  import { FileCommandLoader } from &#39;../../services/FileCommandLoader.js&#39;;
+   17  import { McpPromptLoader } from &#39;../../services/McpPromptLoader.js&#39;;
+   18  import {
+   19    SlashCommandStatus,
+   20    MCPDiscoveryState,
+   21    makeFakeConfig,
+   22    coreEvents,
+   23    type GeminiClient,
+   24  } from &#39;@google/gemini-cli-core&#39;;
+   25
+   26  const {
+   27    logSlashCommand,
+   28    mockBuiltinLoadCommands,
+   29    mockFileLoadCommands,
+   30    mockMcpLoadCommands,
+   31    mockIdeClientGetInstance,
+   32    mockUseAlternateBuffer,
+   33  } = vi.hoisted(() =&gt; ({
+   34    logSlashCommand: vi.fn(),
+   35    mockBuiltinLoadCommands: vi.fn().mockResolvedValue([]),
+   36    mockFileLoadCommands: vi.fn().mockResolvedValue([]),
+   37    mockMcpLoadCommands: vi.fn().mockResolvedValue([]),
+   38    mockIdeClientGetInstance: vi.fn().mockResolvedValue({
+   39      addStatusChangeListener: vi.fn(),
+   40      removeStatusChangeListener: vi.fn(),
+   41    }),
+   42    mockUseAlternateBuffer: vi.fn().mockReturnValue(false),
+   43  }));</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>packages/cli/src/services/SlashCommandConflictHandler.ts</b><small>4923 bytes · .ts</small></div><a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/cli/src/services/SlashCommandConflictHandler.ts#L10-L25" target="_blank" rel="noreferrer">L10–25 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   10    type SlashCommandConflictsPayload,
+   11    type SlashCommandConflict,
+   12  } from &#39;@google/gemini-cli-core&#39;;
+   13  import { CommandKind } from &#39;../ui/commands/types.js&#39;;
+   14
+   15  /**
+   16   * Handles slash command conflict events and provides user feedback.
+   17   *
+   18   * This handler batches multiple conflict events into a single notification
+   19   * block per command name to avoid UI clutter during startup or incremental loading.
+   20   */
+   21  export class SlashCommandConflictHandler {
+   22    private notifiedConflicts = new Set&lt;string&gt;();
+   23    private pendingConflicts: SlashCommandConflict[] = [];
+   24    private flushTimeout: ReturnType&lt;typeof setTimeout&gt; | null = null;
+   25
+   26    constructor() {
+   27      this.handleConflicts = this.handleConflicts.bind(this);
+   28    }
+   29
+   30    start() {
+   31      coreEvents.on(CoreEvent.SlashCommandConflicts, this.handleConflicts);
+   32    }
+   33
+   34    stop() {
+   35      coreEvents.off(CoreEvent.SlashCommandConflicts, this.handleConflicts);
+   36      if (this.flushTimeout) {
+   37        clearTimeout(this.flushTimeout);
+   38        this.flushTimeout = null;
+   39      }
+   40    }
+   41
+   42    private handleConflicts(payload: SlashCommandConflictsPayload) {</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Gemini CLI commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

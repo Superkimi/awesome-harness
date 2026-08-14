@@ -1,0 +1,1435 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>MonkeyCode · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">MonkeyCode · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>MonkeyCode</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>fcc5320b15a1</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · MonkeyCode · fcc5320b15a1</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>5 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 5 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="monkey-resource-001" data-finding-dimension="instructions"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>01 · rules、skills、plugins 是三条不同投放链</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>rules 以内联 ConfigFile 写入 .ai-ready/rules；skills 对三种 CLI 都以 24h presigned zip URL 下发；plugins 只给 OpenCode，并将 entry 变成 file:// URL 注入 opencode.json。</p></section><section><span>PLAIN LANGUAGE</span><p>规则是小纸条直接塞进去，技能是压缩包让 VM 自己下载，插件还要告诉 OpenCode 从哪个入口文件启动。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>资源协议兼顾小文本与大包，但各 runtime 的插件能力并不对齐。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>795–798</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>799–803</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L795-L803" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:795–803</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L795-L803" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  795  // agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在
+  796  // VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip
+  797  // 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的
+  798  // `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。
+  799  const (
+  800  	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;
+  801  	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;
+  802  	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;
+  803  )
+  804
+  805  // parseStringUUIDs 把字符串切片解析成 uuid.UUID 切片。单条解析失败时打一条
+  806  // WARN 日志后跳过，避免一个脏 ID 把整个 task 创建打挂（resolver 内部对
+  807  // per-resource fetch 失败也是 skip-and-log 的策略，这里保持一致）。
+  808  //
+  809  // kind 用来在日志里区分是 skill_ids 还是 plugin_ids。
+  810  func (a *TaskUsecase) parseStringUUIDs(ctx context.Context, kind string, raw []string) []uuid.UUID {
+  811  	if len(raw) == 0 {
+  812  		return nil
+  813  	}
+  814  	out := make([]uuid.UUID, 0, len(raw))
+  815  	for _, s := range raw {
+  816  		trimmed := strings.TrimSpace(s)
+  817  		id, err := uuid.Parse(trimmed)
+  818  		if err != nil {
+  819  			a.logger.WarnContext(ctx, &quot;getCodingConfigs: skip invalid uuid&quot;,
+  820  				slog.String(&quot;kind&quot;, kind),
+  821  				slog.String(&quot;value&quot;, s),
+  822  				slog.Any(&quot;err&quot;, err))
+  823  			continue
+  824  		}
+  825  		out = append(out, id)
+  826  	}
+  827  	return out
+  828  }
+  829
+  830  // injectOpenCodePlugins 重写 cfs 中 path==opencodePath 的那个 ConfigFile，
+  831  // 把 file:// URL 列表注入到 JSON 的 `plugin` 数组。opencode.json 模板里
+  832  // 没有 plugin 字段是有意为之（plugin 列表是运行时动态的），所以这里走渲染后
+  833  // 后置处理而不是 fork 模板。
+  834  func injectOpenCodePlugins(cfs []taskflow.ConfigFile, opencodePath string, pluginURLs []string) ([]taskflow.ConfigFile, error) {
+  835  	for i, c := range cfs {
+  836  		if c.Path != opencodePath {
+  837  			continue
+  838  		}
+  839  		var obj map[string]any
+  840  		if err := json.Unmarshal([]byte(c.Content), &amp;obj); err != nil {
+  841  			return nil, fmt.Errorf(&quot;unmarshal opencode.json: %w&quot;, err)
+  842  		}
+  843  		obj[&quot;plugin&quot;] = pluginURLs
+  844  		out, err := json.MarshalIndent(obj, &quot;&quot;, &quot;  &quot;)
+  845  		if err != nil {
+  846  			return nil, fmt.Errorf(&quot;marshal opencode.json: %w&quot;, err)
+  847  		}
+  848  		cfs[i].Content = string(out)
+  849  		return cfs, nil
+  850  	}
+  851  	return nil, fmt.Errorf(&quot;opencode.json ConfigFile not found at %s&quot;, opencodePath)
+  852  }
+  853
+  854  // userScope 从 DB 查用户所在 team,不依赖 session 里的 Team 字段。
+  855  func (a *TaskUsecase) userScope(ctx context.Context, user *domain.User) agentresource.ScopeFilter {
+  856  	f := agentresource.ScopeFilter{IncludeGlobal: true}
+  857  	if user == nil || a.dbClient == nil {
+  858  		return f
+  859  	}
+  860  	member, err := a.dbClient.TeamMember.Query().
+  861  		Where(teammember.UserIDEQ(user.ID)).
+  862  		First(ctx)
+  863  	if err != nil {
+  864  		if a.logger != nil {
+  865  			a.logger.WarnContext(ctx, &quot;userScope: query team_members failed&quot;,
+  866  				&quot;user_id&quot;, user.ID, &quot;error&quot;, err)
+  867  		}
+  868  		return f
+  869  	}
+  870  	teamID := member.TeamID
+  871  	f.TeamID = &amp;teamID
+  872  	return f
+  873  }
+  874</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>795</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>796</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>797</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>798</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>799</td><th><span class="line-kind-input">INPUT</span></th><td><code>const (</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>800</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>801</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>802</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>803</td><th><span class="line-kind-flow">FLOW</span></th><td><code>)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>804</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>805</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// parseStringUUIDs 把字符串切片解析成 uuid.UUID 切片。单条解析失败时打一条</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>806</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// WARN 日志后跳过，避免一个脏 ID 把整个 task 创建打挂（resolver 内部对</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>807</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>// per-resource fetch 失败也是 skip-and-log 的策略，这里保持一致）。</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>808</td><th><span class="line-kind-flow">FLOW</span></th><td><code>//</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>809</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// kind 用来在日志里区分是 skill_ids 还是 plugin_ids。</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>810</td><th><span class="line-kind-state">STATE</span></th><td><code>func (a *TaskUsecase) parseStringUUIDs(ctx context.Context, kind string, raw []string) []uuid.UUID {</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>811</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if len(raw) == 0 {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>812</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return nil</code></td><td>Returns a result, error, or next step</td></tr><tr><td>813</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>814</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	out := make([]uuid.UUID, 0, len(raw))</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>815</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	for _, s := range raw {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>816</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		trimmed := strings.TrimSpace(s)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>817</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		id, err := uuid.Parse(trimmed)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>818</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>819</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			a.logger.WarnContext(ctx, &quot;getCodingConfigs: skip invalid uuid&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>820</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				slog.String(&quot;kind&quot;, kind),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>821</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				slog.String(&quot;value&quot;, s),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>822</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				slog.Any(&quot;err&quot;, err))</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>backend/biz/task/usecase/task.go · fcc5320b15a1</span><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L795-L803" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  795
+  796  // agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在
+  797  // VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip
+  798  // 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的
+  799  // `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。
+  800  const (
+  801  	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;
+  802  	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;
+  803  	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;
+  804  )
+  805
+  806  // parseStringUUIDs 把字符串切片解析成 uuid.UUID 切片。单条解析失败时打一条
+  807  // WARN 日志后跳过，避免一个脏 ID 把整个 task 创建打挂（resolver 内部对
+  808  // per-resource fetch 失败也是 skip-and-log 的策略，这里保持一致）。
+  809  //
+  810  // kind 用来在日志里区分是 skill_ids 还是 plugin_ids。
+  811  func (a *TaskUsecase) parseStringUUIDs(ctx context.Context, kind string, raw []string) []uuid.UUID {
+  812  	if len(raw) == 0 {
+  813  		return nil
+  814  	}
+  815  	out := make([]uuid.UUID, 0, len(raw))
+  816  	for _, s := range raw {
+  817  		trimmed := strings.TrimSpace(s)
+  818  		id, err := uuid.Parse(trimmed)
+  819  		if err != nil {
+  820  			a.logger.WarnContext(ctx, &quot;getCodingConfigs: skip invalid uuid&quot;,
+  821  				slog.String(&quot;kind&quot;, kind),
+  822  				slog.String(&quot;value&quot;, s),
+  823  				slog.Any(&quot;err&quot;, err))
+  824  			continue
+  825  		}
+  826  		out = append(out, id)
+  827  	}
+  828  	return out
+  829  }
+  830
+  831  // injectOpenCodePlugins 重写 cfs 中 path==opencodePath 的那个 ConfigFile，
+  832  // 把 file:// URL 列表注入到 JSON 的 `plugin` 数组。opencode.json 模板里
+  833  // 没有 plugin 字段是有意为之（plugin 列表是运行时动态的），所以这里走渲染后
+  834  // 后置处理而不是 fork 模板。
+  835  func injectOpenCodePlugins(cfs []taskflow.ConfigFile, opencodePath string, pluginURLs []string) ([]taskflow.ConfigFile, error) {
+  836  	for i, c := range cfs {
+  837  		if c.Path != opencodePath {
+  838  			continue
+  839  		}
+  840  		var obj map[string]any
+  841  		if err := json.Unmarshal([]byte(c.Content), &amp;obj); err != nil {
+  842  			return nil, fmt.Errorf(&quot;unmarshal opencode.json: %w&quot;, err)
+  843  		}
+  844  		obj[&quot;plugin&quot;] = pluginURLs
+  845  		out, err := json.MarshalIndent(obj, &quot;&quot;, &quot;  &quot;)
+  846  		if err != nil {
+  847  			return nil, fmt.Errorf(&quot;marshal opencode.json: %w&quot;, err)
+  848  		}
+  849  		cfs[i].Content = string(out)
+  850  		return cfs, nil
+  851  	}
+  852  	return nil, fmt.Errorf(&quot;opencode.json ConfigFile not found at %s&quot;, opencodePath)
+  853  }
+  854
+  855  // userScope 从 DB 查用户所在 team,不依赖 session 里的 Team 字段。
+  856  func (a *TaskUsecase) userScope(ctx context.Context, user *domain.User) agentresource.ScopeFilter {
+  857  	f := agentresource.ScopeFilter{IncludeGlobal: true}
+  858  	if user == nil || a.dbClient == nil {
+  859  		return f
+  860  	}
+  861  	member, err := a.dbClient.TeamMember.Query().
+  862  		Where(teammember.UserIDEQ(user.ID)).
+  863  		First(ctx)
+  864  	if err != nil {
+  865  		if a.logger != nil {
+  866  			a.logger.WarnContext(ctx, &quot;userScope: query team_members failed&quot;,
+  867  				&quot;user_id&quot;, user.ID, &quot;error&quot;, err)
+  868  		}
+  869  		return f
+  870  	}
+  871  	teamID := member.TeamID
+  872  	f.TeamID = &amp;teamID
+  873  	return f
+  874  }</code></pre></details></div></div></article><article class="finding-card compact" id="monkey-resource-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · 资源按 global/team/user 合并，同名 user 覆盖 team 覆盖 global</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ScopeFilter 可同时包含三个层级，调用方按 user&gt;team&gt;global 做 name override；dispatch 选择用户勾选项与 force-delivery，并过滤 disabled。</p></section><section><span>PLAIN LANGUAGE</span><p>公司给默认技能，团队可换一版，个人还能再覆盖同名版本；被禁用的资源不会因强制投放而复活。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>这已经接近企业 Agent 的策略分层，而不是单用户插件目录。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>99–111</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>112–126</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/types.go#L99-L126" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/agentresource/types.go:99–126</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/types.go#L99-L126" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   99  // ScopeFilter constrains a listing or dispatch query to a subset of the
+  100  // three scope tiers. Used by the *Scoped Repo methods.
+  101  //
+  102  // Semantic: rows whose scope_type is &quot;global&quot; are included when
+  103  // IncludeGlobal is true; rows whose scope is &quot;team&quot; are included when
+  104  // TeamID != nil and matches; same for user. Multiple flags may be set —
+  105  // the result is the union, with name-based override (user &gt; team &gt; global)
+  106  // applied by the call sites that need overrides (Listing / dispatch).
+  107  type ScopeFilter struct {
+  108  	IncludeGlobal bool
+  109  	TeamID        *uuid.UUID
+  110  	UserID        *uuid.UUID
+  111  }
+  112
+  113  // GlobalOnlyScope is the default scope for back-compat call sites that
+  114  // haven&#39;t migrated to ScopeFilter yet. Matches the historical &quot;global only&quot;
+  115  // behavior of the unsuffixed Repo methods.
+  116  func GlobalOnlyScope() ScopeFilter {
+  117  	return ScopeFilter{IncludeGlobal: true}
+  118  }
+  119
+  120  // SkillSelection bundles a ScopeFilter with the user-picked skill IDs for
+  121  // the dispatch path. ListActiveSkillsScoped takes this so the same struct
+  122  // flows from the task usecase down to the SQL.
+  123  type SkillSelection struct {
+  124  	Scope           ScopeFilter
+  125  	UserSelectedIDs []uuid.UUID
+  126  }
+  127
+  128  // MaterializedRule is a fully fetched rule body, ready to be embedded into
+  129  // the getCodingConfigs response.
+  130  type MaterializedRule struct {
+  131  	Name    string
+  132  	Content string
+  133  }
+  134
+  135  // MaterializedFile is one entry inside an unzipped skill or plugin asset.
+  136  // RelPath is the path inside the archive (e.g. &quot;skill.md&quot;, &quot;scripts/run.sh&quot;).
+  137  type MaterializedFile struct {
+  138  	RelPath string
+  139  	Content []byte
+  140  }
+  141
+  142  // MaterializedAsset is a skill or plugin after S3 fetch + in-memory unzip.
+  143  // Entry is only populated for plugins (it is taken from parsed_meta.entry).
+  144  type MaterializedAsset struct {
+  145  	Name  string
+  146  	Entry string
+  147  	Files []MaterializedFile
+  148  }
+  149
+  150  // SkillRef is a skill addressed by a presigned GET URL — the resolver no
+  151  // longer downloads + unzips the skill itself; the codingmatrix agent does
+  152  // that inside the task VM. This is the replacement for MaterializedAsset on
+  153  // the skill dispatch path and exists to keep the gRPC PushTasks payload
+  154  // under the 4MiB ceiling regardless of how many skills are in scope.
+  155  type SkillRef struct {
+  156  	Name    string
+  157  	Version string
+  158  	ZipURL  string // presigned GET URL (TTL bound by the resolver)
+  159  }
+  160
+  161  // PluginRef is the plugin counterpart of SkillRef. EntryFilename comes from
+  162  // parsed_meta.entry and is needed by mcai-backend to write the
+  163  // opencode.json `plugin` array — the agent itself does not consume it.
+  164  type PluginRef struct {
+  165  	Name          string
+  166  	Version       string
+  167  	ZipURL        string
+  168  	EntryFilename string
+  169  }
+  170</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>99</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>// ScopeFilter constrains a listing or dispatch query to a subset of the</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>100</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// three scope tiers. Used by the *Scoped Repo methods.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>101</td><th><span class="line-kind-flow">FLOW</span></th><td><code>//</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>102</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// Semantic: rows whose scope_type is &quot;global&quot; are included when</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>103</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// IncludeGlobal is true; rows whose scope is &quot;team&quot; are included when</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>104</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>// TeamID != nil and matches; same for user. Multiple flags may be set —</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>105</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// the result is the union, with name-based override (user &gt; team &gt; global)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>106</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>// applied by the call sites that need overrides (Listing / dispatch).</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>107</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type ScopeFilter struct {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>108</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	IncludeGlobal bool</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>109</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	TeamID        *uuid.UUID</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>110</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	UserID        *uuid.UUID</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>111</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>112</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>113</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>// GlobalOnlyScope is the default scope for back-compat call sites that</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>114</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// haven&#39;t migrated to ScopeFilter yet. Matches the historical &quot;global only&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>115</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// behavior of the unsuffixed Repo methods.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>116</td><th><span class="line-kind-flow">FLOW</span></th><td><code>func GlobalOnlyScope() ScopeFilter {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>117</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>	return ScopeFilter{IncludeGlobal: true}</code></td><td>Returns a result, error, or next step</td></tr><tr><td>118</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>119</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>120</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>// SkillSelection bundles a ScopeFilter with the user-picked skill IDs for</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>121</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>// the dispatch path. ListActiveSkillsScoped takes this so the same struct</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>122</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// flows from the task usecase down to the SQL.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>123</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type SkillSelection struct {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>124</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Scope           ScopeFilter</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>125</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	UserSelectedIDs []uuid.UUID</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>126</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="monkey-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>03 · MCP Hub 把工具身份绑定到具体 user、task 和 VM</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>任务拿到本地 builtin MCP 和带 runtime token 的平台 MCP；Hub 认证先由 ModelApiKey 找到 VirtualMachineID，再查唯一 TaskVirtualMachine，形成 user/task/model subject。</p></section><section><span>PLAIN LANGUAGE</span><p>工具调用不是“拿到平台 token 就随便用”，而是能追到哪台 VM、哪个人、哪个任务。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>为审计、限额和撤销提供了细粒度主体。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>741–753</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>754–767</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L741-L767" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:741–767</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L741-L767" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  741  func (a *TaskUsecase) buildMCPConfigs(taskID uuid.UUID, token string) []taskflow.McpServerConfig {
+  742  	mcps := []taskflow.McpServerConfig{
+  743  		{
+  744  			Type: &quot;http&quot;,
+  745  			Name: &quot;mcaiBuiltin&quot;,
+  746  			Url:  proto.String(fmt.Sprintf(&quot;http://127.0.0.1:65510/mcp?task_id=%s&quot;, taskID.String())),
+  747  		},
+  748  	}
+  749
+  750  	if token != &quot;&quot; {
+  751  		mcps = append(mcps, taskflow.McpServerConfig{
+  752  			Type: &quot;http&quot;,
+  753  			Name: &quot;monkeycode-ai&quot;,
+  754  			Url:  proto.String(fmt.Sprintf(&quot;%s/mcp&quot;, strings.TrimRight(a.cfg.Server.BaseURL, &quot;/&quot;))),
+  755  			Headers: []*taskflow.McpHttpHeader{
+  756  				{
+  757  					Name:  &quot;Authorization&quot;,
+  758  					Value: fmt.Sprintf(&quot;Bearer %s&quot;, token),
+  759  				},
+  760  			},
+  761  			Command: new(string),
+  762  			Args:    []string{},
+  763  			Env:     map[string]string{},
+  764  		})
+  765  	}
+  766
+  767  	return mcps
+  768  }
+  769
+  770  func opencodeNpmPackage(interfaceType string) (string, error) {
+  771  	switch consts.InterfaceType(interfaceType) {
+  772  	case consts.InterfaceTypeOpenAIChat:
+  773  		return &quot;@ai-sdk/openai-compatible&quot;, nil
+  774  	case consts.InterfaceTypeOpenAIResponse:
+  775  		return &quot;@ai-sdk/openai&quot;, nil
+  776  	case consts.InterfaceTypeAnthropic:
+  777  		return &quot;@ai-sdk/anthropic&quot;, nil
+  778  	default:
+  779  		return &quot;&quot;, fmt.Errorf(&quot;unsupported interface type: %s, supported types: %s, %s, %s&quot;,
+  780  			interfaceType,
+  781  			consts.InterfaceTypeOpenAIChat,
+  782  			consts.InterfaceTypeOpenAIResponse,
+  783  			consts.InterfaceTypeAnthropic,
+  784  		)
+  785  	}
+  786  }
+  787
+  788  func modelRuntimeDefaults(m *db.Model) (thinking bool, contextLimit int, outputLimit int) {
+  789  	thinking = m.ThinkingEnabled
+  790  	contextLimit = cmp.Or(m.ContextLimit, 200000)
+  791  	outputLimit = cmp.Or(m.OutputLimit, 32000)
+  792  	return thinking, contextLimit, outputLimit
+  793  }
+  794
+  795  // agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在
+  796  // VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip
+  797  // 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的
+  798  // `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。
+  799  const (
+  800  	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;
+  801  	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;
+  802  	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;
+  803  )
+  804
+  805  // parseStringUUIDs 把字符串切片解析成 uuid.UUID 切片。单条解析失败时打一条
+  806  // WARN 日志后跳过，避免一个脏 ID 把整个 task 创建打挂（resolver 内部对
+  807  // per-resource fetch 失败也是 skip-and-log 的策略，这里保持一致）。
+  808  //
+  809  // kind 用来在日志里区分是 skill_ids 还是 plugin_ids。
+  810  func (a *TaskUsecase) parseStringUUIDs(ctx context.Context, kind string, raw []string) []uuid.UUID {
+  811  	if len(raw) == 0 {
+  812  		return nil
+  813  	}
+  814  	out := make([]uuid.UUID, 0, len(raw))
+  815  	for _, s := range raw {
+  816  		trimmed := strings.TrimSpace(s)
+  817  		id, err := uuid.Parse(trimmed)
+  818  		if err != nil {
+  819  			a.logger.WarnContext(ctx, &quot;getCodingConfigs: skip invalid uuid&quot;,
+  820  				slog.String(&quot;kind&quot;, kind),
+  821  				slog.String(&quot;value&quot;, s),
+  822  				slog.Any(&quot;err&quot;, err))
+  823  			continue
+  824  		}
+  825  		out = append(out, id)
+  826  	}
+  827  	return out
+  828  }
+  829
+  830  // injectOpenCodePlugins 重写 cfs 中 path==opencodePath 的那个 ConfigFile，
+  831  // 把 file:// URL 列表注入到 JSON 的 `plugin` 数组。opencode.json 模板里
+  832  // 没有 plugin 字段是有意为之（plugin 列表是运行时动态的），所以这里走渲染后
+  833  // 后置处理而不是 fork 模板。
+  834  func injectOpenCodePlugins(cfs []taskflow.ConfigFile, opencodePath string, pluginURLs []string) ([]taskflow.ConfigFile, error) {
+  835  	for i, c := range cfs {
+  836  		if c.Path != opencodePath {
+  837  			continue
+  838  		}</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>741</td><th><span class="line-kind-flow">FLOW</span></th><td><code>func (a *TaskUsecase) buildMCPConfigs(taskID uuid.UUID, token string) []taskflow.McpServerConfig {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>742</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	mcps := []taskflow.McpServerConfig{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>743</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>744</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>			Type: &quot;http&quot;,</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>745</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			Name: &quot;mcaiBuiltin&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>746</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>			Url:  proto.String(fmt.Sprintf(&quot;http://127.0.0.1:65510/mcp?task_id=%s&quot;, taskID.String())),</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>747</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>748</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>749</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>750</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if token != &quot;&quot; {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>751</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		mcps = append(mcps, taskflow.McpServerConfig{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>752</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>			Type: &quot;http&quot;,</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>753</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			Name: &quot;monkeycode-ai&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>754</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			Url:  proto.String(fmt.Sprintf(&quot;%s/mcp&quot;, strings.TrimRight(a.cfg.Server.BaseURL, &quot;/&quot;))),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>755</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			Headers: []*taskflow.McpHttpHeader{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>756</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>757</td><th><span class="line-kind-flow">FLOW</span></th><td><code>					Name:  &quot;Authorization&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>758</td><th><span class="line-kind-flow">FLOW</span></th><td><code>					Value: fmt.Sprintf(&quot;Bearer %s&quot;, token),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>759</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>760</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>761</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			Command: new(string),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>762</td><th><span class="line-kind-input">INPUT</span></th><td><code>			Args:    []string{},</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>763</td><th><span class="line-kind-input">INPUT</span></th><td><code>			Env:     map[string]string{},</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>764</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		})</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>765</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>766</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>767</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>	return mcps</code></td><td>Returns a result, error, or next step</td></tr><tr><td>768</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>backend/biz/task/usecase/task.go · fcc5320b15a1</span><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L741-L767" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  741
+  742  func (a *TaskUsecase) buildMCPConfigs(taskID uuid.UUID, token string) []taskflow.McpServerConfig {
+  743  	mcps := []taskflow.McpServerConfig{
+  744  		{
+  745  			Type: &quot;http&quot;,
+  746  			Name: &quot;mcaiBuiltin&quot;,
+  747  			Url:  proto.String(fmt.Sprintf(&quot;http://127.0.0.1:65510/mcp?task_id=%s&quot;, taskID.String())),
+  748  		},
+  749  	}
+  750
+  751  	if token != &quot;&quot; {
+  752  		mcps = append(mcps, taskflow.McpServerConfig{
+  753  			Type: &quot;http&quot;,
+  754  			Name: &quot;monkeycode-ai&quot;,
+  755  			Url:  proto.String(fmt.Sprintf(&quot;%s/mcp&quot;, strings.TrimRight(a.cfg.Server.BaseURL, &quot;/&quot;))),
+  756  			Headers: []*taskflow.McpHttpHeader{
+  757  				{
+  758  					Name:  &quot;Authorization&quot;,
+  759  					Value: fmt.Sprintf(&quot;Bearer %s&quot;, token),
+  760  				},
+  761  			},
+  762  			Command: new(string),
+  763  			Args:    []string{},
+  764  			Env:     map[string]string{},
+  765  		})
+  766  	}
+  767
+  768  	return mcps
+  769  }
+  770
+  771  func opencodeNpmPackage(interfaceType string) (string, error) {
+  772  	switch consts.InterfaceType(interfaceType) {
+  773  	case consts.InterfaceTypeOpenAIChat:
+  774  		return &quot;@ai-sdk/openai-compatible&quot;, nil
+  775  	case consts.InterfaceTypeOpenAIResponse:
+  776  		return &quot;@ai-sdk/openai&quot;, nil
+  777  	case consts.InterfaceTypeAnthropic:
+  778  		return &quot;@ai-sdk/anthropic&quot;, nil
+  779  	default:
+  780  		return &quot;&quot;, fmt.Errorf(&quot;unsupported interface type: %s, supported types: %s, %s, %s&quot;,
+  781  			interfaceType,
+  782  			consts.InterfaceTypeOpenAIChat,
+  783  			consts.InterfaceTypeOpenAIResponse,
+  784  			consts.InterfaceTypeAnthropic,
+  785  		)
+  786  	}
+  787  }
+  788
+  789  func modelRuntimeDefaults(m *db.Model) (thinking bool, contextLimit int, outputLimit int) {
+  790  	thinking = m.ThinkingEnabled
+  791  	contextLimit = cmp.Or(m.ContextLimit, 200000)
+  792  	outputLimit = cmp.Or(m.OutputLimit, 32000)
+  793  	return thinking, contextLimit, outputLimit
+  794  }
+  795
+  796  // agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在
+  797  // VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip
+  798  // 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的
+  799  // `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。
+  800  const (
+  801  	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;
+  802  	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;
+  803  	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;
+  804  )
+  805
+  806  // parseStringUUIDs 把字符串切片解析成 uuid.UUID 切片。单条解析失败时打一条
+  807  // WARN 日志后跳过，避免一个脏 ID 把整个 task 创建打挂（resolver 内部对
+  808  // per-resource fetch 失败也是 skip-and-log 的策略，这里保持一致）。
+  809  //
+  810  // kind 用来在日志里区分是 skill_ids 还是 plugin_ids。
+  811  func (a *TaskUsecase) parseStringUUIDs(ctx context.Context, kind string, raw []string) []uuid.UUID {
+  812  	if len(raw) == 0 {
+  813  		return nil
+  814  	}
+  815  	out := make([]uuid.UUID, 0, len(raw))
+  816  	for _, s := range raw {
+  817  		trimmed := strings.TrimSpace(s)
+  818  		id, err := uuid.Parse(trimmed)
+  819  		if err != nil {
+  820  			a.logger.WarnContext(ctx, &quot;getCodingConfigs: skip invalid uuid&quot;,
+  821  				slog.String(&quot;kind&quot;, kind),
+  822  				slog.String(&quot;value&quot;, s),
+  823  				slog.Any(&quot;err&quot;, err))
+  824  			continue
+  825  		}
+  826  		out = append(out, id)
+  827  	}
+  828  	return out
+  829  }
+  830
+  831  // injectOpenCodePlugins 重写 cfs 中 path==opencodePath 的那个 ConfigFile，
+  832  // 把 file:// URL 列表注入到 JSON 的 `plugin` 数组。opencode.json 模板里
+  833  // 没有 plugin 字段是有意为之（plugin 列表是运行时动态的），所以这里走渲染后
+  834  // 后置处理而不是 fork 模板。
+  835  func injectOpenCodePlugins(cfs []taskflow.ConfigFile, opencodePath string, pluginURLs []string) ([]taskflow.ConfigFile, error) {
+  836  	for i, c := range cfs {
+  837  		if c.Path != opencodePath {
+  838  			continue</code></pre></details></div></div></article><article class="finding-card compact" id="monkey-mcp-002" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 工具调用具备有效集过滤、幂等 replay 和状态审计</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Hub 合并 platform/user/team 工具和用户开关，过滤 disabled/deleted/missing upstream；调用 ID 由 task、JSON-RPC ID、tool、canonical args 哈希，重复请求复用结果；首次调用写 pending，再标 success/failed/unknown。</p></section><section><span>PLAIN LANGUAGE</span><p>同一个任务重试同一张工具工单不会重复扣动外部系统；每次调用都有完整状态轨迹。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>这是比把 MCP URL 直接交给 Agent 更成熟的连接器治理层。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>56–67</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>68–80</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/registry/service.go#L56-L80" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/mcphub/runtime/registry/service.go:56–80</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/registry/service.go#L56-L80" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   56  func (s *Service) ListEffectiveTools(ctx context.Context, userID uuid.UUID) ([]repo.ToolSnapshot, error) {
+   57  	platform, err := s.listPlatformTools(ctx)
+   58  	if err != nil {
+   59  		return nil, err
+   60  	}
+   61  	userTools, err := s.repo.ListUserPublishedTools(ctx, userID)
+   62  	if err != nil {
+   63  		return nil, err
+   64  	}
+   65  	teamTools, err := s.repo.ListTeamPublishedTools(ctx, userID)
+   66  	if err != nil {
+   67  		return nil, err
+   68  	}
+   69
+   70  	settings := map[uuid.UUID]bool{}
+   71  	if s.userSettings != nil {
+   72  		settings, err = s.userSettings.ListEnabledMap(ctx, userID)
+   73  		if err != nil {
+   74  			return nil, err
+   75  		}
+   76  	}
+   77
+   78  	tools := append(platform, userTools...)
+   79  	tools = append(tools, teamTools...)
+   80  	return applyUserSettingsDefaultEnabled(tools, settings), nil
+   81  }
+   82
+   83  func (s *Service) listPlatformTools(ctx context.Context) ([]repo.ToolSnapshot, error) {
+   84  	if s.cache != nil {
+   85  		b, err := s.cache.Get(ctx, PublishedSnapshotKey)
+   86  		if err == nil {
+   87  			var tools []repo.ToolSnapshot
+   88  			if json.Unmarshal(b, &amp;tools) == nil {
+   89  				return filterPublishedTools(tools), nil
+   90  			}
+   91  		}
+   92  	}
+   93
+   94  	tools, err := s.repo.ListPlatformPublishedTools(ctx)
+   95  	if err != nil {
+   96  		return nil, err
+   97  	}
+   98  	filtered := filterPublishedTools(tools)
+   99  	if s.write != nil {
+  100  		if payload, err := json.Marshal(filtered); err == nil {
+  101  			_ = s.write.Set(ctx, PublishedSnapshotKey, payload, 0)
+  102  		}
+  103  	}
+  104  	return filtered, nil
+  105  }
+  106
+  107  func (s *Service) Publish(ctx context.Context) error {
+  108  	if s.write == nil {
+  109  		return nil
+  110  	}
+  111
+  112  	tools, err := s.repo.ListPlatformPublishedTools(ctx)
+  113  	if err != nil {
+  114  		return err
+  115  	}
+  116  	payload, err := json.Marshal(filterPublishedTools(tools))
+  117  	if err != nil {
+  118  		return err
+  119  	}
+  120  	return s.write.Set(ctx, PublishedSnapshotKey, payload, 0)
+  121  }
+  122
+  123  func applyUserSettingsDefaultEnabled(tools []repo.ToolSnapshot, settings map[uuid.UUID]bool) []repo.ToolSnapshot {
+  124  	filtered := make([]repo.ToolSnapshot, 0, len(tools))
+  125  	for _, tool := range filterPublishedTools(tools) {
+  126  		enabled, ok := settings[tool.ID]
+  127  		if ok &amp;&amp; !enabled {
+  128  			continue
+  129  		}
+  130  		filtered = append(filtered, tool)
+  131  	}
+  132  	return filtered
+  133  }
+  134
+  135  func filterPublishedTools(tools []repo.ToolSnapshot) []repo.ToolSnapshot {
+  136  	filtered := make([]repo.ToolSnapshot, 0, len(tools))
+  137  	for _, tool := range tools {
+  138  		if !tool.Enabled {
+  139  			continue
+  140  		}
+  141  		if tool.DeletedAt != nil {
+  142  			continue
+  143  		}
+  144  		filtered = append(filtered, tool)
+  145  	}
+  146  	return filtered
+  147  }
+  148</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>56</td><th><span class="line-kind-state">STATE</span></th><td><code>func (s *Service) ListEffectiveTools(ctx context.Context, userID uuid.UUID) ([]repo.ToolSnapshot, error) {</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>57</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	platform, err := s.listPlatformTools(ctx)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>58</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>59</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return nil, err</code></td><td>Returns a result, error, or next step</td></tr><tr><td>60</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>61</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	userTools, err := s.repo.ListUserPublishedTools(ctx, userID)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>62</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>63</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return nil, err</code></td><td>Returns a result, error, or next step</td></tr><tr><td>64</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>65</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	teamTools, err := s.repo.ListTeamPublishedTools(ctx, userID)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>66</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>67</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return nil, err</code></td><td>Returns a result, error, or next step</td></tr><tr><td>68</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>69</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>70</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	settings := map[uuid.UUID]bool{}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>71</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if s.userSettings != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>72</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		settings, err = s.userSettings.ListEnabledMap(ctx, userID)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>73</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>74</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>			return nil, err</code></td><td>Returns a result, error, or next step</td></tr><tr><td>75</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>76</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>77</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>78</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	tools := append(platform, userTools...)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>79</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	tools = append(tools, teamTools...)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>80</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>	return applyUserSettingsDefaultEnabled(tools, settings), nil</code></td><td>Returns a result, error, or next step</td></tr><tr><td>81</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>82</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>83</td><th><span class="line-kind-state">STATE</span></th><td><code>func (s *Service) listPlatformTools(ctx context.Context) ([]repo.ToolSnapshot, error) {</code></td><td>Creates or mutates session/context/queue state</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="monkey-mcp-003" data-finding-dimension="tools"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>tools</span></div><h3>05 · MCP 计费接口已预留，但当前实现是 Noop</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>gateway 在调用前后执行 CanConsume/Consume，但默认 billing.Noop 两个方法都直接返回 nil。</p></section><section><span>PLAIN LANGUAGE</span><p>水表接口和插座都装好了，但现在里面还没有真正的计费表芯。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>不能仅凭调用链存在就宣称已实现工具预算或付费配额。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>228–238</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>239–251</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/gateway/handler.go#L228-L251" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/mcphub/runtime/gateway/handler.go:228–251</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/gateway/handler.go#L228-L251" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  228  	if h.billing != nil {
+  229  		if err := h.billing.CanConsume(ctx, call); err != nil {
+  230  			_ = h.calls.MarkFailed(ctx, call.ID, err.Error(), &quot;&quot;)
+  231  			return nil, err
+  232  		}
+  233  	}
+  234
+  235  	result, upstreamRequestID, err := h.upstream.CallTool(ctx, upstream, tool, CallToolParams{
+  236  		Name:      tool.Name,
+  237  		Arguments: args,
+  238  	})
+  239  	switch classifyUpstreamError(err) {
+  240  	case repo.ToolCallStatusSuccess:
+  241  		if err := h.calls.MarkSuccess(ctx, call.ID, result, upstreamRequestID); err != nil {
+  242  			return nil, err
+  243  		}
+  244  		if h.billing != nil {
+  245  			completed := *call
+  246  			completed.Status = repo.ToolCallStatusSuccess
+  247  			completed.ResultJSON = result
+  248  			completed.UpstreamRequestID = upstreamRequestID
+  249  			if err := h.billing.Consume(ctx, &amp;completed); err != nil {
+  250  				return nil, err
+  251  			}
+  252  		}
+  253  		return decodeCallToolResult(result)
+  254  	case repo.ToolCallStatusFailed:
+  255  		_ = h.calls.MarkFailed(ctx, call.ID, err.Error(), upstreamRequestID)
+  256  		return nil, err
+  257  	default:
+  258  		_ = h.calls.MarkUnknown(ctx, call.ID, err.Error(), upstreamRequestID)
+  259  		return nil, errors.New(&quot;upstream result unknown&quot;)
+  260  	}
+  261  }
+  262
+  263  func BuildRequestID(subject *auth.Subject, reqID any, tool string, args json.RawMessage) string {
+  264  	base := subject.TaskID.String() + &quot;:&quot; + stringifyRequestID(reqID) + &quot;:&quot; + tool + &quot;:&quot; + string(canonicalJSON(args))
+  265  	sum := sha256.Sum256([]byte(base))
+  266  	return hex.EncodeToString(sum[:16])
+  267  }
+  268
+  269  func decodeCallToolResult(raw json.RawMessage) (*mcp.CallToolResult, error) {
+  270  	var result mcp.CallToolResult
+  271  	if err := json.Unmarshal(raw, &amp;result); err != nil {
+  272  		return nil, err
+  273  	}
+  274  	return &amp;result, nil
+  275  }
+  276
+  277  func existingCallResult(record *repo.ToolCallRecord) (*mcp.CallToolResult, error) {
+  278  	switch record.Status {
+  279  	case repo.ToolCallStatusSuccess:
+  280  		return decodeCallToolResult(record.ResultJSON)
+  281  	case repo.ToolCallStatusFailed:
+  282  		return nil, errors.New(record.ErrorMessage)
+  283  	default:
+  284  		return nil, errors.New(&quot;upstream result unknown&quot;)
+  285  	}
+  286  }
+  287
+  288  func marshalArguments(args any) (json.RawMessage, error) {
+  289  	if args == nil {
+  290  		return json.RawMessage(`{}`), nil
+  291  	}
+  292  	raw, err := json.Marshal(args)
+  293  	if err != nil {
+  294  		return nil, err
+  295  	}
+  296  	return canonicalJSON(raw), nil
+  297  }
+  298
+  299  func canonicalJSON(raw json.RawMessage) json.RawMessage {
+  300  	if len(raw) == 0 {
+  301  		return json.RawMessage(`{}`)
+  302  	}
+  303
+  304  	var value any
+  305  	if err := json.Unmarshal(raw, &amp;value); err != nil {
+  306  		return raw
+  307  	}
+  308
+  309  	b, err := json.Marshal(value)
+  310  	if err != nil {
+  311  		return raw
+  312  	}
+  313  	return json.RawMessage(b)
+  314  }
+  315
+  316  func stringifyRequestID(v any) string {
+  317  	b, err := json.Marshal(v)
+  318  	if err != nil {
+  319  		return &quot;&quot;
+  320  	}
+  321  	return string(b)
+  322  }</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>228</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if h.billing != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>229</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if err := h.billing.CanConsume(ctx, call); err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>230</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			_ = h.calls.MarkFailed(ctx, call.ID, err.Error(), &quot;&quot;)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>231</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>			return nil, err</code></td><td>Returns a result, error, or next step</td></tr><tr><td>232</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>233</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>234</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>235</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	result, upstreamRequestID, err := h.upstream.CallTool(ctx, upstream, tool, CallToolParams{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>236</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		Name:      tool.Name,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>237</td><th><span class="line-kind-input">INPUT</span></th><td><code>		Arguments: args,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>238</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	})</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>239</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	switch classifyUpstreamError(err) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>240</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	case repo.ToolCallStatusSuccess:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>241</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if err := h.calls.MarkSuccess(ctx, call.ID, result, upstreamRequestID); err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>242</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>			return nil, err</code></td><td>Returns a result, error, or next step</td></tr><tr><td>243</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>244</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if h.billing != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>245</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			completed := *call</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>246</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			completed.Status = repo.ToolCallStatusSuccess</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>247</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			completed.ResultJSON = result</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>248</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			completed.UpstreamRequestID = upstreamRequestID</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>249</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if err := h.billing.Consume(ctx, &amp;completed); err != nil {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>250</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>				return nil, err</code></td><td>Returns a result, error, or next step</td></tr><tr><td>251</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>252</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>253</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return decodeCallToolResult(result)</code></td><td>Returns a result, error, or next step</td></tr><tr><td>254</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	case repo.ToolCallStatusFailed:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>255</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		_ = h.calls.MarkFailed(ctx, call.ID, err.Error(), upstreamRequestID)</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--hov</code></h3><small>flag · desktop/ui/src/commandMenu.tsx:145</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/commandMenu.tsx#L140-L157" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  140          style={{
+  141            height: 24,
+  142            padding: &quot;0 7px&quot;,
+  143            gap: 4,
+  144            borderRadius: 7,
+  145            background: h.open ? &quot;var(--hov)&quot; : &quot;transparent&quot;,
+  146            fontSize: 11.5,
+  147            fontWeight: 500,
+  148            color: &quot;var(--t3)&quot;,
+  149            opacity: disabled ? 0.4 : 1,
+  150          }}
+  151        &gt;
+  152          &lt;IconSlash size={12} color=&quot;var(--t3)&quot; /&gt;
+  153          使用技能
+  154        &lt;/button&gt;
+  155        {h.open &amp;&amp; (
+  156          &lt;&gt;
+  157            &lt;div className=&quot;backdrop&quot; onClick={h.close} /&gt;
+  158            &lt;div
+  159              className=&quot;pop&quot;
+  160              style={{
+  161                position: &quot;absolute&quot;,
+  162                bottom: 30,
+  163                left: 0,
+  164                width: 340,
+  165                maxHeight: menuMaxHeight,
+  166                overflow: &quot;hidden&quot;,
+  167              }}
+  168            &gt;
+  169              &lt;div style={{ flex: 1, minHeight: 0, overflowY: &quot;auto&quot; }}&gt;
+  170                {h.list.length === 0 &amp;&amp; (
+  171                  &lt;div style={{ padding: &quot;8px 10px&quot;, fontSize: 12, color: &quot;var(--t5)&quot; }}&gt;无匹配指令&lt;/div&gt;
+  172                )}
+  173                {h.list.map((c, i) =&gt; (
+  174                  &lt;button
+  175                    key={c.name}
+  176                    className=&quot;menu-item&quot;
+  177                    onMouseEnter={() =&gt; h.setActive(i)}
+  178                    onClick={() =&gt; h.pick(c)}
+  179                    title={c.description || `/${c.name}`}
+  180                    style={{
+  181                      flexDirection: &quot;column&quot;,
+  182                      alignItems: &quot;stretch&quot;,
+  183                      gap: 2,
+  184                      whiteSpace: &quot;normal&quot;,
+  185                      background: i === h.active ? &quot;var(--hov)&quot; : &quot;transparent&quot;,
+  186                    }}
+  187                  &gt;
+  188                    &lt;span style={{ display: &quot;flex&quot;, alignItems: &quot;baseline&quot;, gap: 6, minWidth: 0 }}&gt;
+  189                      &lt;span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: &quot;var(--accTx)&quot;, flex: &quot;none&quot; }}&gt;
+  190                        /{c.name}
+  191                      &lt;/span&gt;
+  192                      {c.input?.hint &amp;&amp; (
+  193                        &lt;span style={{ fontFamily: MONO, fontSize: 11, color: &quot;var(--t6)&quot;, flex: &quot;none&quot; }}&gt;
+  194                          {c.input.hint}
+  195                        &lt;/span&gt;
+  196                      )}
+  197                    &lt;/span&gt;
+  198                    {c.description &amp;&amp; (</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--hov#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--accTx</code></h3><small>flag · desktop/ui/src/commandMenu.tsx:189</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/commandMenu.tsx#L184-L201" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  184                      whiteSpace: &quot;normal&quot;,
+  185                      background: i === h.active ? &quot;var(--hov)&quot; : &quot;transparent&quot;,
+  186                    }}
+  187                  &gt;
+  188                    &lt;span style={{ display: &quot;flex&quot;, alignItems: &quot;baseline&quot;, gap: 6, minWidth: 0 }}&gt;
+  189                      &lt;span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: &quot;var(--accTx)&quot;, flex: &quot;none&quot; }}&gt;
+  190                        /{c.name}
+  191                      &lt;/span&gt;
+  192                      {c.input?.hint &amp;&amp; (
+  193                        &lt;span style={{ fontFamily: MONO, fontSize: 11, color: &quot;var(--t6)&quot;, flex: &quot;none&quot; }}&gt;
+  194                          {c.input.hint}
+  195                        &lt;/span&gt;
+  196                      )}
+  197                    &lt;/span&gt;
+  198                    {c.description &amp;&amp; (
+  199                      &lt;span className=&quot;ellipsis&quot; style={{ fontSize: 11.5, color: &quot;var(--t5)&quot;, lineHeight: 1.4 }}&gt;
+  200                        {c.description}
+  201                      &lt;/span&gt;
+  202                    )}
+  203                  &lt;/button&gt;
+  204                ))}
+  205              &lt;/div&gt;
+  206              &lt;div
+  207                style={{
+  208                  flex: &quot;none&quot;,
+  209                  borderTop: &quot;1px solid var(--line2)&quot;,
+  210                  margin: &quot;4px -4px -4px&quot;,
+  211                  padding: &quot;5px 10px&quot;,
+  212                  fontSize: 10.5,
+  213                  color: &quot;var(--t6)&quot;,
+  214                }}
+  215              &gt;
+  216                ↑↓ 选择 · ↩ 填入 · Esc 关闭
+  217              &lt;/div&gt;
+  218            &lt;/div&gt;
+  219          &lt;/&gt;
+  220        )}
+  221      &lt;/span&gt;
+  222    );
+  223  }
+  224</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--accTx#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--line2</code></h3><small>flag · desktop/ui/src/commandMenu.tsx:209</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/commandMenu.tsx#L204-L221" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  204                ))}
+  205              &lt;/div&gt;
+  206              &lt;div
+  207                style={{
+  208                  flex: &quot;none&quot;,
+  209                  borderTop: &quot;1px solid var(--line2)&quot;,
+  210                  margin: &quot;4px -4px -4px&quot;,
+  211                  padding: &quot;5px 10px&quot;,
+  212                  fontSize: 10.5,
+  213                  color: &quot;var(--t6)&quot;,
+  214                }}
+  215              &gt;
+  216                ↑↓ 选择 · ↩ 填入 · Esc 关闭
+  217              &lt;/div&gt;
+  218            &lt;/div&gt;
+  219          &lt;/&gt;
+  220        )}
+  221      &lt;/span&gt;
+  222    );
+  223  }
+  224</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--line2#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--card</code></h3><small>flag · desktop/ui/src/promptCards.tsx:21</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L16-L33" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   16    const btn: CSSProperties = {
+   17      height: 28,
+   18      display: &quot;flex&quot;,
+   19      alignItems: &quot;center&quot;,
+   20      padding: &quot;0 14px&quot;,
+   21      background: &quot;var(--card)&quot;,
+   22      border: &quot;1px solid var(--line)&quot;,
+   23      color: &quot;var(--t2)&quot;,
+   24      borderRadius: 8,
+   25      cursor: &quot;pointer&quot;,
+   26      fontSize: 12.5,
+   27      fontWeight: 600,
+   28      userSelect: &quot;none&quot;,
+   29      whiteSpace: &quot;nowrap&quot;,
+   30    };
+   31    return (
+   32      &lt;div style={{ display: &quot;flex&quot;, gap: 8, alignItems: &quot;center&quot;, flexWrap: &quot;wrap&quot; }}&gt;
+   33        &lt;div
+   34          className=&quot;hv-acc&quot;
+   35          onClick={() =&gt; onAnswer(id, &quot;allow&quot;)}
+   36          style={{ ...btn, background: &quot;var(--acc)&quot;, borderColor: &quot;var(--acc)&quot;, color: &quot;var(--onAcc)&quot; }}
+   37        &gt;
+   38          允许
+   39        &lt;/div&gt;
+   40        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;always&quot;)} style={btn}&gt;
+   41          本会话始终
+   42        &lt;/div&gt;
+   43        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;persist&quot;)} style={btn}&gt;
+   44          此项目永久
+   45        &lt;/div&gt;
+   46        &lt;div
+   47          className=&quot;hv-errbg&quot;
+   48          onClick={() =&gt; onAnswer(id, &quot;deny&quot;)}
+   49          style={{ ...btn, background: &quot;transparent&quot;, border: &quot;1px solid var(--errBd)&quot;, color: &quot;var(--err)&quot; }}
+   50        &gt;
+   51          拒绝
+   52        &lt;/div&gt;
+   53        &lt;span style={{ marginLeft: &quot;auto&quot;, fontSize: 11, color: &quot;var(--t5)&quot; }}&gt;⏎ 允许 · esc 拒绝&lt;/span&gt;
+   54      &lt;/div&gt;
+   55    );
+   56  }
+   57
+   58  export function PermCard({
+   59    item,
+   60    onAnswer,
+   61  }: {
+   62    item: Extract&lt;LogItem, { kind: &quot;perm&quot; }&gt;;
+   63    onAnswer: PermAnswerFn;
+   64  }) {
+   65    // 已允许/已拒绝的审批卡直接消失(用户拍板):决策后紧跟的工具卡(或
+   66    // 拒绝后的轮次收尾)本身就说明了结果,残留任何形态都嫌多。例外:
+   67    // 拒绝/过期之外的异常终态不多见,同样静默——状态机仍在 reduce 里
+   68    // 完整落盘,journal 回放只是不渲染,不丢审计数据。
+   69    if (item.state !== &quot;open&quot;) {
+   70      return null;
+   71    }
+   72    const title = localizedToolTitleText(item.title);
+   73    return (
+   74      &lt;div</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--card#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--line</code></h3><small>flag · desktop/ui/src/promptCards.tsx:22</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L17-L34" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   17      height: 28,
+   18      display: &quot;flex&quot;,
+   19      alignItems: &quot;center&quot;,
+   20      padding: &quot;0 14px&quot;,
+   21      background: &quot;var(--card)&quot;,
+   22      border: &quot;1px solid var(--line)&quot;,
+   23      color: &quot;var(--t2)&quot;,
+   24      borderRadius: 8,
+   25      cursor: &quot;pointer&quot;,
+   26      fontSize: 12.5,
+   27      fontWeight: 600,
+   28      userSelect: &quot;none&quot;,
+   29      whiteSpace: &quot;nowrap&quot;,
+   30    };
+   31    return (
+   32      &lt;div style={{ display: &quot;flex&quot;, gap: 8, alignItems: &quot;center&quot;, flexWrap: &quot;wrap&quot; }}&gt;
+   33        &lt;div
+   34          className=&quot;hv-acc&quot;
+   35          onClick={() =&gt; onAnswer(id, &quot;allow&quot;)}
+   36          style={{ ...btn, background: &quot;var(--acc)&quot;, borderColor: &quot;var(--acc)&quot;, color: &quot;var(--onAcc)&quot; }}
+   37        &gt;
+   38          允许
+   39        &lt;/div&gt;
+   40        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;always&quot;)} style={btn}&gt;
+   41          本会话始终
+   42        &lt;/div&gt;
+   43        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;persist&quot;)} style={btn}&gt;
+   44          此项目永久
+   45        &lt;/div&gt;
+   46        &lt;div
+   47          className=&quot;hv-errbg&quot;
+   48          onClick={() =&gt; onAnswer(id, &quot;deny&quot;)}
+   49          style={{ ...btn, background: &quot;transparent&quot;, border: &quot;1px solid var(--errBd)&quot;, color: &quot;var(--err)&quot; }}
+   50        &gt;
+   51          拒绝
+   52        &lt;/div&gt;
+   53        &lt;span style={{ marginLeft: &quot;auto&quot;, fontSize: 11, color: &quot;var(--t5)&quot; }}&gt;⏎ 允许 · esc 拒绝&lt;/span&gt;
+   54      &lt;/div&gt;
+   55    );
+   56  }
+   57
+   58  export function PermCard({
+   59    item,
+   60    onAnswer,
+   61  }: {
+   62    item: Extract&lt;LogItem, { kind: &quot;perm&quot; }&gt;;
+   63    onAnswer: PermAnswerFn;
+   64  }) {
+   65    // 已允许/已拒绝的审批卡直接消失(用户拍板):决策后紧跟的工具卡(或
+   66    // 拒绝后的轮次收尾)本身就说明了结果,残留任何形态都嫌多。例外:
+   67    // 拒绝/过期之外的异常终态不多见,同样静默——状态机仍在 reduce 里
+   68    // 完整落盘,journal 回放只是不渲染,不丢审计数据。
+   69    if (item.state !== &quot;open&quot;) {
+   70      return null;
+   71    }
+   72    const title = localizedToolTitleText(item.title);
+   73    return (
+   74      &lt;div
+   75        style={{</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--line#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--acc</code></h3><small>flag · desktop/ui/src/promptCards.tsx:36</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L31-L48" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   31    return (
+   32      &lt;div style={{ display: &quot;flex&quot;, gap: 8, alignItems: &quot;center&quot;, flexWrap: &quot;wrap&quot; }}&gt;
+   33        &lt;div
+   34          className=&quot;hv-acc&quot;
+   35          onClick={() =&gt; onAnswer(id, &quot;allow&quot;)}
+   36          style={{ ...btn, background: &quot;var(--acc)&quot;, borderColor: &quot;var(--acc)&quot;, color: &quot;var(--onAcc)&quot; }}
+   37        &gt;
+   38          允许
+   39        &lt;/div&gt;
+   40        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;always&quot;)} style={btn}&gt;
+   41          本会话始终
+   42        &lt;/div&gt;
+   43        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;persist&quot;)} style={btn}&gt;
+   44          此项目永久
+   45        &lt;/div&gt;
+   46        &lt;div
+   47          className=&quot;hv-errbg&quot;
+   48          onClick={() =&gt; onAnswer(id, &quot;deny&quot;)}
+   49          style={{ ...btn, background: &quot;transparent&quot;, border: &quot;1px solid var(--errBd)&quot;, color: &quot;var(--err)&quot; }}
+   50        &gt;
+   51          拒绝
+   52        &lt;/div&gt;
+   53        &lt;span style={{ marginLeft: &quot;auto&quot;, fontSize: 11, color: &quot;var(--t5)&quot; }}&gt;⏎ 允许 · esc 拒绝&lt;/span&gt;
+   54      &lt;/div&gt;
+   55    );
+   56  }
+   57
+   58  export function PermCard({
+   59    item,
+   60    onAnswer,
+   61  }: {
+   62    item: Extract&lt;LogItem, { kind: &quot;perm&quot; }&gt;;
+   63    onAnswer: PermAnswerFn;
+   64  }) {
+   65    // 已允许/已拒绝的审批卡直接消失(用户拍板):决策后紧跟的工具卡(或
+   66    // 拒绝后的轮次收尾)本身就说明了结果,残留任何形态都嫌多。例外:
+   67    // 拒绝/过期之外的异常终态不多见,同样静默——状态机仍在 reduce 里
+   68    // 完整落盘,journal 回放只是不渲染,不丢审计数据。
+   69    if (item.state !== &quot;open&quot;) {
+   70      return null;
+   71    }
+   72    const title = localizedToolTitleText(item.title);
+   73    return (
+   74      &lt;div
+   75        style={{
+   76          border: &quot;1px solid var(--warnBd)&quot;,
+   77          borderRadius: 12,
+   78          background: &quot;var(--warnBg)&quot;,
+   79          padding: &quot;13px 15px&quot;,
+   80          maxWidth: 560,
+   81          animation: &quot;mcin .25s ease&quot;,
+   82        }}
+   83      &gt;
+   84        &lt;div style={{ fontSize: 12.5, fontWeight: 700, color: &quot;var(--warn)&quot;, whiteSpace: &quot;nowrap&quot; }}&gt;
+   85          需要确认 · {item.tool ? toolDisplayName(item.tool) : &quot;执行操作&quot;}
+   86        &lt;/div&gt;
+   87        &lt;div
+   88          style={{
+   89            margin: &quot;9px 0 11px&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--acc#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--onAcc</code></h3><small>flag · desktop/ui/src/promptCards.tsx:36</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L31-L48" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   31    return (
+   32      &lt;div style={{ display: &quot;flex&quot;, gap: 8, alignItems: &quot;center&quot;, flexWrap: &quot;wrap&quot; }}&gt;
+   33        &lt;div
+   34          className=&quot;hv-acc&quot;
+   35          onClick={() =&gt; onAnswer(id, &quot;allow&quot;)}
+   36          style={{ ...btn, background: &quot;var(--acc)&quot;, borderColor: &quot;var(--acc)&quot;, color: &quot;var(--onAcc)&quot; }}
+   37        &gt;
+   38          允许
+   39        &lt;/div&gt;
+   40        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;always&quot;)} style={btn}&gt;
+   41          本会话始终
+   42        &lt;/div&gt;
+   43        &lt;div className=&quot;hv&quot; onClick={() =&gt; onAnswer(id, &quot;persist&quot;)} style={btn}&gt;
+   44          此项目永久
+   45        &lt;/div&gt;
+   46        &lt;div
+   47          className=&quot;hv-errbg&quot;
+   48          onClick={() =&gt; onAnswer(id, &quot;deny&quot;)}
+   49          style={{ ...btn, background: &quot;transparent&quot;, border: &quot;1px solid var(--errBd)&quot;, color: &quot;var(--err)&quot; }}
+   50        &gt;
+   51          拒绝
+   52        &lt;/div&gt;
+   53        &lt;span style={{ marginLeft: &quot;auto&quot;, fontSize: 11, color: &quot;var(--t5)&quot; }}&gt;⏎ 允许 · esc 拒绝&lt;/span&gt;
+   54      &lt;/div&gt;
+   55    );
+   56  }
+   57
+   58  export function PermCard({
+   59    item,
+   60    onAnswer,
+   61  }: {
+   62    item: Extract&lt;LogItem, { kind: &quot;perm&quot; }&gt;;
+   63    onAnswer: PermAnswerFn;
+   64  }) {
+   65    // 已允许/已拒绝的审批卡直接消失(用户拍板):决策后紧跟的工具卡(或
+   66    // 拒绝后的轮次收尾)本身就说明了结果,残留任何形态都嫌多。例外:
+   67    // 拒绝/过期之外的异常终态不多见,同样静默——状态机仍在 reduce 里
+   68    // 完整落盘,journal 回放只是不渲染,不丢审计数据。
+   69    if (item.state !== &quot;open&quot;) {
+   70      return null;
+   71    }
+   72    const title = localizedToolTitleText(item.title);
+   73    return (
+   74      &lt;div
+   75        style={{
+   76          border: &quot;1px solid var(--warnBd)&quot;,
+   77          borderRadius: 12,
+   78          background: &quot;var(--warnBg)&quot;,
+   79          padding: &quot;13px 15px&quot;,
+   80          maxWidth: 560,
+   81          animation: &quot;mcin .25s ease&quot;,
+   82        }}
+   83      &gt;
+   84        &lt;div style={{ fontSize: 12.5, fontWeight: 700, color: &quot;var(--warn)&quot;, whiteSpace: &quot;nowrap&quot; }}&gt;
+   85          需要确认 · {item.tool ? toolDisplayName(item.tool) : &quot;执行操作&quot;}
+   86        &lt;/div&gt;
+   87        &lt;div
+   88          style={{
+   89            margin: &quot;9px 0 11px&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--onAcc#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--errBd</code></h3><small>flag · desktop/ui/src/promptCards.tsx:49</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L44-L61" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   44          此项目永久
+   45        &lt;/div&gt;
+   46        &lt;div
+   47          className=&quot;hv-errbg&quot;
+   48          onClick={() =&gt; onAnswer(id, &quot;deny&quot;)}
+   49          style={{ ...btn, background: &quot;transparent&quot;, border: &quot;1px solid var(--errBd)&quot;, color: &quot;var(--err)&quot; }}
+   50        &gt;
+   51          拒绝
+   52        &lt;/div&gt;
+   53        &lt;span style={{ marginLeft: &quot;auto&quot;, fontSize: 11, color: &quot;var(--t5)&quot; }}&gt;⏎ 允许 · esc 拒绝&lt;/span&gt;
+   54      &lt;/div&gt;
+   55    );
+   56  }
+   57
+   58  export function PermCard({
+   59    item,
+   60    onAnswer,
+   61  }: {
+   62    item: Extract&lt;LogItem, { kind: &quot;perm&quot; }&gt;;
+   63    onAnswer: PermAnswerFn;
+   64  }) {
+   65    // 已允许/已拒绝的审批卡直接消失(用户拍板):决策后紧跟的工具卡(或
+   66    // 拒绝后的轮次收尾)本身就说明了结果,残留任何形态都嫌多。例外:
+   67    // 拒绝/过期之外的异常终态不多见,同样静默——状态机仍在 reduce 里
+   68    // 完整落盘,journal 回放只是不渲染,不丢审计数据。
+   69    if (item.state !== &quot;open&quot;) {
+   70      return null;
+   71    }
+   72    const title = localizedToolTitleText(item.title);
+   73    return (
+   74      &lt;div
+   75        style={{
+   76          border: &quot;1px solid var(--warnBd)&quot;,
+   77          borderRadius: 12,
+   78          background: &quot;var(--warnBg)&quot;,
+   79          padding: &quot;13px 15px&quot;,
+   80          maxWidth: 560,
+   81          animation: &quot;mcin .25s ease&quot;,
+   82        }}
+   83      &gt;
+   84        &lt;div style={{ fontSize: 12.5, fontWeight: 700, color: &quot;var(--warn)&quot;, whiteSpace: &quot;nowrap&quot; }}&gt;
+   85          需要确认 · {item.tool ? toolDisplayName(item.tool) : &quot;执行操作&quot;}
+   86        &lt;/div&gt;
+   87        &lt;div
+   88          style={{
+   89            margin: &quot;9px 0 11px&quot;,
+   90            padding: &quot;8px 12px&quot;,
+   91            background: &quot;var(--card)&quot;,
+   92            border: &quot;1px solid var(--line2)&quot;,
+   93            borderRadius: 8,
+   94            font: &quot;12.5px &quot; + MONO,
+   95            color: &quot;var(--t1)&quot;,
+   96            wordBreak: &quot;break-all&quot;,
+   97          }}
+   98        &gt;
+   99          &lt;span title={item.title}&gt;{title}&lt;/span&gt;
+  100        &lt;/div&gt;
+  101        &lt;PermActions id={item.id} onAnswer={onAnswer} /&gt;
+  102      &lt;/div&gt;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--errBd#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--err</code></h3><small>flag · desktop/ui/src/promptCards.tsx:49</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L44-L61" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   44          此项目永久
+   45        &lt;/div&gt;
+   46        &lt;div
+   47          className=&quot;hv-errbg&quot;
+   48          onClick={() =&gt; onAnswer(id, &quot;deny&quot;)}
+   49          style={{ ...btn, background: &quot;transparent&quot;, border: &quot;1px solid var(--errBd)&quot;, color: &quot;var(--err)&quot; }}
+   50        &gt;
+   51          拒绝
+   52        &lt;/div&gt;
+   53        &lt;span style={{ marginLeft: &quot;auto&quot;, fontSize: 11, color: &quot;var(--t5)&quot; }}&gt;⏎ 允许 · esc 拒绝&lt;/span&gt;
+   54      &lt;/div&gt;
+   55    );
+   56  }
+   57
+   58  export function PermCard({
+   59    item,
+   60    onAnswer,
+   61  }: {
+   62    item: Extract&lt;LogItem, { kind: &quot;perm&quot; }&gt;;
+   63    onAnswer: PermAnswerFn;
+   64  }) {
+   65    // 已允许/已拒绝的审批卡直接消失(用户拍板):决策后紧跟的工具卡(或
+   66    // 拒绝后的轮次收尾)本身就说明了结果,残留任何形态都嫌多。例外:
+   67    // 拒绝/过期之外的异常终态不多见,同样静默——状态机仍在 reduce 里
+   68    // 完整落盘,journal 回放只是不渲染,不丢审计数据。
+   69    if (item.state !== &quot;open&quot;) {
+   70      return null;
+   71    }
+   72    const title = localizedToolTitleText(item.title);
+   73    return (
+   74      &lt;div
+   75        style={{
+   76          border: &quot;1px solid var(--warnBd)&quot;,
+   77          borderRadius: 12,
+   78          background: &quot;var(--warnBg)&quot;,
+   79          padding: &quot;13px 15px&quot;,
+   80          maxWidth: 560,
+   81          animation: &quot;mcin .25s ease&quot;,
+   82        }}
+   83      &gt;
+   84        &lt;div style={{ fontSize: 12.5, fontWeight: 700, color: &quot;var(--warn)&quot;, whiteSpace: &quot;nowrap&quot; }}&gt;
+   85          需要确认 · {item.tool ? toolDisplayName(item.tool) : &quot;执行操作&quot;}
+   86        &lt;/div&gt;
+   87        &lt;div
+   88          style={{
+   89            margin: &quot;9px 0 11px&quot;,
+   90            padding: &quot;8px 12px&quot;,
+   91            background: &quot;var(--card)&quot;,
+   92            border: &quot;1px solid var(--line2)&quot;,
+   93            borderRadius: 8,
+   94            font: &quot;12.5px &quot; + MONO,
+   95            color: &quot;var(--t1)&quot;,
+   96            wordBreak: &quot;break-all&quot;,
+   97          }}
+   98        &gt;
+   99          &lt;span title={item.title}&gt;{title}&lt;/span&gt;
+  100        &lt;/div&gt;
+  101        &lt;PermActions id={item.id} onAnswer={onAnswer} /&gt;
+  102      &lt;/div&gt;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--err#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--warnBd</code></h3><small>flag · desktop/ui/src/promptCards.tsx:76</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L71-L88" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   71    }
+   72    const title = localizedToolTitleText(item.title);
+   73    return (
+   74      &lt;div
+   75        style={{
+   76          border: &quot;1px solid var(--warnBd)&quot;,
+   77          borderRadius: 12,
+   78          background: &quot;var(--warnBg)&quot;,
+   79          padding: &quot;13px 15px&quot;,
+   80          maxWidth: 560,
+   81          animation: &quot;mcin .25s ease&quot;,
+   82        }}
+   83      &gt;
+   84        &lt;div style={{ fontSize: 12.5, fontWeight: 700, color: &quot;var(--warn)&quot;, whiteSpace: &quot;nowrap&quot; }}&gt;
+   85          需要确认 · {item.tool ? toolDisplayName(item.tool) : &quot;执行操作&quot;}
+   86        &lt;/div&gt;
+   87        &lt;div
+   88          style={{
+   89            margin: &quot;9px 0 11px&quot;,
+   90            padding: &quot;8px 12px&quot;,
+   91            background: &quot;var(--card)&quot;,
+   92            border: &quot;1px solid var(--line2)&quot;,
+   93            borderRadius: 8,
+   94            font: &quot;12.5px &quot; + MONO,
+   95            color: &quot;var(--t1)&quot;,
+   96            wordBreak: &quot;break-all&quot;,
+   97          }}
+   98        &gt;
+   99          &lt;span title={item.title}&gt;{title}&lt;/span&gt;
+  100        &lt;/div&gt;
+  101        &lt;PermActions id={item.id} onAnswer={onAnswer} /&gt;
+  102      &lt;/div&gt;
+  103    );
+  104  }
+  105
+  106  /** 自定义答案在选中集合里的占位键(对齐 mobile askAnswers.ts) */
+  107  const CUSTOM_ANSWER_KEY = &quot;__monkeycode_custom_answer__&quot;;
+  108
+  109  /** 单选圆点/多选勾:问答选项统一使用明确的选择控件,不再只靠整行变色。 */
+  110  function AskChoiceMark({ active, multi }: { active: boolean; multi: boolean }) {
+  111    return (
+  112      &lt;span
+  113        style={{
+  114          width: 17,
+  115          height: 17,
+  116          display: &quot;flex&quot;,
+  117          alignItems: &quot;center&quot;,
+  118          justifyContent: &quot;center&quot;,
+  119          border: `1.5px solid ${active ? &quot;var(--acc)&quot; : &quot;var(--inputBd)&quot;}`,
+  120          borderRadius: multi ? 5 : &quot;50%&quot;,
+  121          background: active ? &quot;var(--acc)&quot; : &quot;var(--card)&quot;,
+  122          flex: &quot;none&quot;,
+  123        }}
+  124      &gt;
+  125        {active &amp;&amp; (multi ? &lt;IconCheck size={10} color=&quot;var(--onAcc)&quot; /&gt; : &lt;span style={{ width: 5, height: 5, borderRadius: &quot;50%&quot;, background: &quot;var(--onAcc)&quot; }} /&gt;)}
+  126      &lt;/span&gt;
+  127    );
+  128  }
+  129</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--warnBd#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--warnBg</code></h3><small>flag · desktop/ui/src/promptCards.tsx:78</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L73-L90" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   73    return (
+   74      &lt;div
+   75        style={{
+   76          border: &quot;1px solid var(--warnBd)&quot;,
+   77          borderRadius: 12,
+   78          background: &quot;var(--warnBg)&quot;,
+   79          padding: &quot;13px 15px&quot;,
+   80          maxWidth: 560,
+   81          animation: &quot;mcin .25s ease&quot;,
+   82        }}
+   83      &gt;
+   84        &lt;div style={{ fontSize: 12.5, fontWeight: 700, color: &quot;var(--warn)&quot;, whiteSpace: &quot;nowrap&quot; }}&gt;
+   85          需要确认 · {item.tool ? toolDisplayName(item.tool) : &quot;执行操作&quot;}
+   86        &lt;/div&gt;
+   87        &lt;div
+   88          style={{
+   89            margin: &quot;9px 0 11px&quot;,
+   90            padding: &quot;8px 12px&quot;,
+   91            background: &quot;var(--card)&quot;,
+   92            border: &quot;1px solid var(--line2)&quot;,
+   93            borderRadius: 8,
+   94            font: &quot;12.5px &quot; + MONO,
+   95            color: &quot;var(--t1)&quot;,
+   96            wordBreak: &quot;break-all&quot;,
+   97          }}
+   98        &gt;
+   99          &lt;span title={item.title}&gt;{title}&lt;/span&gt;
+  100        &lt;/div&gt;
+  101        &lt;PermActions id={item.id} onAnswer={onAnswer} /&gt;
+  102      &lt;/div&gt;
+  103    );
+  104  }
+  105
+  106  /** 自定义答案在选中集合里的占位键(对齐 mobile askAnswers.ts) */
+  107  const CUSTOM_ANSWER_KEY = &quot;__monkeycode_custom_answer__&quot;;
+  108
+  109  /** 单选圆点/多选勾:问答选项统一使用明确的选择控件,不再只靠整行变色。 */
+  110  function AskChoiceMark({ active, multi }: { active: boolean; multi: boolean }) {
+  111    return (
+  112      &lt;span
+  113        style={{
+  114          width: 17,
+  115          height: 17,
+  116          display: &quot;flex&quot;,
+  117          alignItems: &quot;center&quot;,
+  118          justifyContent: &quot;center&quot;,
+  119          border: `1.5px solid ${active ? &quot;var(--acc)&quot; : &quot;var(--inputBd)&quot;}`,
+  120          borderRadius: multi ? 5 : &quot;50%&quot;,
+  121          background: active ? &quot;var(--acc)&quot; : &quot;var(--card)&quot;,
+  122          flex: &quot;none&quot;,
+  123        }}
+  124      &gt;
+  125        {active &amp;&amp; (multi ? &lt;IconCheck size={10} color=&quot;var(--onAcc)&quot; /&gt; : &lt;span style={{ width: 5, height: 5, borderRadius: &quot;50%&quot;, background: &quot;var(--onAcc)&quot; }} /&gt;)}
+  126      &lt;/span&gt;
+  127    );
+  128  }
+  129
+  130  /** AI 提问卡:每题单选/多选 + 可选自定义输入;全部作答后可提交。
+  131   * 已答/过期态只读展示答案。onAnswer 缺省(只读回放场景)则不可交互。 */</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--warnBg#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--warn</code></h3><small>flag · desktop/ui/src/promptCards.tsx:84</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/promptCards.tsx#L79-L96" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   79          padding: &quot;13px 15px&quot;,
+   80          maxWidth: 560,
+   81          animation: &quot;mcin .25s ease&quot;,
+   82        }}
+   83      &gt;
+   84        &lt;div style={{ fontSize: 12.5, fontWeight: 700, color: &quot;var(--warn)&quot;, whiteSpace: &quot;nowrap&quot; }}&gt;
+   85          需要确认 · {item.tool ? toolDisplayName(item.tool) : &quot;执行操作&quot;}
+   86        &lt;/div&gt;
+   87        &lt;div
+   88          style={{
+   89            margin: &quot;9px 0 11px&quot;,
+   90            padding: &quot;8px 12px&quot;,
+   91            background: &quot;var(--card)&quot;,
+   92            border: &quot;1px solid var(--line2)&quot;,
+   93            borderRadius: 8,
+   94            font: &quot;12.5px &quot; + MONO,
+   95            color: &quot;var(--t1)&quot;,
+   96            wordBreak: &quot;break-all&quot;,
+   97          }}
+   98        &gt;
+   99          &lt;span title={item.title}&gt;{title}&lt;/span&gt;
+  100        &lt;/div&gt;
+  101        &lt;PermActions id={item.id} onAnswer={onAnswer} /&gt;
+  102      &lt;/div&gt;
+  103    );
+  104  }
+  105
+  106  /** 自定义答案在选中集合里的占位键(对齐 mobile askAnswers.ts) */
+  107  const CUSTOM_ANSWER_KEY = &quot;__monkeycode_custom_answer__&quot;;
+  108
+  109  /** 单选圆点/多选勾:问答选项统一使用明确的选择控件,不再只靠整行变色。 */
+  110  function AskChoiceMark({ active, multi }: { active: boolean; multi: boolean }) {
+  111    return (
+  112      &lt;span
+  113        style={{
+  114          width: 17,
+  115          height: 17,
+  116          display: &quot;flex&quot;,
+  117          alignItems: &quot;center&quot;,
+  118          justifyContent: &quot;center&quot;,
+  119          border: `1.5px solid ${active ? &quot;var(--acc)&quot; : &quot;var(--inputBd)&quot;}`,
+  120          borderRadius: multi ? 5 : &quot;50%&quot;,
+  121          background: active ? &quot;var(--acc)&quot; : &quot;var(--card)&quot;,
+  122          flex: &quot;none&quot;,
+  123        }}
+  124      &gt;
+  125        {active &amp;&amp; (multi ? &lt;IconCheck size={10} color=&quot;var(--onAcc)&quot; /&gt; : &lt;span style={{ width: 5, height: 5, borderRadius: &quot;50%&quot;, background: &quot;var(--onAcc)&quot; }} /&gt;)}
+  126      &lt;/span&gt;
+  127    );
+  128  }
+  129
+  130  /** AI 提问卡:每题单选/多选 + 可选自定义输入;全部作答后可提交。
+  131   * 已答/过期态只读展示答案。onAnswer 缺省(只读回放场景)则不可交互。 */
+  132  export function AskCard({
+  133    item,
+  134    onAnswer,
+  135  }: {
+  136    item: Extract&lt;LogItem, { kind: &quot;ask&quot; }&gt;;
+  137    onAnswer?: (askId: string, answers: Record&lt;string, string | string[]&gt;) =&gt; void;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--warn#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>rules 以内联 ConfigFile 写入 .ai-ready/rules；skills 对三种 CLI 都以 24h presigned zip URL 下发；plugins 只给 OpenCode，并将 entry 变成 file:// URL 注入 opencode.json。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L795-L803" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:795–803 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>ScopeFilter 可同时包含三个层级，调用方按 user&gt;team&gt;global 做 name override；dispatch 选择用户勾选项与 force-delivery，并过滤 disabled。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/types.go#L99-L126" target="_blank" rel="noreferrer">backend/biz/agentresource/types.go:99–126 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>任务拿到本地 builtin MCP 和带 runtime token 的平台 MCP；Hub 认证先由 ModelApiKey 找到 VirtualMachineID，再查唯一 TaskVirtualMachine，形成 user/task/model subject。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L741-L767" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:741–767 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>Hub 合并 platform/user/team 工具和用户开关，过滤 disabled/deleted/missing upstream；调用 ID 由 task、JSON-RPC ID、tool、canonical args 哈希，重复请求复用结果；首次调用写 pending，再标 success/failed/unknown。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/registry/service.go#L56-L80" target="_blank" rel="noreferrer">backend/biz/mcphub/runtime/registry/service.go:56–80 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>desktop/ui/src/slashCommands.test.ts</b><small>3532 bytes · .ts</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/slashCommands.test.ts#L3-L18" target="_blank" rel="noreferrer">L3–18 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    3  import { commandText, filterCommands, nextActive, slashQuery, withCommandSeparator } from &quot;./slashCommands&quot;;
+    4  import type { SlashCommand } from &quot;./types&quot;;
+    5
+    6  const cmd = (name: string, description?: string, hint?: string): SlashCommand =&gt; ({
+    7    name,
+    8    ...(description ? { description } : {}),
+    9    ...(hint ? { input: { hint } } : {}),
+   10  });
+   11
+   12  describe(&quot;slashQuery&quot;, () =&gt; {
+   13    it(&quot;整段输入以 / 开头且未敲空格时给出查询词&quot;, () =&gt; {
+   14      expect(slashQuery(&quot;/&quot;)).toBe(&quot;&quot;);
+   15      expect(slashQuery(&quot;/com&quot;)).toBe(&quot;com&quot;);
+   16    });
+   17
+   18    it(&quot;敲了空格即进入填参数阶段,不再补全&quot;, () =&gt; {
+   19      expect(slashQuery(&quot;/review src/a.ts&quot;)).toBeNull();
+   20      expect(slashQuery(&quot;/compact &quot;)).toBeNull();
+   21    });
+   22
+   23    it(&quot;句中的 / 是路径或日期,不弹菜单&quot;, () =&gt; {
+   24      expect(slashQuery(&quot;看下 src/main.ts&quot;)).toBeNull();
+   25      expect(slashQuery(&quot;2026/08/02 的记录&quot;)).toBeNull();
+   26      expect(slashQuery(&quot;&quot;)).toBeNull();
+   27    });
+   28  });
+   29
+   30  describe(&quot;filterCommands&quot;, () =&gt; {
+   31    const all = [cmd(&quot;add-context&quot;), cmd(&quot;compact&quot;, &quot;压缩上下文&quot;), cmd(&quot;review&quot;, &quot;代码审查&quot;)];
+   32
+   33    it(&quot;空查询给全量&quot;, () =&gt; {
+   34      expect(filterCommands(all, &quot;&quot;)).toEqual(all);
+   35    });</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>desktop/ui/src/slashCommands.ts</b><small>2499 bytes · .ts</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/desktop/ui/src/slashCommands.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    1  // 斜杠指令(Agent 上报的 available_commands)的纯逻辑:输入框里&quot;正在敲的
+    2  // 指令&quot;识别、过滤排序、选中后的回填文本。UI 在 commandMenu.tsx,这里不触 DOM。
+    3  import type { SlashCommand } from &quot;./types&quot;;
+    4
+    5  /** 输入框正在敲斜杠指令时返回查询词(不含 /),否则 null。
+    6   *
+    7   * 只认&quot;整段输入以 / 开头且还没敲空格&quot;这一种形态:指令必须是整条消息的
+    8   * 开头(云端按 `/name args` 解析),句中出现的 `/` 是路径/日期,弹菜单是打扰。 */
+    9  export function slashQuery(input: string): string | null {
+   10    if (!input.startsWith(&quot;/&quot;)) return null;
+   11    const q = input.slice(1);
+   12    // 空格后即进入&quot;填参数&quot;阶段,指令已选定,不再补全
+   13    return /[\s]/.test(q) ? null : q;
+   14  }
+   15
+   16  /** 按查询词过滤:前缀匹配优先于子串匹配(敲 co 先给 /compact 而非 /add-context) */
+   17  export function filterCommands(commands: SlashCommand[], query: string): SlashCommand[] {
+   18    const q = query.trim().toLowerCase();
+   19    if (!q) return commands;
+   20    const prefix: SlashCommand[] = [];
+   21    const rest: SlashCommand[] = [];
+   22    for (const c of commands) {
+   23      const name = c.name.toLowerCase();
+   24      if (name.startsWith(q)) prefix.push(c);
+   25      else if (name.includes(q) || (c.description ?? &quot;&quot;).toLowerCase().includes(q)) rest.push(c);
+   26    }
+   27    return [...prefix, ...rest];
+   28  }
+   29
+   30  /** 选中指令后的输入框内容:一律补一个尾随空格。
+   31   * 有参数提示的,光标随即等着填参数;没参数的也要补——云端按 `/name args`
+   32   * 解析,指令名后的空格是分隔符,缺了它整条消息会被当普通文本(本地会话这一路
+   33   * 发送前会 trim,补不补都一样)。 */</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>backend/biz/llmproxy/register_test.go</b><small>893 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/llmproxy/register_test.go#L14-L29" target="_blank" rel="noreferrer">L14–29 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   14  func TestNewHandlerRegistersProxyRoutes(t *testing.T) {
+   15  	injector := do.New()
+   16  	w := web.New()
+   17  	do.ProvideValue(injector, w)
+   18  	do.ProvideValue(injector, newProxyTestDB(t))
+   19  	do.ProvideValue(injector, slog.New(slog.NewTextHandler(io.Discard, nil)))
+   20
+   21  	if _, err := NewHandler(injector); err != nil {
+   22  		t.Fatal(err)
+   23  	}
+   24
+   25  	want := map[string]bool{
+   26  		&quot;POST /v1/chat/completions&quot;: false,
+   27  		&quot;POST /v1/responses&quot;:        false,
+   28  		&quot;POST /v1/messages&quot;:         false,
+   29  	}
+   30  	for _, route := range w.Routes() {
+   31  		key := route.Method + &quot; &quot; + route.Path
+   32  		if _, ok := want[key]; ok {
+   33  			want[key] = true
+   34  		}
+   35  	}
+   36  	for route, found := range want {
+   37  		if !found {
+   38  			t.Fatalf(&quot;route %s is not registered&quot;, route)
+   39  		}
+   40  	}
+   41
+   42  	_ = do.MustInvoke[*db.Client](injector)
+   43  }
+   44</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>backend/biz/mcphub/register_test.go</b><small>2193 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/mcphub/register_test.go#L15-L30" target="_blank" rel="noreferrer">L15–30 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   15  func TestHandlerRegistersMCPHubRoutes(t *testing.T) {
+   16  	w := web.New()
+   17  	cfg := &amp;config.Config{}
+   18  	cfg.MCPHub.Token = &quot;secret&quot;
+   19  	handler := NewHandler(w, cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), &amp;syncerStub{})
+   20
+   21  	handler.RegisterRoutes()
+   22
+   23  	want := map[string]bool{
+   24  		&quot;GET /mcp&quot;:                          false,
+   25  		&quot;POST /mcp&quot;:                         false,
+   26  		&quot;DELETE /mcp&quot;:                       false,
+   27  		&quot;POST /internal/upstreams/:id/sync&quot;: false,
+   28  	}
+   29  	for _, route := range w.Routes() {
+   30  		key := route.Method + &quot; &quot; + route.Path
+   31  		if _, ok := want[key]; ok {
+   32  			want[key] = true
+   33  		}
+   34  	}
+   35  	for route, found := range want {
+   36  		if !found {
+   37  			t.Fatalf(&quot;route %s is not registered&quot;, route)
+   38  		}
+   39  	}
+   40  }
+   41
+   42  func TestSyncUpstreamRequiresInternalToken(t *testing.T) {
+   43  	w := web.New()
+   44  	cfg := &amp;config.Config{}
+   45  	cfg.MCPHub.Token = &quot;secret&quot;
+   46  	syncer := &amp;syncerStub{}
+   47  	handler := NewHandler(w, cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), syncer)</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>backend/biz/server/register_test.go</b><small>2972 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/server/register_test.go#L26-L41" target="_blank" rel="noreferrer">L26–41 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   26  func TestServerRegistersConfigRoute(t *testing.T) {
+   27  	injector := do.New()
+   28  	w := web.New()
+   29  	do.ProvideValue(injector, w)
+   30  	do.ProvideValue(injector, slog.New(slog.NewTextHandler(io.Discard, nil)))
+   31  	do.ProvideValue[domain.ServerConfigProvider](injector, serverConfigProviderStub{})
+   32
+   33  	ProvideServer(injector)
+   34  	InvokeServer(injector)
+   35
+   36  	if !hasRoute(w, http.MethodGet, &quot;/api/v1/server/config&quot;) {
+   37  		t.Fatal(&quot;GET /api/v1/server/config route is not registered&quot;)
+   38  	}
+   39  }
+   40
+   41  func TestServerSkipsConfigRouteWithoutProvider(t *testing.T) {
+   42  	injector := do.New()
+   43  	w := web.New()
+   44  	do.ProvideValue(injector, w)
+   45  	do.ProvideValue(injector, slog.New(slog.NewTextHandler(io.Discard, nil)))
+   46
+   47  	ProvideServer(injector)
+   48  	InvokeServer(injector)
+   49
+   50  	if hasRoute(w, http.MethodGet, &quot;/api/v1/server/config&quot;) {
+   51  		t.Fatal(&quot;GET /api/v1/server/config should not be registered without provider&quot;)
+   52  	}
+   53  }
+   54
+   55  func TestServerConfigReturnsInjectedProviderInfo(t *testing.T) {
+   56  	injector := do.New()
+   57  	w := web.New()
+   58  	do.ProvideValue(injector, w)</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>backend/biz/subscription/register_test.go</b><small>1062 bytes · .go</small></div><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/subscription/register_test.go#L14-L29" target="_blank" rel="noreferrer">L14–29 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   14  func TestNewHandlerRegistersSubscriptionRoute(t *testing.T) {
+   15  	injector := do.New()
+   16  	w := web.New()
+   17  	do.ProvideValue(injector, w)
+   18  	do.ProvideValue(injector, slog.New(slog.NewTextHandler(io.Discard, nil)))
+   19  	do.ProvideValue(injector, &amp;middleware.AuthMiddleware{})
+   20  	do.ProvideValue(injector, middleware.NewTargetActiveMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+   21
+   22  	ProvideSubscription(injector)
+   23  	InvokeSubscription(injector)
+   24
+   25  	if !hasRoute(w, &quot;GET&quot;, &quot;/api/v1/users/subscription&quot;) {
+   26  		t.Fatal(&quot;GET /api/v1/users/subscription route is not registered&quot;)
+   27  	}
+   28  	if hasRoute(w, &quot;POST&quot;, &quot;/api/v1/users/subscription&quot;) {
+   29  		t.Fatal(&quot;POST /api/v1/users/subscription should not be registered in opensource&quot;)
+   30  	}
+   31  }
+   32
+   33  func hasRoute(w *web.Web, method, path string) bool {
+   34  	for _, route := range w.Routes() {
+   35  		if route.Method == method &amp;&amp; route.Path == path {
+   36  			return true
+   37  		}
+   38  	}
+   39  	return false
+   40  }
+   41</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="MonkeyCode commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

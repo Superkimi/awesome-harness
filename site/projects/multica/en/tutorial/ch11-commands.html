@@ -1,0 +1,1231 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>Multica · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Multica · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Multica</strong><small>Agent control plane with runtimes</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>d467cc906915</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Multica · d467cc906915</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>4 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Think of Multica as an airport control tower: agents are flights, runtimes are runways, tasks are legs, and deletion must handle flights still bound to a runway.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="multica-architecture-1" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · Architecture &amp; ownership</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Multica models Agents, Runtimes, Tasks, Skills, and connected accounts as control-plane resources; CLI and server share the lifecycle semantics.</p></section><section><span>PLAIN LANGUAGE</span><p>Like tracing a building&#39;s pipes: entry, control, execution, and records each have a job, and edges show handoff.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>14–27</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>28–43</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>server/cmd/multica/cmd_agent.go:14–43</span><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/multica/cmd_agent.go#L14-L43" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   14  	&quot;github.com/spf13/cobra&quot;
+   15
+   16  	&quot;github.com/multica-ai/multica/server/internal/cli&quot;
+   17  	&quot;github.com/multica-ai/multica/server/internal/daemon&quot;
+   18  	&quot;github.com/multica-ai/multica/server/internal/daemon/execenv&quot;
+   19  )
+   20
+   21  var agentCmd = &amp;cobra.Command{
+   22  	Use:   &quot;agent&quot;,
+   23  	Short: &quot;Work with agents&quot;,
+   24  }
+   25
+   26  var agentListCmd = &amp;cobra.Command{
+   27  	Use:   &quot;list&quot;,
+   28  	Short: &quot;List agents in the workspace&quot;,
+   29  	RunE:  runAgentList,
+   30  }
+   31
+   32  var agentGetCmd = &amp;cobra.Command{
+   33  	Use:   &quot;get &lt;id&gt;&quot;,
+   34  	Short: &quot;Get agent details&quot;,
+   35  	Args:  exactArgs(1),
+   36  	RunE:  runAgentGet,
+   37  }
+   38
+   39  var agentCreateCmd = &amp;cobra.Command{
+   40  	Use:   &quot;create&quot;,
+   41  	Short: &quot;Create a new agent&quot;,
+   42  	RunE:  runAgentCreate,
+   43  }
+   44
+   45  var agentUpdateCmd = &amp;cobra.Command{
+   46  	Use:   &quot;update &lt;id&gt;&quot;,
+   47  	Short: &quot;Update an agent&quot;,
+   48  	Args:  exactArgs(1),
+   49  	RunE:  runAgentUpdate,
+   50  }
+   51
+   52  var agentArchiveCmd = &amp;cobra.Command{
+   53  	Use:   &quot;archive &lt;id&gt;&quot;,
+   54  	Short: &quot;Archive an agent&quot;,
+   55  	Args:  exactArgs(1),
+   56  	RunE:  runAgentArchive,
+   57  }
+   58
+   59  var agentRestoreCmd = &amp;cobra.Command{
+   60  	Use:   &quot;restore &lt;id&gt;&quot;,
+   61  	Short: &quot;Restore an archived agent&quot;,
+   62  	Args:  exactArgs(1),
+   63  	RunE:  runAgentRestore,
+   64  }
+   65
+   66  var agentTasksCmd = &amp;cobra.Command{
+   67  	Use:   &quot;tasks &lt;id&gt;&quot;,
+   68  	Short: &quot;List tasks for an agent&quot;,
+   69  	Args:  exactArgs(1),
+   70  	RunE:  runAgentTasks,
+   71  }
+   72
+   73  var agentAvatarCmd = &amp;cobra.Command{
+   74  	Use:   &quot;avatar &lt;id&gt;&quot;,
+   75  	Short: &quot;Upload an avatar image for an agent&quot;,
+   76  	Args:  exactArgs(1),
+   77  	RunE:  runAgentAvatar,
+   78  }
+   79
+   80  // Agent skills subcommands.
+   81
+   82  var agentSkillsCmd = &amp;cobra.Command{
+   83  	Use:   &quot;skills&quot;,
+   84  	Short: &quot;Manage agent skill assignments&quot;,
+   85  }
+   86
+   87  // Agent env subcommands. Live behind a dedicated `agent env` group because
+   88  // they&#39;re the ONLY post-creation path for reading or writing
+   89  // custom_env values — `multica agent list / get / update` no longer
+   90  // expose env on the wire. Each call hits the audited
+   91  // `/api/agents/{id}/env` endpoint. See MUL-2600.
+   92
+   93  var agentEnvCmd = &amp;cobra.Command{
+   94  	Use:   &quot;env&quot;,
+   95  	Short: &quot;Read and update an agent&#39;s custom environment variables (audited)&quot;,
+   96  }
+   97
+   98  var agentEnvGetCmd = &amp;cobra.Command{
+   99  	Use:   &quot;get &lt;agent-id&gt;&quot;,
+  100  	Short: &quot;Print an agent&#39;s custom_env as a JSON map (agent owner or workspace owner/admin; every call is recorded)&quot;,
+  101  	Args:  exactArgs(1),
+  102  	RunE:  runAgentEnvGet,
+  103  }
+  104
+  105  var agentEnvSetCmd = &amp;cobra.Command{
+  106  	Use:   &quot;set &lt;agent-id&gt;&quot;,
+  107  	Short: &quot;Replace an agent&#39;s custom_env (agent owner or workspace owner/admin; values equal to **** preserve the existing entry)&quot;,
+  108  	Args:  exactArgs(1),
+  109  	RunE:  runAgentEnvSet,
+  110  }
+  111
+  112  var agentSkillsListCmd = &amp;cobra.Command{
+  113  	Use:   &quot;list &lt;agent-id&gt;&quot;,
+  114  	Short: &quot;List skills assigned to an agent&quot;,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>14</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	&quot;github.com/spf13/cobra&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>15</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>16</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	&quot;github.com/multica-ai/multica/server/internal/cli&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>17</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	&quot;github.com/multica-ai/multica/server/internal/daemon&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>18</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	&quot;github.com/multica-ai/multica/server/internal/daemon/execenv&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>19</td><th><span class="line-kind-flow">FLOW</span></th><td><code>)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>20</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>21</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>22</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;agent&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;Work with agents&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentListCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;list&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;List agents in the workspace&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>29</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	RunE:  runAgentList,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>30</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>31</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>32</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentGetCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>33</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;get &lt;id&gt;&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>34</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;Get agent details&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>35</td><th><span class="line-kind-input">INPUT</span></th><td><code>	Args:  exactArgs(1),</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>36</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	RunE:  runAgentGet,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>37</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentCreateCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>40</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;create&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>41</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;Create a new agent&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="multica-tools-5" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · Tool registration &amp; execution</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Composio ExecuteToolRequest explicitly carries a connected account, user/toolkit identity, and version rather than reading a hidden global login.</p></section><section><span>PLAIN LANGUAGE</span><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>3–16</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>17–32</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>server/pkg/composio/tools.go:3–32</span><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/pkg/composio/tools.go#L3-L32" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    3  import (
+    4  	&quot;context&quot;
+    5  	&quot;errors&quot;
+    6  	&quot;net/http&quot;
+    7  	&quot;net/url&quot;
+    8  )
+    9
+   10  // ExecuteToolRequest is the body for POST /tools/execute/{tool_slug}.
+   11  //
+   12  // Spec: https://docs.composio.dev/reference/api-reference/tools/postToolsExecuteByToolSlug
+   13  //
+   14  // Either ConnectedAccountID or (UserID + the tool&#39;s toolkit) is required so
+   15  // Composio knows which credential set to use. The SDK does not enforce that
+   16  // invariant up front; the upstream returns a 422 with a clear message when
+   17  // missing.
+   18  type ExecuteToolRequest struct {
+   19  	// Arguments is the structured input to the tool. Shape varies per tool.
+   20  	Arguments map[string]any `json:&quot;arguments,omitempty&quot;`
+   21
+   22  	// ConnectedAccountID pins execution to a specific connected account.
+   23  	ConnectedAccountID string `json:&quot;connected_account_id,omitempty&quot;`
+   24
+   25  	// UserID lets Composio resolve the connected account by user when
+   26  	// the caller does not have the explicit `ca_` id handy.
+   27  	UserID string `json:&quot;user_id,omitempty&quot;`
+   28
+   29  	// Version pins the tool definition version. Pass &quot;latest&quot; or a dated
+   30  	// version like &quot;20251027_00&quot;; defaults to &quot;00000000_00&quot; upstream.
+   31  	//
+   32  	// The Composio docs note that manual tool execution requires an explicit
+   33  	// version; setting this avoids unintended drift when Composio promotes
+   34  	// a new latest.
+   35  	Version string `json:&quot;version,omitempty&quot;`
+   36
+   37  	// AllowTracing is the upstream-deprecated debug-tracing flag.
+   38  	//
+   39  	// Deprecated: marked deprecated on the Composio side (v3.1) — kept here
+   40  	// only for backward compatibility with existing callers. Will be removed
+   41  	// once Composio drops the field.
+   42  	AllowTracing bool `json:&quot;allow_tracing,omitempty&quot;`
+   43  }
+   44
+   45  // ExecuteToolResponse is the typed result. The upstream wire shape varies by
+   46  // tool, so [Data] is intentionally generic; callers cast to whatever the
+   47  // tool&#39;s documented output schema looks like.
+   48  type ExecuteToolResponse struct {
+   49  	Successful  bool           `json:&quot;successful&quot;`
+   50  	Data        map[string]any `json:&quot;data,omitempty&quot;`
+   51  	Error       string         `json:&quot;error,omitempty&quot;`
+   52  	LogID       string         `json:&quot;log_id,omitempty&quot;`
+   53  	SessionInfo map[string]any `json:&quot;session_info,omitempty&quot;`
+   54  }
+   55
+   56  // ExecuteTool calls a Composio tool by its slug
+   57  // (SCREAMING_SNAKE_CASE, e.g. GITHUB_CREATE_ISSUE).
+   58  //
+   59  // This is the deterministic backend path — it skips MCP/session orchestration
+   60  // and is the right call for fixed flows like autopilots or built-in skills.
+   61  func (c *Client) ExecuteTool(ctx context.Context, toolSlug string, req ExecuteToolRequest) (*ExecuteToolResponse, error) {
+   62  	if toolSlug == &quot;&quot; {
+   63  		return nil, errors.New(&quot;composio: ExecuteTool: toolSlug is required&quot;)
+   64  	}
+   65  	if req.ConnectedAccountID == &quot;&quot; &amp;&amp; req.UserID == &quot;&quot; {
+   66  		return nil, errors.New(&quot;composio: ExecuteTool: either ConnectedAccountID or UserID must be set&quot;)
+   67  	}
+   68  	var out ExecuteToolResponse
+   69  	if err := c.do(c.newRequest(ctx).SetBody(req),
+   70  		http.MethodPost, &quot;/tools/execute/&quot;+url.PathEscape(toolSlug), &amp;out); err != nil {
+   71  		return nil, err
+   72  	}
+   73  	return &amp;out, nil
+   74  }
+   75</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>3</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import (</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>4</td><th><span class="line-kind-state">STATE</span></th><td><code>	&quot;context&quot;</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>5</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	&quot;errors&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>6</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>	&quot;net/http&quot;</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>7</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	&quot;net/url&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>8</td><th><span class="line-kind-flow">FLOW</span></th><td><code>)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>9</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>10</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>// ExecuteToolRequest is the body for POST /tools/execute/{tool_slug}.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>11</td><th><span class="line-kind-flow">FLOW</span></th><td><code>//</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>12</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// Spec: https://docs.composio.dev/reference/api-reference/tools/postToolsExecuteByToolSlug</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>13</td><th><span class="line-kind-flow">FLOW</span></th><td><code>//</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>14</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// Either ConnectedAccountID or (UserID + the tool&#39;s toolkit) is required so</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>15</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// Composio knows which credential set to use. The SDK does not enforce that</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>16</td><th><span class="line-kind-input">INPUT</span></th><td><code>// invariant up front; the upstream returns a 422 with a clear message when</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>17</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// missing.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>18</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type ExecuteToolRequest struct {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>19</td><th><span class="line-kind-input">INPUT</span></th><td><code>	// Arguments is the structured input to the tool. Shape varies per tool.</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>20</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Arguments map[string]any `json:&quot;arguments,omitempty&quot;`</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>21</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>22</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// ConnectedAccountID pins execution to a specific connected account.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	ConnectedAccountID string `json:&quot;connected_account_id,omitempty&quot;`</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// UserID lets Composio resolve the connected account by user when</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// the caller does not have the explicit `ca_` id handy.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	UserID string `json:&quot;user_id,omitempty&quot;`</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>29</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// Version pins the tool definition version. Pass &quot;latest&quot; or a dated</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>30</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// version like &quot;20251027_00&quot;; defaults to &quot;00000000_00&quot; upstream.</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="multica-connectors-6" data-finding-dimension="connectors"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>03 · Connectors, plugins &amp; MCP</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Think of Multica as an airport control tower: agents are flights, runtimes are runways, tasks are legs, and deletion must handle flights still bound to a runway.</p></section><section><span>PLAIN LANGUAGE</span><p>Treat the project as a workshop: find the entrypoint, workbench, toolbox, and delivery desk before memorizing APIs.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>73–86</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>87–102</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>server/cmd/multica/cmd_agent.go:73–102</span><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/multica/cmd_agent.go#L73-L102" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   73  var agentAvatarCmd = &amp;cobra.Command{
+   74  	Use:   &quot;avatar &lt;id&gt;&quot;,
+   75  	Short: &quot;Upload an avatar image for an agent&quot;,
+   76  	Args:  exactArgs(1),
+   77  	RunE:  runAgentAvatar,
+   78  }
+   79
+   80  // Agent skills subcommands.
+   81
+   82  var agentSkillsCmd = &amp;cobra.Command{
+   83  	Use:   &quot;skills&quot;,
+   84  	Short: &quot;Manage agent skill assignments&quot;,
+   85  }
+   86
+   87  // Agent env subcommands. Live behind a dedicated `agent env` group because
+   88  // they&#39;re the ONLY post-creation path for reading or writing
+   89  // custom_env values — `multica agent list / get / update` no longer
+   90  // expose env on the wire. Each call hits the audited
+   91  // `/api/agents/{id}/env` endpoint. See MUL-2600.
+   92
+   93  var agentEnvCmd = &amp;cobra.Command{
+   94  	Use:   &quot;env&quot;,
+   95  	Short: &quot;Read and update an agent&#39;s custom environment variables (audited)&quot;,
+   96  }
+   97
+   98  var agentEnvGetCmd = &amp;cobra.Command{
+   99  	Use:   &quot;get &lt;agent-id&gt;&quot;,
+  100  	Short: &quot;Print an agent&#39;s custom_env as a JSON map (agent owner or workspace owner/admin; every call is recorded)&quot;,
+  101  	Args:  exactArgs(1),
+  102  	RunE:  runAgentEnvGet,
+  103  }
+  104
+  105  var agentEnvSetCmd = &amp;cobra.Command{
+  106  	Use:   &quot;set &lt;agent-id&gt;&quot;,
+  107  	Short: &quot;Replace an agent&#39;s custom_env (agent owner or workspace owner/admin; values equal to **** preserve the existing entry)&quot;,
+  108  	Args:  exactArgs(1),
+  109  	RunE:  runAgentEnvSet,
+  110  }
+  111
+  112  var agentSkillsListCmd = &amp;cobra.Command{
+  113  	Use:   &quot;list &lt;agent-id&gt;&quot;,
+  114  	Short: &quot;List skills assigned to an agent&quot;,
+  115  	Args:  exactArgs(1),
+  116  	RunE:  runAgentSkillsList,
+  117  }
+  118
+  119  var agentSkillsSetCmd = &amp;cobra.Command{
+  120  	Use:   &quot;set &lt;agent-id&gt;&quot;,
+  121  	Short: &quot;Set skills for an agent (replaces all current assignments)&quot;,
+  122  	Args:  exactArgs(1),
+  123  	RunE:  runAgentSkillsSet,
+  124  }
+  125
+  126  var agentSkillsAddCmd = &amp;cobra.Command{
+  127  	Use:   &quot;add &lt;agent-id&gt;&quot;,
+  128  	Short: &quot;Add skills to an agent without replacing existing assignments&quot;,
+  129  	Args:  exactArgs(1),
+  130  	RunE:  runAgentSkillsAdd,
+  131  }
+  132
+  133  func init() {
+  134  	agentCmd.AddCommand(agentListCmd)
+  135  	agentCmd.AddCommand(agentGetCmd)
+  136  	agentCmd.AddCommand(agentCreateCmd)
+  137  	agentCmd.AddCommand(agentUpdateCmd)
+  138  	agentCmd.AddCommand(agentArchiveCmd)
+  139  	agentCmd.AddCommand(agentRestoreCmd)
+  140  	agentCmd.AddCommand(agentTasksCmd)
+  141  	agentCmd.AddCommand(agentAvatarCmd)
+  142  	agentCmd.AddCommand(agentSkillsCmd)
+  143  	agentCmd.AddCommand(agentEnvCmd)
+  144
+  145  	agentSkillsCmd.AddCommand(agentSkillsListCmd)
+  146  	agentSkillsCmd.AddCommand(agentSkillsSetCmd)
+  147  	agentSkillsCmd.AddCommand(agentSkillsAddCmd)
+  148
+  149  	agentEnvCmd.AddCommand(agentEnvGetCmd)
+  150  	agentEnvCmd.AddCommand(agentEnvSetCmd)
+  151
+  152  	// agent list
+  153  	agentListCmd.Flags().String(&quot;output&quot;, &quot;table&quot;, &quot;Output format: table or json&quot;)
+  154  	agentListCmd.Flags().Bool(&quot;include-archived&quot;, false, &quot;Include archived agents&quot;)
+  155
+  156  	// agent get
+  157  	agentGetCmd.Flags().String(&quot;output&quot;, &quot;json&quot;, &quot;Output format: table or json&quot;)
+  158
+  159  	// agent create
+  160  	agentCreateCmd.Flags().String(&quot;name&quot;, &quot;&quot;, &quot;Agent name (required)&quot;)
+  161  	agentCreateCmd.Flags().String(&quot;description&quot;, &quot;&quot;, &quot;Agent description&quot;)
+  162  	agentCreateCmd.Flags().String(&quot;instructions&quot;, &quot;&quot;, &quot;Agent instructions&quot;)
+  163  	agentCreateCmd.Flags().String(&quot;runtime-id&quot;, &quot;&quot;, &quot;Runtime ID (required)&quot;)
+  164  	agentCreateCmd.Flags().String(&quot;runtime-config&quot;, &quot;&quot;, &quot;Runtime config as JSON string&quot;)
+  165  	agentCreateCmd.Flags().String(&quot;model&quot;, &quot;&quot;, &quot;Model identifier (e.g. claude-sonnet-4-6, openai/gpt-4o). Prefer this over passing --model in --custom-args.&quot;)
+  166  	agentCreateCmd.Flags().String(&quot;thinking-level&quot;, &quot;&quot;, &quot;Reasoning/effort level for the agent&#39;s runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Empty = runtime default.&quot;)
+  167  	agentCreateCmd.Flags().String(&quot;service-tier&quot;, &quot;&quot;, &quot;Codex execution service tier from the selected model&#39;s runtime catalog (e.g. priority, displayed as Fast). Empty = inherit local Codex configuration.&quot;)
+  168  	agentCreateCmd.Flags().String(&quot;custom-args&quot;, &quot;&quot;, &quot;Custom CLI arguments as JSON array. For model selection prefer --model; some providers (codex app-server, openclaw) reject --model in custom_args.&quot;)
+  169  	agentCreateCmd.Flags().String(&quot;custom-env&quot;, &quot;&quot;, &quot;Custom environment variables as JSON object, e.g. &#39;{\&quot;KEY\&quot;:\&quot;value\&quot;}&#39;. Treated as secret material — never logged by the CLI, but values passed on the command line are visible to shell history and &#39;ps&#39;; prefer --custom-env-stdin or --custom-env-file for real secrets. Pass &#39;{}&#39; to set an empty map.&quot;)
+  170  	agentCreateCmd.Flags().Bool(&quot;custom-env-stdin&quot;, false, &quot;Read the --custom-env JSON object from stdin. Keeps secrets out of shell history and &#39;ps&#39;. Mutually exclusive with --custom-env and --custom-env-file.&quot;)
+  171  	agentCreateCmd.Flags().String(&quot;custom-env-file&quot;, &quot;&quot;, &quot;Read the --custom-env JSON object from a file path (suggested mode: 0600). Mutually exclusive with --custom-env and --custom-env-stdin.&quot;)
+  172  	agentCreateCmd.Flags().String(&quot;mcp-config&quot;, &quot;&quot;, &quot;MCP server configuration as a JSON object, e.g. &#39;{\&quot;mcpServers\&quot;:{\&quot;shortcut\&quot;:{...}}}&#39;. Treated as secret material (MCP entries often carry API tokens) — never logged by the CLI, but values passed on the command line are visible to shell history and &#39;ps&#39;; prefer --mcp-config-stdin or --mcp-config-file for real secrets.&quot;)
+  173  	agentCreateCmd.Flags().Bool(&quot;mcp-config-stdin&quot;, false, &quot;Read the --mcp-config JSON object from stdin. Keeps secrets out of shell history and &#39;ps&#39;. Mutually exclusive with --mcp-config and --mcp-config-file.&quot;)</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>73</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentAvatarCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>74</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;avatar &lt;id&gt;&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>75</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	Short: &quot;Upload an avatar image for an agent&quot;,</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>76</td><th><span class="line-kind-input">INPUT</span></th><td><code>	Args:  exactArgs(1),</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>77</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	RunE:  runAgentAvatar,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>78</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>79</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>80</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// Agent skills subcommands.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>81</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>82</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentSkillsCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>83</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;skills&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>84</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;Manage agent skill assignments&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>85</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>86</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>87</td><th><span class="line-kind-input">INPUT</span></th><td><code>// Agent env subcommands. Live behind a dedicated `agent env` group because</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>88</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>// they&#39;re the ONLY post-creation path for reading or writing</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>89</td><th><span class="line-kind-state">STATE</span></th><td><code>// custom_env values — `multica agent list / get / update` no longer</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>90</td><th><span class="line-kind-input">INPUT</span></th><td><code>// expose env on the wire. Each call hits the audited</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>91</td><th><span class="line-kind-input">INPUT</span></th><td><code>// `/api/agents/{id}/env` endpoint. See MUL-2600.</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>92</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>93</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentEnvCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>94</td><th><span class="line-kind-input">INPUT</span></th><td><code>	Use:   &quot;env&quot;,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>95</td><th><span class="line-kind-state">STATE</span></th><td><code>	Short: &quot;Read and update an agent&#39;s custom environment variables (audited)&quot;,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>96</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>97</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>98</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentEnvGetCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>99</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;get &lt;agent-id&gt;&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>100</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;Print an agent&#39;s custom_env as a JSON map (agent owner or workspace owner/admin; every call is recorded)&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="multica-instructions-10" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · Instructions &amp; extension surface</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Agent skills, custom env vars, CLI flags, and Composio toolkit versions are explicit inputs; credentials and versions are not hidden in prose.</p></section><section><span>PLAIN LANGUAGE</span><p>Treat the project as a workshop: find the entrypoint, workbench, toolbox, and delivery desk before memorizing APIs.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>73–86</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>87–102</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>server/cmd/multica/cmd_agent.go:73–102</span><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/multica/cmd_agent.go#L73-L102" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   73  var agentAvatarCmd = &amp;cobra.Command{
+   74  	Use:   &quot;avatar &lt;id&gt;&quot;,
+   75  	Short: &quot;Upload an avatar image for an agent&quot;,
+   76  	Args:  exactArgs(1),
+   77  	RunE:  runAgentAvatar,
+   78  }
+   79
+   80  // Agent skills subcommands.
+   81
+   82  var agentSkillsCmd = &amp;cobra.Command{
+   83  	Use:   &quot;skills&quot;,
+   84  	Short: &quot;Manage agent skill assignments&quot;,
+   85  }
+   86
+   87  // Agent env subcommands. Live behind a dedicated `agent env` group because
+   88  // they&#39;re the ONLY post-creation path for reading or writing
+   89  // custom_env values — `multica agent list / get / update` no longer
+   90  // expose env on the wire. Each call hits the audited
+   91  // `/api/agents/{id}/env` endpoint. See MUL-2600.
+   92
+   93  var agentEnvCmd = &amp;cobra.Command{
+   94  	Use:   &quot;env&quot;,
+   95  	Short: &quot;Read and update an agent&#39;s custom environment variables (audited)&quot;,
+   96  }
+   97
+   98  var agentEnvGetCmd = &amp;cobra.Command{
+   99  	Use:   &quot;get &lt;agent-id&gt;&quot;,
+  100  	Short: &quot;Print an agent&#39;s custom_env as a JSON map (agent owner or workspace owner/admin; every call is recorded)&quot;,
+  101  	Args:  exactArgs(1),
+  102  	RunE:  runAgentEnvGet,
+  103  }
+  104
+  105  var agentEnvSetCmd = &amp;cobra.Command{
+  106  	Use:   &quot;set &lt;agent-id&gt;&quot;,
+  107  	Short: &quot;Replace an agent&#39;s custom_env (agent owner or workspace owner/admin; values equal to **** preserve the existing entry)&quot;,
+  108  	Args:  exactArgs(1),
+  109  	RunE:  runAgentEnvSet,
+  110  }
+  111
+  112  var agentSkillsListCmd = &amp;cobra.Command{
+  113  	Use:   &quot;list &lt;agent-id&gt;&quot;,
+  114  	Short: &quot;List skills assigned to an agent&quot;,
+  115  	Args:  exactArgs(1),
+  116  	RunE:  runAgentSkillsList,
+  117  }
+  118
+  119  var agentSkillsSetCmd = &amp;cobra.Command{
+  120  	Use:   &quot;set &lt;agent-id&gt;&quot;,
+  121  	Short: &quot;Set skills for an agent (replaces all current assignments)&quot;,
+  122  	Args:  exactArgs(1),
+  123  	RunE:  runAgentSkillsSet,
+  124  }
+  125
+  126  var agentSkillsAddCmd = &amp;cobra.Command{
+  127  	Use:   &quot;add &lt;agent-id&gt;&quot;,
+  128  	Short: &quot;Add skills to an agent without replacing existing assignments&quot;,
+  129  	Args:  exactArgs(1),
+  130  	RunE:  runAgentSkillsAdd,
+  131  }
+  132
+  133  func init() {
+  134  	agentCmd.AddCommand(agentListCmd)
+  135  	agentCmd.AddCommand(agentGetCmd)
+  136  	agentCmd.AddCommand(agentCreateCmd)
+  137  	agentCmd.AddCommand(agentUpdateCmd)
+  138  	agentCmd.AddCommand(agentArchiveCmd)
+  139  	agentCmd.AddCommand(agentRestoreCmd)
+  140  	agentCmd.AddCommand(agentTasksCmd)
+  141  	agentCmd.AddCommand(agentAvatarCmd)
+  142  	agentCmd.AddCommand(agentSkillsCmd)
+  143  	agentCmd.AddCommand(agentEnvCmd)
+  144
+  145  	agentSkillsCmd.AddCommand(agentSkillsListCmd)
+  146  	agentSkillsCmd.AddCommand(agentSkillsSetCmd)
+  147  	agentSkillsCmd.AddCommand(agentSkillsAddCmd)
+  148
+  149  	agentEnvCmd.AddCommand(agentEnvGetCmd)
+  150  	agentEnvCmd.AddCommand(agentEnvSetCmd)
+  151
+  152  	// agent list
+  153  	agentListCmd.Flags().String(&quot;output&quot;, &quot;table&quot;, &quot;Output format: table or json&quot;)
+  154  	agentListCmd.Flags().Bool(&quot;include-archived&quot;, false, &quot;Include archived agents&quot;)
+  155
+  156  	// agent get
+  157  	agentGetCmd.Flags().String(&quot;output&quot;, &quot;json&quot;, &quot;Output format: table or json&quot;)
+  158
+  159  	// agent create
+  160  	agentCreateCmd.Flags().String(&quot;name&quot;, &quot;&quot;, &quot;Agent name (required)&quot;)
+  161  	agentCreateCmd.Flags().String(&quot;description&quot;, &quot;&quot;, &quot;Agent description&quot;)
+  162  	agentCreateCmd.Flags().String(&quot;instructions&quot;, &quot;&quot;, &quot;Agent instructions&quot;)
+  163  	agentCreateCmd.Flags().String(&quot;runtime-id&quot;, &quot;&quot;, &quot;Runtime ID (required)&quot;)
+  164  	agentCreateCmd.Flags().String(&quot;runtime-config&quot;, &quot;&quot;, &quot;Runtime config as JSON string&quot;)
+  165  	agentCreateCmd.Flags().String(&quot;model&quot;, &quot;&quot;, &quot;Model identifier (e.g. claude-sonnet-4-6, openai/gpt-4o). Prefer this over passing --model in --custom-args.&quot;)
+  166  	agentCreateCmd.Flags().String(&quot;thinking-level&quot;, &quot;&quot;, &quot;Reasoning/effort level for the agent&#39;s runtime (e.g. Claude: low|medium|high|xhigh|max; Codex values come from the runtime model catalog). The set is runtime/model-specific; malformed values are rejected server-side and the daemon validates the exact model/level pair. Some runtimes (e.g. hermes) expose no reasoning control and reject every value. Empty = runtime default.&quot;)
+  167  	agentCreateCmd.Flags().String(&quot;service-tier&quot;, &quot;&quot;, &quot;Codex execution service tier from the selected model&#39;s runtime catalog (e.g. priority, displayed as Fast). Empty = inherit local Codex configuration.&quot;)
+  168  	agentCreateCmd.Flags().String(&quot;custom-args&quot;, &quot;&quot;, &quot;Custom CLI arguments as JSON array. For model selection prefer --model; some providers (codex app-server, openclaw) reject --model in custom_args.&quot;)
+  169  	agentCreateCmd.Flags().String(&quot;custom-env&quot;, &quot;&quot;, &quot;Custom environment variables as JSON object, e.g. &#39;{\&quot;KEY\&quot;:\&quot;value\&quot;}&#39;. Treated as secret material — never logged by the CLI, but values passed on the command line are visible to shell history and &#39;ps&#39;; prefer --custom-env-stdin or --custom-env-file for real secrets. Pass &#39;{}&#39; to set an empty map.&quot;)
+  170  	agentCreateCmd.Flags().Bool(&quot;custom-env-stdin&quot;, false, &quot;Read the --custom-env JSON object from stdin. Keeps secrets out of shell history and &#39;ps&#39;. Mutually exclusive with --custom-env and --custom-env-file.&quot;)
+  171  	agentCreateCmd.Flags().String(&quot;custom-env-file&quot;, &quot;&quot;, &quot;Read the --custom-env JSON object from a file path (suggested mode: 0600). Mutually exclusive with --custom-env and --custom-env-stdin.&quot;)
+  172  	agentCreateCmd.Flags().String(&quot;mcp-config&quot;, &quot;&quot;, &quot;MCP server configuration as a JSON object, e.g. &#39;{\&quot;mcpServers\&quot;:{\&quot;shortcut\&quot;:{...}}}&#39;. Treated as secret material (MCP entries often carry API tokens) — never logged by the CLI, but values passed on the command line are visible to shell history and &#39;ps&#39;; prefer --mcp-config-stdin or --mcp-config-file for real secrets.&quot;)
+  173  	agentCreateCmd.Flags().Bool(&quot;mcp-config-stdin&quot;, false, &quot;Read the --mcp-config JSON object from stdin. Keeps secrets out of shell history and &#39;ps&#39;. Mutually exclusive with --mcp-config and --mcp-config-file.&quot;)</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>73</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentAvatarCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>74</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;avatar &lt;id&gt;&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>75</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	Short: &quot;Upload an avatar image for an agent&quot;,</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>76</td><th><span class="line-kind-input">INPUT</span></th><td><code>	Args:  exactArgs(1),</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>77</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	RunE:  runAgentAvatar,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>78</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>79</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>80</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// Agent skills subcommands.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>81</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>82</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentSkillsCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>83</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;skills&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>84</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;Manage agent skill assignments&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>85</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>86</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>87</td><th><span class="line-kind-input">INPUT</span></th><td><code>// Agent env subcommands. Live behind a dedicated `agent env` group because</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>88</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>// they&#39;re the ONLY post-creation path for reading or writing</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>89</td><th><span class="line-kind-state">STATE</span></th><td><code>// custom_env values — `multica agent list / get / update` no longer</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>90</td><th><span class="line-kind-input">INPUT</span></th><td><code>// expose env on the wire. Each call hits the audited</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>91</td><th><span class="line-kind-input">INPUT</span></th><td><code>// `/api/agents/{id}/env` endpoint. See MUL-2600.</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>92</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>93</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentEnvCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>94</td><th><span class="line-kind-input">INPUT</span></th><td><code>	Use:   &quot;env&quot;,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>95</td><th><span class="line-kind-state">STATE</span></th><td><code>	Short: &quot;Read and update an agent&#39;s custom environment variables (audited)&quot;,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>96</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>97</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>98</td><th><span class="line-kind-input">INPUT</span></th><td><code>var agentEnvGetCmd = &amp;cobra.Command{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>99</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Use:   &quot;get &lt;agent-id&gt;&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>100</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Short: &quot;Print an agent&#39;s custom_env as a JSON map (agent owner or workspace owner/admin; every call is recorded)&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--force</code></h3><small>flag · apps/desktop/src/main/cli-bootstrap.ts:134</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/apps/desktop/src/main/cli-bootstrap.ts#L129-L146" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  129      await chmod(target, 0o755);
+  130
+  131      // macOS: ad-hoc sign so spawning the child never hits a gatekeeper quirk.
+  132      // Non-fatal: unsigned binaries still execute when the parent app is trusted.
+  133      if (process.platform === &quot;darwin&quot;) {
+  134        await run(&quot;codesign&quot;, [&quot;-s&quot;, &quot;-&quot;, &quot;--force&quot;, target]).catch((err) =&gt; {
+  135          console.warn(&quot;[cli-bootstrap] ad-hoc codesign failed:&quot;, err);
+  136        });
+  137      }
+  138
+  139      console.log(`[cli-bootstrap] installed CLI at ${target}`);
+  140      return target;
+  141    } finally {
+  142      await rm(workDir, { recursive: true, force: true }).catch(() =&gt; {});
+  143    }
+  144  }
+  145
+  146  /**
+  147   * Returns the path to a usable `multica` binary. If one is already present at
+  148   * the managed userData location, returns it immediately. Otherwise downloads
+  149   * the latest release asset for the current platform and installs it.
+  150   */
+  151  export async function ensureManagedCli(
+  152    options: { forceInstall?: boolean } = {},
+  153  ): Promise&lt;string&gt; {
+  154    const target = managedCliPath();
+  155    if (existsSync(target) &amp;&amp; !options.forceInstall) return target;
+  156    return installFresh();
+  157  }
+  158</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--force#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>/api</code></h3><small>slash · packages/core/api/client.ts:1098</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/core/api/client.ts#L1093-L1110" target="_blank" rel="noreferrer">Source ↗</a></header><p>A slash-command clue: the interaction layer recognises the token before routing it through the project&#39;s registry.</p><pre><code> 1093    async unresolveComment(commentId: string): Promise&lt;Comment&gt; {
+ 1094      return this.fetch(`/api/comments/${commentId}/resolve`, { method: &quot;DELETE&quot; });
+ 1095    }
+ 1096
+ 1097    async addReaction(commentId: string, emoji: string): Promise&lt;Reaction&gt; {
+ 1098      return this.fetch(`/api/comments/${commentId}/reactions`, {
+ 1099        method: &quot;POST&quot;,
+ 1100        body: JSON.stringify({ emoji }),
+ 1101      });
+ 1102    }
+ 1103
+ 1104    async removeReaction(commentId: string, emoji: string): Promise&lt;void&gt; {
+ 1105      await this.fetch(`/api/comments/${commentId}/reactions`, {
+ 1106        method: &quot;DELETE&quot;,
+ 1107        body: JSON.stringify({ emoji }),
+ 1108      });
+ 1109    }
+ 1110
+ 1111    async addIssueReaction(issueId: string, emoji: string): Promise&lt;IssueReaction&gt; {
+ 1112      return this.fetch(`/api/issues/${issueId}/reactions`, {
+ 1113        method: &quot;POST&quot;,
+ 1114        body: JSON.stringify({ emoji }),
+ 1115      });
+ 1116    }
+ 1117
+ 1118    async removeIssueReaction(issueId: string, emoji: string): Promise&lt;void&gt; {
+ 1119      await this.fetch(`/api/issues/${issueId}/reactions`, {
+ 1120        method: &quot;DELETE&quot;,
+ 1121        body: JSON.stringify({ emoji }),
+ 1122      });
+ 1123    }
+ 1124
+ 1125    // Subscribers
+ 1126    async listIssueSubscribers(issueId: string): Promise&lt;IssueSubscriber[]&gt; {
+ 1127      const raw = await this.fetch&lt;unknown&gt;(`/api/issues/${issueId}/subscribers`);
+ 1128      return parseWithFallback(raw, SubscribersListSchema, [], {
+ 1129        endpoint: &quot;GET /api/issues/:id/subscribers&quot;,
+ 1130      });
+ 1131    }
+ 1132
+ 1133    async subscribeToIssue(issueId: string, userId?: string, userType?: string): Promise&lt;void&gt; {
+ 1134      const body: Record&lt;string, string&gt; = {};
+ 1135      if (userId) body.user_id = userId;
+ 1136      if (userType) body.user_type = userType;
+ 1137      await this.fetch(`/api/issues/${issueId}/subscribe`, {
+ 1138        method: &quot;POST&quot;,
+ 1139        body: JSON.stringify(body),
+ 1140      });
+ 1141    }
+ 1142
+ 1143    async unsubscribeFromIssue(
+ 1144      issueId: string,
+ 1145      userId?: string,
+ 1146      userType?: string,
+ 1147    ): Promise&lt;void&gt; {
+ 1148      await this.fetch(`/api/issues/${issueId}/unsubscribe`, {
+ 1149        method: &quot;POST&quot;,
+ 1150        body: JSON.stringify(subscriberTarget(userId, userType)),
+ 1151      });</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fapi#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--tags</code></h3><small>flag · packages/core/runtimes/cli-version.ts:28</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/core/runtimes/cli-version.ts#L23-L40" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   23    min: string;
+   24  }
+   25
+   26  const SEMVER_RE = /v?(\d+)\.(\d+)\.(\d+)/;
+   27
+   28  // Matches the `git describe --tags --always --dirty` output for a build past
+   29  // the latest tag, e.g. `v0.2.15-235-gdaf0e935` or `v0.2.15-235-gdaf0e935-dirty`.
+   30  // Daemons built from source (Makefile `make build` / `make daemon`) report this
+   31  // shape; tagged releases are bare semver. Treating dev-described daemons as OK
+   32  // is what keeps `pnpm dev:desktop` + `make daemon` unblocked without weakening
+   33  // the gate for staging or production users running stale stable releases.
+   34  const DEV_DESCRIBE_RE = /^v?\d+\.\d+\.\d+-\d+-g[0-9a-fA-F]+/;
+   35
+   36  function parseSemver(raw: string): [number, number, number] | null {
+   37    const m = SEMVER_RE.exec(raw.trim());
+   38    if (!m) return null;
+   39    return [Number(m[1]), Number(m[2]), Number(m[3])];
+   40  }
+   41
+   42  function lessThan(a: [number, number, number], b: [number, number, number]) {
+   43    if (a[0] !== b[0]) return a[0] &lt; b[0];
+   44    if (a[1] !== b[1]) return a[1] &lt; b[1];
+   45    return a[2] &lt; b[2];
+   46  }
+   47
+   48  /**
+   49   * Check a daemon-reported CLI version string against the minimum. Returns
+   50   * `&quot;missing&quot;` for empty/unparsable input (fail closed — same policy as the
+   51   * server) and `&quot;too_old&quot;` for a parsable version below the threshold.
+   52   * Dev-built daemons (git-describe shape) are always OK — the version string
+   53   * itself is the shared signal, so frontend and server agree by construction.
+   54   */
+   55  export function checkQuickCreateCliVersion(detected: string | undefined | null): CliVersionCheck {
+   56    return checkCliVersion(detected, MIN_QUICK_CREATE_CLI_VERSION);
+   57  }
+   58
+   59  /** Capability gate for explicit quick-create priority and due-date fields. */
+   60  export function checkQuickCreateFieldsCliVersion(
+   61    detected: string | undefined | null,
+   62  ): CliVersionCheck {
+   63    return checkCliVersion(detected, MIN_QUICK_CREATE_FIELDS_CLI_VERSION);
+   64  }
+   65
+   66  function checkCliVersion(
+   67    detected: string | undefined | null,
+   68    minimum: string,
+   69  ): CliVersionCheck {
+   70    const current = (detected ?? &quot;&quot;).trim();
+   71    if (DEV_DESCRIBE_RE.test(current)) {
+   72      return { state: &quot;ok&quot;, current, min: minimum };
+   73    }
+   74    const parsed = current ? parseSemver(current) : null;
+   75    if (!parsed) {
+   76      return { state: &quot;missing&quot;, current, min: minimum };
+   77    }
+   78    const min = parseSemver(minimum)!;
+   79    if (lessThan(parsed, min)) {
+   80      return { state: &quot;too_old&quot;, current, min: minimum };
+   81    }</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--tags#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--always</code></h3><small>flag · packages/core/runtimes/cli-version.ts:28</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/core/runtimes/cli-version.ts#L23-L40" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   23    min: string;
+   24  }
+   25
+   26  const SEMVER_RE = /v?(\d+)\.(\d+)\.(\d+)/;
+   27
+   28  // Matches the `git describe --tags --always --dirty` output for a build past
+   29  // the latest tag, e.g. `v0.2.15-235-gdaf0e935` or `v0.2.15-235-gdaf0e935-dirty`.
+   30  // Daemons built from source (Makefile `make build` / `make daemon`) report this
+   31  // shape; tagged releases are bare semver. Treating dev-described daemons as OK
+   32  // is what keeps `pnpm dev:desktop` + `make daemon` unblocked without weakening
+   33  // the gate for staging or production users running stale stable releases.
+   34  const DEV_DESCRIBE_RE = /^v?\d+\.\d+\.\d+-\d+-g[0-9a-fA-F]+/;
+   35
+   36  function parseSemver(raw: string): [number, number, number] | null {
+   37    const m = SEMVER_RE.exec(raw.trim());
+   38    if (!m) return null;
+   39    return [Number(m[1]), Number(m[2]), Number(m[3])];
+   40  }
+   41
+   42  function lessThan(a: [number, number, number], b: [number, number, number]) {
+   43    if (a[0] !== b[0]) return a[0] &lt; b[0];
+   44    if (a[1] !== b[1]) return a[1] &lt; b[1];
+   45    return a[2] &lt; b[2];
+   46  }
+   47
+   48  /**
+   49   * Check a daemon-reported CLI version string against the minimum. Returns
+   50   * `&quot;missing&quot;` for empty/unparsable input (fail closed — same policy as the
+   51   * server) and `&quot;too_old&quot;` for a parsable version below the threshold.
+   52   * Dev-built daemons (git-describe shape) are always OK — the version string
+   53   * itself is the shared signal, so frontend and server agree by construction.
+   54   */
+   55  export function checkQuickCreateCliVersion(detected: string | undefined | null): CliVersionCheck {
+   56    return checkCliVersion(detected, MIN_QUICK_CREATE_CLI_VERSION);
+   57  }
+   58
+   59  /** Capability gate for explicit quick-create priority and due-date fields. */
+   60  export function checkQuickCreateFieldsCliVersion(
+   61    detected: string | undefined | null,
+   62  ): CliVersionCheck {
+   63    return checkCliVersion(detected, MIN_QUICK_CREATE_FIELDS_CLI_VERSION);
+   64  }
+   65
+   66  function checkCliVersion(
+   67    detected: string | undefined | null,
+   68    minimum: string,
+   69  ): CliVersionCheck {
+   70    const current = (detected ?? &quot;&quot;).trim();
+   71    if (DEV_DESCRIBE_RE.test(current)) {
+   72      return { state: &quot;ok&quot;, current, min: minimum };
+   73    }
+   74    const parsed = current ? parseSemver(current) : null;
+   75    if (!parsed) {
+   76      return { state: &quot;missing&quot;, current, min: minimum };
+   77    }
+   78    const min = parseSemver(minimum)!;
+   79    if (lessThan(parsed, min)) {
+   80      return { state: &quot;too_old&quot;, current, min: minimum };
+   81    }</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--always#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--dirty</code></h3><small>flag · packages/core/runtimes/cli-version.ts:28</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/core/runtimes/cli-version.ts#L23-L40" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   23    min: string;
+   24  }
+   25
+   26  const SEMVER_RE = /v?(\d+)\.(\d+)\.(\d+)/;
+   27
+   28  // Matches the `git describe --tags --always --dirty` output for a build past
+   29  // the latest tag, e.g. `v0.2.15-235-gdaf0e935` or `v0.2.15-235-gdaf0e935-dirty`.
+   30  // Daemons built from source (Makefile `make build` / `make daemon`) report this
+   31  // shape; tagged releases are bare semver. Treating dev-described daemons as OK
+   32  // is what keeps `pnpm dev:desktop` + `make daemon` unblocked without weakening
+   33  // the gate for staging or production users running stale stable releases.
+   34  const DEV_DESCRIBE_RE = /^v?\d+\.\d+\.\d+-\d+-g[0-9a-fA-F]+/;
+   35
+   36  function parseSemver(raw: string): [number, number, number] | null {
+   37    const m = SEMVER_RE.exec(raw.trim());
+   38    if (!m) return null;
+   39    return [Number(m[1]), Number(m[2]), Number(m[3])];
+   40  }
+   41
+   42  function lessThan(a: [number, number, number], b: [number, number, number]) {
+   43    if (a[0] !== b[0]) return a[0] &lt; b[0];
+   44    if (a[1] !== b[1]) return a[1] &lt; b[1];
+   45    return a[2] &lt; b[2];
+   46  }
+   47
+   48  /**
+   49   * Check a daemon-reported CLI version string against the minimum. Returns
+   50   * `&quot;missing&quot;` for empty/unparsable input (fail closed — same policy as the
+   51   * server) and `&quot;too_old&quot;` for a parsable version below the threshold.
+   52   * Dev-built daemons (git-describe shape) are always OK — the version string
+   53   * itself is the shared signal, so frontend and server agree by construction.
+   54   */
+   55  export function checkQuickCreateCliVersion(detected: string | undefined | null): CliVersionCheck {
+   56    return checkCliVersion(detected, MIN_QUICK_CREATE_CLI_VERSION);
+   57  }
+   58
+   59  /** Capability gate for explicit quick-create priority and due-date fields. */
+   60  export function checkQuickCreateFieldsCliVersion(
+   61    detected: string | undefined | null,
+   62  ): CliVersionCheck {
+   63    return checkCliVersion(detected, MIN_QUICK_CREATE_FIELDS_CLI_VERSION);
+   64  }
+   65
+   66  function checkCliVersion(
+   67    detected: string | undefined | null,
+   68    minimum: string,
+   69  ): CliVersionCheck {
+   70    const current = (detected ?? &quot;&quot;).trim();
+   71    if (DEV_DESCRIBE_RE.test(current)) {
+   72      return { state: &quot;ok&quot;, current, min: minimum };
+   73    }
+   74    const parsed = current ? parseSemver(current) : null;
+   75    if (!parsed) {
+   76      return { state: &quot;missing&quot;, current, min: minimum };
+   77    }
+   78    const min = parseSemver(minimum)!;
+   79    if (lessThan(parsed, min)) {
+   80      return { state: &quot;too_old&quot;, current, min: minimum };
+   81    }</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--dirty#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--radius</code></h3><small>flag · packages/ui/components/ui/input-group.tsx:28</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/ui/components/ui/input-group.tsx#L23-L40" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   23      /&gt;
+   24    )
+   25  }
+   26
+   27  const inputGroupAddonVariants = cva(
+   28    &quot;flex h-auto cursor-text items-center justify-center gap-2 py-1.5 text-body font-medium text-muted-foreground select-none group-data-[disabled=true]/input-group:opacity-50 [&amp;&gt;kbd]:rounded-[calc(var(--radius)-5px)] [&amp;&gt;svg:not([class*=&#39;size-&#39;])]:size-4&quot;,
+   29    {
+   30      variants: {
+   31        align: {
+   32          &quot;inline-start&quot;:
+   33            &quot;order-first pl-2 has-[&gt;button]:ml-[-0.3rem] has-[&gt;kbd]:ml-[-0.15rem]&quot;,
+   34          &quot;inline-end&quot;:
+   35            &quot;order-last pr-2 has-[&gt;button]:mr-[-0.3rem] has-[&gt;kbd]:mr-[-0.15rem]&quot;,
+   36          &quot;block-start&quot;:
+   37            &quot;order-first w-full justify-start px-2.5 pt-2 group-has-[&gt;input]/input-group:pt-2 [.border-b]:pb-2&quot;,
+   38          &quot;block-end&quot;:
+   39            &quot;order-last w-full justify-start px-2.5 pb-2 group-has-[&gt;input]/input-group:pb-2 [.border-t]:pt-2&quot;,
+   40        },
+   41      },
+   42      defaultVariants: {
+   43        align: &quot;inline-start&quot;,
+   44      },
+   45    }
+   46  )
+   47
+   48  function InputGroupAddon({
+   49    className,
+   50    align = &quot;inline-start&quot;,
+   51    ...props
+   52  }: React.ComponentProps&lt;&quot;div&quot;&gt; &amp; VariantProps&lt;typeof inputGroupAddonVariants&gt;) {
+   53    return (
+   54      &lt;div
+   55        role=&quot;group&quot;
+   56        data-slot=&quot;input-group-addon&quot;
+   57        data-align={align}
+   58        className={cn(inputGroupAddonVariants({ align }), className)}
+   59        onMouseDown={(e) =&gt; {
+   60          if ((e.target as HTMLElement).closest(&quot;button&quot;)) {
+   61            return
+   62          }
+   63          // The addon acts as part of the input, so a click on it must not move
+   64          // focus: the blur would land before the click below could focus back,
+   65          // and the input&#39;s blur handlers (commit, close) would already have run.
+   66          e.preventDefault()
+   67        }}
+   68        onClick={(e) =&gt; {
+   69          if ((e.target as HTMLElement).closest(&quot;button&quot;)) {
+   70            return
+   71          }
+   72          e.currentTarget.parentElement?.querySelector(&quot;input&quot;)?.focus()
+   73        }}
+   74        {...props}
+   75      /&gt;
+   76    )
+   77  }
+   78
+   79  const inputGroupButtonVariants = cva(
+   80    &quot;flex items-center gap-2 text-body shadow-none&quot;,
+   81    {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--radius#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--suggestion-available-height</code></h3><small>flag · packages/views/editor/extensions/slash-command-suggestion.tsx:137</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/views/editor/extensions/slash-command-suggestion.tsx#L132-L149" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  132        ? t(($) =&gt; $.slash_command.commands.note)
+  133        : item.description;
+  134
+  135    return (
+  136      // Height budget clamps to min(design max, viewport-aware
+  137      // `--suggestion-available-height` from suggestion-popup.tsx&#39;s size
+  138      // middleware), falling back to the design max when rendered standalone.
+  139      // Single height authority — mirrors MentionList.
+  140      &lt;div className=&quot;rounded-md border bg-popover py-1 shadow-md w-72 max-h-[min(300px,var(--suggestion-available-height,300px))] overflow-y-auto&quot;&gt;
+  141        {items.map((item, index) =&gt; {
+  142          const description = describe(item);
+  143          return (
+  144            &lt;button
+  145              key={item.id}
+  146              ref={(el) =&gt; {
+  147                itemRefs.current[index] = el;
+  148              }}
+  149              className={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left text-caption transition-colors ${
+  150                selectedIndex === index ? &quot;bg-accent&quot; : &quot;hover:bg-accent/50&quot;
+  151              }`}
+  152              onClick={() =&gt; selectItem(index)}
+  153            &gt;
+  154              &lt;span className=&quot;font-medium&quot;&gt;/{item.label}&lt;/span&gt;
+  155              {description &amp;&amp; (
+  156                &lt;span className=&quot;truncate text-muted-foreground&quot;&gt;
+  157                  {description}
+  158                &lt;/span&gt;
+  159              )}
+  160            &lt;/button&gt;
+  161          );
+  162        })}
+  163      &lt;/div&gt;
+  164    );
+  165  });
+  166
+  167  function buildItems(qc: QueryClient, query: string): SlashCommandItem[] {
+  168    const wsId = getCurrentWsId();
+  169    if (!wsId) return [];
+  170
+  171    const agents: Agent[] = qc.getQueryData(workspaceKeys.agents(wsId)) ?? [];
+  172    const members: MemberWithUser[] =
+  173      qc.getQueryData(workspaceKeys.members(wsId)) ?? [];
+  174    // Tiptap calls suggestion items outside React render, so direct store reads
+  175    // are intentional here.
+  176    const { selectedAgentId } = useChatStore.getState();
+  177    const userId = useAuthStore.getState().user?.id ?? null;
+  178    const memberRole = members.find((m) =&gt; m.user_id === userId)?.role ?? null;
+  179
+  180    const availableAgents = agents.filter(
+  181      (a) =&gt;
+  182        !a.archived_at &amp;&amp;
+  183        canAssignAgentToIssue(a, { userId, role: memberRole }).allowed,
+  184    );
+  185    const activeAgent =
+  186      availableAgents.find((a) =&gt; a.id === selectedAgentId) ??
+  187      availableAgents[0] ??
+  188      null;
+  189
+  190    const q = query.toLowerCase();</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--suggestion-available-height#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>/usr</code></h3><small>slash · packages/views/editor/extensions/slash-command-suggestion.tsx:330</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/views/editor/extensions/slash-command-suggestion.tsx#L325-L342" target="_blank" rel="noreferrer">Source ↗</a></header><p>A slash-command clue: the interaction layer recognises the token before routing it through the project&#39;s registry.</p><pre><code>  325
+  326    return {
+  327      char: &quot;/&quot;,
+  328      pluginKey,
+  329      // Only open over a `/` the user actually typed, so a pasted path
+  330      // (`/usr/local/bin`) never opens the command menu (MUL-5429).
+  331      shouldShow: ({ editor, range }) =&gt; isTriggerArmedAt(editor, range.from),
+  332      items: ({ query }) =&gt; buildBuiltinCommandItems(query, options.getQuickActions?.() ?? []),
+  333      command: ({ editor, range, props }) =&gt; {
+  334        if (isQuickActionItem(props)) {
+  335          const render = options.renderQuickAction;
+  336          if (!render) return;
+  337          const id = quickActionIdFromItem(props);
+  338
+  339          // The &quot;/query&quot; text is deliberately left in place while the request
+  340          // is in flight. Deleting first meant a failed or slow render destroyed
+  341          // what the user typed with nothing to show for it, and the insert then
+  342          // landed wherever the caret happened to be by the time it resolved.
+  343          //
+  344          // Snapshot the EXACT text under the range, not just its shape. A
+  345          // prefix check (&quot;does it still start with /&quot;) passes when the user
+  346          // rewrote `/review` into `/fix` mid-request, and the stale response
+  347          // would then overwrite the new command.
+  348          const originalText = editor.state.doc.textBetween(range.from, range.to);
+  349
+  350          void render(id)
+  351            .then((content) =&gt; {
+  352              if (!content) return;
+  353              const withinDoc = range.to &lt;= editor.state.doc.content.size;
+  354              const unchanged =
+  355                withinDoc &amp;&amp; editor.state.doc.textBetween(range.from, range.to) === originalText;
+  356              if (!unchanged) {
+  357                // The command was edited, moved, or removed while the request
+  358                // was outstanding. Inserting anywhere now would either clobber
+  359                // the user&#39;s newer text or drop the body in an unrelated spot,
+  360                // so this pick is simply abandoned.
+  361                return;
+  362              }
+  363              editor
+  364                .chain()
+  365                .focus()
+  366                // contentType: &quot;markdown&quot; is load-bearing. Without it Tiptap
+  367                // inserts the string as literal TEXT, so the server-rendered
+  368                // `[@Name](mention://agent/…)` never becomes a mention node —
+  369                // it serialises back out with the brackets escaped
+  370                // (`\[@Name\](…)`) and renders as raw markup in the thread.
+  371                .insertContentAt({ from: range.from, to: range.to }, content, {
+  372                  contentType: &quot;markdown&quot;,
+  373                })
+  374                .run();
+  375              window.getSelection()?.collapseToEnd();
+  376            })
+  377            .catch((error: unknown) =&gt; {
+  378              // The command text is still there, so the user can retry or edit
+  379              // it by hand; the host surfaces why nothing was inserted.
+  380              options.onRenderError?.(error);
+  381            });
+  382          return;
+  383        }</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fusr#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--execute</code></h3><small>flag · server/cmd/backfill_codex_usage_cache/main.go:5</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/backfill_codex_usage_cache/main.go#L1-L17" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>    1  // Backfill_codex_usage_cache corrects historical Codex task_usage rows
+    2  // written before Codex cached input was normalized at ingestion time.
+    3  //
+    4  // This is a hosted-data repair tool, not a general migration:
+    5  //   - dry-run is the default; pass --execute to mutate data
+    6  //   - only provider=&#39;codex&#39; rows with persisted cache_read_tokens are touched
+    7  //   - --cutoff must be the actual hosted deployment time of the ingestion fix
+    8  //   - rows updated after the cutoff are left alone to avoid double-subtracting
+    9  //   - the hourly rollup is rebuilt explicitly from the updated_at window
+   10  package main
+   11
+   12  import (
+   13  	&quot;context&quot;
+   14  	&quot;flag&quot;
+   15  	&quot;fmt&quot;
+   16  	&quot;log/slog&quot;
+   17  	&quot;os&quot;
+   18  	&quot;os/signal&quot;
+   19  	&quot;syscall&quot;
+   20  	&quot;time&quot;
+   21
+   22  	&quot;github.com/jackc/pgx/v5/pgxpool&quot;
+   23  	&quot;github.com/multica-ai/multica/server/internal/logger&quot;
+   24  )
+   25
+   26  const rollupAdvisoryLockID = 4246
+   27
+   28  type config struct {
+   29  	cutoff              time.Time
+   30  	cutoffRaw           string
+   31  	workspaceID         string
+   32  	batchSize           int
+   33  	sleepBetweenBatches time.Duration
+   34  	execute             bool
+   35  	rebuildRollup       bool
+   36  }
+   37
+   38  type summaryRow struct {
+   39  	WorkspaceID   string
+   40  	DateUTC       string
+   41  	Rows          int64
+   42  	InputBefore   int64
+   43  	InputAfter    int64
+   44  	Overcount     int64
+   45  	ClampedRows   int64
+   46  	MinCreatedUTC time.Time
+   47  	MaxCreatedUTC time.Time
+   48  }
+   49
+   50  type totals struct {
+   51  	Rows        int64
+   52  	InputBefore int64
+   53  	InputAfter  int64
+   54  	Overcount   int64
+   55  	ClampedRows int64
+   56  }
+   57
+   58  func main() {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--execute#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--cutoff</code></h3><small>flag · server/cmd/backfill_codex_usage_cache/main.go:7</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/backfill_codex_usage_cache/main.go#L2-L19" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>    2  // written before Codex cached input was normalized at ingestion time.
+    3  //
+    4  // This is a hosted-data repair tool, not a general migration:
+    5  //   - dry-run is the default; pass --execute to mutate data
+    6  //   - only provider=&#39;codex&#39; rows with persisted cache_read_tokens are touched
+    7  //   - --cutoff must be the actual hosted deployment time of the ingestion fix
+    8  //   - rows updated after the cutoff are left alone to avoid double-subtracting
+    9  //   - the hourly rollup is rebuilt explicitly from the updated_at window
+   10  package main
+   11
+   12  import (
+   13  	&quot;context&quot;
+   14  	&quot;flag&quot;
+   15  	&quot;fmt&quot;
+   16  	&quot;log/slog&quot;
+   17  	&quot;os&quot;
+   18  	&quot;os/signal&quot;
+   19  	&quot;syscall&quot;
+   20  	&quot;time&quot;
+   21
+   22  	&quot;github.com/jackc/pgx/v5/pgxpool&quot;
+   23  	&quot;github.com/multica-ai/multica/server/internal/logger&quot;
+   24  )
+   25
+   26  const rollupAdvisoryLockID = 4246
+   27
+   28  type config struct {
+   29  	cutoff              time.Time
+   30  	cutoffRaw           string
+   31  	workspaceID         string
+   32  	batchSize           int
+   33  	sleepBetweenBatches time.Duration
+   34  	execute             bool
+   35  	rebuildRollup       bool
+   36  }
+   37
+   38  type summaryRow struct {
+   39  	WorkspaceID   string
+   40  	DateUTC       string
+   41  	Rows          int64
+   42  	InputBefore   int64
+   43  	InputAfter    int64
+   44  	Overcount     int64
+   45  	ClampedRows   int64
+   46  	MinCreatedUTC time.Time
+   47  	MaxCreatedUTC time.Time
+   48  }
+   49
+   50  type totals struct {
+   51  	Rows        int64
+   52  	InputBefore int64
+   53  	InputAfter  int64
+   54  	Overcount   int64
+   55  	ClampedRows int64
+   56  }
+   57
+   58  func main() {
+   59  	logger.Init()
+   60  	if err := run(); err != nil {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--cutoff#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--batch-size</code></h3><small>flag · server/cmd/backfill_codex_usage_cache/main.go:172</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/backfill_codex_usage_cache/main.go#L167-L184" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  167  	cutoff = cutoff.UTC()
+  168  	if !cutoff.Before(now) {
+  169  		return fmt.Errorf(&quot;--cutoff must be before now; refusing a future cutoff because it could double-subtract already-normalized rows&quot;)
+  170  	}
+  171  	if cfg.batchSize &lt;= 0 {
+  172  		return fmt.Errorf(&quot;--batch-size must be positive&quot;)
+  173  	}
+  174  	cfg.cutoff = cutoff
+  175  	return nil
+  176  }
+  177
+  178  func loadDryRunSummary(ctx context.Context, pool *pgxpool.Pool, cfg config) ([]summaryRow, totals, error) {
+  179  	const query = `
+  180  SELECT
+  181      a.workspace_id::text AS workspace_id,
+  182      (tu.created_at AT TIME ZONE &#39;UTC&#39;)::date::text AS date_utc,
+  183      COUNT(*)::bigint AS rows,
+  184      COALESCE(SUM(tu.input_tokens), 0)::bigint AS input_before,
+  185      COALESCE(SUM(GREATEST(tu.input_tokens - tu.cache_read_tokens, 0)), 0)::bigint AS input_after,
+  186      COALESCE(SUM(tu.input_tokens - GREATEST(tu.input_tokens - tu.cache_read_tokens, 0)), 0)::bigint AS overcount,
+  187      COUNT(*) FILTER (WHERE tu.input_tokens &lt; tu.cache_read_tokens)::bigint AS clamped_rows,
+  188      MIN(tu.created_at) AS min_created_at,
+  189      MAX(tu.created_at) AS max_created_at
+  190  FROM task_usage tu
+  191  JOIN agent_task_queue atq ON atq.id = tu.task_id
+  192  JOIN agent a ON a.id = atq.agent_id
+  193  WHERE tu.provider = &#39;codex&#39;
+  194    AND tu.cache_read_tokens &gt; 0
+  195    AND tu.input_tokens &gt; 0
+  196    AND COALESCE(tu.updated_at, tu.created_at) &lt; $1
+  197    AND (NULLIF($2, &#39;&#39;)::uuid IS NULL OR a.workspace_id = NULLIF($2, &#39;&#39;)::uuid)
+  198  GROUP BY a.workspace_id, (tu.created_at AT TIME ZONE &#39;UTC&#39;)::date
+  199  ORDER BY a.workspace_id, date_utc`
+  200  	rows, err := pool.Query(ctx, query, cfg.cutoff, cfg.workspaceID)
+  201  	if err != nil {
+  202  		return nil, totals{}, fmt.Errorf(&quot;load dry-run summary: %w&quot;, err)
+  203  	}
+  204  	defer rows.Close()
+  205
+  206  	var summaries []summaryRow
+  207  	var total totals
+  208  	for rows.Next() {
+  209  		var row summaryRow
+  210  		if err := rows.Scan(
+  211  			&amp;row.WorkspaceID,
+  212  			&amp;row.DateUTC,
+  213  			&amp;row.Rows,
+  214  			&amp;row.InputBefore,
+  215  			&amp;row.InputAfter,
+  216  			&amp;row.Overcount,
+  217  			&amp;row.ClampedRows,
+  218  			&amp;row.MinCreatedUTC,
+  219  			&amp;row.MaxCreatedUTC,
+  220  		); err != nil {
+  221  			return nil, totals{}, fmt.Errorf(&quot;scan dry-run summary: %w&quot;, err)
+  222  		}
+  223  		summaries = append(summaries, row)
+  224  		total.Rows += row.Rows
+  225  		total.InputBefore += row.InputBefore</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--batch-size#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--sleep-between-slices</code></h3><small>flag · server/cmd/backfill_task_usage_hourly/main.go:32</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/backfill_task_usage_hourly/main.go#L27-L44" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   27  // partially completed backfill can be resumed without TRUNCATEing
+   28  // task_usage_hourly first.
+   29  //
+   30  // Read pressure: each slice scans task_usage / agent_task_queue / agent
+   31  // / issue. On a database with years of history that is sustained heavy
+   32  // load. Use --sleep-between-slices to throttle on a busy production DB,
+   33  // and coordinate a maintenance window with the DB team before a
+   34  // full-history run.
+   35  //
+   36  // Operator note: this command does NOT call prune_task_usage_hourly_dirty.
+   37  // The dirty queue starts empty during backfill (triggers fire only on
+   38  // future writes), so there is nothing to prune until the rollup worker
+   39  // has been running for a while.
+   40  package main
+   41
+   42  import (
+   43  	&quot;context&quot;
+   44  	&quot;flag&quot;
+   45  	&quot;fmt&quot;
+   46  	&quot;log/slog&quot;
+   47  	&quot;os&quot;
+   48  	&quot;os/signal&quot;
+   49  	&quot;syscall&quot;
+   50  	&quot;time&quot;
+   51
+   52  	&quot;github.com/jackc/pgx/v5/pgtype&quot;
+   53  	&quot;github.com/jackc/pgx/v5/pgxpool&quot;
+   54  	&quot;github.com/multica-ai/multica/server/internal/logger&quot;
+   55  )
+   56
+   57  func main() {
+   58  	logger.Init()
+   59  	if err := run(); err != nil {
+   60  		slog.Error(&quot;backfill failed&quot;, &quot;error&quot;, err)
+   61  		os.Exit(1)
+   62  	}
+   63  }
+   64
+   65  func run() error {
+   66  	var (
+   67  		dryRun       = flag.Bool(&quot;dry-run&quot;, false, &quot;log slices that would be processed without touching task_usage_hourly&quot;)
+   68  		monthsBack   = flag.Int(&quot;months-back&quot;, 0, &quot;limit backfill to the last N months (0 = all available history)&quot;)
+   69  		forcePartial = flag.Bool(&quot;force-partial&quot;, false, &quot;acknowledge that --months-back permanently abandons buckets older than the cutoff (the watermark still advances past them)&quot;)
+   70  		sleep        = flag.Duration(&quot;sleep-between-slices&quot;, 0, &quot;pause this long between monthly slices to throttle source-table read pressure on a busy DB (e.g. 2s)&quot;)
+   71  	)
+   72  	flag.Parse()
+   73
+   74  	dbURL := os.Getenv(&quot;DATABASE_URL&quot;)
+   75  	if dbURL == &quot;&quot; {
+   76  		dbURL = &quot;postgres://multica:multica@localhost:5432/multica?sslmode=disable&quot;
+   77  	}
+   78
+   79  	// SIGINT/SIGTERM cancels ctx so an in-flight slice stops cleanly —
+   80  	// each slice runs in its own transaction (the window function), so
+   81  	// Postgres rolls back the interrupted one and the idempotent design
+   82  	// lets a later run resume from where this one stopped.
+   83  	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+   84  	defer stop()
+   85</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--sleep-between-slices#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>Multica models Agents, Runtimes, Tasks, Skills, and connected accounts as control-plane resources; CLI and server share the lifecycle semantics.</blockquote><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/multica/cmd_agent.go#L14-L43" target="_blank" rel="noreferrer">server/cmd/multica/cmd_agent.go:14–43 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>Composio ExecuteToolRequest explicitly carries a connected account, user/toolkit identity, and version rather than reading a hidden global login.</blockquote><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/pkg/composio/tools.go#L3-L32" target="_blank" rel="noreferrer">server/pkg/composio/tools.go:3–32 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>Think of Multica as an airport control tower: agents are flights, runtimes are runways, tasks are legs, and deletion must handle flights still bound to a runway.</blockquote><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/multica/cmd_agent.go#L73-L102" target="_blank" rel="noreferrer">server/cmd/multica/cmd_agent.go:73–102 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>Agent skills, custom env vars, CLI flags, and Composio toolkit versions are explicit inputs; credentials and versions are not hidden in prose.</blockquote><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/multica/cmd_agent.go#L73-L102" target="_blank" rel="noreferrer">server/cmd/multica/cmd_agent.go:73–102 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>packages/views/editor/extensions/slash-command-extension.test.ts</b><small>4126 bytes · .ts</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/views/editor/extensions/slash-command-extension.test.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import { SlashCommandExtension } from &quot;./slash-command-extension&quot;;
+    3
+    4  const tokenizer = SlashCommandExtension.config.markdownTokenizer!;
+    5
+    6  const startFn = tokenizer.start as (src: string) =&gt; number;
+    7  const tokenizeFn = tokenizer.tokenize as (
+    8    src: string,
+    9  ) =&gt; { type: string; raw: string; attributes: Record&lt;string, string&gt; } | undefined;
+   10  const renderMarkdown = SlashCommandExtension.config.renderMarkdown as (
+   11    node: { attrs: Record&lt;string, string&gt; },
+   12  ) =&gt; string;
+   13  const renderHTML = SlashCommandExtension.config.renderHTML as (
+   14    this: { options: { HTMLAttributes: Record&lt;string, string&gt; } },
+   15    props: {
+   16      node: { attrs: Record&lt;string, string | undefined&gt; };
+   17      HTMLAttributes: Record&lt;string, string&gt;;
+   18    },
+   19  ) =&gt; [string, Record&lt;string, string&gt;, string];
+   20
+   21  function tokenize(src: string) {
+   22    const start = startFn(src);
+   23    if (start === -1) return undefined;
+   24    return tokenizeFn(src.slice(start));
+   25  }
+   26
+   27  describe(&quot;slash command tokenizer&quot;, () =&gt; {
+   28    it(&quot;parses a slash skill link&quot;, () =&gt; {
+   29      const token = tokenize(&quot;[/git-commit](slash://skill/aaa-bbb)&quot;);
+   30
+   31      expect(token).toBeDefined();
+   32      expect(token!.attributes.label).toBe(&quot;git-commit&quot;);
+   33      expect(token!.attributes.id).toBe(&quot;aaa-bbb&quot;);
+   34    });</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>packages/views/editor/extensions/slash-command-suggestion.test.tsx</b><small>19028 bytes · .tsx</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/views/editor/extensions/slash-command-suggestion.test.tsx#L41-L56" target="_blank" rel="noreferrer">L41–56 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   41    SlashCommandList,
+   42    type SlashCommandListRef,
+   43    createSlashCommandSuggestion,
+   44    type SlashCommandItem,
+   45    buildBuiltinCommandItems,
+   46    BUILTIN_COMMANDS,
+   47    createBuiltinCommandSuggestion,
+   48    QUICK_ACTION_ITEM_PREFIX,
+   49  } from &quot;./slash-command-suggestion&quot;;
+   50
+   51  function agent(overrides: Partial&lt;Agent&gt;): Agent {
+   52    return {
+   53      id: &quot;agent-1&quot;,
+   54      workspace_id: &quot;ws-1&quot;,
+   55      runtime_id: &quot;runtime-1&quot;,
+   56      name: &quot;Agent&quot;,
+   57      description: &quot;&quot;,
+   58      instructions: &quot;&quot;,
+   59      avatar_url: null,
+   60      runtime_mode: &quot;local&quot;,
+   61      runtime_config: {},
+   62      custom_args: [],
+   63      visibility: &quot;workspace&quot;,
+   64      permission_mode: &quot;public_to&quot;,
+   65      invocation_targets: [{ target_type: &quot;workspace&quot;, target_id: null }],
+   66      status: &quot;idle&quot;,
+   67      max_concurrent_tasks: 1,
+   68      model: &quot;&quot;,
+   69      owner_id: null,
+   70      skills: [],
+   71      created_at: &quot;&quot;,
+   72      updated_at: &quot;&quot;,
+   73      archived_at: null,</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>server/cmd/server/autopilot_dispatch_for_plan_test.go</b><small>15659 bytes · .go</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/cmd/server/autopilot_dispatch_for_plan_test.go#L15-L30" target="_blank" rel="noreferrer">L15–30 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   15  // TestDispatchAutopilotForPlanIsIdempotent locks in the
+   16  // occurrence-level idempotency contract (MUL-3551):
+   17  //
+   18  //   - A second DispatchAutopilotForPlan with the same (trigger_id,
+   19  //     planned_at) MUST return the SAME run row that the first call
+   20  //     created. No second autopilot_run, no second issue / task, no
+   21  //     second failure recorded.
+   22  //
+   23  // This is the dispatch-layer half of the two-defence design. The
+   24  // primary defence lives in sys_cron_executions
+   25  // (uq_sys_cron_execution). This one catches the stale-steal case
+   26  // where a runner crashes between &quot;create run&quot; and &quot;write SUCCESS in
+   27  // sys_cron_executions&quot;: the next runner re-enters the dispatch and
+   28  // must reuse the in-flight run instead of duplicating it.
+   29  func TestDispatchAutopilotForPlanIsIdempotent(t *testing.T) {
+   30  	ctx := context.Background()
+   31  	queries := db.New(testPool)
+   32  	bus := events.New()
+   33  	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
+   34  	autopilotSvc := service.NewAutopilotService(queries, testPool, bus, taskSvc)
+   35
+   36  	var agentID string
+   37  	if err := testPool.QueryRow(ctx,
+   38  		`SELECT id::text FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
+   39  		testWorkspaceID,
+   40  	).Scan(&amp;agentID); err != nil {
+   41  		t.Fatalf(&quot;load fixture agent: %v&quot;, err)
+   42  	}
+   43
+   44  	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
+   45  		WorkspaceID:        parseUUID(testWorkspaceID),
+   46  		Title:              &quot;Dispatch for plan idempotency&quot;,
+   47  		Description:        pgtype.Text{String: &quot;Dispatch for plan test&quot;, Valid: true},</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>server/internal/integrations/slack/slash_command_test.go</b><small>8644 bytes · .go</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/server/internal/integrations/slack/slash_command_test.go#L76-L91" target="_blank" rel="noreferrer">L76–91 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   76  func newTestSlashProcessor(q slashQueries, tasks quickCreateEnqueuer, binding bindingMinter) (*SlashCommandProcessor, *string, *int) {
+   77  	captured := new(string)
+   78  	count := new(int)
+   79  	p := &amp;SlashCommandProcessor{
+   80  		q:           q,
+   81  		tasks:       tasks,
+   82  		binding:     binding,
+   83  		appURL:      &quot;https://app.example&quot;,
+   84  		bindingPath: &quot;/slack/bind&quot;,
+   85  		logger:      slog.Default(),
+   86  	}
+   87  	p.respond = func(_ context.Context, _ string, text string) error {
+   88  		*count++
+   89  		*captured = text
+   90  		return nil
+   91  	}
+   92  	return p, captured, count
+   93  }
+   94
+   95  func activeSlashInstallation() db.ChannelInstallation {
+   96  	return db.ChannelInstallation{
+   97  		ID:              slashTestUUID(1),
+   98  		WorkspaceID:     slashTestUUID(2),
+   99  		AgentID:         slashTestUUID(3),
+  100  		InstallerUserID: slashTestUUID(4),
+  101  		Status:          &quot;active&quot;,
+  102  		Config:          []byte(`{&quot;app_id&quot;:&quot;A1&quot;,&quot;team_id&quot;:&quot;T1&quot;}`),
+  103  	}
+  104  }
+  105
+  106  func issueSlashCmd() slack.SlashCommand {
+  107  	return slack.SlashCommand{
+  108  		Command:     &quot;/issue&quot;,</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>packages/views/editor/extensions/slash-command-extension.ts</b><small>2316 bytes · .ts</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/views/editor/extensions/slash-command-extension.ts#L4-L19" target="_blank" rel="noreferrer">L4–19 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    4  import { SlashCommandView } from &quot;./slash-command-view&quot;;
+    5  import { formatSlashCommandLabel } from &quot;./slash-command-utils&quot;;
+    6  import { escapeMarkdownLabel } from &quot;../utils/escape-markdown-label&quot;;
+    7
+    8  export const SlashCommandExtension = Mention.extend({
+    9    name: &quot;slashCommand&quot;,
+   10
+   11    addNodeView() {
+   12      return ReactNodeViewRenderer(SlashCommandView);
+   13    },
+   14
+   15    renderHTML({ node, HTMLAttributes }) {
+   16      return [
+   17        &quot;span&quot;,
+   18        mergeAttributes(
+   19          { &quot;data-type&quot;: &quot;slash-command&quot; },
+   20          this.options.HTMLAttributes,
+   21          HTMLAttributes,
+   22        ),
+   23        `/${formatSlashCommandLabel(node.attrs.label)}`,
+   24      ];
+   25    },
+   26
+   27    addAttributes() {
+   28      return { ...this.parent?.() };
+   29    },
+   30
+   31    parseHTML() {
+   32      return [{ tag: &#39;span[data-type=&quot;slash-command&quot;]&#39; }];
+   33    },
+   34
+   35    markdownTokenizer: {
+   36      name: &quot;slashCommand&quot;,</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>packages/views/editor/extensions/slash-command-suggestion.tsx</b><small>15159 bytes · .tsx</small></div><a href="https://github.com/multica-ai/multica/blob/d467cc90691587ed00bdaca678475957df62dd3a/packages/views/editor/extensions/slash-command-suggestion.tsx#L33-L48" target="_blank" rel="noreferrer">L33–48 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   33  /** Known built-in command ids — the keys under editor `slash_command.commands`. */
+   34  export type BuiltinCommandKey = &quot;note&quot;;
+   35
+   36  export interface SlashCommandItem {
+   37    id: string;
+   38    label: string;
+   39    /** Raw description (skill picker). Built-in commands use descriptionKey. */
+   40    description?: string;
+   41    /**
+   42     * For built-in commands: the i18n key under editor `slash_command.commands`.
+   43     * When set, the menu renders the translated copy instead of `description`,
+   44     * so the visible string stays localized (the typed `/label` does not).
+   45     */
+   46    descriptionKey?: BuiltinCommandKey;
+   47  }
+   48
+   49  interface SlashCommandListProps {
+   50    items: SlashCommandItem[];
+   51    query: string;
+   52    command: (item: SlashCommandItem) =&gt; void;
+   53    /**
+   54     * When true, render nothing instead of an empty-state box when there are no
+   55     * matching items. Used by the built-in command menu in issue comments, where
+   56     * `/` is common in prose (paths, dates) and a popup on every slash would be
+   57     * noise. The chat skill picker leaves this false so it can still explain
+   58     * &quot;no skills configured&quot;.
+   59     */
+   60    hideOnEmpty?: boolean;
+   61  }
+   62
+   63  export interface SlashCommandListRef {
+   64    onKeyDown: (props: { event: KeyboardEvent }) =&gt; boolean;
+   65  }</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Multica commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

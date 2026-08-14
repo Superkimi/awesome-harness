@@ -1,0 +1,1528 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="一个内置指令如何被解析、路由、执行并写回会话？"><title>DeepSeek Harness · M11 · 指令执行：从 /goal 到回执</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek Harness · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">源码教程</a><a href="ch11-commands.html">中</a><a href="../../en/tutorial/ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek Harness</strong><small>Plugin-composed, event-sourced Coding Agent Harness</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><a class="active" href="ch11-commands.html"><span>M11</span>指令执行：从 /goal 到回执</a><div class="side-foot">main<br>47f943859bef</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · DeepSeek Harness · 47f943859bef</p><h1>指令执行：从 /goal 到回执</h1><p class="lede">一个内置指令如何被解析、路由、执行并写回会话？</p><div class="chapter-meta"><span>第 11 / 11 章</span><span>8 条源码 finding</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>逐行翻译</b></div><div class="callout"><b>先用一个生活比喻</b><p>指令像机场值机单：先认出航班，再检查登机规则，交给正确柜台执行，最后把登机和到达状态写回系统。</p></div><h2>先回答本章问题</h2><p>一个内置指令如何被解析、路由、执行并写回会话？ 把 DeepSeek Harness 想成一棵可以热插拔的运行树：事件日志是黑匣子，Agent loop 是驾驶员，工具/模型/沙箱只是可以更换的部件。</p><h2>本章证据板：8 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="dsh-architecture-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>architecture</span></div><h3>01 · Cordis 把整个 Harness 组织成可重组插件树</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 把模型适配器、工具注册表、会话日志、沙箱和 Agent loop 都列为 Cordis 插件；profile 选择 bundle，bundle 提供 patch，启动时按层叠加。</p></section><section><span>白话解释</span><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研时应把可替换能力做成 service seam，并把最终启动配置打印出来。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>8–32</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>33–58</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:8–58</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L8-L58" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    8
+    9  ## Cordis
+   10
+   11  [Cordis](cordis-primer.md) is the framework under dsh: plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so every part is replaceable from configuration.
+   12
+   13  There is no privileged core to patch: you extend dsh by mounting a plugin beside the others, and registrations are effects that unwind when their plugin unloads.
+   14
+   15  ## Profiles and bundles
+   16
+   17  A running `dsh` is a plugin tree composed at boot from ordered layers.
+   18
+   19  A **profile** is a named composition stored in the Harness home. It lists the bundles it stacks, holds any out-of-tree plugins it installs, and keeps the user&#39;s own `cordis.patch.yml`. `web` and `headless` ship as templates.
+   20
+   21  A **bundle** is a distribution format for Cordis config rows and the code they mount, so whatever it inserts stays patchable by the layers above it.
+   22
+   23  Each declares itself in its own `package.json` under a `dsh` field: `dsh.profile` lists a profile&#39;s bundles, and `dsh.bundle` points at a bundle&#39;s patch file.
+   24
+   25  [`dsh-base`](../packages/bundle/base/README.md) is the first layer of every profile: model adapters, tools, persistence, sandbox and approval policy, settings, credentials, telemetry. [`dsh-web-app`](../packages/bundle/web-app/README.md) adds the browser application; [`dsh-headless`](../packages/bundle/headless/README.md) adds a one-shot runner with no server at all.
+   26
+   27  Layers apply to an empty entry list in this order: each bundle in the profile&#39;s listed order, then the profile&#39;s `cordis.patch.yml`, then the home-level one, then any `--patch` overlay. A patch targets a row by id and replaces its whole config, or inserts new rows.
+   28
+   29  To see the tree your machine actually boots:
+   30
+   31  ```sh
+   32  dsh --profile web --dump-config
+   33  ```
+   34
+   35  Any row it prints can be replaced by a patch of your own.
+   36
+   37  Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#profiles); config fields are in the generated [config catalog](config-catalog.md).
+   38
+   39  ## Core packages
+   40
+   41  Here are some core packages that contribute to the Cordis tree.
+   42
+   43  | Package | Owns | `ctx` key |
+   44  |---|---|---|
+   45  | [`core/session`](subsystems/session.md) | The append-only `SessionEvent` log and in-memory store | `ctx.sessions` |
+   46  | [`core/system-prompt`](subsystems/system-prompt.md) | Prompt-section and tool-schema assembly | `ctx.systemPrompt` |
+   47  | [`core/tools`](subsystems/tools.md) | The scoped tool registry and guarded execution pipeline | `ctx.tools` |
+   48  | [`core/agent`](subsystems/core.md) | The `Agent` interface, live registry, and `agent/*` events | `ctx.agents` |
+   49  | [`core/agent-loop`](subsystems/core.md) | The default driver implementing that interface | `ctx.agentLoop` |
+   50  | [`core/scope`](subsystems/scope.md) | The per-agent scoped-registration primitive | library, no key |
+   51  | [`llm/llm`](subsystems/llm-streaming.md) | Message and stream vocabulary plus the adapter seam | `ctx.llm` |
+   52
+   53  ## Events
+   54
+   55  Events are the extension points, and picking the right domain is the first decision in most changes.
+   56
+   57  - **Session events** are durable facts appended to the log and broadcast through `session/event`. Use one when the fact must survive a reload.
+   58  - **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.
+   59  - **Capability events** attach policy and adapters to a seam (`fs/*`, `tools/*`, `telemetry/*`) without importing the loop.
+   60
+   61  The [event map](event-producer-consumer.md) lists every event&#39;s producers and consumers.
+   62
+   63  ## Turn flow
+   64
+   65  A **step** is one model request plus the tools it calls. A **turn** is zero or more steps: it opens before its first input is claimed and closes once nothing is owed.
+   66
+   67  ```text
+   68  turn/start
+   69    claim next-step input plus one queued message
+   70    assemble prompt sections + tool schemas
+   71    -&gt; agent/pre-step                   reject | enter(messages)
+   72       reject, or a first enter rewritten empty -&gt; close the turn with no step
+   73       step/start
+   74       append entered messages as user/message
+   75       derive model history from the log
+   76       agent/request -&gt; llm/stream -&gt; assistant/chunk* -&gt; assistant/message
+   77       tool/call* -&gt; tools/pre-execute -&gt; tools/execute -&gt; tools/post-execute -&gt; tool/result*
+   78       step/end
+   79       tools owe another request, or next-step input arrived -&gt; claim -&gt; next step
+   80    -&gt; agent/turn-stopping
+   81  turn/end
+   82  ```
+   83
+   84  `turn/*`, `step/*`, `user/message`, `assistant/*`, and `tool/*` are durable session events; the rest are live extension points across three domains. `agent/pre-step`, `agent/request`, `llm/stream`, and the three `tools/*` events are waterfalls, whose listeners must call `next()` to delegate; `agent/turn-stopping` is serial and has no `next()`.
+   85
+   86  Input reaches the driver through one inbox. Some messages wake it immediately; injected context waits in the inbox until another message does.
+   87
+   88  `agent/pre-step` decides what the model sees. Listeners may rewrite the claimed messages or reject them outright; a rejected or empty first claim still closes a durable turn that spent no step, so the log records the attempt. Each step reads the prompt sections and tool schemas that plugins registered.
+   89
+   90  Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
+   91
+   92  ## Session log
+   93
+   94  The session log is the source of the context the model sees. `deriveMessages()` projects model history from it, and raw `assistant/chunk` events preserve replay and UI fidelity. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
+   95
+   96  **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
+   97
+   98  ## Capability seams
+   99
+  100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
+  101
+  102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
+  103
+  104  ## Where new behavior goes
+  105
+  106  New behavior attaches to a documented extension point. Changing the loop itself updates this map.
+  107
+  108  | Goal | Mechanism |
+  109  |---|---|
+  110  | Add a model provider | register its adapter on `ctx.llm` |
+  111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |
+  119  | Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |
+  120  | Add model-facing context | call `agent.inject()`; it lands in the next admitted request |
+  121  | Add UI or editor integration | drive `ctx.agents` and render from `session/event` |
+  122  | Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |
+  123  | Add durable session state | extend `SessionEventMap`; render and replay from the log |
+  124  | Generate session titles | register the sole `ctx.sessionTitle` provider |
+  125  | Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |
+  126  | Fork a live session | `ctx.sessions.fork(source, boundary?, childSessionId?)` |
+  127  | Scope a registration to one agent | use that agent&#39;s `agent.ctx` |
+  128
+  129  The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [Chat nodes](cookbook/adding-a-conversation-node.md).</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>8</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>9</td><th><span class="line-kind-flow">流转</span></th><td><code>## Cordis</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>10</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>11</td><th><span class="line-kind-state">状态</span></th><td><code>[Cordis](cordis-primer.md) is the framework under dsh: plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so every part is replaceable from configuration.</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>12</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>13</td><th><span class="line-kind-flow">流转</span></th><td><code>There is no privileged core to patch: you extend dsh by mounting a plugin beside the others, and registrations are effects that unwind when their plugin unloads.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>14</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>15</td><th><span class="line-kind-flow">流转</span></th><td><code>## Profiles and bundles</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>16</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>17</td><th><span class="line-kind-flow">流转</span></th><td><code>A running `dsh` is a plugin tree composed at boot from ordered layers.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>18</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>19</td><th><span class="line-kind-flow">流转</span></th><td><code>A **profile** is a named composition stored in the Harness home. It lists the bundles it stacks, holds any out-of-tree plugins it installs, and keeps the user&#39;s own `cordis.patch.yml`. `web` and `headless` ship as templates.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>20</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>21</td><th><span class="line-kind-branch">分支</span></th><td><code>A **bundle** is a distribution format for Cordis config rows and the code they mount, so whatever it inserts stays patchable by the layers above it.</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>22</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>23</td><th><span class="line-kind-flow">流转</span></th><td><code>Each declares itself in its own `package.json` under a `dsh` field: `dsh.profile` lists a profile&#39;s bundles, and `dsh.bundle` points at a bundle&#39;s patch file.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>24</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>25</td><th><span class="line-kind-flow">流转</span></th><td><code>[`dsh-base`](../packages/bundle/base/README.md) is the first layer of every profile: model adapters, tools, persistence, sandbox and approval policy, settings, credentials, telemetry. [`dsh-web-app`](../packages/bundle/web-app/README.md) adds the browser application; [`dsh-headless`](../packages/bundle/headless/README.md) adds a one-shot runner with no server at all.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>26</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>27</td><th><span class="line-kind-input">输入</span></th><td><code>Layers apply to an empty entry list in this order: each bundle in the profile&#39;s listed order, then the profile&#39;s `cordis.patch.yml`, then the home-level one, then any `--patch` overlay. A patch targets a row by id and replaces its whole config, or inserts new rows.</code></td><td>接收参数、事件或配置</td></tr><tr><td>28</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>29</td><th><span class="line-kind-flow">流转</span></th><td><code>To see the tree your machine actually boots:</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>30</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>31</td><th><span class="line-kind-flow">流转</span></th><td><code>```sh</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>32</td><th><span class="line-kind-input">输入</span></th><td><code>dsh --profile web --dump-config</code></td><td>接收参数、事件或配置</td></tr><tr><td>33</td><th><span class="line-kind-flow">流转</span></th><td><code>```</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>34</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>35</td><th><span class="line-kind-flow">流转</span></th><td><code>Any row it prints can be replaced by a patch of your own.</code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="dsh-architecture-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · Agent、Session、LLM 和工具通过 Context 服务互相连接</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>agent-loop 构造函数一次性创建 event dispatch、Inbox、Scope、RuntimeContextProjection，并把它们挂进 Cordis context。</p></section><section><span>白话解释</span><p>Agent 本身只负责驾驶，工具、日志和提示词从上下文里取，不直接互相 import。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>扩展点要围绕上下文服务设计，避免 UI 或单一 provider 侵入主循环。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>63–79</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>80–97</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:63–97</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L63-L97" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   63  /** Drives one session through turn and step boundaries. */
+   64  export class ReactLoopAgent implements Agent {
+   65    readonly inbox: Inbox
+   66    private phase: Phase
+   67    private activityDone: Promise&lt;void&gt; = Promise.resolve()
+   68
+   69    /** The agent-scoped registration boundary; the lifecycle owner unwinds it after the driver exits. */
+   70    readonly scope: Scope
+   71    readonly ctx: Context
+   72
+   73    /** Fused dispatcher, built once in the constructor so hot-path dispatches never allocate. */
+   74    private readonly dispatch: AgentEventDispatch
+   75
+   76    /** Whether this loop instance has appended its initial/resume request anchor. */
+   77    private requestHeaderLogged = false
+   78    private readonly runtimeContext: RuntimeContextProjection
+   79
+   80    constructor(
+   81      private loopCtx: Context,
+   82      public readonly id: SessionId,
+   83      public readonly options: AgentOptions,
+   84      public readonly session: Session,
+   85    ) {
+   86      this.dispatch = agentEvents(loopCtx, this)
+   87      this.inbox = new Inbox(session, {
+   88        inserted: (message) =&gt; { this.dispatch.emit(&#39;agent/inbox/inserted&#39;, { message }) },
+   89        discarded: (message) =&gt; { this.dispatch.emit(&#39;agent/inbox/discarded&#39;, { message }) },
+   90        claimed: (message, turn) =&gt; { this.dispatch.emit(&#39;agent/inbox/claimed&#39;, { message, turn }) },
+   91      })
+   92      const lastTurn = session.events.findLast(event =&gt; event.type === &#39;turn/start&#39;)?.data.turn ?? 0
+   93      this.phase = { kind: &#39;idle&#39;, lastTurn }
+   94      this.scope = createScope(loopCtx, this)
+   95      this.ctx = this.scope.ctx.extend({ agent: this })
+   96      this.runtimeContext = new RuntimeContextProjection(this.ctx, session)
+   97    }
+   98
+   99    get status(): AgentStatus {
+  100      return this.phase.kind === &#39;idle&#39; || this.phase.kind === &#39;maintenance&#39; ? &#39;idle&#39; : &#39;running&#39;
+  101    }
+  102
+  103    /** Commit a phase and publish its externally visible status transition. */
+  104    private setPhase(next: Phase): void {
+  105      const previousStatus = this.status
+  106      this.phase = next
+  107      const status = this.status
+  108      if (status !== previousStatus) {
+  109        this.dispatch.emit(&#39;agent/status&#39;, { status })
+  110      }
+  111    }
+  112
+  113    send(message: UserMessage, target: InboxTarget, wakeup: boolean): void {
+  114      // Waking input cannot join an aborted activity, so it starts the next turn.
+  115      // Captured before the insertion so a reentrant cancel from a splice observer cannot reclassify it.
+  116      const wakingAfterAbort = wakeup &amp;&amp; this.phase.kind !== &#39;idle&#39; &amp;&amp; this.phase.abort.signal.aborted
+  117      const resolvedTarget = wakingAfterAbort ? &#39;next-turn&#39; : target
+  118      this.inbox.splice(resolvedTarget, Infinity, 0, [message])
+  119      if (wakeup) this.wakeDriver(wakingAfterAbort)
+  120    }
+  121
+  122    followup(input: UserMessage): void {
+  123      this.send(input, &#39;next-turn&#39;, true)
+  124    }
+  125
+  126    steer(input: UserMessage): void {
+  127      this.send(input, &#39;next-step&#39;, true)
+  128    }
+  129
+  130    inject(input: UserMessage): void {
+  131      this.send(input, &#39;next-step&#39;, false)
+  132    }
+  133
+  134    cancel(cause: AgentCancelCause, options: CancelOptions = {}): void {
+  135      if (!options.keepInbox) {
+  136        this.inbox.clear()
+  137        if (this.phase.kind !== &#39;idle&#39;) this.phase.wakeRequested = false
+  138      }
+  139      if (this.phase.kind !== &#39;idle&#39;) this.phase.abort.abort(cause)
+  140    }
+  141
+  142    runMaintenance&lt;T&gt;(job: (signal: AbortSignal) =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+  143      if (this.phase.kind !== &#39;idle&#39;) throw new Error(`agent &quot;${this.id}&quot; already has active work`)
+  144      const done = Promise.withResolvers&lt;void&gt;()
+  145      const maintenance: Phase = {
+  146        kind: &#39;maintenance&#39;,
+  147        abort: new AbortController(),
+  148        lastTurn: this.phase.lastTurn,
+  149        wakeRequested: false,
+  150      }
+  151      this.setPhase(maintenance)
+  152      this.activityDone = done.promise
+  153      return (async () =&gt; {
+  154        try {
+  155          return await job(maintenance.abort.signal)
+  156        } finally {
+  157          this.setPhase({ kind: &#39;idle&#39;, lastTurn: maintenance.lastTurn })
+  158          if (maintenance.wakeRequested &amp;&amp; this.inbox.hasPending) this.wakeDriver()
+  159          done.resolve()
+  160        }
+  161      })()
+  162    }
+  163
+  164    /**
+  165     * Start one driver, or latch its wake behind maintenance or an aborted
+  166     * activity. A wake sent while idle always opens its turn boundary, even
+  167     * when its message was cleared; only a latched replay is suppressed when
+  168     * the queue no longer holds the wake.</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>63</td><th><span class="line-kind-state">状态</span></th><td><code>/** Drives one session through turn and step boundaries. */</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>64</td><th><span class="line-kind-flow">流转</span></th><td><code>export class ReactLoopAgent implements Agent {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>65</td><th><span class="line-kind-flow">流转</span></th><td><code>  readonly inbox: Inbox</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>66</td><th><span class="line-kind-flow">流转</span></th><td><code>  private phase: Phase</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>67</td><th><span class="line-kind-flow">流转</span></th><td><code>  private activityDone: Promise&lt;void&gt; = Promise.resolve()</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>68</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>69</td><th><span class="line-kind-flow">流转</span></th><td><code>  /** The agent-scoped registration boundary; the lifecycle owner unwinds it after the driver exits. */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>70</td><th><span class="line-kind-flow">流转</span></th><td><code>  readonly scope: Scope</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>71</td><th><span class="line-kind-state">状态</span></th><td><code>  readonly ctx: Context</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>72</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>73</td><th><span class="line-kind-flow">流转</span></th><td><code>  /** Fused dispatcher, built once in the constructor so hot-path dispatches never allocate. */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>74</td><th><span class="line-kind-effect">副作用</span></th><td><code>  private readonly dispatch: AgentEventDispatch</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>75</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>76</td><th><span class="line-kind-input">输入</span></th><td><code>  /** Whether this loop instance has appended its initial/resume request anchor. */</code></td><td>接收参数、事件或配置</td></tr><tr><td>77</td><th><span class="line-kind-flow">流转</span></th><td><code>  private requestHeaderLogged = false</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>78</td><th><span class="line-kind-flow">流转</span></th><td><code>  private readonly runtimeContext: RuntimeContextProjection</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>79</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>80</td><th><span class="line-kind-flow">流转</span></th><td><code>  constructor(</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>81</td><th><span class="line-kind-state">状态</span></th><td><code>    private loopCtx: Context,</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>82</td><th><span class="line-kind-flow">流转</span></th><td><code>    public readonly id: SessionId,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>83</td><th><span class="line-kind-flow">流转</span></th><td><code>    public readonly options: AgentOptions,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>84</td><th><span class="line-kind-state">状态</span></th><td><code>    public readonly session: Session,</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>85</td><th><span class="line-kind-flow">流转</span></th><td><code>  ) {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>86</td><th><span class="line-kind-effect">副作用</span></th><td><code>    this.dispatch = agentEvents(loopCtx, this)</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>87</td><th><span class="line-kind-state">状态</span></th><td><code>    this.inbox = new Inbox(session, {</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>88</td><th><span class="line-kind-branch">分支</span></th><td><code>      inserted: (message) =&gt; { this.dispatch.emit(&#39;agent/inbox/inserted&#39;, { message }) },</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>89</td><th><span class="line-kind-branch">分支</span></th><td><code>      discarded: (message) =&gt; { this.dispatch.emit(&#39;agent/inbox/discarded&#39;, { message }) },</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>90</td><th><span class="line-kind-branch">分支</span></th><td><code>      claimed: (message, turn) =&gt; { this.dispatch.emit(&#39;agent/inbox/claimed&#39;, { message, turn }) },</code></td><td>决定继续、停止、重试或走哪条路径</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="dsh-tools-001" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · 工具调用先按 executionMode 分组</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>executeToolCalls 先解析所有 tool-call，再按 executionMode 把连续 parallel 调用放进 bounded pool；遇到 exclusive 就形成 barrier。</p></section><section><span>白话解释</span><p>能并行的读操作一起做，可能冲突的写操作排队做。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发策略应是工具声明的一部分，而不是模型临时决定。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>59–78</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>79–100</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:59–100</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L59-L100" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   59  export async function executeToolCalls(
+   60    ctx: Context,
+   61    turn: number,
+   62    step: number,
+   63    toolCalls: ToolCallBlock[],
+   64    signal: AbortSignal,
+   65    acceptContext: (context: UserMessage) =&gt; void,
+   66  ): Promise&lt;{ concluded: boolean }&gt; {
+   67    const agent = ctx.agents.requireInitiator()
+   68    const { session } = agent
+   69
+   70    // Inputs are distinct because tools/execute wrappers may replace `exec.signal`.
+   71    const planned: PlannedCall[] = toolCalls.map(block =&gt; ({
+   72      block,
+   73      exec: {
+   74        callId: block.id,
+   75        name: block.name,
+   76        arguments: parseArguments(block.arguments),
+   77        agent,
+   78        signal,
+   79      },
+   80    }))
+   81
+   82    let next = 0
+   83    let concluded = false
+   84    while (next &lt; planned.length) {
+   85      // Commit before classifying again so registry changes affect unstarted calls.
+   86      // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded by the loop condition
+   87      const first = planned[next]!
+   88      const mode = ctx.tools.executionMode(first.exec).kind
+   89      const group = mode === &#39;parallel&#39; ? planned.slice(next) : [first]
+   90      const outcome = await runGroup(
+   91        ctx, turn, step, group, mode, signal, acceptContext,
+   92      )
+   93      next += outcome.consumed
+   94      concluded ||= outcome.concluded
+   95      if (outcome.aborted) {
+   96        for (const call of planned.slice(next)) appendSkippedToolCall(session, turn, step, call.block)
+   97        return { concluded }
+   98      }
+   99    }
+  100    return { concluded }
+  101  }
+  102
+  103  /** Parse model arguments, preserving invalid JSON as text and mapping empty input to `{}`. */
+  104  function parseArguments(raw: string): unknown {
+  105    try {
+  106      return raw ? JSON.parse(raw) : {}
+  107    } catch {
+  108      return raw
+  109    }
+  110  }
+  111
+  112  /**
+  113   * Run one exclusive barrier or parallel pool. Later calls are reclassified
+  114   * before start; an exclusive reclassification waits for the current pool to
+  115   * drain and remains for the caller&#39;s next barrier. Results and contexts commit
+  116   * in model order. Abort stops starts, drains and commits started calls, accepts
+  117   * their contexts into the owning batch, records results for skipped calls, and
+  118   * returns an aborted outcome. Scheduler failure drains dispatches without
+  119   * committing synthetic recovery results.
+  120   */
+  121  async function runGroup(
+  122    ctx: Context,
+  123    turn: number,
+  124    step: number,
+  125    group: PlannedCall[],
+  126    mode: ToolExecutionMode[&#39;kind&#39;],
+  127    signal: AbortSignal,
+  128    acceptContext: (context: UserMessage) =&gt; void,
+  129  ): Promise&lt;GroupOutcome&gt; {
+  130    const { session } = ctx.agents.requireInitiator()
+  131    const { maxParallelToolCalls } = ctx.agentLoop.config
+  132    const slots: (Slot | undefined)[] = group.map(() =&gt; undefined)
+  133    // Started slots retain their `tool/call` seq so the result can cite it.
+  134    const callSeqs: number[] = group.map(() =&gt; -1)
+  135    let nextToStart = 0
+  136    let committed = 0
+  137    let started = 0
+  138    let aborted: boolean = signal.aborted
+  139    let concluded = false
+  140    let schedulerFailure: { error: unknown } | undefined
+  141    const throwSchedulerFailure = (): void =&gt; {
+  142      if (schedulerFailure !== undefined) throw schedulerFailure.error
+  143    }
+  144
+  145    // `committed` advances only across contiguous model-order slots.
+  146    const commitReady = async (): Promise&lt;void&gt; =&gt; {
+  147      while (committed &lt; group.length) {
+  148        const slot = slots[committed]
+  149        if (slot === undefined) break
+  150        const call = group[committed]
+  151        const result = slot.needsPost
+  152          ? await ctx.tools[TOOL_RUNTIME_SCHEDULER].finalize(slot.exec, slot.result)
+  153          : ctx.tools[TOOL_RUNTIME_SCHEDULER].finish(slot.exec, slot.result)
+  154        // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  155        appendToolResult(session, turn, step, call!.block, result, callSeqs[committed]!)
+  156        for (const context of result.additionalContexts ?? []) acceptContext(context)
+  157        concluded ||= result.concludesTurn === true
+  158        committed++
+  159      }
+  160    }
+  161
+  162    const inFlight = new Map&lt;number, Promise&lt;number&gt;&gt;()
+  163
+  164    const startCall = async (index: number): Promise&lt;void&gt; =&gt; {
+  165      // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  166      const call = group[index]!
+  167      callSeqs[index] = appendToolCall(session, turn, step, call.block)
+  168      started++
+  169      const prepared = await ctx.tools[TOOL_RUNTIME_SCHEDULER].prepare(call.exec)
+  170      throwSchedulerFailure()
+  171      switch (prepared.kind) {</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>59</td><th><span class="line-kind-flow">流转</span></th><td><code>export async function executeToolCalls(</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>60</td><th><span class="line-kind-state">状态</span></th><td><code>  ctx: Context,</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>61</td><th><span class="line-kind-flow">流转</span></th><td><code>  turn: number,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>62</td><th><span class="line-kind-flow">流转</span></th><td><code>  step: number,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>63</td><th><span class="line-kind-flow">流转</span></th><td><code>  toolCalls: ToolCallBlock[],</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>64</td><th><span class="line-kind-flow">流转</span></th><td><code>  signal: AbortSignal,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>65</td><th><span class="line-kind-state">状态</span></th><td><code>  acceptContext: (context: UserMessage) =&gt; void,</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>66</td><th><span class="line-kind-flow">流转</span></th><td><code>): Promise&lt;{ concluded: boolean }&gt; {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>67</td><th><span class="line-kind-input">输入</span></th><td><code>  const agent = ctx.agents.requireInitiator()</code></td><td>接收参数、事件或配置</td></tr><tr><td>68</td><th><span class="line-kind-state">状态</span></th><td><code>  const { session } = agent</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>69</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>70</td><th><span class="line-kind-effect">副作用</span></th><td><code>  // Inputs are distinct because tools/execute wrappers may replace `exec.signal`.</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>71</td><th><span class="line-kind-input">输入</span></th><td><code>  const planned: PlannedCall[] = toolCalls.map(block =&gt; ({</code></td><td>接收参数、事件或配置</td></tr><tr><td>72</td><th><span class="line-kind-flow">流转</span></th><td><code>    block,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>73</td><th><span class="line-kind-effect">副作用</span></th><td><code>    exec: {</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>74</td><th><span class="line-kind-flow">流转</span></th><td><code>      callId: block.id,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>75</td><th><span class="line-kind-flow">流转</span></th><td><code>      name: block.name,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>76</td><th><span class="line-kind-flow">流转</span></th><td><code>      arguments: parseArguments(block.arguments),</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>77</td><th><span class="line-kind-flow">流转</span></th><td><code>      agent,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>78</td><th><span class="line-kind-flow">流转</span></th><td><code>      signal,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>79</td><th><span class="line-kind-flow">流转</span></th><td><code>    },</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>80</td><th><span class="line-kind-flow">流转</span></th><td><code>  }))</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>81</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>82</td><th><span class="line-kind-input">输入</span></th><td><code>  let next = 0</code></td><td>接收参数、事件或配置</td></tr><tr><td>83</td><th><span class="line-kind-input">输入</span></th><td><code>  let concluded = false</code></td><td>接收参数、事件或配置</td></tr><tr><td>84</td><th><span class="line-kind-branch">分支</span></th><td><code>  while (next &lt; planned.length) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>85</td><th><span class="line-kind-flow">流转</span></th><td><code>    // Commit before classifying again so registry changes affect unstarted calls.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>86</td><th><span class="line-kind-flow">流转</span></th><td><code>    // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded by the loop condition</code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="dsh-tools-002" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 工具结果异步完成，但按模型顺序提交</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>runGroup 用 slots 保存完成结果，commitReady 只从连续可提交的 index 开始 finalize/finish、appendToolResult，并把 additionalContexts 放进下一步。</p></section><section><span>白话解释</span><p>第三个工具先完成也不能把第二个工具的回执顶到模型前面。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发系统一定要有稳定 call id、提交序号和取消后的合成结果。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>112–134</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>135–159</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:112–159</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L112-L159" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  112  /**
+  113   * Run one exclusive barrier or parallel pool. Later calls are reclassified
+  114   * before start; an exclusive reclassification waits for the current pool to
+  115   * drain and remains for the caller&#39;s next barrier. Results and contexts commit
+  116   * in model order. Abort stops starts, drains and commits started calls, accepts
+  117   * their contexts into the owning batch, records results for skipped calls, and
+  118   * returns an aborted outcome. Scheduler failure drains dispatches without
+  119   * committing synthetic recovery results.
+  120   */
+  121  async function runGroup(
+  122    ctx: Context,
+  123    turn: number,
+  124    step: number,
+  125    group: PlannedCall[],
+  126    mode: ToolExecutionMode[&#39;kind&#39;],
+  127    signal: AbortSignal,
+  128    acceptContext: (context: UserMessage) =&gt; void,
+  129  ): Promise&lt;GroupOutcome&gt; {
+  130    const { session } = ctx.agents.requireInitiator()
+  131    const { maxParallelToolCalls } = ctx.agentLoop.config
+  132    const slots: (Slot | undefined)[] = group.map(() =&gt; undefined)
+  133    // Started slots retain their `tool/call` seq so the result can cite it.
+  134    const callSeqs: number[] = group.map(() =&gt; -1)
+  135    let nextToStart = 0
+  136    let committed = 0
+  137    let started = 0
+  138    let aborted: boolean = signal.aborted
+  139    let concluded = false
+  140    let schedulerFailure: { error: unknown } | undefined
+  141    const throwSchedulerFailure = (): void =&gt; {
+  142      if (schedulerFailure !== undefined) throw schedulerFailure.error
+  143    }
+  144
+  145    // `committed` advances only across contiguous model-order slots.
+  146    const commitReady = async (): Promise&lt;void&gt; =&gt; {
+  147      while (committed &lt; group.length) {
+  148        const slot = slots[committed]
+  149        if (slot === undefined) break
+  150        const call = group[committed]
+  151        const result = slot.needsPost
+  152          ? await ctx.tools[TOOL_RUNTIME_SCHEDULER].finalize(slot.exec, slot.result)
+  153          : ctx.tools[TOOL_RUNTIME_SCHEDULER].finish(slot.exec, slot.result)
+  154        // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  155        appendToolResult(session, turn, step, call!.block, result, callSeqs[committed]!)
+  156        for (const context of result.additionalContexts ?? []) acceptContext(context)
+  157        concluded ||= result.concludesTurn === true
+  158        committed++
+  159      }
+  160    }
+  161
+  162    const inFlight = new Map&lt;number, Promise&lt;number&gt;&gt;()
+  163
+  164    const startCall = async (index: number): Promise&lt;void&gt; =&gt; {
+  165      // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  166      const call = group[index]!
+  167      callSeqs[index] = appendToolCall(session, turn, step, call.block)
+  168      started++
+  169      const prepared = await ctx.tools[TOOL_RUNTIME_SCHEDULER].prepare(call.exec)
+  170      throwSchedulerFailure()
+  171      switch (prepared.kind) {
+  172        case &#39;dispatch&#39;: {
+  173          const promise = ctx.tools[TOOL_RUNTIME_SCHEDULER].dispatch(prepared.exec).then(
+  174            (outcome) =&gt; {
+  175              slots[index] = { exec: prepared.exec, result: outcome.result, needsPost: outcome.kind === &#39;post-result&#39; }
+  176              return index
+  177            },
+  178            (error: unknown) =&gt; {
+  179              schedulerFailure ??= { error }
+  180              return index
+  181            },
+  182          )
+  183          inFlight.set(index, promise)
+  184          break
+  185        }
+  186        case &#39;post-result&#39;:
+  187          slots[index] = { exec: prepared.exec, result: prepared.result, needsPost: true }
+  188          break
+  189        case &#39;final-result&#39;:
+  190          slots[index] = { exec: prepared.exec, result: prepared.result, needsPost: false }
+  191          break
+  192        /* v8 ignore next -- closed-union exhaustiveness guard */
+  193        default:
+  194          assertNever(prepared, &#39;tool-call scheduler prepare result&#39;)
+  195      }
+  196    }
+  197
+  198    const fillPool = async (): Promise&lt;void&gt; =&gt; {
+  199      while (!aborted &amp;&amp; nextToStart &lt; group.length &amp;&amp; inFlight.size &lt; maxParallelToolCalls) {
+  200        // Re-read later modes after ordered commits so registry changes can create a barrier.
+  201        // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded by the loop condition
+  202        const nextCall = group[nextToStart]!
+  203        if (nextToStart &gt; 0 &amp;&amp; mode === &#39;parallel&#39;
+  204          &amp;&amp; ctx.tools.executionMode(nextCall.exec).kind !== &#39;parallel&#39;) break
+  205        await startCall(nextToStart)
+  206        nextToStart++
+  207        throwSchedulerFailure()
+  208        await commitReady()
+  209        throwSchedulerFailure()
+  210        // Abort may arrive while pre-execute awaits.
+  211        if (signal.aborted) aborted = true
+  212      }
+  213    }
+  214
+  215    // Ordered pre-execute may await; only dispatch/body overlaps. A scheduler
+  216    // failure stops new dispatches and reaches the turn boundary after every
+  217    // already-started dispatch settles.
+  218    try {
+  219      await fillPool()
+  220      while (inFlight.size &gt; 0) {
+  221        const settledIndex = await Promise.race(inFlight.values())
+  222        inFlight.delete(settledIndex)
+  223        throwSchedulerFailure()
+  224        await commitReady()
+  225        throwSchedulerFailure()
+  226        // Abort may arrive while a tool or ordered commit awaits.
+  227
+  228        if (signal.aborted) aborted = true
+  229        await fillPool()
+  230      }</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>112</td><th><span class="line-kind-flow">流转</span></th><td><code>/**</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>113</td><th><span class="line-kind-flow">流转</span></th><td><code> * Run one exclusive barrier or parallel pool. Later calls are reclassified</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>114</td><th><span class="line-kind-branch">分支</span></th><td><code> * before start; an exclusive reclassification waits for the current pool to</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>115</td><th><span class="line-kind-branch">分支</span></th><td><code> * drain and remains for the caller&#39;s next barrier. Results and contexts commit</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>116</td><th><span class="line-kind-flow">流转</span></th><td><code> * in model order. Abort stops starts, drains and commits started calls, accepts</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>117</td><th><span class="line-kind-branch">分支</span></th><td><code> * their contexts into the owning batch, records results for skipped calls, and</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>118</td><th><span class="line-kind-flow">流转</span></th><td><code> * returns an aborted outcome. Scheduler failure drains dispatches without</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>119</td><th><span class="line-kind-flow">流转</span></th><td><code> * committing synthetic recovery results.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>120</td><th><span class="line-kind-flow">流转</span></th><td><code> */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>121</td><th><span class="line-kind-flow">流转</span></th><td><code>async function runGroup(</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>122</td><th><span class="line-kind-state">状态</span></th><td><code>  ctx: Context,</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>123</td><th><span class="line-kind-flow">流转</span></th><td><code>  turn: number,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>124</td><th><span class="line-kind-flow">流转</span></th><td><code>  step: number,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>125</td><th><span class="line-kind-flow">流转</span></th><td><code>  group: PlannedCall[],</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>126</td><th><span class="line-kind-flow">流转</span></th><td><code>  mode: ToolExecutionMode[&#39;kind&#39;],</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>127</td><th><span class="line-kind-flow">流转</span></th><td><code>  signal: AbortSignal,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>128</td><th><span class="line-kind-state">状态</span></th><td><code>  acceptContext: (context: UserMessage) =&gt; void,</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>129</td><th><span class="line-kind-flow">流转</span></th><td><code>): Promise&lt;GroupOutcome&gt; {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>130</td><th><span class="line-kind-state">状态</span></th><td><code>  const { session } = ctx.agents.requireInitiator()</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>131</td><th><span class="line-kind-input">输入</span></th><td><code>  const { maxParallelToolCalls } = ctx.agentLoop.config</code></td><td>接收参数、事件或配置</td></tr><tr><td>132</td><th><span class="line-kind-input">输入</span></th><td><code>  const slots: (Slot | undefined)[] = group.map(() =&gt; undefined)</code></td><td>接收参数、事件或配置</td></tr><tr><td>133</td><th><span class="line-kind-flow">流转</span></th><td><code>  // Started slots retain their `tool/call` seq so the result can cite it.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>134</td><th><span class="line-kind-input">输入</span></th><td><code>  const callSeqs: number[] = group.map(() =&gt; -1)</code></td><td>接收参数、事件或配置</td></tr><tr><td>135</td><th><span class="line-kind-input">输入</span></th><td><code>  let nextToStart = 0</code></td><td>接收参数、事件或配置</td></tr><tr><td>136</td><th><span class="line-kind-input">输入</span></th><td><code>  let committed = 0</code></td><td>接收参数、事件或配置</td></tr><tr><td>137</td><th><span class="line-kind-input">输入</span></th><td><code>  let started = 0</code></td><td>接收参数、事件或配置</td></tr><tr><td>138</td><th><span class="line-kind-input">输入</span></th><td><code>  let aborted: boolean = signal.aborted</code></td><td>接收参数、事件或配置</td></tr><tr><td>139</td><th><span class="line-kind-input">输入</span></th><td><code>  let concluded = false</code></td><td>接收参数、事件或配置</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="dsh-connectors-001" data-finding-dimension="connectors"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>connectors</span></div><h3>05 · LLM、MCP、FS、Shell 和子 Agent 共用 capability seam</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 将 Service Definition、Provider、Consumer 定义为 seam 的三个角色；远端 sandbox 可以同时替换 Bash、PTY 和 LSP 的执行世界。</p></section><section><span>白话解释</span><p>换一个 provider，不需要为每种工具复制一套逻辑。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>连接器设计应先抽象执行世界，再堆具体工具。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>99–119</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>120–142</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:99–142</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L99-L142" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   99
+  100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
+  101
+  102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
+  103
+  104  ## Where new behavior goes
+  105
+  106  New behavior attaches to a documented extension point. Changing the loop itself updates this map.
+  107
+  108  | Goal | Mechanism |
+  109  |---|---|
+  110  | Add a model provider | register its adapter on `ctx.llm` |
+  111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |
+  119  | Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |
+  120  | Add model-facing context | call `agent.inject()`; it lands in the next admitted request |
+  121  | Add UI or editor integration | drive `ctx.agents` and render from `session/event` |
+  122  | Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |
+  123  | Add durable session state | extend `SessionEventMap`; render and replay from the log |
+  124  | Generate session titles | register the sole `ctx.sessionTitle` provider |
+  125  | Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |
+  126  | Fork a live session | `ctx.sessions.fork(source, boundary?, childSessionId?)` |
+  127  | Scope a registration to one agent | use that agent&#39;s `agent.ctx` |
+  128
+  129  The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [Chat nodes](cookbook/adding-a-conversation-node.md).
+  130</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>99</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>100</td><th><span class="line-kind-flow">流转</span></th><td><code>A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>101</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>102</td><th><span class="line-kind-effect">副作用</span></th><td><code>Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>103</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>104</td><th><span class="line-kind-flow">流转</span></th><td><code>## Where new behavior goes</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>105</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>106</td><th><span class="line-kind-flow">流转</span></th><td><code>New behavior attaches to a documented extension point. Changing the loop itself updates this map.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>107</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>108</td><th><span class="line-kind-flow">流转</span></th><td><code>| Goal | Mechanism |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>109</td><th><span class="line-kind-flow">流转</span></th><td><code>|---|---|</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>110</td><th><span class="line-kind-flow">流转</span></th><td><code>| Add a model provider | register its adapter on `ctx.llm` |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>111</td><th><span class="line-kind-flow">流转</span></th><td><code>| Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>112</td><th><span class="line-kind-state">状态</span></th><td><code>| Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>113</td><th><span class="line-kind-effect">副作用</span></th><td><code>| Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>114</td><th><span class="line-kind-effect">副作用</span></th><td><code>| Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>115</td><th><span class="line-kind-flow">流转</span></th><td><code>| Add a human command | register on `ctx.commands`; it dispatches without a model turn |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>116</td><th><span class="line-kind-flow">流转</span></th><td><code>| Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>117</td><th><span class="line-kind-effect">副作用</span></th><td><code>| Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>118</td><th><span class="line-kind-flow">流转</span></th><td><code>| Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>119</td><th><span class="line-kind-input">输入</span></th><td><code>| Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |</code></td><td>接收参数、事件或配置</td></tr><tr><td>120</td><th><span class="line-kind-state">状态</span></th><td><code>| Add model-facing context | call `agent.inject()`; it lands in the next admitted request |</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>121</td><th><span class="line-kind-state">状态</span></th><td><code>| Add UI or editor integration | drive `ctx.agents` and render from `session/event` |</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>122</td><th><span class="line-kind-flow">流转</span></th><td><code>| Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>123</td><th><span class="line-kind-state">状态</span></th><td><code>| Add durable session state | extend `SessionEventMap`; render and replay from the log |</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>124</td><th><span class="line-kind-state">状态</span></th><td><code>| Generate session titles | register the sole `ctx.sessionTitle` provider |</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>125</td><th><span class="line-kind-return">回执</span></th><td><code>| Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>126</td><th><span class="line-kind-state">状态</span></th><td><code>| Fork a live session | `ctx.sessions.fork(source, boundary?, childSessionId?)` |</code></td><td>创建或修改 session、context、队列等状态</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="dsh-connectors-002" data-finding-dimension="connectors"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>06 · 工具管道用 waterfall/emit 区分决策与观测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>tools/pre-execute 可以 allow/deny/ask，tools/execute 包装实际 dispatch，tools/post-execute 可改写结果，tools/result 只观察最终冻结结果。</p></section><section><span>白话解释</span><p>审批、重试、结果改写和指标不是一个大函数里的隐式分支，而是可插拔的阶段。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>每个阶段要写清楚是否能阻断、是否持久化、是否允许改写。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>137–171</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>172–207</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:137–207</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L137-L207" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  137  declare module &#39;@deepseek-ai/cordis&#39; {
+  138    interface Context {
+  139      tools: ToolRuntime
+  140    }
+  141
+  142    interface Events {
+  143      /**
+  144       * Allow, deny, or ask before dispatch. `next()` delegates to allow; missing
+  145       * approval support turns `ask` into denial. Async gates must observe
+  146       * `exec.signal`; the registry rechecks cancellation after they settle but
+  147       * never abandons their promise.
+  148       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  149       * @param exec - the pending call (name, parsed arguments, caller agent).
+  150       * @mode waterfall
+  151       */
+  152      &#39;tools/pre-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, next: () =&gt; Promise&lt;PreToolDecision&gt;): Promise&lt;PreToolDecision&gt;
+  153      /**
+  154       * Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns
+  155       * a normalized result; wrappers may change only `exec.signal`, while call
+  156       * identity remains immutable. The registry re-fuses the original caller
+  157       * signal before the body, so replacement cannot detach caller cancellation;
+  158       * wrappers must still restore their signal and reach quiescence.
+  159       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  160       * @param exec - the allowed call about to dispatch (name, parsed arguments, caller agent, signal).
+  161       * @mode waterfall
+  162       */
+  163      &#39;tools/execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolDispatchExecution, next: () =&gt; Promise&lt;ToolExecutionResult&gt;): Promise&lt;ToolExecutionResult&gt;
+  164      /**
+  165       * Accept, replace, enrich, or block a normalized dispatch result. `next()`
+  166       * accepts it unchanged; thrown tools still reach this waterfall as errors. Async
+  167       * listeners must observe `exec.signal`; after they settle, caller
+  168       * cancellation replaces only a successful accepted outcome with the code
+  169       * selected by whether the tool body was invoked.
+  170       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.
+  171       * @param exec - the call that just ran (name, parsed arguments, caller agent).
+  172       * @param result - the dispatch outcome a listener may accept, replace, or block.
+  173       * @mode waterfall
+  174       */
+  175      &#39;tools/post-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, result: Readonly&lt;ToolExecutionResult&gt;, next: () =&gt; Promise&lt;PostToolDecision&gt;): Promise&lt;PostToolDecision&gt;
+  176      /**
+  177       * Allow a listener to replace content in the DURABLE LOG COPY of one
+  178       * `run_code` sub-dispatch outcome before the bridge appends its
+  179       * `tool/code-dispatch` event. `next()` keeps the
+  180       * content unchanged; a listener may return replacement blocks (e.g. the
+  181       * spill policy&#39;s preview + locator for an oversized text result). Only the
+  182       * logged copy is affected — the program already received the complete
+  183       * value, and the model sees neither. A throwing listener is contained:
+  184       * the bridge falls back to logging the original settled content.
+  185       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s dispatches.
+  186       * @param dispatch - the parent execution, sub-call identity, and the settled content to log.
+  187       * @mode waterfall
+  188       */
+  189      &#39;tools/code-dispatch-log&#39;(this: Scoped&lt;ToolRuntime&gt;, dispatch: CodeDispatchLog, next: () =&gt; Promise&lt;ContentBlock[]&gt;): Promise&lt;ContentBlock[]&gt;
+  190      /**
+  191       * Observe the frozen, lossless-JSON final outcome. Listener failures are contained.
+  192       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): keyed by `exec.agent`.
+  193       * @param exec - the execution object that traversed the pipeline.
+  194       * @param result - a deep-frozen snapshot of the final returned result.
+  195       * @mode emit
+  196       */
+  197      &#39;tools/result&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: Readonly&lt;ToolExecution&gt;, result: Readonly&lt;ToolExecutionResult&gt;): undefined
+  198      /**
+  199       * A tool was registered or unregistered, or a scoped restriction changed
+  200       * (the available tool set changed — possibly for one scope only). An
+  201       * UNFILTERED registry-subject notification, deliberately not scope-filtered
+  202       * dispatch: a global change concerns every agent&#39;s next assembly, so a
+  203       * scoped listener subscribing here sees every change, not just its own
+  204       * scope&#39;s.
+  205       * @mode emit
+  206       */
+  207      &#39;tools/change&#39;(): void
+  208    }
+  209  }
+  210
+  211  /** Tool-owned canonical output contract used after the body returns a JSON value. */
+  212  export interface ToolOutputDefinition {
+  213    /** Raw supported JSON Schema enforced against every successful canonical value. */
+  214    readonly schema: JsonSchemaNode
+  215    /** Pure projection from validated arguments and value to Native/model content. */
+  216    render(args: unknown, value: JsonValue): ContentBlock[]
+  217    /** Pure replayable presentation projection, computed only for top-level calls. */
+  218    presentationMeta?(args: unknown, value: JsonValue): JsonValue
+  219  }
+  220
+  221  /** A registered tool: its schema plus the execution function. */
+  222  export interface ToolDefinition extends ToolSchema {
+  223    /** Mandatory canonical output declaration. */
+  224    readonly output: ToolOutputDefinition
+  225    /**
+  226     * Run one accepted call and return only its canonical lossless-JSON value.
+  227     * Async work must observe or forward `exec.signal` and settle only after its
+  228     * owned work reaches quiescence. The registry preserves caller cancellation
+  229     * through around-dispatch signal replacement and does not abandon this
+  230     * promise, but it cannot hard-kill same-process code.
+  231     * @param args - losslessly snapshotted, frozen model arguments.
+  232     * @param exec - execution identity, cancellation signal, and context deferral.
+  233     * @returns the canonical value declared by `output.schema`.
+  234     */
+  235    execute(args: unknown, exec: ToolRunContext): Promise&lt;unknown&gt;
+  236    /**
+  237     * Synchronous last-mile transform for model-facing content. The registry
+  238     * snapshots this callback when execution starts and invokes it exactly once
+  239     * for every normalized outcome, including pipeline failures that bypass
+  240     * `tools/post-execute`, immediately before lossless materialization.
+  241     * Returning `undefined` preserves the content; every other result field
+  242     * remains registry-owned. The callback must be total and must not throw.
+  243     * @param exec - immutable execution identity and arguments.
+  244     * @param result - complete normalized outcome before materialization.
+  245     * @returns replacement content, or `undefined` to preserve it.
+  246     */
+  247    finalizeContent?(exec: Readonly&lt;ToolExecution&gt;, result: Readonly&lt;ToolExecutionResult&gt;): ContentBlock[] | undefined
+  248    /**
+  249     * Cooperative tool-call timeout budget in milliseconds. Omit for no deadline.
+  250     * Enforced by `@deepseek-ai/dsh-tool-call-timeout-policy` (a `tools/execute` wrapper); it
+  251     * is NEVER sent to the model — `schemas()` whitelists only name/description/
+  252     * parameters. Declaring it asserts this tool forwards `exec.signal` to a
+  253     * cooperative implementation that can reach quiescence when the signal aborts.
+  254     */
+  255    timeoutMs?: number
+  256    /**
+  257     * Pure synchronous classifier for overlap with sibling tool calls. Only
+  258     * `true` opts in; omission, exceptions, non-`true` returns, and invalid
+  259     * `defineTool` arguments are exclusive. This metadata is never model-visible.
+  260     *
+  261     * Opted-in executions must not mutate parent-owned state. Shared state must
+  262     * tolerate concurrent dispatch; recorder races are permitted only when they
+  263     * commute or fail closed. See the
+  264     * [parallel-tool-call Agent Note](../../../../.agents/notes/implemented/feature/2026-07-10-parallel-tool-call-execution.md)
+  265     * for the full contract.
+  266     * @param args - parsed arguments; `defineTool` validates before calling.
+  267     * @returns Whether this call may join a parallel group.
+  268     */
+  269    isConcurrencySafe?(args: unknown): boolean
+  270    /**
+  271     * Optional: how to present the PENDING state of one call in a UI, derived from
+  272     * the call&#39;s `args` (parsed arguments, `unknown` — the tool validates/narrows
+  273     * its own input). Returns a {@link ToolCallView} (a `card`-tagged render intent),
+  274     * or `undefined` (or omit the method) to fall back to a generic presentation
+  275     * (title = tool name, raw args as input). Pure and side-effect-free: a UI may
+  276     * call it during live streaming AND a session-log replay, so it must depend
+  277     * only on `args`.
+  278     */</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>137</td><th><span class="line-kind-flow">流转</span></th><td><code>declare module &#39;@deepseek-ai/cordis&#39; {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>138</td><th><span class="line-kind-state">状态</span></th><td><code>  interface Context {</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>139</td><th><span class="line-kind-flow">流转</span></th><td><code>    tools: ToolRuntime</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>140</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>141</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>142</td><th><span class="line-kind-flow">流转</span></th><td><code>  interface Events {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>143</td><th><span class="line-kind-flow">流转</span></th><td><code>    /**</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>144</td><th><span class="line-kind-effect">副作用</span></th><td><code>     * Allow, deny, or ask before dispatch. `next()` delegates to allow; missing</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>145</td><th><span class="line-kind-flow">流转</span></th><td><code>     * approval support turns `ask` into denial. Async gates must observe</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>146</td><th><span class="line-kind-effect">副作用</span></th><td><code>     * `exec.signal`; the registry rechecks cancellation after they settle but</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>147</td><th><span class="line-kind-flow">流转</span></th><td><code>     * never abandons their promise.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>148</td><th><span class="line-kind-effect">副作用</span></th><td><code>     * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>149</td><th><span class="line-kind-effect">副作用</span></th><td><code>     * @param exec - the pending call (name, parsed arguments, caller agent).</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>150</td><th><span class="line-kind-flow">流转</span></th><td><code>     * @mode waterfall</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>151</td><th><span class="line-kind-flow">流转</span></th><td><code>     */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>152</td><th><span class="line-kind-effect">副作用</span></th><td><code>    &#39;tools/pre-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, next: () =&gt; Promise&lt;PreToolDecision&gt;): Promise&lt;PreToolDecision&gt;</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>153</td><th><span class="line-kind-flow">流转</span></th><td><code>    /**</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>154</td><th><span class="line-kind-branch">分支</span></th><td><code>     * Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>155</td><th><span class="line-kind-branch">分支</span></th><td><code>     * a normalized result; wrappers may change only `exec.signal`, while call</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>156</td><th><span class="line-kind-flow">流转</span></th><td><code>     * identity remains immutable. The registry re-fuses the original caller</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>157</td><th><span class="line-kind-flow">流转</span></th><td><code>     * signal before the body, so replacement cannot detach caller cancellation;</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>158</td><th><span class="line-kind-flow">流转</span></th><td><code>     * wrappers must still restore their signal and reach quiescence.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>159</td><th><span class="line-kind-effect">副作用</span></th><td><code>     * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s calls.</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>160</td><th><span class="line-kind-effect">副作用</span></th><td><code>     * @param exec - the allowed call about to dispatch (name, parsed arguments, caller agent, signal).</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>161</td><th><span class="line-kind-flow">流转</span></th><td><code>     * @mode waterfall</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>162</td><th><span class="line-kind-flow">流转</span></th><td><code>     */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>163</td><th><span class="line-kind-effect">副作用</span></th><td><code>    &#39;tools/execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolDispatchExecution, next: () =&gt; Promise&lt;ToolExecutionResult&gt;): Promise&lt;ToolExecutionResult&gt;</code></td><td>调用模型、工具、文件、网络或进程</td></tr><tr><td>164</td><th><span class="line-kind-flow">流转</span></th><td><code>    /**</code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="dsh-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>instructions</span></div><h3>07 · system-prompt 有严格的 section 和 toolOrder 规则</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>system-prompt 对变量、重复 toolOrder、&lt;unlisted-tools&gt; 和未知工具名进行校验，再按稳定顺序渲染 sections。</p></section><section><span>白话解释</span><p>提示词和工具目录不是随便拼字符串，顺序和未知项都会被拒绝。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>指令系统要能 fail loudly，否则模型看到的能力集合会悄悄漂移。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>142–161</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>162–182</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/system-prompt/src/index.ts:142–182</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L142-L182" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  142  /**
+  143   * Validate duplicate names and the required {@link TOOL_ORDER_REST} marker.
+  144   * Registered names are checked later because plugins have not loaded yet.
+  145   */
+  146  function validateToolOrder(toolOrder: string[] | undefined): string[] | undefined {
+  147    if (toolOrder === undefined) return undefined
+  148    const seen = new Set&lt;string&gt;()
+  149    for (const name of toolOrder) {
+  150      if (seen.has(name)) throw new Error(`toolOrder lists &quot;${name}&quot; more than once`)
+  151      seen.add(name)
+  152    }
+  153    if (!seen.has(TOOL_ORDER_REST)) {
+  154      throw new Error(`toolOrder must contain the &quot;${TOOL_ORDER_REST}&quot; rest entry (where unlisted tools are inserted)`)
+  155    }
+  156    return toolOrder
+  157  }
+  158
+  159  /**
+  160   * Apply configured tool order, inserting unlisted tools lexicographically at
+  161   * {@link TOOL_ORDER_REST}. Unknown configured names fail; known but restricted
+  162   * names may be absent.
+  163   */
+  164  function orderTools(tools: ToolSchema[], toolOrder: string[] | undefined, knownNames: ReadonlySet&lt;string&gt;): ToolSchema[] {
+  165    const reserved = tools.find(tool =&gt; tool.name === TOOL_ORDER_REST)
+  166    if (reserved !== undefined) {
+  167      throw new Error(`tool provider returned reserved tool name &quot;${TOOL_ORDER_REST}&quot; (reserved for toolOrder&#39;s rest entry)`)
+  168    }
+  169    if (toolOrder === undefined) return tools.sort(compareToolNames)
+  170    const unknown = toolOrder.filter(name =&gt; name !== TOOL_ORDER_REST &amp;&amp; !knownNames.has(name))
+  171    if (unknown.length &gt; 0) {
+  172      throw new Error(`toolOrder lists unregistered tool${unknown.length &gt; 1 ? &#39;s&#39; : &#39;&#39;} ${unknown.map(name =&gt; `&quot;${name}&quot;`).join(&#39;, &#39;)}; known tools: ${[...knownNames].sort().join(&#39;, &#39;) || &#39;(none)&#39;}`)
+  173    }
+  174    const listed = new Set(toolOrder)
+  175    const rest = tools.filter(tool =&gt; !listed.has(tool.name)).sort(compareToolNames)
+  176    return toolOrder.flatMap(name =&gt;
+  177      name === TOOL_ORDER_REST ? rest : tools.filter(tool =&gt; tool.name === name))
+  178  }
+  179
+  180  /** Lexicographic (code-unit) name comparison — locale-independent, so the order is identical on every machine. */
+  181  function compareToolNames(a: ToolSchema, b: ToolSchema): number {
+  182    return a.name &lt; b.name ? -1 : a.name &gt; b.name ? 1 : 0
+  183  }
+  184
+  185  /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.persona} for its contract). */
+  186  export interface Config {
+  187    /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
+  188    includeHarnessIdentity?: boolean
+  189    /** Include dynamic runtime-context snapshots in model history (default true). */
+  190    includeRuntimeContext?: boolean
+  191    /**
+  192     * Deployment-wide order-0 persona template. A scoped section named
+  193     * `deployment:persona` shadows it; `{{variable}}` references are strict.
+  194     */
+  195    persona?: string
+  196    /**
+  197     * Model-facing tool names in order, with {@link TOOL_ORDER_REST} exactly once.
+  198     * Invalid fields fail at load and unknown names fail at assembly; known names
+  199     * hidden in one scope may be absent there. Omitted means lexicographic order.
+  200     */
+  201    toolOrder?: string[]
+  202  }
+  203
+  204  /**
+  205   * Interpolate strict `{{variable}}` references, drop empty sections, and join
+  206   * the rest with blank lines. Malformed, unknown, or undefined references throw;
+  207   * a lone `{{` without any later `}}` is literal prose, and substituted values
+  208   * are not scanned again.
+  209   * @param assembly - the assembly whose sections and variables to render.
+  210   * @returns the rendered prompt, or `&#39;&#39;` when all sections are empty.
+  211   */
+  212  export function renderPrompt(assembly: PromptAssembly): string {
+  213    return assembly.sections
+  214      .map(section =&gt; interpolate(section, assembly.variables, &#39;section&#39;))
+  215      .filter(text =&gt; text.length &gt; 0)
+  216      .join(&#39;\n\n&#39;)
+  217  }
+  218
+  219  /**
+  220   * Render the complete dynamic context snapshot.
+  221   * @param assembly - the assembly whose contexts and variables to render.
+  222   * @returns the current full snapshot, or `&#39;&#39;` when no context is active.
+  223   */
+  224  export function renderContextSnapshot(assembly: PromptAssembly): string {
+  225    return joinContextSections(renderContextSections(assembly))
+  226  }
+  227
+  228  /**
+  229   * The model-facing snapshot text for an already-rendered section list.
+  230   *
+  231   * A caller that also needs the sections renders them once and joins here, so a
+  232   * request does not interpolate every context twice.
+  233   * @param sections - sections from {@link renderContextSections}.
+  234   * @returns the current full snapshot, or `&#39;&#39;` when no context is active.
+  235   */
+  236  export function joinContextSections(sections: readonly ContextSnapshotSection[]): string {
+  237    const body = sections.map(section =&gt; section.text).join(&#39;\n\n&#39;)
+  238    if (body.length === 0) return &#39;&#39;
+  239    return `Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\n${body}`
+  240  }
+  241
+  242  /**
+  243   * The same snapshot, kept as the named contributions it was assembled from.
+  244   *
+  245   * {@link renderContextSnapshot} joins these for the model; a consumer that
+  246   * presents the snapshot uses them to attribute each part to the subsystem that
+  247   * contributed it, without re-splitting the joined prose.
+  248   * @param assembly - the assembly whose contexts and variables to render.
+  249   * @returns one entry per contributing context that rendered to non-empty text.
+  250   */
+  251  export function renderContextSections(assembly: PromptAssembly): ContextSnapshotSection[] {
+  252    return assembly.contexts
+  253      .map(context =&gt; ({ name: context.name, text: interpolate(context, assembly.variables, &#39;context&#39;) }))</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>142</td><th><span class="line-kind-flow">流转</span></th><td><code>/**</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>143</td><th><span class="line-kind-flow">流转</span></th><td><code> * Validate duplicate names and the required {@link TOOL_ORDER_REST} marker.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>144</td><th><span class="line-kind-flow">流转</span></th><td><code> * Registered names are checked later because plugins have not loaded yet.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>145</td><th><span class="line-kind-flow">流转</span></th><td><code> */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>146</td><th><span class="line-kind-flow">流转</span></th><td><code>function validateToolOrder(toolOrder: string[] | undefined): string[] | undefined {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>147</td><th><span class="line-kind-return">回执</span></th><td><code>  if (toolOrder === undefined) return undefined</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>148</td><th><span class="line-kind-input">输入</span></th><td><code>  const seen = new Set&lt;string&gt;()</code></td><td>接收参数、事件或配置</td></tr><tr><td>149</td><th><span class="line-kind-branch">分支</span></th><td><code>  for (const name of toolOrder) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>150</td><th><span class="line-kind-branch">分支</span></th><td><code>    if (seen.has(name)) throw new Error(`toolOrder lists &quot;${name}&quot; more than once`)</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>151</td><th><span class="line-kind-flow">流转</span></th><td><code>    seen.add(name)</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>152</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>153</td><th><span class="line-kind-branch">分支</span></th><td><code>  if (!seen.has(TOOL_ORDER_REST)) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>154</td><th><span class="line-kind-flow">流转</span></th><td><code>    throw new Error(`toolOrder must contain the &quot;${TOOL_ORDER_REST}&quot; rest entry (where unlisted tools are inserted)`)</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>155</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>156</td><th><span class="line-kind-return">回执</span></th><td><code>  return toolOrder</code></td><td>把结果、错误或下一步交回调用者</td></tr><tr><td>157</td><th><span class="line-kind-flow">流转</span></th><td><code>}</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>158</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>159</td><th><span class="line-kind-flow">流转</span></th><td><code>/**</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>160</td><th><span class="line-kind-flow">流转</span></th><td><code> * Apply configured tool order, inserting unlisted tools lexicographically at</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>161</td><th><span class="line-kind-flow">流转</span></th><td><code> * {@link TOOL_ORDER_REST}. Unknown configured names fail; known but restricted</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>162</td><th><span class="line-kind-flow">流转</span></th><td><code> * names may be absent.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>163</td><th><span class="line-kind-flow">流转</span></th><td><code> */</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>164</td><th><span class="line-kind-flow">流转</span></th><td><code>function orderTools(tools: ToolSchema[], toolOrder: string[] | undefined, knownNames: ReadonlySet&lt;string&gt;): ToolSchema[] {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>165</td><th><span class="line-kind-input">输入</span></th><td><code>  const reserved = tools.find(tool =&gt; tool.name === TOOL_ORDER_REST)</code></td><td>接收参数、事件或配置</td></tr><tr><td>166</td><th><span class="line-kind-branch">分支</span></th><td><code>  if (reserved !== undefined) {</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>167</td><th><span class="line-kind-branch">分支</span></th><td><code>    throw new Error(`tool provider returned reserved tool name &quot;${TOOL_ORDER_REST}&quot; (reserved for toolOrder&#39;s rest entry)`)</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>168</td><th><span class="line-kind-flow">流转</span></th><td><code>  }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>169</td><th><span class="line-kind-return">回执</span></th><td><code>  if (toolOrder === undefined) return tools.sort(compareToolNames)</code></td><td>把结果、错误或下一步交回调用者</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="dsh-instructions-002" data-finding-dimension="instructions"><header><span class="finding-index">08</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>instructions</span></div><h3>08 · 配置通过 profile、bundle 和 patch 分层覆盖</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 规定 bundle 顺序、profile patch、home patch 和 --patch overlay 的覆盖顺序，用户可以 dump-config 查看最终运行树。</p></section><section><span>白话解释</span><p>同一套源码在 web、headless、企业 profile 中可以换不同能力，但必须能看到最后到底装了什么。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署时应把 resolved config 当作可审计产物。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>17–31</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>32–47</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:17–47</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L47" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   17  A running `dsh` is a plugin tree composed at boot from ordered layers.
+   18
+   19  A **profile** is a named composition stored in the Harness home. It lists the bundles it stacks, holds any out-of-tree plugins it installs, and keeps the user&#39;s own `cordis.patch.yml`. `web` and `headless` ship as templates.
+   20
+   21  A **bundle** is a distribution format for Cordis config rows and the code they mount, so whatever it inserts stays patchable by the layers above it.
+   22
+   23  Each declares itself in its own `package.json` under a `dsh` field: `dsh.profile` lists a profile&#39;s bundles, and `dsh.bundle` points at a bundle&#39;s patch file.
+   24
+   25  [`dsh-base`](../packages/bundle/base/README.md) is the first layer of every profile: model adapters, tools, persistence, sandbox and approval policy, settings, credentials, telemetry. [`dsh-web-app`](../packages/bundle/web-app/README.md) adds the browser application; [`dsh-headless`](../packages/bundle/headless/README.md) adds a one-shot runner with no server at all.
+   26
+   27  Layers apply to an empty entry list in this order: each bundle in the profile&#39;s listed order, then the profile&#39;s `cordis.patch.yml`, then the home-level one, then any `--patch` overlay. A patch targets a row by id and replaces its whole config, or inserts new rows.
+   28
+   29  To see the tree your machine actually boots:
+   30
+   31  ```sh
+   32  dsh --profile web --dump-config
+   33  ```
+   34
+   35  Any row it prints can be replaced by a patch of your own.
+   36
+   37  Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#profiles); config fields are in the generated [config catalog](config-catalog.md).
+   38
+   39  ## Core packages
+   40
+   41  Here are some core packages that contribute to the Cordis tree.
+   42
+   43  | Package | Owns | `ctx` key |
+   44  |---|---|---|
+   45  | [`core/session`](subsystems/session.md) | The append-only `SessionEvent` log and in-memory store | `ctx.sessions` |
+   46  | [`core/system-prompt`](subsystems/system-prompt.md) | Prompt-section and tool-schema assembly | `ctx.systemPrompt` |
+   47  | [`core/tools`](subsystems/tools.md) | The scoped tool registry and guarded execution pipeline | `ctx.tools` |
+   48  | [`core/agent`](subsystems/core.md) | The `Agent` interface, live registry, and `agent/*` events | `ctx.agents` |
+   49  | [`core/agent-loop`](subsystems/core.md) | The default driver implementing that interface | `ctx.agentLoop` |
+   50  | [`core/scope`](subsystems/scope.md) | The per-agent scoped-registration primitive | library, no key |
+   51  | [`llm/llm`](subsystems/llm-streaming.md) | Message and stream vocabulary plus the adapter seam | `ctx.llm` |
+   52
+   53  ## Events
+   54
+   55  Events are the extension points, and picking the right domain is the first decision in most changes.
+   56
+   57  - **Session events** are durable facts appended to the log and broadcast through `session/event`. Use one when the fact must survive a reload.
+   58  - **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.
+   59  - **Capability events** attach policy and adapters to a seam (`fs/*`, `tools/*`, `telemetry/*`) without importing the loop.
+   60
+   61  The [event map](event-producer-consumer.md) lists every event&#39;s producers and consumers.
+   62
+   63  ## Turn flow
+   64
+   65  A **step** is one model request plus the tools it calls. A **turn** is zero or more steps: it opens before its first input is claimed and closes once nothing is owed.
+   66
+   67  ```text
+   68  turn/start
+   69    claim next-step input plus one queued message
+   70    assemble prompt sections + tool schemas
+   71    -&gt; agent/pre-step                   reject | enter(messages)
+   72       reject, or a first enter rewritten empty -&gt; close the turn with no step
+   73       step/start
+   74       append entered messages as user/message
+   75       derive model history from the log
+   76       agent/request -&gt; llm/stream -&gt; assistant/chunk* -&gt; assistant/message
+   77       tool/call* -&gt; tools/pre-execute -&gt; tools/execute -&gt; tools/post-execute -&gt; tool/result*
+   78       step/end
+   79       tools owe another request, or next-step input arrived -&gt; claim -&gt; next step
+   80    -&gt; agent/turn-stopping
+   81  turn/end
+   82  ```
+   83
+   84  `turn/*`, `step/*`, `user/message`, `assistant/*`, and `tool/*` are durable session events; the rest are live extension points across three domains. `agent/pre-step`, `agent/request`, `llm/stream`, and the three `tools/*` events are waterfalls, whose listeners must call `next()` to delegate; `agent/turn-stopping` is serial and has no `next()`.
+   85
+   86  Input reaches the driver through one inbox. Some messages wake it immediately; injected context waits in the inbox until another message does.
+   87
+   88  `agent/pre-step` decides what the model sees. Listeners may rewrite the claimed messages or reject them outright; a rejected or empty first claim still closes a durable turn that spent no step, so the log records the attempt. Each step reads the prompt sections and tool schemas that plugins registered.
+   89
+   90  Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
+   91
+   92  ## Session log
+   93
+   94  The session log is the source of the context the model sees. `deriveMessages()` projects model history from it, and raw `assistant/chunk` events preserve replay and UI fidelity. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
+   95
+   96  **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
+   97
+   98  ## Capability seams
+   99
+  100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
+  101
+  102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
+  103
+  104  ## Where new behavior goes
+  105
+  106  New behavior attaches to a documented extension point. Changing the loop itself updates this map.
+  107
+  108  | Goal | Mechanism |
+  109  |---|---|
+  110  | Add a model provider | register its adapter on `ctx.llm` |
+  111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>17</td><th><span class="line-kind-flow">流转</span></th><td><code>A running `dsh` is a plugin tree composed at boot from ordered layers.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>18</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>19</td><th><span class="line-kind-flow">流转</span></th><td><code>A **profile** is a named composition stored in the Harness home. It lists the bundles it stacks, holds any out-of-tree plugins it installs, and keeps the user&#39;s own `cordis.patch.yml`. `web` and `headless` ship as templates.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>20</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>21</td><th><span class="line-kind-branch">分支</span></th><td><code>A **bundle** is a distribution format for Cordis config rows and the code they mount, so whatever it inserts stays patchable by the layers above it.</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>22</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>23</td><th><span class="line-kind-flow">流转</span></th><td><code>Each declares itself in its own `package.json` under a `dsh` field: `dsh.profile` lists a profile&#39;s bundles, and `dsh.bundle` points at a bundle&#39;s patch file.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>24</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>25</td><th><span class="line-kind-flow">流转</span></th><td><code>[`dsh-base`](../packages/bundle/base/README.md) is the first layer of every profile: model adapters, tools, persistence, sandbox and approval policy, settings, credentials, telemetry. [`dsh-web-app`](../packages/bundle/web-app/README.md) adds the browser application; [`dsh-headless`](../packages/bundle/headless/README.md) adds a one-shot runner with no server at all.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>26</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>27</td><th><span class="line-kind-input">输入</span></th><td><code>Layers apply to an empty entry list in this order: each bundle in the profile&#39;s listed order, then the profile&#39;s `cordis.patch.yml`, then the home-level one, then any `--patch` overlay. A patch targets a row by id and replaces its whole config, or inserts new rows.</code></td><td>接收参数、事件或配置</td></tr><tr><td>28</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>29</td><th><span class="line-kind-flow">流转</span></th><td><code>To see the tree your machine actually boots:</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>30</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>31</td><th><span class="line-kind-flow">流转</span></th><td><code>```sh</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>32</td><th><span class="line-kind-input">输入</span></th><td><code>dsh --profile web --dump-config</code></td><td>接收参数、事件或配置</td></tr><tr><td>33</td><th><span class="line-kind-flow">流转</span></th><td><code>```</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>34</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>35</td><th><span class="line-kind-flow">流转</span></th><td><code>Any row it prints can be replaced by a patch of your own.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>36</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>37</td><th><span class="line-kind-input">输入</span></th><td><code>Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#profiles); config fields are in the generated [config catalog](config-catalog.md).</code></td><td>接收参数、事件或配置</td></tr><tr><td>38</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>39</td><th><span class="line-kind-flow">流转</span></th><td><code>## Core packages</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>40</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>41</td><th><span class="line-kind-flow">流转</span></th><td><code>Here are some core packages that contribute to the Cordis tree.</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>42</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>43</td><th><span class="line-kind-flow">流转</span></th><td><code>| Package | Owns | `ctx` key |</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>44</td><th><span class="line-kind-flow">流转</span></th><td><code>|---|---|---|</code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 条指令线索</b></div><p>指令不是 UI 文案列表：每条线索都来自本地源码中的注册器、参数解析器或 slash token。点击源码行号，再用执行图查看从解析到回执的完整路径；未定位项会明确标注，不会被包装成事实。</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>web</code></h3><small>registered · apps/cli/src/args.ts:156</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L151-L168" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。</p><pre><code>  151        || parent.dumpConfig !== undefined || parent.dumpDefaultConfig !== undefined) {
+  152        program.error(`error: ${command} takes none of parent --profile, --patch, --dump-config, or --dump-default-config`)
+  153      }
+  154    }
+  155
+  156    const web = program.command(&#39;web&#39;).description(&#39;boot the web profile (alias of --profile web); the web app\&#39;s own flags follow&#39;)
+  157    web
+  158      .helpOption(false)
+  159      .allowUnknownOption()
+  160      .passThroughOptions()
+  161      .enablePositionalOptions()
+  162      .argument(&#39;[args...]&#39;, &#39;arguments for the web app (see: dsh web --help)&#39;)
+  163      .option(&#39;--patch &lt;path&gt;&#39;, &#39;extra patch-list overlay applied after the profile layer (repeatable)&#39;, collect)
+  164      .option(&#39;--dump-config&#39;, &#39;print the composed web-profile tree (with the user layer and any --patch) and exit&#39;)
+  165      .option(&#39;--dump-default-config&#39;, &#39;print the web profile\&#39;s bundle layers (no user layer) and exit&#39;)
+  166      .action((args: string[], options: BootOptions) =&gt; {
+  167        rejectParentOptions(&#39;web&#39;)
+  168        resolved = resolveBoot(web, &#39;web&#39;, options, args)
+  169      })
+  170
+  171    const plugin = program.command(&#39;plugin&#39;).description(&#39;manage a profile\&#39;s plugins by forwarding the remaining arguments to pnpm in the profile directory&#39;)
+  172    plugin
+  173      .requiredOption(&#39;--profile &lt;name&gt;&#39;, &#39;the profile whose plugins to manage (initialized on first use)&#39;)
+  174      .allowUnknownOption()
+  175      .argument(&#39;[args...]&#39;, &#39;pnpm arguments, forwarded verbatim (add &lt;pkg&gt;, remove &lt;pkg&gt;, why &lt;pkg&gt;, ...)&#39;)
+  176      .action((args: string[], options: { profile: string }) =&gt; {
+  177        rejectParentOptions(&#39;plugin&#39;)
+  178        if (options.profile === &#39;&#39;) program.error(&#39;error: --profile needs a name&#39;)
+  179        if (args.length === 0) program.error(&#39;error: plugin needs pnpm arguments to forward (e.g. add &lt;package&gt;)&#39;)
+  180        resolved = { mode: &#39;plugin&#39;, profile: options.profile, args }
+  181      })
+  182
+  183    try {
+  184      program.parse(argv, { from: &#39;user&#39; })
+  185    } catch (error) {
+  186      return process.exit(error instanceof CommanderError ? error.exitCode : 1)
+  187    }
+  188    /* v8 ignore next -- an action resolves or Commander throws */
+  189    if (resolved === undefined) throw new Error(&#39;dsh: no invocation resolved&#39;)
+  190    return resolved
+  191  }
+  192</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=web#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>02</span><div><h3><code>plugin</code></h3><small>registered · apps/cli/src/args.ts:171</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L166-L183" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。</p><pre><code>  166      .action((args: string[], options: BootOptions) =&gt; {
+  167        rejectParentOptions(&#39;web&#39;)
+  168        resolved = resolveBoot(web, &#39;web&#39;, options, args)
+  169      })
+  170
+  171    const plugin = program.command(&#39;plugin&#39;).description(&#39;manage a profile\&#39;s plugins by forwarding the remaining arguments to pnpm in the profile directory&#39;)
+  172    plugin
+  173      .requiredOption(&#39;--profile &lt;name&gt;&#39;, &#39;the profile whose plugins to manage (initialized on first use)&#39;)
+  174      .allowUnknownOption()
+  175      .argument(&#39;[args...]&#39;, &#39;pnpm arguments, forwarded verbatim (add &lt;pkg&gt;, remove &lt;pkg&gt;, why &lt;pkg&gt;, ...)&#39;)
+  176      .action((args: string[], options: { profile: string }) =&gt; {
+  177        rejectParentOptions(&#39;plugin&#39;)
+  178        if (options.profile === &#39;&#39;) program.error(&#39;error: --profile needs a name&#39;)
+  179        if (args.length === 0) program.error(&#39;error: plugin needs pnpm arguments to forward (e.g. add &lt;package&gt;)&#39;)
+  180        resolved = { mode: &#39;plugin&#39;, profile: options.profile, args }
+  181      })
+  182
+  183    try {
+  184      program.parse(argv, { from: &#39;user&#39; })
+  185    } catch (error) {
+  186      return process.exit(error instanceof CommanderError ? error.exitCode : 1)
+  187    }
+  188    /* v8 ignore next -- an action resolves or Commander throws */
+  189    if (resolved === undefined) throw new Error(&#39;dsh: no invocation resolved&#39;)
+  190    return resolved
+  191  }
+  192</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=plugin#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--help</code></h3><small>flag · apps/cli/src/args.ts:7</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L2-L19" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>    2   * Commander adapter for the `dsh` command line.
+    3   *
+    4   * The launcher parses only what it owns — which profile to boot, which extra
+    5   * patch overlays to apply, and the config dumps — and hands **everything after
+    6   * its own flags** to the booted tree verbatim, where injected app plugins parse
+    7   * their own flag families and print their own `--help` (see
+    8   * `@deepseek-ai/dsh-cmdline`). Launcher flags therefore come first: the first
+    9   * token this parser does not recognize starts the inner arguments, so
+   10   * `dsh --profile tui --resume abc` boots the tui profile with `--resume abc`,
+   11   * and `dsh --profile web -h` prints the web app&#39;s help, not this one&#39;s.
+   12   *
+   13   * `web` is a hardcoded alias for `--profile web`; `plugin` manages a profile&#39;s
+   14   * plugin dependencies by forwarding to pnpm.
+   15   * @module @deepseek-ai/dsh/args
+   16   */
+   17
+   18  import { Command, CommanderError } from &#39;commander&#39;
+   19
+   20  /** Boot a named profile and hand it the invocation&#39;s inner arguments. */
+   21  interface ProfileInvocation {
+   22    mode: &#39;profile&#39;
+   23    profile: string
+   24    /** Extra patch-list overlays applied after the profile&#39;s own layer, in argv order. */
+   25    patches: string[]
+   26    /** Everything after the launcher&#39;s own flags, verbatim, for injected app plugins. */
+   27    args: string[]
+   28  }
+   29
+   30  /** Print a composed profile tree and exit without booting. */
+   31  interface DumpConfigInvocation {
+   32    mode: &#39;dump-config&#39;
+   33    profile: string
+   34    /** Omit the profile&#39;s user layer and --patch overlays; print bundle layers only. */
+   35    defaultOnly: boolean
+   36    patches: string[]
+   37  }
+   38
+   39  /** Manage a profile&#39;s plugins: forward `args` to pnpm inside the profile directory. */
+   40  interface PluginInvocation {
+   41    mode: &#39;plugin&#39;
+   42    profile: string
+   43    /** Raw pnpm arguments, verbatim. */
+   44    args: string[]
+   45  }
+   46
+   47  /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
+   48  export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+   49
+   50  /** Launcher flags shared by the default command and the `web` alias. */
+   51  interface BootOptions {
+   52    patch?: string[]
+   53    dumpConfig?: boolean
+   54    dumpDefaultConfig?: boolean
+   55  }
+   56
+   57  /**
+   58   * Repeatable single-value collector: `--patch a.yml --patch b.yml`. Never
+   59   * variadic — a variadic `--patch` would swallow the inner arguments.
+   60   */</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--help#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--profile</code></h3><small>flag · apps/cli/src/args.ts:10</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L5-L22" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>    5   * patch overlays to apply, and the config dumps — and hands **everything after
+    6   * its own flags** to the booted tree verbatim, where injected app plugins parse
+    7   * their own flag families and print their own `--help` (see
+    8   * `@deepseek-ai/dsh-cmdline`). Launcher flags therefore come first: the first
+    9   * token this parser does not recognize starts the inner arguments, so
+   10   * `dsh --profile tui --resume abc` boots the tui profile with `--resume abc`,
+   11   * and `dsh --profile web -h` prints the web app&#39;s help, not this one&#39;s.
+   12   *
+   13   * `web` is a hardcoded alias for `--profile web`; `plugin` manages a profile&#39;s
+   14   * plugin dependencies by forwarding to pnpm.
+   15   * @module @deepseek-ai/dsh/args
+   16   */
+   17
+   18  import { Command, CommanderError } from &#39;commander&#39;
+   19
+   20  /** Boot a named profile and hand it the invocation&#39;s inner arguments. */
+   21  interface ProfileInvocation {
+   22    mode: &#39;profile&#39;
+   23    profile: string
+   24    /** Extra patch-list overlays applied after the profile&#39;s own layer, in argv order. */
+   25    patches: string[]
+   26    /** Everything after the launcher&#39;s own flags, verbatim, for injected app plugins. */
+   27    args: string[]
+   28  }
+   29
+   30  /** Print a composed profile tree and exit without booting. */
+   31  interface DumpConfigInvocation {
+   32    mode: &#39;dump-config&#39;
+   33    profile: string
+   34    /** Omit the profile&#39;s user layer and --patch overlays; print bundle layers only. */
+   35    defaultOnly: boolean
+   36    patches: string[]
+   37  }
+   38
+   39  /** Manage a profile&#39;s plugins: forward `args` to pnpm inside the profile directory. */
+   40  interface PluginInvocation {
+   41    mode: &#39;plugin&#39;
+   42    profile: string
+   43    /** Raw pnpm arguments, verbatim. */
+   44    args: string[]
+   45  }
+   46
+   47  /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
+   48  export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+   49
+   50  /** Launcher flags shared by the default command and the `web` alias. */
+   51  interface BootOptions {
+   52    patch?: string[]
+   53    dumpConfig?: boolean
+   54    dumpDefaultConfig?: boolean
+   55  }
+   56
+   57  /**
+   58   * Repeatable single-value collector: `--patch a.yml --patch b.yml`. Never
+   59   * variadic — a variadic `--patch` would swallow the inner arguments.
+   60   */
+   61  const collect = (value: string, previous: string[] = []): string[] =&gt; [...previous, value]
+   62
+   63  /** The launcher&#39;s own help text; each app prints its own. */</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--profile#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--resume</code></h3><small>flag · apps/cli/src/args.ts:10</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L5-L22" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>    5   * patch overlays to apply, and the config dumps — and hands **everything after
+    6   * its own flags** to the booted tree verbatim, where injected app plugins parse
+    7   * their own flag families and print their own `--help` (see
+    8   * `@deepseek-ai/dsh-cmdline`). Launcher flags therefore come first: the first
+    9   * token this parser does not recognize starts the inner arguments, so
+   10   * `dsh --profile tui --resume abc` boots the tui profile with `--resume abc`,
+   11   * and `dsh --profile web -h` prints the web app&#39;s help, not this one&#39;s.
+   12   *
+   13   * `web` is a hardcoded alias for `--profile web`; `plugin` manages a profile&#39;s
+   14   * plugin dependencies by forwarding to pnpm.
+   15   * @module @deepseek-ai/dsh/args
+   16   */
+   17
+   18  import { Command, CommanderError } from &#39;commander&#39;
+   19
+   20  /** Boot a named profile and hand it the invocation&#39;s inner arguments. */
+   21  interface ProfileInvocation {
+   22    mode: &#39;profile&#39;
+   23    profile: string
+   24    /** Extra patch-list overlays applied after the profile&#39;s own layer, in argv order. */
+   25    patches: string[]
+   26    /** Everything after the launcher&#39;s own flags, verbatim, for injected app plugins. */
+   27    args: string[]
+   28  }
+   29
+   30  /** Print a composed profile tree and exit without booting. */
+   31  interface DumpConfigInvocation {
+   32    mode: &#39;dump-config&#39;
+   33    profile: string
+   34    /** Omit the profile&#39;s user layer and --patch overlays; print bundle layers only. */
+   35    defaultOnly: boolean
+   36    patches: string[]
+   37  }
+   38
+   39  /** Manage a profile&#39;s plugins: forward `args` to pnpm inside the profile directory. */
+   40  interface PluginInvocation {
+   41    mode: &#39;plugin&#39;
+   42    profile: string
+   43    /** Raw pnpm arguments, verbatim. */
+   44    args: string[]
+   45  }
+   46
+   47  /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
+   48  export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+   49
+   50  /** Launcher flags shared by the default command and the `web` alias. */
+   51  interface BootOptions {
+   52    patch?: string[]
+   53    dumpConfig?: boolean
+   54    dumpDefaultConfig?: boolean
+   55  }
+   56
+   57  /**
+   58   * Repeatable single-value collector: `--patch a.yml --patch b.yml`. Never
+   59   * variadic — a variadic `--patch` would swallow the inner arguments.
+   60   */
+   61  const collect = (value: string, previous: string[] = []): string[] =&gt; [...previous, value]
+   62
+   63  /** The launcher&#39;s own help text; each app prints its own. */</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--resume#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--patch</code></h3><small>flag · apps/cli/src/args.ts:34</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L29-L46" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   29
+   30  /** Print a composed profile tree and exit without booting. */
+   31  interface DumpConfigInvocation {
+   32    mode: &#39;dump-config&#39;
+   33    profile: string
+   34    /** Omit the profile&#39;s user layer and --patch overlays; print bundle layers only. */
+   35    defaultOnly: boolean
+   36    patches: string[]
+   37  }
+   38
+   39  /** Manage a profile&#39;s plugins: forward `args` to pnpm inside the profile directory. */
+   40  interface PluginInvocation {
+   41    mode: &#39;plugin&#39;
+   42    profile: string
+   43    /** Raw pnpm arguments, verbatim. */
+   44    args: string[]
+   45  }
+   46
+   47  /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
+   48  export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+   49
+   50  /** Launcher flags shared by the default command and the `web` alias. */
+   51  interface BootOptions {
+   52    patch?: string[]
+   53    dumpConfig?: boolean
+   54    dumpDefaultConfig?: boolean
+   55  }
+   56
+   57  /**
+   58   * Repeatable single-value collector: `--patch a.yml --patch b.yml`. Never
+   59   * variadic — a variadic `--patch` would swallow the inner arguments.
+   60   */
+   61  const collect = (value: string, previous: string[] = []): string[] =&gt; [...previous, value]
+   62
+   63  /** The launcher&#39;s own help text; each app prints its own. */
+   64  const HELP_EXAMPLES = `
+   65  Examples:
+   66    dsh --profile web                          boot the web profile (same as: dsh web)
+   67    dsh --profile headless &quot;run the tests&quot;     answer one task, print the result, and exit
+   68    dsh --profile tui --patch ./extra.yml      boot a custom profile with one extra overlay
+   69    dsh --profile tui --resume &lt;session&gt;       arguments after the launcher flags reach the app
+   70    dsh --profile web --help                   the web app&#39;s own flags and help
+   71    dsh plugin --profile tui add &lt;package&gt;     install a plugin into the tui profile
+   72  `
+   73
+   74  /**
+   75   * Resolve a boot or dump invocation from the launcher flags and the leftover
+   76   * inner arguments.
+   77   * @param program - the command whose options were parsed (the root, or the `web` alias).
+   78   * @param profile - the profile these flags boot.
+   79   * @param options - the launcher flags commander collected.
+   80   * @param args - the leftover arguments, in argv order.
+   81   * @returns the resolved invocation.
+   82   */
+   83  function resolveBoot(program: Command, profile: string, options: BootOptions, args: string[]): DshInvocation {
+   84    const patches = options.patch ?? []
+   85    if (patches.includes(&#39;&#39;)) program.error(&#39;error: --patch needs a path&#39;)
+   86    if (options.dumpConfig !== true &amp;&amp; options.dumpDefaultConfig !== true) {
+   87      return { mode: &#39;profile&#39;, profile, patches, args }</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--patch#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--dump-config</code></h3><small>flag · apps/cli/src/args.ts:90</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L85-L102" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   85    if (patches.includes(&#39;&#39;)) program.error(&#39;error: --patch needs a path&#39;)
+   86    if (options.dumpConfig !== true &amp;&amp; options.dumpDefaultConfig !== true) {
+   87      return { mode: &#39;profile&#39;, profile, patches, args }
+   88    }
+   89    if (options.dumpConfig === true &amp;&amp; options.dumpDefaultConfig === true) {
+   90      program.error(&#39;error: --dump-config and --dump-default-config are mutually exclusive&#39;)
+   91    }
+   92    // The dump is boot-free: it never runs app command-line providers, so it
+   93    // cannot show what those flags would decide, and printing a tree that differs
+   94    // from the same invocation&#39;s boot would mislead.
+   95    if (args.length &gt; 0) {
+   96      program.error(`error: config dumps take no app arguments, got ${args.map(argument =&gt; JSON.stringify(argument)).join(&#39; &#39;)}`)
+   97    }
+   98    const defaultOnly = options.dumpDefaultConfig === true
+   99    if (defaultOnly &amp;&amp; patches.length &gt; 0) {
+  100      program.error(&#39;error: --dump-default-config prints the bundle layers and takes no --patch&#39;)
+  101    }
+  102    return { mode: &#39;dump-config&#39;, profile, defaultOnly, patches }
+  103  }
+  104
+  105  /**
+  106   * Resolve argv into one invocation, or print and exit for help, version, or an
+  107   * error.
+  108   * @param argv - arguments after the Node binary and script.
+  109   * @param version - version string printed by `--version`.
+  110   * @returns the resolved invocation.
+  111   */
+  112  export function parseDshArgs(argv: readonly string[], version: string): DshInvocation {
+  113    let resolved: DshInvocation | undefined
+  114    // Annotated, not inferred: the actions below call back into `program`, and an
+  115    // inferred type would be circular through its own chain.
+  116    const program: Command = new Command()
+  117    program
+  118      .name(&#39;dsh&#39;)
+  119      .version(version, &#39;-V, --version&#39;, &#39;output the version number&#39;)
+  120      .description(&#39;dsh: boot a DeepSeek Harness profile — an ordered stack of plugin-bundle patch layers under your own overrides.&#39;)
+  121      .addHelpText(&#39;after&#39;, HELP_EXAMPLES)
+  122      .exitOverride()
+  123      // The launcher&#39;s flags come first and end at the first token it does not
+  124      // know; everything from there on belongs to the booted app, including
+  125      // its -h. `dsh -h` with no profile still prints this help, below.
+  126      .helpOption(false)
+  127      .allowUnknownOption()
+  128      .passThroughOptions()
+  129      .enablePositionalOptions()
+  130      .argument(&#39;[args...]&#39;, &#39;arguments for the booted profile\&#39;s app (see: dsh --profile &lt;name&gt; --help)&#39;)
+  131      .option(&#39;--profile &lt;name&gt;&#39;, &#39;the profile under $DSH_HOME/profiles to boot&#39;)
+  132      .option(&#39;--patch &lt;path&gt;&#39;, &#39;extra patch-list overlay applied after the profile layer (repeatable)&#39;, collect)
+  133      .option(&#39;--dump-config&#39;, &#39;print the composed profile tree and exit&#39;)
+  134      .option(&#39;--dump-default-config&#39;, &#39;print the profile tree without its user layer or --patch overlays and exit&#39;)
+  135      .action((args: string[], options: BootOptions &amp; { profile?: string }) =&gt; {
+  136        // With the app owning -h, the launcher&#39;s own help is what a bare
+  137        // `dsh -h` (no profile to hand it to) must print.
+  138        if (options.profile === undefined) {
+  139          if (args.some(argument =&gt; argument === &#39;-h&#39; || argument === &#39;--help&#39;)) program.help()
+  140          program.error(&#39;error: --profile &lt;name&gt; is required&#39;)
+  141        }
+  142        const profile = options.profile
+  143        if (profile === &#39;&#39;) program.error(&#39;error: --profile needs a name&#39;)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--dump-config#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--dump-default-config</code></h3><small>flag · apps/cli/src/args.ts:90</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L85-L102" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   85    if (patches.includes(&#39;&#39;)) program.error(&#39;error: --patch needs a path&#39;)
+   86    if (options.dumpConfig !== true &amp;&amp; options.dumpDefaultConfig !== true) {
+   87      return { mode: &#39;profile&#39;, profile, patches, args }
+   88    }
+   89    if (options.dumpConfig === true &amp;&amp; options.dumpDefaultConfig === true) {
+   90      program.error(&#39;error: --dump-config and --dump-default-config are mutually exclusive&#39;)
+   91    }
+   92    // The dump is boot-free: it never runs app command-line providers, so it
+   93    // cannot show what those flags would decide, and printing a tree that differs
+   94    // from the same invocation&#39;s boot would mislead.
+   95    if (args.length &gt; 0) {
+   96      program.error(`error: config dumps take no app arguments, got ${args.map(argument =&gt; JSON.stringify(argument)).join(&#39; &#39;)}`)
+   97    }
+   98    const defaultOnly = options.dumpDefaultConfig === true
+   99    if (defaultOnly &amp;&amp; patches.length &gt; 0) {
+  100      program.error(&#39;error: --dump-default-config prints the bundle layers and takes no --patch&#39;)
+  101    }
+  102    return { mode: &#39;dump-config&#39;, profile, defaultOnly, patches }
+  103  }
+  104
+  105  /**
+  106   * Resolve argv into one invocation, or print and exit for help, version, or an
+  107   * error.
+  108   * @param argv - arguments after the Node binary and script.
+  109   * @param version - version string printed by `--version`.
+  110   * @returns the resolved invocation.
+  111   */
+  112  export function parseDshArgs(argv: readonly string[], version: string): DshInvocation {
+  113    let resolved: DshInvocation | undefined
+  114    // Annotated, not inferred: the actions below call back into `program`, and an
+  115    // inferred type would be circular through its own chain.
+  116    const program: Command = new Command()
+  117    program
+  118      .name(&#39;dsh&#39;)
+  119      .version(version, &#39;-V, --version&#39;, &#39;output the version number&#39;)
+  120      .description(&#39;dsh: boot a DeepSeek Harness profile — an ordered stack of plugin-bundle patch layers under your own overrides.&#39;)
+  121      .addHelpText(&#39;after&#39;, HELP_EXAMPLES)
+  122      .exitOverride()
+  123      // The launcher&#39;s flags come first and end at the first token it does not
+  124      // know; everything from there on belongs to the booted app, including
+  125      // its -h. `dsh -h` with no profile still prints this help, below.
+  126      .helpOption(false)
+  127      .allowUnknownOption()
+  128      .passThroughOptions()
+  129      .enablePositionalOptions()
+  130      .argument(&#39;[args...]&#39;, &#39;arguments for the booted profile\&#39;s app (see: dsh --profile &lt;name&gt; --help)&#39;)
+  131      .option(&#39;--profile &lt;name&gt;&#39;, &#39;the profile under $DSH_HOME/profiles to boot&#39;)
+  132      .option(&#39;--patch &lt;path&gt;&#39;, &#39;extra patch-list overlay applied after the profile layer (repeatable)&#39;, collect)
+  133      .option(&#39;--dump-config&#39;, &#39;print the composed profile tree and exit&#39;)
+  134      .option(&#39;--dump-default-config&#39;, &#39;print the profile tree without its user layer or --patch overlays and exit&#39;)
+  135      .action((args: string[], options: BootOptions &amp; { profile?: string }) =&gt; {
+  136        // With the app owning -h, the launcher&#39;s own help is what a bare
+  137        // `dsh -h` (no profile to hand it to) must print.
+  138        if (options.profile === undefined) {
+  139          if (args.some(argument =&gt; argument === &#39;-h&#39; || argument === &#39;--help&#39;)) program.help()
+  140          program.error(&#39;error: --profile &lt;name&gt; is required&#39;)
+  141        }
+  142        const profile = options.profile
+  143        if (profile === &#39;&#39;) program.error(&#39;error: --profile needs a name&#39;)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--dump-default-config#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--version</code></h3><small>flag · apps/cli/src/args.ts:109</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/args.ts#L104-L121" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>  104
+  105  /**
+  106   * Resolve argv into one invocation, or print and exit for help, version, or an
+  107   * error.
+  108   * @param argv - arguments after the Node binary and script.
+  109   * @param version - version string printed by `--version`.
+  110   * @returns the resolved invocation.
+  111   */
+  112  export function parseDshArgs(argv: readonly string[], version: string): DshInvocation {
+  113    let resolved: DshInvocation | undefined
+  114    // Annotated, not inferred: the actions below call back into `program`, and an
+  115    // inferred type would be circular through its own chain.
+  116    const program: Command = new Command()
+  117    program
+  118      .name(&#39;dsh&#39;)
+  119      .version(version, &#39;-V, --version&#39;, &#39;output the version number&#39;)
+  120      .description(&#39;dsh: boot a DeepSeek Harness profile — an ordered stack of plugin-bundle patch layers under your own overrides.&#39;)
+  121      .addHelpText(&#39;after&#39;, HELP_EXAMPLES)
+  122      .exitOverride()
+  123      // The launcher&#39;s flags come first and end at the first token it does not
+  124      // know; everything from there on belongs to the booted app, including
+  125      // its -h. `dsh -h` with no profile still prints this help, below.
+  126      .helpOption(false)
+  127      .allowUnknownOption()
+  128      .passThroughOptions()
+  129      .enablePositionalOptions()
+  130      .argument(&#39;[args...]&#39;, &#39;arguments for the booted profile\&#39;s app (see: dsh --profile &lt;name&gt; --help)&#39;)
+  131      .option(&#39;--profile &lt;name&gt;&#39;, &#39;the profile under $DSH_HOME/profiles to boot&#39;)
+  132      .option(&#39;--patch &lt;path&gt;&#39;, &#39;extra patch-list overlay applied after the profile layer (repeatable)&#39;, collect)
+  133      .option(&#39;--dump-config&#39;, &#39;print the composed profile tree and exit&#39;)
+  134      .option(&#39;--dump-default-config&#39;, &#39;print the profile tree without its user layer or --patch overlays and exit&#39;)
+  135      .action((args: string[], options: BootOptions &amp; { profile?: string }) =&gt; {
+  136        // With the app owning -h, the launcher&#39;s own help is what a bare
+  137        // `dsh -h` (no profile to hand it to) must print.
+  138        if (options.profile === undefined) {
+  139          if (args.some(argument =&gt; argument === &#39;-h&#39; || argument === &#39;--help&#39;)) program.help()
+  140          program.error(&#39;error: --profile &lt;name&gt; is required&#39;)
+  141        }
+  142        const profile = options.profile
+  143        if (profile === &#39;&#39;) program.error(&#39;error: --profile needs a name&#39;)
+  144        resolved = resolveBoot(program, profile, options, args)
+  145      })
+  146
+  147    /** Reject parent options supplied before a subcommand. */
+  148    const rejectParentOptions = (command: string): void =&gt; {
+  149      const parent = program.opts&lt;BootOptions &amp; { profile?: string }&gt;()
+  150      if (parent.profile !== undefined || parent.patch !== undefined
+  151        || parent.dumpConfig !== undefined || parent.dumpDefaultConfig !== undefined) {
+  152        program.error(`error: ${command} takes none of parent --profile, --patch, --dump-config, or --dump-default-config`)
+  153      }
+  154    }
+  155
+  156    const web = program.command(&#39;web&#39;).description(&#39;boot the web profile (alias of --profile web); the web app\&#39;s own flags follow&#39;)
+  157    web
+  158      .helpOption(false)
+  159      .allowUnknownOption()
+  160      .passThroughOptions()
+  161      .enablePositionalOptions()
+  162      .argument(&#39;[args...]&#39;, &#39;arguments for the web app (see: dsh web --help)&#39;)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--version#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--probe</code></h3><small>flag · native/landlock-run/packages/entry/src/index.ts:102</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/native/landlock-run/packages/entry/src/index.ts#L97-L114" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   97      ...(grants.readWrite ?? []).flatMap(root =&gt; [&#39;--rw&#39;, root]),
+   98    ]
+   99  }
+  100
+  101  /**
+  102   * Functional probe: `landlock-run --probe` builds and enforces a maximal
+  103   * ruleset in a short-lived child and exits 0 only when the running kernel
+  104   * actually enforces it — `--version`-style checks would miss a kernel that
+  105   * has the syscalls but refuses enforcement. The probe&#39;s one report line is
+  106   * part of the CLI contract and distinguishes complete from per-ABI-subset
+  107   * enforcement; a zero exit without the partial marker reads as `full`. A
+  108   * failed or timed-out spawn (missing binary, wrong architecture, unenforcing
+  109   * kernel) probes `unusable`. Synchronous by design: consumers run it once
+  110   * and cache the verdict.
+  111   * @param launcher - the launcher path to probe; defaults to
+  112   *   {@link launcherPath}&#39;s resolution for this host.
+  113   * @param options - `timeoutMs` bounds the probe child (default 2000).
+  114   * @returns the enforcement verdict for this host.
+  115   */
+  116  export function probe(
+  117    launcher: string = launcherPath(),
+  118    options: { timeoutMs?: number } = {},
+  119  ): LandlockEnforcement {
+  120    const result = spawnSync(launcher, [&#39;--probe&#39;], {
+  121      timeout: options.timeoutMs ?? 2000,
+  122      encoding: &#39;utf8&#39;,
+  123      stdio: [&#39;ignore&#39;, &#39;pipe&#39;, &#39;ignore&#39;],
+  124    })
+  125    if (result.status !== 0) return &#39;unusable&#39;
+  126    return /partially enforced/.test(result.stdout) ? &#39;partial&#39; : &#39;full&#39;
+  127  }
+  128</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--probe#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>11</span><div><h3><code>/api</code></h3><small>slash · packages/client/connection/src/api-path.ts:7</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/connection/src/api-path.ts#L2-L19" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>    2   * The /api URL prefix — single source for both halves of the web transport.
+    3   * The node half registers this prefix on the web server; both halves share the
+    4   * event paths below for the browser WebSocket downlinks.
+    5   */
+    6
+    7  /** Route prefix owning every api request (`/api` and `/api/&lt;anything&gt;`). */
+    8  export const API_PATH = &#39;/api&#39;
+    9
+   10  /** Browser mux-frame WebSocket pathname. */
+   11  export const MUX_EVENTS_PATH = `${API_PATH}/events.mux`
+   12
+   13  /** Browser host-frame WebSocket pathname. */
+   14  export const HOST_EVENTS_PATH = `${API_PATH}/events.host`
+   15</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fapi#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--watch</code></h3><small>flag · packages/client/locale/package.json:79</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/locale/package.json#L74-L91" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   74      &quot;lib/client.js&quot;,
+   75      &quot;lib/types/**/*.d.ts&quot;
+   76    ],
+   77    &quot;scripts&quot;: {
+   78      &quot;bundle&quot;: &quot;tsdown&quot;,
+   79      &quot;watch&quot;: &quot;tsdown --watch&quot;
+   80    }
+   81  }
+   82</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--watch#command-flow">打开这条指令的执行图 →</a></article></div></section><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>architecture.md 把模型适配器、工具注册表、会话日志、沙箱和 Agent loop 都列为 Cordis 插件；profile 选择 bundle，bundle 提供 patch，启动时按层叠加。</blockquote><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L8-L58" target="_blank" rel="noreferrer">docs/architecture.md:8–58 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>agent-loop 构造函数一次性创建 event dispatch、Inbox、Scope、RuntimeContextProjection，并把它们挂进 Cordis context。</blockquote><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L63-L97" target="_blank" rel="noreferrer">packages/core/agent-loop/src/agent.ts:63–97 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>executeToolCalls 先解析所有 tool-call，再按 executionMode 把连续 parallel 调用放进 bounded pool；遇到 exclusive 就形成 barrier。</blockquote><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L59-L100" target="_blank" rel="noreferrer">packages/core/agent-loop/src/tool-calls.ts:59–100 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>runGroup 用 slots 保存完成结果，commitReady 只从连续可提交的 index 开始 finalize/finish、appendToolResult，并把 additionalContexts 放进下一步。</blockquote><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L112-L159" target="_blank" rel="noreferrer">packages/core/agent-loop/src/tool-calls.ts:112–159 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>apps/web/tests/goal-command-presentation.e2e.ts</b><small>6280 bytes · .ts</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/web/tests/goal-command-presentation.e2e.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>1. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  // Web e2e: /goal opts its command input into the human transcript while the
+    2  // command remains log-only. The shipped composition runs with no model adapter,
+    3  // so an accidental turn fails loud in addition to the event-level assertions.
+    4  import { fileURLToPath } from &#39;node:url&#39;
+    5  import type { Browser, Page } from &#39;playwright&#39;
+    6  import { chromium } from &#39;playwright&#39;
+    7  import { afterAll, beforeAll, describe, expect, it, onTestFailed } from &#39;vitest&#39;
+    8  import type { SessionEvent } from &#39;@deepseek-ai/dsh-session/types&#39;
+    9  import type {} from &#39;@deepseek-ai/dsh-commands/types&#39;
+   10  import {
+   11    acknowledgeReloadConnectionLoss, assertFixtureInventory, captureStableAria,
+   12    compareOrRefreshGolden, launchWebScaffold, watchConsole, webSnapshotMode,
+   13    type WebScaffold,
+   14  } from &#39;./scaffold.ts&#39;
+   15  import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from &#39;./support.ts&#39;
+   16
+   17  const SNAPSHOT_DIR = fileURLToPath(new URL(&#39;./snapshots/goal-command-presentation&#39;, import.meta.url))
+   18  const UI_EXPECTED = fileURLToPath(new URL(
+   19    &#39;./snapshots/goal-command-presentation/ui.expected.md&#39;, import.meta.url,
+   20  ))
+   21  const MODE = webSnapshotMode()
+   22
+   23  describe(&#39;web e2e: /goal human transcript presentation&#39;, () =&gt; {
+   24    let scaffold: WebScaffold
+   25    let browser: Browser
+   26    let page: Page
+   27    let tripwire: ReturnType&lt;typeof watchConsole&gt;
+   28    const events: SessionEvent[] = []
+   29
+   30    beforeAll(async () =&gt; {
+   31      scaffold = await launchWebScaffold()
+   32      scaffold.ctx.on(&#39;session/event&#39;, (_session, event: SessionEvent) =&gt; { events.push(event) })
+   33      browser = await chromium.launch()</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>packages/client/ui-goal/tests/goal-command-input.client.spec.tsx</b><small>5682 bytes · .tsx</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-goal/tests/goal-command-input.client.spec.tsx#L12-L27" target="_blank" rel="noreferrer">L12–27 ↗</a></header><p>2. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   12  import { commandDefinition } from &#39;@deepseek-ai/dsh-client-ui-conversation/src/client/conversation-nodes/command.ts&#39;
+   13  import { chatViewDefinition } from &#39;@deepseek-ai/dsh-client-ui-conversation/src/client/conversation-nodes/chat-snapshot-builder.ts&#39;
+   14  import { GoalCommandInputView } from &#39;../src/client/GoalCommandInputView.tsx&#39;
+   15  import {
+   16    goalCommandInputDefinition, goalCommandText,
+   17  } from &#39;../src/client/goal-command-input.ts&#39;
+   18  import { zh } from &#39;../src/client/locales.ts&#39;
+   19
+   20  afterEach(cleanup)
+   21
+   22  class TestEventDefinitions {
+   23    entries(): readonly ConversationNodeDefinition[] {
+   24      return [commandDefinition, goalCommandInputDefinition]
+   25    }
+   26
+   27    fallbackEntry(): undefined {
+   28      return undefined
+   29    }
+   30  }
+   31
+   32  class TestViewDefinitions {
+   33    entries(): readonly ConversationViewDefinition[] {
+   34      return [chatViewDefinition]
+   35    }
+   36  }
+   37
+   38  function entry(seq: number, type: string, data: unknown): ConversationEventInput {
+   39    return {
+   40      event: { seq, time: 1_700_000_000_000 + seq, type, data } as ConversationEventInput[&#39;event&#39;],
+   41      view: undefined,
+   42    }
+   43  }
+   44</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>packages/goal/command-goal/tests/command-goal.spec.ts</b><small>10472 bytes · .ts</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/goal/command-goal/tests/command-goal.spec.ts#L6-L21" target="_blank" rel="noreferrer">L6–21 ↗</a></header><p>3. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    6  import CommandRuntime from &#39;@deepseek-ai/dsh-commands&#39;
+    7  import GoalService from &#39;@deepseek-ai/dsh-goal&#39;
+    8  import type { GoalRef } from &#39;@deepseek-ai/dsh-goal&#39;
+    9  import SessionStore, { Session, SessionId } from &#39;@deepseek-ai/dsh-session&#39;
+   10  import * as commandGoal from &#39;@deepseek-ai/dsh-command-goal&#39;
+   11
+   12  interface Harness {
+   13    readonly ctx: Context
+   14    readonly agent: Agent
+   15    readonly session: Session
+   16    readonly plugin: Awaited&lt;ReturnType&lt;Context[&#39;plugin&#39;]&gt;&gt;
+   17  }
+   18
+   19  /** Build a live idle agent accepted by the exact-identity goal service. */
+   20  function stubAgent(ctx: Context, id: string): { agent: Agent; session: Session } {
+   21    // Store-created: the command executor durably logs lifecycle events on it.
+   22    const session = ctx.sessions.create(SessionId(id))
+   23    const inbox = new Inbox(session, { inserted: () =&gt; {}, discarded: () =&gt; {}, claimed: () =&gt; {} })
+   24    let status: AgentStatus = &#39;idle&#39;
+   25    const agent: Agent = {
+   26      id: session.id,
+   27      options: {},
+   28      session,
+   29      inbox,
+   30      ctx: new Context(),
+   31      get status() { return status },
+   32      send: () =&gt; {},
+   33      followup: () =&gt; {},
+   34      steer: () =&gt; {},
+   35      inject(input) { inbox.append(&#39;next-step&#39;, input) },
+   36      cancel() { status = &#39;idle&#39; },
+   37      runMaintenance: task =&gt; task(new AbortController().signal),
+   38      whenIdle() { return Promise.resolve() },</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>.agents/notes/archived/architecture/2026-07-24-dsh-commander-argument-adapter.i18n.yaml</b><small>469 bytes · .yaml</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/.agents/notes/archived/architecture/2026-07-24-dsh-commander-argument-adapter.i18n.yaml#L5-L7" target="_blank" rel="noreferrer">L5–7 ↗</a></header><p>4. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    5  2026-07-24-dsh-commander-argument-adapter.md: a5f6e580b91c0de1cdb433e1973bdff960384f06
+    6  2026-07-24-dsh-commander-argument-adapter.zh.md: 4321ab154996c9b23ce58175b112234c92013cb8
+    7</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>.agents/notes/archived/architecture/2026-07-24-dsh-commander-argument-adapter.md</b><small>10705 bytes · .md</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/.agents/notes/archived/architecture/2026-07-24-dsh-commander-argument-adapter.md#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>5. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  # Agent Note: Parse `dsh` argv through one Commander adapter
+    2
+    3  Status: implemented
+    4  Archived: 2026-07-26
+    5
+    6  English | [中文](2026-07-24-dsh-commander-argument-adapter.zh.md)
+    7
+    8  ## Problem
+    9
+   10  The `dsh` CLI entry (`apps/cli`) parsed argv in three hand-rolled idioms that did not compose and gave no `--help`/`--version`. `bin.ts` dispatched by raw inspection — `argv[0] === &#39;web&#39;`, then `argv.includes(&#39;-p&#39;) || argv.includes(&#39;--prompt&#39;)`, else TUI — which is positional-blind: a prompt flag or a config path in the wrong position could misroute the mode, and `argv.includes(&#39;-p&#39;)` could not tell a real flag from an incidental token. `headless.ts` and `web.ts` each ran their own `node:util` `parseArgs` with inline host/port validation, and `dsh-app-boot` carried `parseResumeArg`, a ~30-line bespoke scanner reimplementing flag/`=`-form/value/repeat handling for `--resume`. Usage was a single hardcoded `usage: dsh -p &quot;task&quot;` line; there was no version flag and no rendered help.
+   11
+   12  ## Decision
+   13
+   14  Argv is parsed once, in `apps/cli/src/args.ts`, through a Commander adapter (the same parser the SDK bins — `create-sdk`, `dsh-scripts` — already standardize on). `parseDshArgs(argv, version)` returns a discriminated `DshInvocation` union of the three real modes: `{ mode: &#39;tui&#39;, config?, resume? }`, `{ mode: &#39;headless&#39;, prompt }`, or `{ mode: &#39;web&#39;, host?, port?, dev }`. It does **not** model help/version/errors as data: Commander owns those, printing usage or the diagnostic and exiting at the point of failure. `exitOverride()` turns each into a thrown `CommanderError` carrying the intended code (0 for help/version, 1 for a parse or domain error), which one `try/catch` in `parseDshArgs` turns into `process.exit`.
+   15
+   16  `bin.ts` calls the adapter once and switches on `mode` (closed union, `satisfies never` default), dynamic-importing only the chosen mode&#39;s module; only a valid, non-help invocation reaches the switch, so it has no help/version/error cases. Each mode module consumes already-parsed values: `runTui(config, resume)`, `runHeadless(task)`, `runWeb(host, port, dev, workspaceRoot)` — none re-reads argv. It is **one Commander program**: the default surface (no subcommand) carries option-only flags — `--config &lt;path&gt;`, `-p/--prompt &lt;task&gt;`, `--resume &lt;id&gt;` — and `web` is a real `program.command(&#39;web&#39;)` subcommand. The default surface takes no positional argument, which is what lets `web` be a real subcommand without a positional collision, so `dsh --help` lists `web` natively (no hand-pasted command text). The default action and the `web` action set the resolved mode, then bail via `command.error(...)` (print + exit 1) on the domain checks Commander cannot express: `--prompt` selects headless and rejects an empty task or a `--config`/`--resume` alongside it rather than silently dropping a TUI input; an empty `--resume=` id fails loud (agent-loop treats `&#39;&#39;` as no-resume). Commander parses the default-surface options on either side of the `web` token into `program.opts()`; since `web` shares none of them, the `web` action rejects a leaked `--config`/`-p`/`--resume` (`dsh web -p x`, `dsh --config c.yml web`) rather than silently serving and dropping it. `dsh web`&#39;s `--host`/`--port` are unvalidated pass-through overrides: the adapter assigns no default and does no validation, only `Number`-coercing the port string (the schema wants a number). The `dsh-host-webserver` schemastery `Config` (`host` a `127.0.0.1`/`0.0.0.0` literal union, `port` a natural ≤ 65535) is the single source of both the default (the shipped `apps/cli/cordis.yml` `webserver` row stands when a flag is absent) and validity — `AppCLIEntry` patches an explicit flag straight into that row, so a bad host/port fails loud at the schema on boot, not at parse. `--dev` mounts the client HMR driver and bundle watch, and `--workspace-root &lt;path&gt;` is a plain pass-through to `AppCLIEntry` (the parent directory for name-created workspaces). A repeated `--resume`, or a following flag captured as a `--resume`/`--prompt` value, is Commander&#39;s standard behavior (last-wins / next-token) and is left alone; a bad id fails loud downstream when the session cannot load. `--version` reads this app&#39;s `package.json`.
+   17
+   18  `dsh` takes no positional argument. `--config &lt;path&gt;` names an alternate cordis tree to boot instead of the shipped default; it exists only so the demo/test call sites (`demo:cordis`, `demo:code-mode`, the keyless PTY smokes) can point the shipped bin at an example tree. A bare `dsh` boots the shipped tree plus the `~/.dsh/config.yaml` personal overlay; a real user never passes `--config`.
+   19
+   20  CLI parsing lives entirely in `apps/cli`. `dsh-app-boot` holds the boot/env/config/personal-overlay helpers and no argv scanner.
+   21
+   22  ## Session resume through the boot context
+   23
+   24  `dsh --resume &lt;id&gt;` is the one way to resume a persisted session, with no environment variable. `runTui` provides the parsed id on the boot context through `boot`&#39;s `prepare(ctx)` hook — `ctx.provide(RESUME_SESSION_ID_KEY, id)` (a `dsh-app-boot` export, value `&#39;resumeSessionId&#39;`) — and the shipped tui-agent/cordis configs read it as a bare identifier: `resumeSessionId: !!js &quot;typeof resumeSessionId === &#39;string&#39; ? resumeSessionId : undefined&quot;`. The expression is quoted because YAML otherwise parses the `?`/`:` as a mapping; the `typeof` guard tolerates a launcher that never provides the slot. The `/resume` in-place handoff (`process.execve`) rebuilds its re-exec argv from the parsed values as `dsh --resume=&lt;id&gt; [--config &lt;path&gt;]`.
+   25
+   26  ## One terminal front door: `dsh`
+   27
+   28  `dsh` is the only terminal entry point; the `dsh-tui-demo` package ships the TUI app bundle plugin the shipped config mounts, and no bin of its own. `demo:cordis`, `demo:code-mode`, and both the tui-agent and cordis-agent keyless PTY smokes launch through `apps/cli/src/bin.ts` with `--config &lt;path&gt;`. `dsh`&#39;s TTY guard (refuse piped stdio before booting, pointing at `dsh -p` for automation) is pinned by `apps/cli/tests/built-bin.e2e.ts`, which runs the built `lib/bin.js` under plain Node with piped stdio (`apps/cli/tests` is in the e2e vitest include). `cli-demo`, `acp-demo`, and `jsonrpc-demo` keep their own bins because each is a distinct surface (headless, ACP, JSON-RPC) `dsh` does not provide.
+   29
+   30  ## Package topology
+   31
+   32  The argument surface stays inside `apps/cli`, the assembly tier, not a `packages/*` library: it is this one app&#39;s routing, not a reusable seam. `dsh-app-boot` shrinks to boot glue with no CLI-parsing responsibility. `commander@^15` is added to `apps/cli/package.json`, matching the SDK bins&#39; pin.
+   33</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>.agents/notes/archived/architecture/2026-07-24-dsh-commander-argument-adapter.zh.md</b><small>11618 bytes · .md</small></div><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/.agents/notes/archived/architecture/2026-07-24-dsh-commander-argument-adapter.zh.md#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>6. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    1  # Agent Note: 通过单个 Commander 适配器解析 `dsh` 的 argv
+    2
+    3  Status: implemented
+    4  Archived: 2026-07-26
+    5
+    6  [English](2026-07-24-dsh-commander-argument-adapter.md) | 中文
+    7
+    8  ## 问题
+    9
+   10  `dsh` 的 CLI（命令行界面）入口（`apps/cli`）以三种手写方式解析 argv，这些方式无法组合，也不提供 `--help`/`--version`。`bin.ts` 通过原始检查进行分发：先判断 `argv[0] === &#39;web&#39;`，再判断 `argv.includes(&#39;-p&#39;) || argv.includes(&#39;--prompt&#39;)`，否则走 TUI。这种方式对位置不敏感：位置错误的 prompt 标志或配置路径可能把模式路由错，而 `argv.includes(&#39;-p&#39;)` 无法区分真正的标志和偶然出现的 token。`headless.ts` 和 `web.ts` 各自运行自己的 `node:util` `parseArgs`，并内联校验 host/port，而 `dsh-app-boot` 携带 `parseResumeArg`——一个约 30 行的定制扫描器，为 `--resume` 重新实现了标志、`=` 形式、取值和重复的处理。用法说明只有一行硬编码的 `usage: dsh -p &quot;task&quot;`；既没有版本标志，也没有渲染出的帮助信息。
+   11
+   12  ## 决策
+   13
+   14  argv 只在 `apps/cli/src/args.ts` 中解析一次，并使用 Commander 适配器（SDK bin `create-sdk`、`dsh-scripts` 已经统一采用的同一解析器）。`parseDshArgs(argv, version)` 返回仅包含三种实际模式的判别式 `DshInvocation` 联合类型：`{ mode: &#39;tui&#39;, config?, resume? }`、`{ mode: &#39;headless&#39;, prompt }` 或 `{ mode: &#39;web&#39;, host?, port?, dev }`。它**不会**将帮助、版本信息或错误建模为数据：这些情况由 Commander 处理，在触发处打印用法或诊断信息并退出。`exitOverride()` 会将每种情况转为抛出的 `CommanderError`，并携带预期退出码（帮助或版本为 0，解析错误或领域错误为 1）；唯一一处 `try/catch` 位于 `parseDshArgs` 中，捕获错误后调用 `process.exit`。
+   15
+   16  `bin.ts` 只调用适配器一次，并对 `mode` 做分支切换（封闭联合类型，默认分支为 `satisfies never`），仅动态导入所选模式对应的模块；只有合法的非帮助请求才会进入这段分支逻辑，因此其中没有帮助、版本或错误分支。每个模式模块只消费已解析好的值：`runTui(config, resume)`、`runHeadless(task)`、`runWeb(host, port, dev, workspaceRoot)`，都不会再次读取 argv。整个 CLI 由**单个 Commander 程序**实现：默认接口（不使用子命令时）只包含选项标志——`--config &lt;path&gt;`、`-p/--prompt &lt;task&gt;`、`--resume &lt;id&gt;`——而 `web` 是通过 `program.command(&#39;web&#39;)` 定义的真正子命令。默认接口不接受位置参数，因此 `web` 可以成为真正的子命令且不会发生位置参数冲突，`dsh --help` 也会原生列出 `web`，无需手工拼接命令文本。默认命令和 `web` 子命令的处理函数会设置解析得到的模式，随后对 Commander 无法表达的领域校验调用 `command.error(...)` 立即终止（打印信息并以退出码 1 退出）：`--prompt` 选择 headless 模式；如果任务为空，或调用中还包含 `--config` 或 `--resume`，它会拒绝调用，而不会静默丢弃 TUI 输入；空的 `--resume=` id 会显式失败（agent-loop 把 `&#39;&#39;` 视为不恢复）。Commander 会将 `web` token 前后的默认接口选项都解析进 `program.opts()`；由于 `web` 不与默认接口共用任何选项，`web` 子命令的处理函数会拒绝误入的 `--config`/`-p`/`--resume`（`dsh web -p x`、`dsh --config c.yml web`），而不是静默启动服务并丢弃这些选项。`dsh web` 的 `--host`/`--port` 是未经校验、直接透传的覆盖值：适配器既不设置默认值，也不执行校验，只使用 `Number` 将端口字符串转换为数字（schema 要求该值为数字）。`dsh-host-webserver` 的 schemastery `Config`（`host` 是 `127.0.0.1`/`0.0.0.0` 字面量联合类型，`port` 是不大于 65535 的自然数）是默认值与有效性的唯一真源：未提供标志时，随产品提供的 `apps/cli/cordis.yml` 中 `webserver` 配置项保持原值；`AppCLIEntry` 将显式标志的值直接写入该配置项，因此无效的 host/port 会在启动时触发 schema 校验并显式失败，而不是在参数解析阶段失败。`--dev` 会挂载客户端 HMR（热模块替换）驱动，并启用构建产物监视，`--workspace-root &lt;path&gt;` 则是直接透传给 `AppCLIEntry` 的选项（按名称创建 workspace 时使用的父目录）。重复提供 `--resume`，或后续标志被捕获为 `--resume` 或 `--prompt` 的值，都是 Commander 的标准行为（最后一次取值生效／将下一 token 作为值），本适配器不作干预；无效 id 会在下游无法加载会话时显式失败。`--version` 读取本应用的 `package.json`。
+   17
+   18  `dsh` 不接受位置参数。`--config &lt;path&gt;` 指定一份替代 Cordis 配置树，系统启动该配置树而不是随产品提供的默认配置树；该标志仅用于让演示和测试调用点（`demo:cordis`、`demo:code-mode`、无密钥 PTY 冒烟测试）通过随产品提供的 bin 启动一份示例树。直接运行 `dsh` 会启动随产品提供的配置树，并叠加 `~/.dsh/config.yaml` 个人覆盖；实际用户从不传入 `--config`。
+   19
+   20  CLI 解析完全位于 `apps/cli` 中。`dsh-app-boot` 提供启动、环境变量、配置和个人覆盖辅助函数，不包含 argv 扫描器。
+   21
+   22  ## 通过启动上下文恢复会话
+   23
+   24  `dsh --resume &lt;id&gt;` 是恢复持久化会话的唯一方式，无需环境变量。`runTui` 通过 `boot` 的 `prepare(ctx)` 钩子，在启动上下文中提供已解析的 id：`ctx.provide(RESUME_SESSION_ID_KEY, id)`（`dsh-app-boot` 的一项导出，值为 `&#39;resumeSessionId&#39;`）；随产品提供的 tui-agent/cordis 配置将该值作为裸标识符读取：`resumeSessionId: !!js &quot;typeof resumeSessionId === &#39;string&#39; ? resumeSessionId : undefined&quot;`。这个表达式需要加引号，否则 YAML 会把 `?` 和 `:` 解析为映射；`typeof` 守卫使从未提供该槽位的启动器也能正常运行。`/resume` 原地交接（`process.execve`）根据已解析的值将重新执行时的 argv 构造成 `dsh --resume=&lt;id&gt; [--config &lt;path&gt;]`。
+   25
+   26  ## 唯一的终端入口：`dsh`
+   27
+   28  `dsh` 是唯一的终端入口；`dsh-tui-demo` 包（package）提供 TUI 应用组合插件，随产品提供的配置会挂载该插件，而该包不提供自己的 bin。`demo:cordis`、`demo:code-mode` 以及 tui-agent 和 cordis-agent 的无密钥 PTY 冒烟测试都通过 `apps/cli/src/bin.ts` 启动，并传入 `--config &lt;path&gt;`。`dsh` 的 TTY 守卫会在启动前拒绝标准输入输出接入管道的调用，并提示自动化场景使用 `dsh -p`；`apps/cli/tests/built-bin.e2e.ts` 锁定了这一行为：该测试将标准输入输出接入管道，并通过普通 Node 运行构建后的 `lib/bin.js`（e2e Vitest 的 include 包含 `apps/cli/tests`）。`cli-demo`、`acp-demo` 和 `jsonrpc-demo` 保留各自的 bin，因为它们分别提供 `dsh` 所没有的独立接口（headless、ACP（Agent Client Protocol）、JSON-RPC）。
+   29
+   30  ## 包拓扑
+   31
+   32  参数解析留在 `apps/cli`（组装层）内，而不是 `packages/*` 库中：它是这一个应用自身的路由，而非可复用的 seam。`dsh-app-boot` 收缩为纯粹的 boot 胶水代码，不再承担 CLI 解析职责。`commander@^15` 被加入 `apps/cli/package.json`，与 SDK bin 锁定的版本一致。
+   33</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="DeepSeek Harness commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← 证据与取舍：把源码结论带回自研</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

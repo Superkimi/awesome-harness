@@ -1,0 +1,1661 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>Prime Agent · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Prime Agent · 7787f07415d8</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>8 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 8 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="prime-arch-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 低层 Agent Loop 是可复用的 provider-neutral 状态机</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>agentLoop 只接收 prompts、AgentContext、AgentLoopConfig 和可选 streamFn；runLoop 把 steering、tool calls、follow-up、continuation 和 abort 编排成外层/内层循环，并最终发出 agent_end。</p></section><section><span>PLAIN LANGUAGE</span><p>Prime Agent 把“模型怎么流式回答、什么时候执行工具、用户插话后是否继续”抽成一个不依赖 TUI 的小内核，上层入口只负责喂配置和消费事件。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>自研时可把 loop 做成纯运行时，再让 CLI、RPC、桌面 UI 共用；不要让界面组件自己复制一套 tool loop。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>178–190</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>191–205</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L178-L205" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:178–205</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L178-L205" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  178   * Start an agent loop with a new prompt message.
+  179   * The prompt is added to the context and events are emitted for it.
+  180   */
+  181  export function agentLoop(
+  182  	prompts: AgentMessage[],
+  183  	context: AgentContext,
+  184  	config: AgentLoopConfig,
+  185  	signal?: AbortSignal,
+  186  	streamFn?: StreamFn,
+  187  ): EventStream&lt;AgentEvent, AgentMessage[]&gt; {
+  188  	const stream = createAgentStream();
+  189
+  190  	endAgentStreamOnError(
+  191  		stream,
+  192  		runAgentLoop(
+  193  			prompts,
+  194  			context,
+  195  			config,
+  196  			async (event) =&gt; {
+  197  				stream.push(event);
+  198  			},
+  199  			signal,
+  200  			streamFn,
+  201  		),
+  202  	);
+  203
+  204  	return stream;
+  205  }
+  206
+  207  /**
+  208   * Continue an agent loop from the current context without adding a new message.
+  209   * Used for retries - context already has user message or tool results.
+  210   *
+  211   * **Important:** The last message in context must convert to a `user` or `toolResult` message
+  212   * via `convertToLlm`. If it doesn&#39;t, the LLM provider will reject the request.
+  213   * This cannot be validated here since `convertToLlm` is only called once per turn.
+  214   */
+  215  export function agentLoopContinue(
+  216  	context: AgentContext,
+  217  	config: AgentLoopConfig,
+  218  	signal?: AbortSignal,
+  219  	streamFn?: StreamFn,
+  220  ): EventStream&lt;AgentEvent, AgentMessage[]&gt; {
+  221  	if (context.messages.length === 0) {
+  222  		throw new Error(&quot;Cannot continue: no messages in context&quot;);
+  223  	}
+  224
+  225  	if (context.messages[context.messages.length - 1].role === &quot;assistant&quot;) {
+  226  		throw new Error(&quot;Cannot continue from message role: assistant&quot;);
+  227  	}
+  228
+  229  	const stream = createAgentStream();
+  230
+  231  	endAgentStreamOnError(
+  232  		stream,
+  233  		runAgentLoopContinue(
+  234  			context,
+  235  			config,
+  236  			async (event) =&gt; {
+  237  				stream.push(event);
+  238  			},
+  239  			signal,
+  240  			streamFn,
+  241  		),
+  242  	);
+  243
+  244  	return stream;
+  245  }
+  246
+  247  export async function runAgentLoop(
+  248  	prompts: AgentMessage[],
+  249  	context: AgentContext,
+  250  	config: AgentLoopConfig,
+  251  	emit: AgentEventSink,
+  252  	signal?: AbortSignal,
+  253  	streamFn?: StreamFn,
+  254  ): Promise&lt;AgentMessage[]&gt; {
+  255  	const newMessages: AgentMessage[] = [...prompts];
+  256  	const currentContext: AgentContext = {
+  257  		...context,
+  258  		messages: [...context.messages, ...prompts],
+  259  	};
+  260
+  261  	await emit({ type: &quot;agent_start&quot; });
+  262  	await emit({ type: &quot;turn_start&quot; });
+  263  	for (const prompt of prompts) {
+  264  		await emit({ type: &quot;message_start&quot;, message: prompt });
+  265  		await emit({ type: &quot;message_end&quot;, message: prompt });
+  266  	}
+  267
+  268  	await runLoop(currentContext, newMessages, config, signal, emit, streamFn);
+  269  	return newMessages;
+  270  }
+  271
+  272  export async function runAgentLoopContinue(
+  273  	context: AgentContext,
+  274  	config: AgentLoopConfig,
+  275  	emit: AgentEventSink,
+  276  	signal?: AbortSignal,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>178</td><th><span class="line-kind-input">INPUT</span></th><td><code> * Start an agent loop with a new prompt message.</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>179</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * The prompt is added to the context and events are emitted for it.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>180</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>181</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export function agentLoop(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>182</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	prompts: AgentMessage[],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>183</td><th><span class="line-kind-state">STATE</span></th><td><code>	context: AgentContext,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>184</td><th><span class="line-kind-input">INPUT</span></th><td><code>	config: AgentLoopConfig,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>185</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	signal?: AbortSignal,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>186</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	streamFn?: StreamFn,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>187</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): EventStream&lt;AgentEvent, AgentMessage[]&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>188</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const stream = createAgentStream();</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>189</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>190</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	endAgentStreamOnError(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>191</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		stream,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>192</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		runAgentLoop(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>193</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			prompts,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>194</td><th><span class="line-kind-state">STATE</span></th><td><code>			context,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>195</td><th><span class="line-kind-input">INPUT</span></th><td><code>			config,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>196</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			async (event) =&gt; {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>197</td><th><span class="line-kind-state">STATE</span></th><td><code>				stream.push(event);</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>198</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>199</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			signal,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>200</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			streamFn,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>201</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>202</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>203</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>204</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>	return stream;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>205</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="prime-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · Steering、follow-up、continuation 是三个不同的队列语义</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>runLoop 在当前 assistant turn 完成工具后轮询 steering；没有工具和 steering 时才轮询 follow-up；最后通过 getContinuationMessages 处理宿主拥有的长任务续跑策略。</p></section><section><span>PLAIN LANGUAGE</span><p>用户正在打断时是一种消息，用户等 Agent 停下来再追加是另一种消息，系统为了长目标自动继续又是第三种消息，三者不会混成一个 pending 数组。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长任务产品应给消息定义明确的 admission boundary，才能保证“插话”不会跳过当前工具调用或错误地重放。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>317–330</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>331–345</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L317-L345" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:317–345</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L317-L345" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  317  	// Check for steering messages at start (user may have typed while waiting)
+  318  	let pendingMessages: AgentMessage[] = await pollMessagesUnlessAborted(config.getSteeringMessages, signal);
+  319
+  320  	const shouldStopBeforeTurn = (): boolean =&gt; !firstTurn &amp;&amp; (config.shouldStopBeforeTurn?.() ?? false);
+  321
+  322  	// Outer loop: continues when queued follow-up messages arrive after agent would stop
+  323  	while (true) {
+  324  		throwIfAborted(signal);
+  325  		let hasMoreToolCalls = true;
+  326
+  327  		// Inner loop: process tool calls and steering messages
+  328  		while (hasMoreToolCalls || pendingMessages.length &gt; 0) {
+  329  			throwIfAborted(signal);
+  330  			if (!firstTurn) {
+  331  				await emit({ type: &quot;turn_start&quot; });
+  332  			} else {
+  333  				firstTurn = false;
+  334  			}
+  335
+  336  			// Process pending messages (inject before next assistant response)
+  337  			if (pendingMessages.length &gt; 0) {
+  338  				for (const message of pendingMessages) {
+  339  					await emit({ type: &quot;message_start&quot;, message });
+  340  					await emit({ type: &quot;message_end&quot;, message });
+  341  					currentContext.messages.push(message);
+  342  					newMessages.push(message);
+  343  				}
+  344  				pendingMessages = [];
+  345  			}
+  346
+  347  			// Stream assistant response
+  348  			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
+  349  			newMessages.push(message);
+  350
+  351  			if (message.stopReason === &quot;error&quot; || message.stopReason === &quot;aborted&quot;) {
+  352  				await emit({ type: &quot;turn_end&quot;, message, toolResults: [] });
+  353  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  354  				return;
+  355  			}
+  356
+  357  			// Check for tool calls
+  358  			const toolCalls = message.content.filter((c) =&gt; c.type === &quot;toolCall&quot;);
+  359
+  360  			const toolResults: ToolResultMessage[] = [];
+  361  			hasMoreToolCalls = false;
+  362  			if (toolCalls.length &gt; 0) {
+  363  				const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, emit);
+  364  				toolResults.push(...executedToolBatch.messages);
+  365  				hasMoreToolCalls = !executedToolBatch.terminate;
+  366
+  367  				for (const result of toolResults) {
+  368  					currentContext.messages.push(result);
+  369  					newMessages.push(result);
+  370  				}
+  371  			}
+  372
+  373  			await emit({ type: &quot;turn_end&quot;, message, toolResults });
+  374  			if (signal?.aborted) {
+  375  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  376  				return;
+  377  			}
+  378  			lastTurn = {
+  379  				message,
+  380  				toolResults,
+  381  				context: currentContext,
+  382  				newMessages,
+  383  			};
+  384
+  385  			const shouldStopResult = await settlePostTurn(
+  386  				maybePromiseWithAbort(
+  387  					config.shouldStopAfterTurn?.({
+  388  						message,
+  389  						toolResults,
+  390  						context: currentContext,
+  391  						newMessages,
+  392  					}) ?? false,
+  393  					signal,
+  394  				),
+  395  				signal,
+  396  			);
+  397  			if (shouldStopResult.status === &quot;aborted&quot;) {
+  398  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  399  				return;
+  400  			}
+  401  			if (shouldStopResult.value || shouldStopBeforeTurn()) {
+  402  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  403  				return;
+  404  			}
+  405
+  406  			const steeringMessagesResult = await settlePostTurn(
+  407  				pollMessagesUnlessAborted(config.getSteeringMessages, signal),
+  408  				signal,
+  409  			);
+  410  			if (steeringMessagesResult.status === &quot;aborted&quot;) {
+  411  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  412  				return;
+  413  			}
+  414  			pendingMessages = steeringMessagesResult.value;
+  415  			// Steering drained by this poll owns the turn boundary; stop only when it was empty.
+  416  			if (pendingMessages.length === 0 &amp;&amp; shouldStopBeforeTurn()) {</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>317</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	// Check for steering messages at start (user may have typed while waiting)</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>318</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>	let pendingMessages: AgentMessage[] = await pollMessagesUnlessAborted(config.getSteeringMessages, signal);</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>319</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>320</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const shouldStopBeforeTurn = (): boolean =&gt; !firstTurn &amp;&amp; (config.shouldStopBeforeTurn?.() ?? false);</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>321</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>322</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// Outer loop: continues when queued follow-up messages arrive after agent would stop</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>323</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	while (true) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>324</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		throwIfAborted(signal);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>325</td><th><span class="line-kind-input">INPUT</span></th><td><code>		let hasMoreToolCalls = true;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>326</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>327</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		// Inner loop: process tool calls and steering messages</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>328</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		while (hasMoreToolCalls || pendingMessages.length &gt; 0) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>329</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			throwIfAborted(signal);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>330</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if (!firstTurn) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>331</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>				await emit({ type: &quot;turn_start&quot; });</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>332</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			} else {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>333</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				firstTurn = false;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>334</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>335</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>336</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			// Process pending messages (inject before next assistant response)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>337</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if (pendingMessages.length &gt; 0) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>338</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>				for (const message of pendingMessages) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>339</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>					await emit({ type: &quot;message_start&quot;, message });</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>340</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>					await emit({ type: &quot;message_end&quot;, message });</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>341</td><th><span class="line-kind-state">STATE</span></th><td><code>					currentContext.messages.push(message);</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>342</td><th><span class="line-kind-state">STATE</span></th><td><code>					newMessages.push(message);</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>343</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>344</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				pendingMessages = [];</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="prime-tools-001" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · 工具调用先预检再执行，支持串行和并行两条路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>executeToolCalls 根据全局 toolExecution 或单个工具 executionMode 决定串行/并行；两条路径都先 prepareToolCall，验证参数后才执行，结果 message 保持工具调用源顺序。</p></section><section><span>PLAIN LANGUAGE</span><p>多个独立查询可以并发跑，但带副作用的工具能强制串行；模型给错参数时不会直接进 shell，而是先变成错误 tool result。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>工具调度应把“可并行性”和“参数校验”写进 ToolDefinition，而不是让模型提示词决定。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>608–614</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>615–623</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L608-L623" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:608–623</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L608-L623" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  608  async function executeToolCalls(
+  609  	currentContext: AgentContext,
+  610  	assistantMessage: AssistantMessage,
+  611  	config: AgentLoopConfig,
+  612  	signal: AbortSignal | undefined,
+  613  	emit: AgentEventSink,
+  614  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  615  	const toolCalls = assistantMessage.content.filter((c) =&gt; c.type === &quot;toolCall&quot;);
+  616  	const hasSequentialToolCall = toolCalls.some(
+  617  		(tc) =&gt; currentContext.tools?.find((t) =&gt; t.name === tc.name)?.executionMode === &quot;sequential&quot;,
+  618  	);
+  619  	if (config.toolExecution === &quot;sequential&quot; || hasSequentialToolCall) {
+  620  		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+  621  	}
+  622  	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+  623  }
+  624
+  625  type ExecutedToolCallBatch = {
+  626  	messages: ToolResultMessage[];
+  627  	terminate: boolean;
+  628  };
+  629
+  630  async function executeToolCallsSequential(
+  631  	currentContext: AgentContext,
+  632  	assistantMessage: AssistantMessage,
+  633  	toolCalls: AgentToolCall[],
+  634  	config: AgentLoopConfig,
+  635  	signal: AbortSignal | undefined,
+  636  	emit: AgentEventSink,
+  637  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  638  	const finalizedCalls: FinalizedToolCallOutcome[] = [];
+  639  	const messages: ToolResultMessage[] = [];
+  640
+  641  	for (const toolCall of toolCalls) {
+  642  		if (signal?.aborted) {
+  643  			break;
+  644  		}
+  645
+  646  		await emit({
+  647  			type: &quot;tool_execution_start&quot;,
+  648  			toolCallId: toolCall.id,
+  649  			toolName: toolCall.name,
+  650  			args: toolCall.arguments,
+  651  		});
+  652
+  653  		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+  654  		let finalized: FinalizedToolCallOutcome;
+  655  		if (preparation.kind === &quot;immediate&quot;) {
+  656  			finalized = {
+  657  				toolCall,
+  658  				result: preparation.result,
+  659  				isError: preparation.isError,
+  660  			};
+  661  		} else {
+  662  			const executed = await executePreparedToolCall(preparation, signal, emit);
+  663  			finalized = await finalizeExecutedToolCall(
+  664  				currentContext,
+  665  				assistantMessage,
+  666  				preparation,
+  667  				executed,
+  668  				config,
+  669  				signal,
+  670  			);
+  671  		}
+  672
+  673  		await emitToolExecutionEnd(finalized, emit);
+  674  		const toolResultMessage = createToolResultMessage(finalized);
+  675  		await emitToolResultMessage(toolResultMessage, emit);
+  676  		finalizedCalls.push(finalized);
+  677  		messages.push(toolResultMessage);
+  678
+  679  		if (signal?.aborted) {
+  680  			break;
+  681  		}
+  682  	}
+  683
+  684  	return {
+  685  		messages,
+  686  		terminate: shouldTerminateToolBatch(finalizedCalls),
+  687  	};
+  688  }
+  689
+  690  async function executeToolCallsParallel(
+  691  	currentContext: AgentContext,
+  692  	assistantMessage: AssistantMessage,
+  693  	toolCalls: AgentToolCall[],
+  694  	config: AgentLoopConfig,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>608</td><th><span class="line-kind-flow">FLOW</span></th><td><code>async function executeToolCalls(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>609</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	currentContext: AgentContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>610</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	assistantMessage: AssistantMessage,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>611</td><th><span class="line-kind-input">INPUT</span></th><td><code>	config: AgentLoopConfig,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>612</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	signal: AbortSignal | undefined,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>613</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	emit: AgentEventSink,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>614</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): Promise&lt;ExecutedToolCallBatch&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>615</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const toolCalls = assistantMessage.content.filter((c) =&gt; c.type === &quot;toolCall&quot;);</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>616</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const hasSequentialToolCall = toolCalls.some(</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>617</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		(tc) =&gt; currentContext.tools?.find((t) =&gt; t.name === tc.name)?.executionMode === &quot;sequential&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>618</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>619</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if (config.toolExecution === &quot;sequential&quot; || hasSequentialToolCall) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>620</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);</code></td><td>Returns a result, error, or next step</td></tr><tr><td>621</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>622</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);</code></td><td>Returns a result, error, or next step</td></tr><tr><td>623</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>624</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>625</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type ExecutedToolCallBatch = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>626</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	messages: ToolResultMessage[];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>627</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	terminate: boolean;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>628</td><th><span class="line-kind-flow">FLOW</span></th><td><code>};</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>629</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>630</td><th><span class="line-kind-flow">FLOW</span></th><td><code>async function executeToolCallsSequential(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>631</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	currentContext: AgentContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>632</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	assistantMessage: AssistantMessage,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>633</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	toolCalls: AgentToolCall[],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>634</td><th><span class="line-kind-input">INPUT</span></th><td><code>	config: AgentLoopConfig,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>635</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	signal: AbortSignal | undefined,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="prime-resources-001" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · ResourceLoader 统一管理 skills、prompts、themes、extensions 和 AGENTS 文件</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ResourceLoader 暴露 getSkills/getPrompts/getThemes/getAgentsFiles/getSystemPrompt、extendResources 和 reload；reload 解析启用路径、加载 extensions、skills、prompts、themes，再按 cwd/agentDir 加载项目上下文文件。</p></section><section><span>PLAIN LANGUAGE</span><p>指令、技能、主题和扩展不是四套互不相干的扫描器，而是在 reload 时形成一份带诊断的资源快照。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>插件/技能热更新要有单一 loader 和明确的 reload boundary，才能通知 session 资源变了。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>23–30</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>31–39</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/resource-loader.ts#L23-L39" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/resource-loader.ts:23–39</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/resource-loader.ts#L23-L39" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   23  export interface ResourceExtensionPaths {
+   24  	skillPaths?: Array&lt;{ path: string; metadata: PathMetadata }&gt;;
+   25  	promptPaths?: Array&lt;{ path: string; metadata: PathMetadata }&gt;;
+   26  	themePaths?: Array&lt;{ path: string; metadata: PathMetadata }&gt;;
+   27  }
+   28
+   29  export interface ResourceLoader {
+   30  	getExtensions(): LoadExtensionsResult;
+   31  	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+   32  	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
+   33  	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
+   34  	getAgentsFiles(): { agentsFiles: Array&lt;{ path: string; content: string }&gt; };
+   35  	getSystemPrompt(): string | undefined;
+   36  	getAppendSystemPrompt(): string[];
+   37  	extendResources(paths: ResourceExtensionPaths): void;
+   38  	reload(): Promise&lt;void&gt;;
+   39  }
+   40
+   41  function resolvePromptInput(input: string | undefined, description: string): string | undefined {
+   42  	if (!input) {
+   43  		return undefined;
+   44  	}
+   45
+   46  	if (existsSync(input)) {
+   47  		try {
+   48  			return readFileSync(input, &quot;utf-8&quot;);
+   49  		} catch (error) {
+   50  			console.error(chalk.yellow(`Warning: Could not read ${description} file ${input}: ${error}`));
+   51  			return input;
+   52  		}
+   53  	}
+   54
+   55  	return input;
+   56  }
+   57
+   58  function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
+   59  	const candidates = [&quot;AGENTS.md&quot;, &quot;AGENTS.MD&quot;, &quot;CLAUDE.md&quot;, &quot;CLAUDE.MD&quot;];
+   60  	for (const filename of candidates) {
+   61  		const filePath = join(dir, filename);
+   62  		if (existsSync(filePath)) {
+   63  			try {
+   64  				return {
+   65  					path: filePath,
+   66  					content: readFileSync(filePath, &quot;utf-8&quot;),
+   67  				};
+   68  			} catch (error) {
+   69  				console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
+   70  			}
+   71  		}
+   72  	}
+   73  	return null;
+   74  }
+   75
+   76  export function loadProjectContextFiles(options: {
+   77  	cwd: string;
+   78  	agentDir: string;
+   79  }): Array&lt;{ path: string; content: string }&gt; {
+   80  	const resolvedCwd = options.cwd;
+   81  	const resolvedAgentDir = options.agentDir;
+   82
+   83  	const contextFiles: Array&lt;{ path: string; content: string }&gt; = [];
+   84  	const seenPaths = new Set&lt;string&gt;();
+   85
+   86  	const globalContext = loadContextFileFromDir(resolvedAgentDir);
+   87  	if (globalContext) {
+   88  		contextFiles.push(globalContext);
+   89  		seenPaths.add(globalContext.path);
+   90  	}
+   91
+   92  	const ancestorContextFiles: Array&lt;{ path: string; content: string }&gt; = [];
+   93
+   94  	let currentDir = resolvedCwd;
+   95  	const root = resolve(&quot;/&quot;);
+   96
+   97  	while (true) {
+   98  		const contextFile = loadContextFileFromDir(currentDir);
+   99  		if (contextFile &amp;&amp; !seenPaths.has(contextFile.path)) {
+  100  			ancestorContextFiles.unshift(contextFile);
+  101  			seenPaths.add(contextFile.path);
+  102  		}
+  103
+  104  		if (currentDir === root) break;
+  105
+  106  		const parentDir = resolve(currentDir, &quot;..&quot;);
+  107  		if (parentDir === currentDir) break;
+  108  		currentDir = parentDir;
+  109  	}
+  110</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export interface ResourceExtensionPaths {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	skillPaths?: Array&lt;{ path: string; metadata: PathMetadata }&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	promptPaths?: Array&lt;{ path: string; metadata: PathMetadata }&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	themePaths?: Array&lt;{ path: string; metadata: PathMetadata }&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>29</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export interface ResourceLoader {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>30</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	getExtensions(): LoadExtensionsResult;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>31</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>32</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>33</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>34</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	getAgentsFiles(): { agentsFiles: Array&lt;{ path: string; content: string }&gt; };</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>35</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	getSystemPrompt(): string | undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>36</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	getAppendSystemPrompt(): string[];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>37</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	extendResources(paths: ResourceExtensionPaths): void;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	reload(): Promise&lt;void&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>40</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>41</td><th><span class="line-kind-input">INPUT</span></th><td><code>function resolvePromptInput(input: string | undefined, description: string): string | undefined {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>42</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if (!input) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>43</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return undefined;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>44</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>45</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>46</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if (existsSync(input)) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>47</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		try {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>48</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>			return readFileSync(input, &quot;utf-8&quot;);</code></td><td>Returns a result, error, or next step</td></tr><tr><td>49</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		} catch (error) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>50</td><th><span class="line-kind-input">INPUT</span></th><td><code>			console.error(chalk.yellow(`Warning: Could not read ${description} file ${input}: ${error}`));</code></td><td>Receives arguments, events, or configuration</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="prime-resources-002" data-finding-dimension="instructions"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>05 · 资源来源带 user/project/temporary metadata 并去重冲突</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>resource-loader 根据 agentDir 和 cwd 下的 skills/prompts/themes/extensions 根目录给资源标注 scope；mergePaths 用 canonical path 去重，dedupePrompts 对同名 prompt 生成 collision diagnostics。</p></section><section><span>PLAIN LANGUAGE</span><p>系统知道一个 skill 是用户级、项目级还是临时 CLI 注入的；同名 prompt 不会静默覆盖，而是留下谁赢、谁输的诊断。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>自研扩展系统需保留来源元数据和碰撞报告，否则排查“为什么这条指令生效”会非常困难。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>646–661</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>662–678</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/resource-loader.ts#L646-L678" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/resource-loader.ts:646–678</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/resource-loader.ts#L646-L678" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  646  		const normalizedPath = resolve(filePath);
+  647  		const agentRoots = [
+  648  			join(this.agentDir, &quot;skills&quot;),
+  649  			join(this.agentDir, &quot;prompts&quot;),
+  650  			join(this.agentDir, &quot;themes&quot;),
+  651  			join(this.agentDir, &quot;extensions&quot;),
+  652  		];
+  653  		const projectRoots = [
+  654  			join(this.cwd, CONFIG_DIR_NAME, &quot;skills&quot;),
+  655  			join(this.cwd, CONFIG_DIR_NAME, &quot;prompts&quot;),
+  656  			join(this.cwd, CONFIG_DIR_NAME, &quot;themes&quot;),
+  657  			join(this.cwd, CONFIG_DIR_NAME, &quot;extensions&quot;),
+  658  		];
+  659
+  660  		for (const root of agentRoots) {
+  661  			if (this.isUnderPath(normalizedPath, root)) {
+  662  				return { path: filePath, source: &quot;local&quot;, scope: &quot;user&quot;, origin: &quot;top-level&quot;, baseDir: root };
+  663  			}
+  664  		}
+  665
+  666  		for (const root of projectRoots) {
+  667  			if (this.isUnderPath(normalizedPath, root)) {
+  668  				return { path: filePath, source: &quot;local&quot;, scope: &quot;project&quot;, origin: &quot;top-level&quot;, baseDir: root };
+  669  			}
+  670  		}
+  671
+  672  		return {
+  673  			path: filePath,
+  674  			source: &quot;local&quot;,
+  675  			scope: &quot;temporary&quot;,
+  676  			origin: &quot;top-level&quot;,
+  677  			baseDir: statSync(normalizedPath).isDirectory() ? normalizedPath : resolve(normalizedPath, &quot;..&quot;),
+  678  		};
+  679  	}
+  680
+  681  	private mergePaths(primary: string[], additional: string[]): string[] {
+  682  		const merged: string[] = [];
+  683  		const seen = new Set&lt;string&gt;();
+  684
+  685  		for (const p of [...primary, ...additional]) {
+  686  			const resolved = this.resolveResourcePath(p);
+  687  			const canonicalPath = canonicalizePath(resolved);
+  688  			if (seen.has(canonicalPath)) continue;
+  689  			seen.add(canonicalPath);
+  690  			merged.push(resolved);
+  691  		}
+  692
+  693  		return merged;
+  694  	}
+  695
+  696  	private resolveResourcePath(p: string): string {
+  697  		const trimmed = p.trim();
+  698  		let expanded = trimmed;
+  699  		if (trimmed === &quot;~&quot;) {
+  700  			expanded = homedir();
+  701  		} else if (trimmed.startsWith(&quot;~/&quot;)) {
+  702  			expanded = join(homedir(), trimmed.slice(2));
+  703  		} else if (trimmed.startsWith(&quot;~&quot;)) {
+  704  			expanded = join(homedir(), trimmed.slice(1));
+  705  		}
+  706  		return resolve(this.cwd, expanded);
+  707  	}
+  708
+  709  	private loadThemes(
+  710  		paths: string[],
+  711  		includeDefaults: boolean = true,
+  712  	): {
+  713  		themes: Theme[];
+  714  		diagnostics: ResourceDiagnostic[];
+  715  	} {
+  716  		const themes: Theme[] = [];
+  717  		const diagnostics: ResourceDiagnostic[] = [];
+  718  		if (includeDefaults) {
+  719  			const defaultDirs = [join(this.agentDir, &quot;themes&quot;), join(this.cwd, CONFIG_DIR_NAME, &quot;themes&quot;)];
+  720
+  721  			for (const dir of defaultDirs) {
+  722  				this.loadThemesFromDir(dir, themes, diagnostics);
+  723  			}
+  724  		}
+  725
+  726  		for (const p of paths) {
+  727  			const resolved = resolve(this.cwd, p);
+  728  			if (!existsSync(resolved)) {
+  729  				diagnostics.push({ type: &quot;warning&quot;, message: &quot;theme path does not exist&quot;, path: resolved });
+  730  				continue;
+  731  			}
+  732
+  733  			try {
+  734  				const stats = statSync(resolved);
+  735  				if (stats.isDirectory()) {
+  736  					this.loadThemesFromDir(resolved, themes, diagnostics);
+  737  				} else if (stats.isFile() &amp;&amp; resolved.endsWith(&quot;.json&quot;)) {
+  738  					this.loadThemeFromFile(resolved, themes, diagnostics);
+  739  				} else {
+  740  					diagnostics.push({ type: &quot;warning&quot;, message: &quot;theme path is not a json file&quot;, path: resolved });
+  741  				}
+  742  			} catch (error) {
+  743  				const message = error instanceof Error ? error.message : &quot;failed to read theme path&quot;;
+  744  				diagnostics.push({ type: &quot;warning&quot;, message, path: resolved });
+  745  			}
+  746  		}
+  747
+  748  		return { themes, diagnostics };
+  749  	}</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>646</td><th><span class="line-kind-input">INPUT</span></th><td><code>		const normalizedPath = resolve(filePath);</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>647</td><th><span class="line-kind-input">INPUT</span></th><td><code>		const agentRoots = [</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>648</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.agentDir, &quot;skills&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>649</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.agentDir, &quot;prompts&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>650</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.agentDir, &quot;themes&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>651</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.agentDir, &quot;extensions&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>652</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>653</td><th><span class="line-kind-input">INPUT</span></th><td><code>		const projectRoots = [</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>654</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.cwd, CONFIG_DIR_NAME, &quot;skills&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>655</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.cwd, CONFIG_DIR_NAME, &quot;prompts&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>656</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.cwd, CONFIG_DIR_NAME, &quot;themes&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>657</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			join(this.cwd, CONFIG_DIR_NAME, &quot;extensions&quot;),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>658</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>659</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>660</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		for (const root of agentRoots) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>661</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if (this.isUnderPath(normalizedPath, root)) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>662</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>				return { path: filePath, source: &quot;local&quot;, scope: &quot;user&quot;, origin: &quot;top-level&quot;, baseDir: root };</code></td><td>Returns a result, error, or next step</td></tr><tr><td>663</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>664</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>665</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>666</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		for (const root of projectRoots) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>667</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if (this.isUnderPath(normalizedPath, root)) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>668</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>				return { path: filePath, source: &quot;local&quot;, scope: &quot;project&quot;, origin: &quot;top-level&quot;, baseDir: root };</code></td><td>Returns a result, error, or next step</td></tr><tr><td>669</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>670</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>671</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>672</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return {</code></td><td>Returns a result, error, or next step</td></tr><tr><td>673</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			path: filePath,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="prime-ext-001" data-finding-dimension="instructions"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>06 · Extension API 覆盖生命周期、工具、命令、provider 和持久化</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ExtensionAPI 支持 session/context/provider/agent/turn/message/tool/input 等事件，registerTool、registerCommand、registerShortcut、registerFlag、appendEntry、exec、setActiveTools 和 provider registration。</p></section><section><span>PLAIN LANGUAGE</span><p>扩展不是只能加一个 prompt；它可以加入工具、CLI 命令、模型 provider、上下文变换和 session state。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>这种能力适合构建插件生态，但必须把 extension 来源、冲突和权限当作一等公民。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1024–1048</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1049–1074</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/types.ts#L1024-L1074" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/extensions/types.ts:1024–1074</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/types.ts#L1024-L1074" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1024  /** Handler function type for events */
+ 1025  // biome-ignore lint/suspicious/noConfusingVoidType: void allows bare return statements
+ 1026  export type ExtensionHandler&lt;E, R = undefined&gt; = (event: E, ctx: ExtensionContext) =&gt; Promise&lt;R | void&gt; | R | void;
+ 1027
+ 1028  /**
+ 1029   * ExtensionAPI passed to extension factory functions.
+ 1030   */
+ 1031  export interface ExtensionAPI {
+ 1032  	// =========================================================================
+ 1033  	// Event Subscription
+ 1034  	// =========================================================================
+ 1035
+ 1036  	on(event: &quot;resources_discover&quot;, handler: ExtensionHandler&lt;ResourcesDiscoverEvent, ResourcesDiscoverResult&gt;): void;
+ 1037  	on(event: &quot;session_start&quot;, handler: ExtensionHandler&lt;SessionStartEvent&gt;): void;
+ 1038  	on(
+ 1039  		event: &quot;session_before_switch&quot;,
+ 1040  		handler: ExtensionHandler&lt;SessionBeforeSwitchEvent, SessionBeforeSwitchResult&gt;,
+ 1041  	): void;
+ 1042  	on(event: &quot;session_before_fork&quot;, handler: ExtensionHandler&lt;SessionBeforeForkEvent, SessionBeforeForkResult&gt;): void;
+ 1043  	on(
+ 1044  		event: &quot;session_before_compact&quot;,
+ 1045  		handler: ExtensionHandler&lt;SessionBeforeCompactEvent, SessionBeforeCompactResult&gt;,
+ 1046  	): void;
+ 1047  	on(event: &quot;session_compact&quot;, handler: ExtensionHandler&lt;SessionCompactEvent&gt;): void;
+ 1048  	on(event: &quot;session_shutdown&quot;, handler: ExtensionHandler&lt;SessionShutdownEvent&gt;): void;
+ 1049  	on(event: &quot;session_before_tree&quot;, handler: ExtensionHandler&lt;SessionBeforeTreeEvent, SessionBeforeTreeResult&gt;): void;
+ 1050  	on(event: &quot;session_tree&quot;, handler: ExtensionHandler&lt;SessionTreeEvent&gt;): void;
+ 1051  	on(event: &quot;context&quot;, handler: ExtensionHandler&lt;ContextEvent, ContextEventResult&gt;): void;
+ 1052  	on(
+ 1053  		event: &quot;before_provider_request&quot;,
+ 1054  		handler: ExtensionHandler&lt;BeforeProviderRequestEvent, BeforeProviderRequestEventResult&gt;,
+ 1055  	): void;
+ 1056  	on(event: &quot;after_provider_response&quot;, handler: ExtensionHandler&lt;AfterProviderResponseEvent&gt;): void;
+ 1057  	on(event: &quot;before_agent_start&quot;, handler: ExtensionHandler&lt;BeforeAgentStartEvent, BeforeAgentStartEventResult&gt;): void;
+ 1058  	on(event: &quot;agent_start&quot;, handler: ExtensionHandler&lt;AgentStartEvent&gt;): void;
+ 1059  	on(event: &quot;agent_end&quot;, handler: ExtensionHandler&lt;AgentEndEvent&gt;): void;
+ 1060  	on(event: &quot;turn_start&quot;, handler: ExtensionHandler&lt;TurnStartEvent&gt;): void;
+ 1061  	on(event: &quot;turn_end&quot;, handler: ExtensionHandler&lt;TurnEndEvent&gt;): void;
+ 1062  	on(event: &quot;message_start&quot;, handler: ExtensionHandler&lt;MessageStartEvent&gt;): void;
+ 1063  	on(event: &quot;message_update&quot;, handler: ExtensionHandler&lt;MessageUpdateEvent&gt;): void;
+ 1064  	on(event: &quot;message_end&quot;, handler: ExtensionHandler&lt;MessageEndEvent, MessageEndEventResult&gt;): void;
+ 1065  	on(event: &quot;tool_execution_start&quot;, handler: ExtensionHandler&lt;ToolExecutionStartEvent&gt;): void;
+ 1066  	on(event: &quot;tool_execution_update&quot;, handler: ExtensionHandler&lt;ToolExecutionUpdateEvent&gt;): void;
+ 1067  	on(event: &quot;tool_execution_end&quot;, handler: ExtensionHandler&lt;ToolExecutionEndEvent&gt;): void;
+ 1068  	on(event: &quot;model_select&quot;, handler: ExtensionHandler&lt;ModelSelectEvent&gt;): void;
+ 1069  	on(event: &quot;thinking_level_select&quot;, handler: ExtensionHandler&lt;ThinkingLevelSelectEvent&gt;): void;
+ 1070  	on(event: &quot;tool_call&quot;, handler: ExtensionHandler&lt;ToolCallEvent, ToolCallEventResult&gt;): void;
+ 1071  	on(event: &quot;tool_result&quot;, handler: ExtensionHandler&lt;ToolResultEvent, ToolResultEventResult&gt;): void;
+ 1072  	on(event: &quot;user_bash&quot;, handler: ExtensionHandler&lt;UserBashEvent, UserBashEventResult&gt;): void;
+ 1073  	on(event: &quot;input&quot;, handler: ExtensionHandler&lt;InputEvent, InputEventResult&gt;): void;
+ 1074  	on(event: &quot;refine_complete&quot;, handler: ExtensionHandler&lt;RefineCompleteEvent&gt;): void;
+ 1075
+ 1076  	// =========================================================================
+ 1077  	// Tool Registration
+ 1078  	// =========================================================================
+ 1079
+ 1080  	/** Register a tool that the LLM can call. */
+ 1081  	registerTool&lt;TParams extends TSchema = TSchema, TDetails = unknown, TState = any&gt;(
+ 1082  		tool: ToolDefinition&lt;TParams, TDetails, TState&gt;,
+ 1083  	): void;
+ 1084
+ 1085  	// =========================================================================
+ 1086  	// Command, Shortcut, Flag Registration
+ 1087  	// =========================================================================
+ 1088
+ 1089  	/** Register a custom command. */
+ 1090  	registerCommand(name: string, options: Omit&lt;RegisteredCommand, &quot;name&quot; | &quot;sourceInfo&quot;&gt;): void;
+ 1091
+ 1092  	/** Register a keyboard shortcut. */
+ 1093  	registerShortcut(
+ 1094  		shortcut: KeyId,
+ 1095  		options: {
+ 1096  			description?: string;
+ 1097  			handler: (ctx: ExtensionContext) =&gt; Promise&lt;void&gt; | void;
+ 1098  		},
+ 1099  	): void;
+ 1100
+ 1101  	/** Register a CLI flag. */
+ 1102  	registerFlag(
+ 1103  		name: string,
+ 1104  		options: {
+ 1105  			description?: string;
+ 1106  			type: &quot;boolean&quot; | &quot;string&quot;;
+ 1107  			default?: boolean | string;
+ 1108  		},
+ 1109  	): void;
+ 1110
+ 1111  	/** Get the value of a registered CLI flag. */
+ 1112  	getFlag(name: string): boolean | string | undefined;
+ 1113
+ 1114  	// =========================================================================
+ 1115  	// Message Rendering
+ 1116  	// =========================================================================
+ 1117
+ 1118  	/** Register a custom renderer for CustomMessageEntry. */
+ 1119  	registerMessageRenderer&lt;T = unknown&gt;(customType: string, renderer: MessageRenderer&lt;T&gt;): void;
+ 1120
+ 1121  	// =========================================================================
+ 1122  	// Actions
+ 1123  	// =========================================================================
+ 1124
+ 1125  	/** Send a custom message to the session. */
+ 1126  	sendMessage&lt;T = unknown&gt;(
+ 1127  		message: Pick&lt;CustomMessage&lt;T&gt;, &quot;customType&quot; | &quot;content&quot; | &quot;display&quot; | &quot;details&quot;&gt;,
+ 1128  		options?: { triggerTurn?: boolean; deliverAs?: &quot;steer&quot; | &quot;followUp&quot; | &quot;nextTurn&quot; },
+ 1129  	): void;
+ 1130
+ 1131  	/**
+ 1132  	 * Send a user message to the agent. Always triggers a turn.
+ 1133  	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+ 1134  	 */
+ 1135  	sendUserMessage(
+ 1136  		content: string | (TextContent | ImageContent)[],
+ 1137  		options?: { deliverAs?: &quot;steer&quot; | &quot;followUp&quot; },
+ 1138  	): void;
+ 1139
+ 1140  	/** Append a custom entry to the session for state persistence (not sent to LLM). */
+ 1141  	appendEntry&lt;T = unknown&gt;(customType: string, data?: T): void;
+ 1142
+ 1143  	// =========================================================================
+ 1144  	// Session Metadata
+ 1145  	// =========================================================================</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>1024</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>/** Handler function type for events */</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>1025</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>// biome-ignore lint/suspicious/noConfusingVoidType: void allows bare return statements</code></td><td>Returns a result, error, or next step</td></tr><tr><td>1026</td><th><span class="line-kind-input">INPUT</span></th><td><code>export type ExtensionHandler&lt;E, R = undefined&gt; = (event: E, ctx: ExtensionContext) =&gt; Promise&lt;R | void&gt; | R | void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1027</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1028</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1029</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * ExtensionAPI passed to extension factory functions.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1030</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1031</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export interface ExtensionAPI {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1032</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// =========================================================================</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1033</td><th><span class="line-kind-input">INPUT</span></th><td><code>	// Event Subscription</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1034</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// =========================================================================</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1035</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1036</td><th><span class="line-kind-input">INPUT</span></th><td><code>	on(event: &quot;resources_discover&quot;, handler: ExtensionHandler&lt;ResourcesDiscoverEvent, ResourcesDiscoverResult&gt;): void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1037</td><th><span class="line-kind-input">INPUT</span></th><td><code>	on(event: &quot;session_start&quot;, handler: ExtensionHandler&lt;SessionStartEvent&gt;): void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1038</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	on(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1039</td><th><span class="line-kind-input">INPUT</span></th><td><code>		event: &quot;session_before_switch&quot;,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1040</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		handler: ExtensionHandler&lt;SessionBeforeSwitchEvent, SessionBeforeSwitchResult&gt;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1041</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	): void;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1042</td><th><span class="line-kind-input">INPUT</span></th><td><code>	on(event: &quot;session_before_fork&quot;, handler: ExtensionHandler&lt;SessionBeforeForkEvent, SessionBeforeForkResult&gt;): void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1043</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	on(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1044</td><th><span class="line-kind-input">INPUT</span></th><td><code>		event: &quot;session_before_compact&quot;,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1045</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		handler: ExtensionHandler&lt;SessionBeforeCompactEvent, SessionBeforeCompactResult&gt;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1046</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	): void;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1047</td><th><span class="line-kind-input">INPUT</span></th><td><code>	on(event: &quot;session_compact&quot;, handler: ExtensionHandler&lt;SessionCompactEvent&gt;): void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1048</td><th><span class="line-kind-input">INPUT</span></th><td><code>	on(event: &quot;session_shutdown&quot;, handler: ExtensionHandler&lt;SessionShutdownEvent&gt;): void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1049</td><th><span class="line-kind-input">INPUT</span></th><td><code>	on(event: &quot;session_before_tree&quot;, handler: ExtensionHandler&lt;SessionBeforeTreeEvent, SessionBeforeTreeResult&gt;): void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1050</td><th><span class="line-kind-input">INPUT</span></th><td><code>	on(event: &quot;session_tree&quot;, handler: ExtensionHandler&lt;SessionTreeEvent&gt;): void;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1051</td><th><span class="line-kind-state">STATE</span></th><td><code>	on(event: &quot;context&quot;, handler: ExtensionHandler&lt;ContextEvent, ContextEventResult&gt;): void;</code></td><td>Creates or mutates session/context/queue state</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="prime-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>07 · MCP host 侧把 OAuth provider 与 kernel 请求分开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>McpManager refresh/config/begin_login host request 会读取 auth storage、重新获取 API key，并把解析后的 server URL/config 交给 kernel；stdio server 由 Python 自己管理，HTTP 用户 server 才在 host 侧注册 OAuth provider。</p></section><section><span>PLAIN LANGUAGE</span><p>登录凭据、UI 交互和真正的 MCP kernel 连接没有混成一条黑盒；host 只做身份和配置桥接。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>连接器设计应区分 credential plane、control plane 和 tool execution plane，避免把 token 直接塞进模型上下文。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>36–56</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>57–78</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/mcp/mcp-manager.ts#L36-L78" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/mcp/mcp-manager.ts:36–78</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/mcp/mcp-manager.ts#L36-L78" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   36  export class McpManager {
+   37  	private readonly authStorage: AuthStorage;
+   38  	private readonly getUserServers: () =&gt; Record&lt;string, McpServerConfig&gt; | undefined;
+   39  	private readonly beginLogin?: (server: string) =&gt; Promise&lt;void&gt;;
+   40  	private integrations = new Map&lt;string, ResolvedIntegration&gt;();
+   41  	/** Provider ids we registered for user servers, so refresh can drop removed ones. */
+   42  	private registeredUserProviderIds = new Set&lt;string&gt;();
+   43
+   44  	constructor(options: McpManagerOptions) {
+   45  		this.authStorage = options.authStorage;
+   46  		this.getUserServers = options.getUserServers ?? (() =&gt; undefined);
+   47  		this.beginLogin = options.beginLogin;
+   48  		this.resolveIntegrations();
+   49  		this.registerProviders();
+   50  	}
+   51
+   52  	/** Re-read settings and re-register providers; call after a session reload. */
+   53  	refresh(): void {
+   54  		this.resolveIntegrations();
+   55  		this.registerProviders();
+   56  	}
+   57
+   58  	private providerId(server: string): string {
+   59  		return `mcp:${server}`;
+   60  	}
+   61
+   62  	private resolveIntegrations(): void {
+   63  		const integrations = new Map&lt;string, ResolvedIntegration&gt;();
+   64  		for (const entry of BUILTIN_MCP_CATALOG) {
+   65  			integrations.set(entry.server, {
+   66  				server: entry.server,
+   67  				label: entry.label,
+   68  				url: entry.url,
+   69  				usesOAuth: entry.oauth?.kind === &quot;oauth&quot;,
+   70  			});
+   71  		}
+   72  		for (const [server, config] of Object.entries(this.getUserServers() ?? {})) {
+   73  			if (config.type !== &quot;http&quot;) continue; // stdio servers self-manage in Python
+   74  			integrations.set(server, {
+   75  				server,
+   76  				label: server,
+   77  				url: config.url,
+   78  				usesOAuth: config.oauth === true,
+   79  				bearerTokenEnvVar: config.bearerTokenEnvVar,
+   80  				enabled: config.enabled,
+   81  				headers: config.headers,
+   82  				userDeclared: true,
+   83  			});
+   84  		}
+   85  		this.integrations = integrations;
+   86  	}
+   87
+   88  	private registerProviders(): void {
+   89  		registerBuiltinMcpOAuthProviders();
+   90  		this.registerUserProviders();
+   91  	}
+   92
+   93  	/**
+   94  	 * Register OAuth providers for user-declared (non-catalog) servers. Public so it
+   95  	 * can run after ModelRegistry.refresh() resets the registry — otherwise custom
+   96  	 * `mcp:&lt;server&gt;` providers vanish on every refresh (e.g. post-login).
+   97  	 */
+   98  	registerUserProviders(): void {
+   99  		const current = new Set&lt;string&gt;();
+  100  		for (const integration of this.integrations.values()) {
+  101  			if (!integration.userDeclared) continue;
+  102  			const id = this.providerId(integration.server);
+  103  			if (integration.usesOAuth) {
+  104  				// Register pointing at the user&#39;s URL (overrides a catalog default too).
+  105  				current.add(id);
+  106  				registerOAuthProvider(
+  107  					createMcpOAuthProvider({
+  108  						server: integration.server,
+  109  						label: integration.label,
+  110  						url: integration.url,
+  111  					}),
+  112  				);
+  113  			} else if (getCatalogEntry(integration.server)) {
+  114  				// User overrode a catalog server with a custom URL but no oauth: drop the
+  115  				// built-in provider so we never send the official token to that URL.
+  116  				unregisterOAuthProvider(id);
+  117  			}
+  118  		}
+  119  		// Drop providers for user servers removed since the last registration.
+  120  		for (const id of this.registeredUserProviderIds) {
+  121  			if (!current.has(id)) unregisterOAuthProvider(id);
+  122  		}
+  123  		this.registeredUserProviderIds = current;
+  124  	}
+  125
+  126  	/** True when valid credentials exist for the integration (drives enablement). */
+  127  	private isAuthed(integration: ResolvedIntegration): boolean {
+  128  		if (integration.enabled === false) return false;
+  129  		if (integration.bearerTokenEnvVar &amp;&amp; process.env[integration.bearerTokenEnvVar]?.trim()) {
+  130  			return true;
+  131  		}
+  132  		// A user server that overrides a catalog name must NOT inherit the built-in&#39;s
+  133  		// stored mcp: creds — those were issued for the official endpoint and could be
+  134  		// sent to the override URL. Such an override authenticates only via a bearer
+  135  		// env var (handled above); we don&#39;t trust auth.json OAuth creds for it.
+  136  		if (integration.userDeclared &amp;&amp; getCatalogEntry(integration.server)) {
+  137  			return false;
+  138  		}
+  139  		const cred = this.authStorage.get(this.providerId(integration.server));
+  140  		return cred !== undefined;
+  141  	}
+  142
+  143  	/** `-&lt;server&gt;/SKILL.md` overrides for every built-in integration the user isn&#39;t logged into. */
+  144  	getDisabledBuiltinSkillOverrides(): string[] {
+  145  		const overrides: string[] = [];
+  146  		for (const entry of BUILTIN_MCP_CATALOG) {
+  147  			const integration = this.integrations.get(entry.server);
+  148  			if (integration &amp;&amp; !this.isAuthed(integration)) {
+  149  				overrides.push(`-${entry.server}/SKILL.md`);</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>36</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export class McpManager {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>37</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private readonly authStorage: AuthStorage;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private readonly getUserServers: () =&gt; Record&lt;string, McpServerConfig&gt; | undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private readonly beginLogin?: (server: string) =&gt; Promise&lt;void&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>40</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private integrations = new Map&lt;string, ResolvedIntegration&gt;();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>41</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	/** Provider ids we registered for user servers, so refresh can drop removed ones. */</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>42</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private registeredUserProviderIds = new Set&lt;string&gt;();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>43</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>44</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	constructor(options: McpManagerOptions) {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>45</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		this.authStorage = options.authStorage;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>46</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		this.getUserServers = options.getUserServers ?? (() =&gt; undefined);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>47</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		this.beginLogin = options.beginLogin;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>48</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		this.resolveIntegrations();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>49</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		this.registerProviders();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>50</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>51</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>52</td><th><span class="line-kind-state">STATE</span></th><td><code>	/** Re-read settings and re-register providers; call after a session reload. */</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>53</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	refresh(): void {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>54</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		this.resolveIntegrations();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>55</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		this.registerProviders();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>56</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>57</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>58</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private providerId(server: string): string {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>59</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return `mcp:${server}`;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>60</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>61</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>62</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private resolveIntegrations(): void {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>63</td><th><span class="line-kind-input">INPUT</span></th><td><code>		const integrations = new Map&lt;string, ResolvedIntegration&gt;();</code></td><td>Receives arguments, events, or configuration</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="prime-recommend-001" data-finding-dimension="architecture"><header><span class="finding-index">08</span><div><div class="finding-meta"><b>L2</b><span>inference</span><span>architecture</span></div><h3>08 · 最值得借鉴的是“纯 loop + coding host + extension bus”三层分离</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>低层 agent-loop 只处理消息/工具/流；AgentSession 组合 compaction、resource loader、MCP、RLM、session manager；ExtensionRunner 再把 context/provider/tool/session 变换做成可插拔 bus。</p></section><section><span>PLAIN LANGUAGE</span><p>这套分层让我们既能复用基础 loop，又能按产品需要装配 TUI、RPC、daemon 或插件，而不是把所有能力塞进一个巨型 Agent 类。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>自研架构建议沿此边界拆包：Core Loop、Harness Session、Policy/Extension Bus、Execution Adapters、Persistence/Control Plane。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1–6</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>7–13</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><div class="finding-caveat"><span>CAVEAT / RISK</span><ul><li>这是跨模块架构归纳，不是仓库作者的单一官方标签。</li></ul></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/agent-session.ts#L1-L13" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/agent-session.ts:1–13</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/agent-session.ts#L1-L13" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    1  /**
+    2   * AgentSession - Core abstraction for agent lifecycle and session management.
+    3   *
+    4   * This class is shared between all run modes (interactive, print, rpc).
+    5   * It encapsulates:
+    6   * - Agent state access
+    7   * - Event subscription with automatic session persistence
+    8   * - Model and thinking level management
+    9   * - Compaction (manual and auto)
+   10   * - Bash execution
+   11   * - Session switching and branching
+   12   *
+   13   * Modes use this class and add their own I/O layer on top.
+   14   */
+   15
+   16  import { AsyncLocalStorage } from &quot;node:async_hooks&quot;;
+   17  import { randomUUID } from &quot;node:crypto&quot;;
+   18  import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from &quot;node:fs&quot;;
+   19  import { tmpdir } from &quot;node:os&quot;;
+   20  import { basename, dirname, join, resolve } from &quot;node:path&quot;;
+   21  import {
+   22  	Agent,
+   23  	type AgentContext,
+   24  	type AgentEvent,
+   25  	type AgentMessage,
+   26  	type AgentState,
+   27  	type AgentTool,
+   28  	type GetContinuationMessagesContext,
+   29  	type ShouldStopAfterTurnContext,
+   30  	type ThinkingLevel,
+   31  } from &quot;@earendil-works/pi-agent-core&quot;;
+   32  import type {
+   33  	Api,
+   34  	AssistantMessage,
+   35  	ImageContent,
+   36  	Model,
+   37  	ServiceTier,
+   38  	TextContent,
+   39  	Usage,
+   40  	UserMessage,
+   41  } from &quot;@earendil-works/pi-ai&quot;;
+   42  import {
+   43  	clampThinkingLevel,
+   44  	cleanupSessionResources,
+   45  	getSupportedThinkingLevels,
+   46  	isContextOverflow,
+   47  	modelsAreEqual,
+   48  	resetApiProviders,
+   49  	supportsFastMode,
+   50  } from &quot;@earendil-works/pi-ai&quot;;
+   51  import { theme } from &quot;../modes/interactive/theme/theme.js&quot;;
+   52  import { stripFrontmatter } from &quot;../utils/frontmatter.js&quot;;
+   53  import { sleep } from &quot;../utils/sleep.js&quot;;
+   54  import {
+   55  	AGENT_MESSAGE_CUSTOM_TYPE,
+   56  	AGENT_MESSAGE_RECEIVED_PREVIEW_LABEL,
+   57  	AGENT_MESSAGE_SKILL_NAME,
+   58  	type AgentFamilyCatalogEntry,
+   59  	type AgentFamilyRosterResult,
+   60  	type AgentSessionMessage,
+   61  	type AgentSessionMessageAgentSummary,
+   62  	type AgentSessionMessageController,
+   63  	type AgentSessionMessageListResult,
+   64  	type AgentSessionMessageReceipt,
+   65  	assertAgentSessionNameAvailable,
+   66  	assertDirectAgentMessageTarget,
+   67  	createAgentMessageHostHandlers,
+   68  	formatAgentSessionNameUnavailable,
+   69  	isAgentSessionMessage,
+   70  	normalizeAgentSessionMessage,
+   71  	parseAgentSessionMessagePromptId,
+   72  } from &quot;./agent-messages.js&quot;;
+   73  import {
+   74  	AGENT_OBSERVE_SKILL_NAME,
+   75  	type AgentObserveAgentSnapshot,
+   76  	type AgentObserveController,
+   77  	type AgentObserveListResult,
+   78  	type AgentObserveRecentMessagesResult,
+   79  	createAgentObserveHostHandlers,
+   80  	normalizeObserveLimit,
+   81  	normalizeObserveMaxChars,
+   82  	ORCHESTRATION_HEARTBEAT_SKILL_NAME,
+   83  } from &quot;./agent-observe.js&quot;;
+   84  import { flushAgentTraceUpload } from &quot;./agent-traces.js&quot;;</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>1</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>2</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * AgentSession - Core abstraction for agent lifecycle and session management.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>3</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>4</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * This class is shared between all run modes (interactive, print, rpc).</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>5</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * It encapsulates:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>6</td><th><span class="line-kind-state">STATE</span></th><td><code> * - Agent state access</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>7</td><th><span class="line-kind-state">STATE</span></th><td><code> * - Event subscription with automatic session persistence</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>8</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * - Model and thinking level management</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>9</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * - Compaction (manual and auto)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>10</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * - Bash execution</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>11</td><th><span class="line-kind-state">STATE</span></th><td><code> * - Session switching and branching</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>12</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>13</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * Modes use this class and add their own I/O layer on top.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>14</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>15</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>16</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import { AsyncLocalStorage } from &quot;node:async_hooks&quot;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>17</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import { randomUUID } from &quot;node:crypto&quot;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>18</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from &quot;node:fs&quot;;</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>19</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import { tmpdir } from &quot;node:os&quot;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>20</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import { basename, dirname, join, resolve } from &quot;node:path&quot;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>21</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>22</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	Agent,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	type AgentContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	type AgentEvent,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	type AgentMessage,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	type AgentState,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	type AgentTool,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	type GetContinuationMessagesContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--help</code></h3><small>flag · packages/ai/src/cli.ts:65</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/ai/src/cli.ts#L60-L77" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   60
+   61  async function main(): Promise&lt;void&gt; {
+   62  	const args = process.argv.slice(2);
+   63  	const command = args[0];
+   64
+   65  	if (!command || command === &quot;help&quot; || command === &quot;--help&quot; || command === &quot;-h&quot;) {
+   66  		const providerList = PROVIDERS.map((p) =&gt; `  ${p.id.padEnd(20)} ${p.name}`).join(&quot;\n&quot;);
+   67  		console.log(`Usage: npx @earendil-works/pi-ai &lt;command&gt; [provider]
+   68
+   69  Commands:
+   70    login [provider]  Login to an OAuth provider
+   71    list              List available providers
+   72
+   73  Providers:
+   74  ${providerList}
+   75
+   76  Examples:
+   77    npx @earendil-works/pi-ai login              # interactive provider selection
+   78    npx @earendil-works/pi-ai login anthropic    # login to specific provider
+   79    npx @earendil-works/pi-ai list               # list providers
+   80  `);
+   81  		return;
+   82  	}
+   83
+   84  	if (command === &quot;list&quot;) {
+   85  		console.log(&quot;Available OAuth providers:\n&quot;);
+   86  		for (const p of PROVIDERS) {
+   87  			console.log(`  ${p.id.padEnd(20)} ${p.name}`);
+   88  		}
+   89  		return;
+   90  	}
+   91
+   92  	if (command === &quot;login&quot;) {
+   93  		let provider = args[1] as OAuthProviderId | undefined;
+   94
+   95  		if (!provider) {
+   96  			const rl = createInterface({ input: process.stdin, output: process.stdout });
+   97  			console.log(&quot;Select a provider:\n&quot;);
+   98  			for (let i = 0; i &lt; PROVIDERS.length; i++) {
+   99  				console.log(`  ${i + 1}. ${PROVIDERS[i].name}`);
+  100  			}
+  101  			console.log();
+  102
+  103  			const choice = await prompt(rl, `Enter number (1-${PROVIDERS.length}): `);
+  104  			rl.close();
+  105
+  106  			const index = parseInt(choice, 10) - 1;
+  107  			if (index &lt; 0 || index &gt;= PROVIDERS.length) {
+  108  				console.error(&quot;Invalid selection&quot;);
+  109  				process.exit(1);
+  110  			}
+  111  			provider = PROVIDERS[index].id;
+  112  		}
+  113
+  114  		if (!PROVIDERS.some((p) =&gt; p.id === provider)) {
+  115  			console.error(`Unknown provider: ${provider}`);
+  116  			console.error(`Use &#39;npx @earendil-works/pi-ai list&#39; to see available providers`);
+  117  			process.exit(1);
+  118  		}</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--help#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--version</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:100</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L95-L112" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   95  			continue;
+   96  		}
+   97
+   98  		if (arg === &quot;--help&quot; || arg === &quot;-h&quot;) {
+   99  			result.help = true;
+  100  		} else if (arg === &quot;--version&quot; || arg === &quot;-v&quot;) {
+  101  			result.version = true;
+  102  		} else if (arg === &quot;--mode&quot; &amp;&amp; i + 1 &lt; args.length) {
+  103  			const mode = args[++i];
+  104  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot; || mode === &quot;acp&quot; || mode === &quot;daemon&quot;) {
+  105  				result.mode = mode;
+  106  			}
+  107  		} else if (arg === &quot;--daemon-socket&quot; &amp;&amp; i + 1 &lt; args.length) {
+  108  			result.daemonSocket = args[++i];
+  109  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+  110  			result.continue = true;
+  111  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+  112  			const next = args[i + 1];
+  113  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;-&quot;) &amp;&amp; !next.startsWith(&quot;@&quot;)) {
+  114  				if (next === &quot;&quot;) {
+  115  					result.resume = true;
+  116  					i++;
+  117  				} else {
+  118  					result.resume = next;
+  119  					i++;
+  120  				}
+  121  			} else {
+  122  				result.resume = true;
+  123  			}
+  124  		} else if (arg.startsWith(&quot;--resume=&quot;)) {
+  125  			const value = arg.slice(&quot;--resume=&quot;.length);
+  126  			if (!value) {
+  127  				result.resume = true;
+  128  			} else {
+  129  				result.resume = value;
+  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--version#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--mode</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:102</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L97-L114" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   97
+   98  		if (arg === &quot;--help&quot; || arg === &quot;-h&quot;) {
+   99  			result.help = true;
+  100  		} else if (arg === &quot;--version&quot; || arg === &quot;-v&quot;) {
+  101  			result.version = true;
+  102  		} else if (arg === &quot;--mode&quot; &amp;&amp; i + 1 &lt; args.length) {
+  103  			const mode = args[++i];
+  104  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot; || mode === &quot;acp&quot; || mode === &quot;daemon&quot;) {
+  105  				result.mode = mode;
+  106  			}
+  107  		} else if (arg === &quot;--daemon-socket&quot; &amp;&amp; i + 1 &lt; args.length) {
+  108  			result.daemonSocket = args[++i];
+  109  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+  110  			result.continue = true;
+  111  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+  112  			const next = args[i + 1];
+  113  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;-&quot;) &amp;&amp; !next.startsWith(&quot;@&quot;)) {
+  114  				if (next === &quot;&quot;) {
+  115  					result.resume = true;
+  116  					i++;
+  117  				} else {
+  118  					result.resume = next;
+  119  					i++;
+  120  				}
+  121  			} else {
+  122  				result.resume = true;
+  123  			}
+  124  		} else if (arg.startsWith(&quot;--resume=&quot;)) {
+  125  			const value = arg.slice(&quot;--resume=&quot;.length);
+  126  			if (!value) {
+  127  				result.resume = true;
+  128  			} else {
+  129  				result.resume = value;
+  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--mode#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--daemon-socket</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:107</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L102-L119" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  102  		} else if (arg === &quot;--mode&quot; &amp;&amp; i + 1 &lt; args.length) {
+  103  			const mode = args[++i];
+  104  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot; || mode === &quot;acp&quot; || mode === &quot;daemon&quot;) {
+  105  				result.mode = mode;
+  106  			}
+  107  		} else if (arg === &quot;--daemon-socket&quot; &amp;&amp; i + 1 &lt; args.length) {
+  108  			result.daemonSocket = args[++i];
+  109  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+  110  			result.continue = true;
+  111  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+  112  			const next = args[i + 1];
+  113  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;-&quot;) &amp;&amp; !next.startsWith(&quot;@&quot;)) {
+  114  				if (next === &quot;&quot;) {
+  115  					result.resume = true;
+  116  					i++;
+  117  				} else {
+  118  					result.resume = next;
+  119  					i++;
+  120  				}
+  121  			} else {
+  122  				result.resume = true;
+  123  			}
+  124  		} else if (arg.startsWith(&quot;--resume=&quot;)) {
+  125  			const value = arg.slice(&quot;--resume=&quot;.length);
+  126  			if (!value) {
+  127  				result.resume = true;
+  128  			} else {
+  129  				result.resume = value;
+  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--daemon-socket#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--continue</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:109</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L104-L121" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  104  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot; || mode === &quot;acp&quot; || mode === &quot;daemon&quot;) {
+  105  				result.mode = mode;
+  106  			}
+  107  		} else if (arg === &quot;--daemon-socket&quot; &amp;&amp; i + 1 &lt; args.length) {
+  108  			result.daemonSocket = args[++i];
+  109  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+  110  			result.continue = true;
+  111  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+  112  			const next = args[i + 1];
+  113  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;-&quot;) &amp;&amp; !next.startsWith(&quot;@&quot;)) {
+  114  				if (next === &quot;&quot;) {
+  115  					result.resume = true;
+  116  					i++;
+  117  				} else {
+  118  					result.resume = next;
+  119  					i++;
+  120  				}
+  121  			} else {
+  122  				result.resume = true;
+  123  			}
+  124  		} else if (arg.startsWith(&quot;--resume=&quot;)) {
+  125  			const value = arg.slice(&quot;--resume=&quot;.length);
+  126  			if (!value) {
+  127  				result.resume = true;
+  128  			} else {
+  129  				result.resume = value;
+  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--continue#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--resume</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:111</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L106-L123" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  106  			}
+  107  		} else if (arg === &quot;--daemon-socket&quot; &amp;&amp; i + 1 &lt; args.length) {
+  108  			result.daemonSocket = args[++i];
+  109  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+  110  			result.continue = true;
+  111  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+  112  			const next = args[i + 1];
+  113  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;-&quot;) &amp;&amp; !next.startsWith(&quot;@&quot;)) {
+  114  				if (next === &quot;&quot;) {
+  115  					result.resume = true;
+  116  					i++;
+  117  				} else {
+  118  					result.resume = next;
+  119  					i++;
+  120  				}
+  121  			} else {
+  122  				result.resume = true;
+  123  			}
+  124  		} else if (arg.startsWith(&quot;--resume=&quot;)) {
+  125  			const value = arg.slice(&quot;--resume=&quot;.length);
+  126  			if (!value) {
+  127  				result.resume = true;
+  128  			} else {
+  129  				result.resume = value;
+  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {
+  163  				result.diagnostics.push({
+  164  					type: &quot;error&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--resume#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--provider</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:131</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L126-L143" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  126  			if (!value) {
+  127  				result.resume = true;
+  128  			} else {
+  129  				result.resume = value;
+  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {
+  163  				result.diagnostics.push({
+  164  					type: &quot;error&quot;,
+  165  					message: `Unknown built-in tool(s): ${removedTools.join(&quot;, &quot;)}. Available built-in tools: ${BUILTIN_TOOL_NAMES.join(&quot;, &quot;)}`,
+  166  				});
+  167  			}
+  168  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  169  			const level = args[++i];
+  170  			if (isValidThinkingLevel(level)) {
+  171  				result.thinking = level;
+  172  			} else {
+  173  				result.diagnostics.push({
+  174  					type: &quot;warning&quot;,
+  175  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  176  				});
+  177  			}
+  178  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  179  			result.print = true;
+  180  			const next = args[i + 1];
+  181  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  182  				result.messages.push(next);
+  183  				i++;
+  184  			}</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--provider#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--model</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:133</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L128-L145" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  128  			} else {
+  129  				result.resume = value;
+  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {
+  163  				result.diagnostics.push({
+  164  					type: &quot;error&quot;,
+  165  					message: `Unknown built-in tool(s): ${removedTools.join(&quot;, &quot;)}. Available built-in tools: ${BUILTIN_TOOL_NAMES.join(&quot;, &quot;)}`,
+  166  				});
+  167  			}
+  168  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  169  			const level = args[++i];
+  170  			if (isValidThinkingLevel(level)) {
+  171  				result.thinking = level;
+  172  			} else {
+  173  				result.diagnostics.push({
+  174  					type: &quot;warning&quot;,
+  175  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  176  				});
+  177  			}
+  178  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  179  			result.print = true;
+  180  			const next = args[i + 1];
+  181  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  182  				result.messages.push(next);
+  183  				i++;
+  184  			}
+  185  		} else if (arg === &quot;--export&quot;) {
+  186  			if (!internalRuntimeCommand) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--model#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--api-key</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:135</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L130-L147" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  130  			}
+  131  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {
+  163  				result.diagnostics.push({
+  164  					type: &quot;error&quot;,
+  165  					message: `Unknown built-in tool(s): ${removedTools.join(&quot;, &quot;)}. Available built-in tools: ${BUILTIN_TOOL_NAMES.join(&quot;, &quot;)}`,
+  166  				});
+  167  			}
+  168  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  169  			const level = args[++i];
+  170  			if (isValidThinkingLevel(level)) {
+  171  				result.thinking = level;
+  172  			} else {
+  173  				result.diagnostics.push({
+  174  					type: &quot;warning&quot;,
+  175  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  176  				});
+  177  			}
+  178  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  179  			result.print = true;
+  180  			const next = args[i + 1];
+  181  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  182  				result.messages.push(next);
+  183  				i++;
+  184  			}
+  185  		} else if (arg === &quot;--export&quot;) {
+  186  			if (!internalRuntimeCommand) {
+  187  				result.diagnostics.push({
+  188  					type: &quot;error&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--api-key#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--cwd</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:137</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L132-L149" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  132  			result.provider = args[++i];
+  133  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {
+  163  				result.diagnostics.push({
+  164  					type: &quot;error&quot;,
+  165  					message: `Unknown built-in tool(s): ${removedTools.join(&quot;, &quot;)}. Available built-in tools: ${BUILTIN_TOOL_NAMES.join(&quot;, &quot;)}`,
+  166  				});
+  167  			}
+  168  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  169  			const level = args[++i];
+  170  			if (isValidThinkingLevel(level)) {
+  171  				result.thinking = level;
+  172  			} else {
+  173  				result.diagnostics.push({
+  174  					type: &quot;warning&quot;,
+  175  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  176  				});
+  177  			}
+  178  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  179  			result.print = true;
+  180  			const next = args[i + 1];
+  181  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  182  				result.messages.push(next);
+  183  				i++;
+  184  			}
+  185  		} else if (arg === &quot;--export&quot;) {
+  186  			if (!internalRuntimeCommand) {
+  187  				result.diagnostics.push({
+  188  					type: &quot;error&quot;,
+  189  					message: `--export was removed. Use &quot;${APP_NAME} session export &lt;file&gt; [output]&quot;.`,
+  190  				});</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--cwd#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--system-prompt</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:139</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L134-L151" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  134  			result.model = args[++i];
+  135  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {
+  163  				result.diagnostics.push({
+  164  					type: &quot;error&quot;,
+  165  					message: `Unknown built-in tool(s): ${removedTools.join(&quot;, &quot;)}. Available built-in tools: ${BUILTIN_TOOL_NAMES.join(&quot;, &quot;)}`,
+  166  				});
+  167  			}
+  168  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  169  			const level = args[++i];
+  170  			if (isValidThinkingLevel(level)) {
+  171  				result.thinking = level;
+  172  			} else {
+  173  				result.diagnostics.push({
+  174  					type: &quot;warning&quot;,
+  175  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  176  				});
+  177  			}
+  178  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  179  			result.print = true;
+  180  			const next = args[i + 1];
+  181  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  182  				result.messages.push(next);
+  183  				i++;
+  184  			}
+  185  		} else if (arg === &quot;--export&quot;) {
+  186  			if (!internalRuntimeCommand) {
+  187  				result.diagnostics.push({
+  188  					type: &quot;error&quot;,
+  189  					message: `--export was removed. Use &quot;${APP_NAME} session export &lt;file&gt; [output]&quot;.`,
+  190  				});
+  191  				if (i + 1 &lt; args.length &amp;&amp; !args[i + 1].startsWith(&quot;-&quot;)) i++;
+  192  			} else if (i + 1 &lt; args.length) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--system-prompt#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--append-system-prompt</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:141</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/cli/args.ts#L136-L153" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  136  			result.apiKey = args[++i];
+  137  		} else if (arg === &quot;--cwd&quot; &amp;&amp; i + 1 &lt; args.length) {
+  138  			result.cwd = args[++i];
+  139  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  140  			result.systemPrompt = args[++i];
+  141  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+  142  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  143  			result.appendSystemPrompt.push(args[++i]);
+  144  		} else if (arg === &quot;--no-session&quot;) {
+  145  			result.noSession = true;
+  146  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  147  			result.fork = args[++i];
+  148  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  149  			result.sessionDir = args[++i];
+  150  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  152  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  153  			result.noTools = true;
+  154  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  155  			result.noBuiltinTools = true;
+  156  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  157  			result.tools = args[++i]
+  158  				.split(&quot;,&quot;)
+  159  				.map((s) =&gt; s.trim())
+  160  				.filter((name) =&gt; name.length &gt; 0);
+  161  			const removedTools = result.tools.filter((name) =&gt; REMOVED_BUILTIN_TOOL_NAMES.has(name));
+  162  			if (removedTools.length &gt; 0) {
+  163  				result.diagnostics.push({
+  164  					type: &quot;error&quot;,
+  165  					message: `Unknown built-in tool(s): ${removedTools.join(&quot;, &quot;)}. Available built-in tools: ${BUILTIN_TOOL_NAMES.join(&quot;, &quot;)}`,
+  166  				});
+  167  			}
+  168  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  169  			const level = args[++i];
+  170  			if (isValidThinkingLevel(level)) {
+  171  				result.thinking = level;
+  172  			} else {
+  173  				result.diagnostics.push({
+  174  					type: &quot;warning&quot;,
+  175  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  176  				});
+  177  			}
+  178  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  179  			result.print = true;
+  180  			const next = args[i + 1];
+  181  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  182  				result.messages.push(next);
+  183  				i++;
+  184  			}
+  185  		} else if (arg === &quot;--export&quot;) {
+  186  			if (!internalRuntimeCommand) {
+  187  				result.diagnostics.push({
+  188  					type: &quot;error&quot;,
+  189  					message: `--export was removed. Use &quot;${APP_NAME} session export &lt;file&gt; [output]&quot;.`,
+  190  				});
+  191  				if (i + 1 &lt; args.length &amp;&amp; !args[i + 1].startsWith(&quot;-&quot;)) i++;
+  192  			} else if (i + 1 &lt; args.length) {
+  193  				result.export = args[++i];
+  194  			} else {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--append-system-prompt#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>agentLoop 只接收 prompts、AgentContext、AgentLoopConfig 和可选 streamFn；runLoop 把 steering、tool calls、follow-up、continuation 和 abort 编排成外层/内层循环，并最终发出 agent_end。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L178-L205" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:178–205 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>runLoop 在当前 assistant turn 完成工具后轮询 steering；没有工具和 steering 时才轮询 follow-up；最后通过 getContinuationMessages 处理宿主拥有的长任务续跑策略。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L317-L345" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:317–345 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>executeToolCalls 根据全局 toolExecution 或单个工具 executionMode 决定串行/并行；两条路径都先 prepareToolCall，验证参数后才执行，结果 message 保持工具调用源顺序。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L608-L623" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:608–623 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>ResourceLoader 暴露 getSkills/getPrompts/getThemes/getAgentsFiles/getSystemPrompt、extendResources 和 reload；reload 解析启用路径、加载 extensions、skills、prompts、themes，再按 cwd/agentDir 加载项目上下文文件。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/resource-loader.ts#L23-L39" target="_blank" rel="noreferrer">packages/coding-agent/src/core/resource-loader.ts:23–39 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>packages/coding-agent/test/slash-commands.test.ts</b><small>10694 bytes · .ts</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/test/slash-commands.test.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import { parseNewSessionCommand } from &quot;../src/core/new-session-command.js&quot;;
+    3  import {
+    4  	BUILTIN_SLASH_COMMANDS,
+    5  	builtinSlashCommandTakesArgument,
+    6  	isBuiltinSlashCommandName,
+    7  	isSessionSlashCommandName,
+    8  	parseRefineCommandOptions,
+    9  	parseSessionSlashCommand,
+   10  	parseSlashCommand,
+   11  	resolveBuiltinSlashCommandName,
+   12  	resolveSlashCommand,
+   13  	SESSION_SLASH_COMMAND_NAMES,
+   14  } from &quot;../src/core/slash-commands.js&quot;;
+   15
+   16  describe(&quot;built-in slash commands&quot;, () =&gt; {
+   17  	test(&quot;exposes heartbeat without exposing a cron slash command&quot;, () =&gt; {
+   18  		const commandNames = BUILTIN_SLASH_COMMANDS.map((command) =&gt; command.name);
+   19
+   20  		expect(commandNames).toContain(&quot;heartbeat&quot;);
+   21  		expect(commandNames).not.toContain(&quot;cron&quot;);
+   22  	});
+   23
+   24  	test(&quot;describes the fine-grained /rlm-max-depth semantics&quot;, () =&gt; {
+   25  		expect(BUILTIN_SLASH_COMMANDS.find((command) =&gt; command.name === &quot;rlm-max-depth&quot;)).toMatchObject({
+   26  			description:
+   27  				&quot;Set/view the per-chat persistent RLM max depth immediately; never interrupts or queues the running turn&quot;,
+   28  			argumentHint: &quot;[&lt;int&gt; [--global]]&quot;,
+   29  			takesArgument: true,
+   30  		});
+   31  	});
+   32
+   33  	test(&quot;exposes heartbeat syntax guidance&quot;, () =&gt; {
+   34  		expect(BUILTIN_SLASH_COMMANDS.find((command) =&gt; command.name === &quot;heartbeat&quot;)).toMatchObject({</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>packages/coding-agent/test/suite/regressions/2023-queued-slash-command-followup.test.ts</b><small>2520 bytes · .ts</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/test/suite/regressions/2023-queued-slash-command-followup.test.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    8  describe(&quot;issue #2023 queued slash-command follow-up&quot;, () =&gt; {
+    9  	const harnesses: Harness[] = [];
+   10
+   11  	afterEach(() =&gt; {
+   12  		while (harnesses.length &gt; 0) {
+   13  			harnesses.pop()?.cleanup();
+   14  		}
+   15  	});
+   16
+   17  	it(&quot;treats extension-origin queued slash-command follow-ups as raw user text instead of dispatching the command&quot;, async () =&gt; {
+   18  		let extensionApi: ExtensionAPI | undefined;
+   19  		const commandRuns: string[] = [];
+   20  		let releaseToolExecution: (() =&gt; void) | undefined;
+   21  		const toolRelease = new Promise&lt;void&gt;((resolve) =&gt; {
+   22  			releaseToolExecution = resolve;
+   23  		});
+   24  		const waitTool: AgentTool = {
+   25  			name: &quot;wait&quot;,
+   26  			label: &quot;Wait&quot;,
+   27  			description: &quot;Wait for the test to release execution&quot;,
+   28  			parameters: Type.Object({}),
+   29  			execute: async () =&gt; {
+   30  				await toolRelease;
+   31  				return {
+   32  					content: [{ type: &quot;text&quot;, text: &quot;released&quot; }],
+   33  					details: {},
+   34  				};
+   35  			},
+   36  		};
+   37  		const harness = await createHarness({
+   38  			tools: [waitTool],
+   39  			extensionFactories: [
+   40  				(pi) =&gt; {</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>packages/coding-agent/src/core/slash-commands.ts</b><small>10079 bytes · .ts</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/core/slash-commands.ts#L4-L19" target="_blank" rel="noreferrer">L4–19 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    4  export type SlashCommandSource = &quot;extension&quot; | &quot;prompt&quot; | &quot;skill&quot;;
+    5
+    6  export interface SlashCommandInfo {
+    7  	name: string;
+    8  	description?: string;
+    9  	source: SlashCommandSource;
+   10  	sourceInfo: SourceInfo;
+   11  }
+   12
+   13  export const SESSION_SLASH_COMMAND_NAMES = [&quot;compact&quot;, &quot;refine&quot;, &quot;goal&quot;, &quot;autonomous&quot;] as const;
+   14
+   15  export type SessionSlashCommandName = (typeof SESSION_SLASH_COMMAND_NAMES)[number];
+   16
+   17  const SESSION_SLASH_COMMAND_NAME_SET: ReadonlySet&lt;string&gt; = new Set(SESSION_SLASH_COMMAND_NAMES);
+   18
+   19  export function isSessionSlashCommandName(value: unknown): value is SessionSlashCommandName {
+   20  	return typeof value === &quot;string&quot; &amp;&amp; SESSION_SLASH_COMMAND_NAME_SET.has(value);
+   21  }
+   22
+   23  export interface SessionSlashCommand {
+   24  	name: SessionSlashCommandName;
+   25  	args: string;
+   26  	text: string;
+   27  }
+   28
+   29  export interface RefineCommandOptions {
+   30  	instructions?: string;
+   31  	rollbackId?: string;
+   32  	global?: boolean;
+   33  }
+   34
+   35  export function parseRefineCommandOptions(args: string): RefineCommandOptions {
+   36  	let rest = args.trim();</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>packages/coding-agent/src/modes/interactive/components/slash-command-message.ts</b><small>1593 bytes · .ts</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/modes/interactive/components/slash-command-message.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import { parseSlashCommand } from &quot;../../../core/slash-commands.js&quot;;
+    3  import { theme } from &quot;../theme/theme.js&quot;;
+    4
+    5  const OSC133_ZONE_START = &quot;\x1b]133;A\x07&quot;;
+    6  const OSC133_ZONE_END = &quot;\x1b]133;B\x07&quot;;
+    7  const OSC133_ZONE_FINAL = &quot;\x1b]133;C\x07&quot;;
+    8
+    9  export function isLeadingSlashCommand(text: string, isRecognized: (name: string) =&gt; boolean): boolean {
+   10  	const command = parseSlashCommand(text);
+   11  	return command !== undefined &amp;&amp; isRecognized(command.name);
+   12  }
+   13
+   14  export function styleSlashCommandText(text: string, styleRest: (rest: string) =&gt; string = (rest) =&gt; rest): string {
+   15  	const parsed = parseSlashCommand(text);
+   16  	const commandEnd = parsed ? parsed.name.length + 1 : text.length;
+   17  	return `${theme.fg(&quot;accent&quot;, text.slice(0, commandEnd))}${styleRest(text.slice(commandEnd))}`;
+   18  }
+   19
+   20  /** Renders a durable session command with the same layout as a user message. */
+   21  export class SlashCommandMessageComponent extends Container {
+   22  	private readonly contentBox: Box;
+   23
+   24  	constructor(text: string) {
+   25  		super();
+   26  		this.contentBox = new Box(2, 1, (content: string) =&gt; theme.getUserMessageBackgroundColor()(content));
+   27  		this.contentBox.addChild(new Text(styleSlashCommandText(text), 0, 0));
+   28  		this.addChild(this.contentBox);
+   29  	}
+   30
+   31  	setExpanded(_expanded: boolean): void {}
+   32
+   33  	override render(width: number): string[] {
+   34  		const lines = super.render(width);</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>packages/coding-agent/src/modes/interactive/components/slash-command-result-message.ts</b><small>635 bytes · .ts</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/modes/interactive/components/slash-command-result-message.ts#L2-L16" target="_blank" rel="noreferrer">L2–16 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import type { SessionSlashCommandResultMessage } from &quot;../../../core/messages.js&quot;;
+    3  import { theme } from &quot;../theme/theme.js&quot;;
+    4
+    5  /** Renders a durable session-command outcome with user-message spacing. */
+    6  export class SlashCommandResultMessageComponent extends Container {
+    7  	constructor(message: SessionSlashCommandResultMessage) {
+    8  		super();
+    9  		const contentBox = new Box(2, 1, (text: string) =&gt; theme.getUserMessageBackgroundColor()(text));
+   10  		contentBox.addChild(new Text(message.content, 0, 0));
+   11  		this.addChild(contentBox);
+   12  	}
+   13
+   14  	setExpanded(_expanded: boolean): void {}
+   15  }
+   16</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>packages/tui/src/slash-command-context.ts</b><small>1383 bytes · .ts</small></div><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/tui/src/slash-command-context.ts#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    1  export type SlashCommandContext =
+    2  	| { kind: &quot;name&quot;; prefix: string; isAtPromptStart: boolean }
+    3  	| { kind: &quot;argument&quot;; commandName: string; prefix: string; isAtPromptStart: true };
+    4
+    5  export function getSlashCommandContext(
+    6  	lines: string[],
+    7  	cursorLine: number,
+    8  	cursorCol: number,
+    9  ): SlashCommandContext | null {
+   10  	const currentLine = lines[cursorLine] ?? &quot;&quot;;
+   11  	const textBeforeCursor = currentLine.slice(0, cursorCol);
+   12  	const trimmedStart = textBeforeCursor.trimStart();
+   13
+   14  	if (cursorLine === 0 &amp;&amp; trimmedStart.startsWith(&quot;/&quot;)) {
+   15  		const separatorIndex = trimmedStart.search(/[ \t]/);
+   16  		const commandToken = separatorIndex === -1 ? trimmedStart : trimmedStart.slice(0, separatorIndex);
+   17
+   18  		if (commandToken.slice(1).includes(&quot;/&quot;)) {
+   19  			return null;
+   20  		}
+   21
+   22  		if (separatorIndex === -1) {
+   23  			return { kind: &quot;name&quot;, prefix: commandToken, isAtPromptStart: true };
+   24  		}
+   25
+   26  		const commandName = commandToken.slice(1);
+   27  		if (!commandName) {
+   28  			return null;
+   29  		}
+   30
+   31  		return {
+   32  			kind: &quot;argument&quot;,
+   33  			commandName,</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Prime Agent commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,0 +1,1809 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>Kimi CLI · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Kimi CLI · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Kimi CLI</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>cbc15c076d17</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Kimi CLI · cbc15c076d17</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>8 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 8 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="kimi-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每轮是带检查点的多步状态机，不是单次聊天请求</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>run 先刷新 OAuth、建立 approval source、运行 UserPromptSubmit hook，再进入 _turn；_turn 先 checkpoint、持久化 user message，然后 _agent_loop 逐 step 做压缩、checkpoint、LLM+工具执行，直到无工具调用、拒绝或重复调用强停。</p></section><section><span>PLAIN LANGUAGE</span><p>一次用户输入可能触发多次“模型思考—调工具—看结果—再思考”，每一步前都留存档点。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长任务可恢复、可插话，也需要严格的步数上限和副作用治理。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>659–699</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>700–742</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/kimisoul.py:659–742</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  659      async def run(
+  660          self,
+  661          user_input: str | list[ContentPart],
+  662          *,
+  663          skip_user_prompt_hook: bool = False,
+  664      ):
+  665          approval_source_token = None
+  666          created_approval_source: ApprovalSource | None = None
+  667          turn_started = False
+  668          turn_finished = False
+  669          interrupt_reason: str | None = None
+  670          turn_t0 = time.monotonic()
+  671          self._set_trace_id(None)
+  672          if get_current_approval_source_or_none() is None:
+  673              created_approval_source = ApprovalSource(kind=&quot;foreground_turn&quot;, id=uuid.uuid4().hex)
+  674              approval_source_token = set_current_approval_source(created_approval_source)
+  675          try:
+  676              # Refresh OAuth tokens on each turn to avoid idle-time expirations.
+  677              await self._runtime.oauth.ensure_fresh(self._runtime)
+  678
+  679              # Set session_id ContextVar for toolset hooks
+  680              from kimi_cli.soul.toolset import set_session_id
+  681
+  682              set_session_id(self._runtime.session.id)
+  683
+  684              from kimi_cli.hooks import events
+  685
+  686              # --- UserPromptSubmit hook ---
+  687              # Synthetic internal prompts (e.g. background-task notification
+  688              # follow-ups injected by ``Print`` after a bg task finishes or
+  689              # the wait ceiling is hit) must bypass ``UserPromptSubmit``:
+  690              # they are not user input, and a user-configured prompt-blocking
+  691              # hook would drop the notification and hang the wait loop.
+  692              if not skip_user_prompt_hook:
+  693                  text_input_for_hook = user_input if isinstance(user_input, str) else &quot;&quot;
+  694
+  695                  hook_results = await self._hook_engine.trigger(
+  696                      &quot;UserPromptSubmit&quot;,
+  697                      matcher_value=text_input_for_hook,
+  698                      input_data=events.user_prompt_submit(
+  699                          session_id=self._runtime.session.id,
+  700                          cwd=str(Path.cwd()),
+  701                          prompt=text_input_for_hook,
+  702                      ),
+  703                  )
+  704                  for result in hook_results:
+  705                      if result.action == &quot;block&quot;:
+  706                          wire_send(TurnBegin(user_input=user_input))
+  707                          turn_started = True
+  708                          wire_send(TextPart(text=result.reason or &quot;Prompt blocked by hook.&quot;))
+  709                          wire_send(TurnEnd())
+  710                          turn_finished = True
+  711                          return
+  712
+  713              wire_send(TurnBegin(user_input=user_input))
+  714              turn_started = True
+  715              from kimi_cli.telemetry import track as _track_telemetry
+  716
+  717              _track_telemetry(
+  718                  &quot;turn_started&quot;,
+  719                  mode=&quot;plan&quot; if self._plan_mode else &quot;agent&quot;,
+  720                  **_provider_telemetry_kwargs(self._runtime.llm),
+  721              )
+  722              user_message = Message(role=&quot;user&quot;, content=user_input)
+  723              text_input = user_message.extract_text(&quot; &quot;).strip()
+  724
+  725              if command_call := parse_slash_command_call(text_input):
+  726                  command = self._find_slash_command(command_call.name)
+  727                  if command is None:
+  728                      # this should not happen actually, the shell should have filtered it out
+  729                      wire_send(TextPart(text=f&#39;Unknown slash command &quot;/{command_call.name}&quot;.&#39;))
+  730                  else:
+  731                      ret = command.func(self, command_call.args)
+  732                      if isinstance(ret, Awaitable):
+  733                          await ret
+  734              elif self._loop_control.max_ralph_iterations != 0:
+  735                  runner = FlowRunner.ralph_loop(
+  736                      user_message,
+  737                      self._loop_control.max_ralph_iterations,
+  738                  )
+  739                  await runner.run(self, &quot;&quot;)
+  740              else:
+  741                  await self._turn(user_message)
+  742
+  743              # --- Stop hook (max 1 re-trigger to prevent infinite loop) ---
+  744              if not self._stop_hook_active:
+  745                  stop_results = await self._hook_engine.trigger(
+  746                      &quot;Stop&quot;,
+  747                      input_data=events.stop(
+  748                          session_id=self._runtime.session.id,
+  749                          cwd=str(Path.cwd()),
+  750                          stop_hook_active=False,
+  751                      ),
+  752                  )
+  753                  for result in stop_results:
+  754                      if result.action == &quot;block&quot; and result.reason:
+  755                          self._stop_hook_active = True
+  756                          try:
+  757                              await self._turn(Message(role=&quot;user&quot;, content=result.reason))
+  758                          finally:
+  759                              self._stop_hook_active = False
+  760                          break
+  761
+  762              wire_send(TurnEnd())
+  763              turn_finished = True
+  764
+  765              # Auto-set title after first real turn (skip slash commands)
+  766              if not command_call:
+  767                  session = self._runtime.session
+  768                  if session.state.custom_title is None:
+  769                      from kimi_cli.utils.string import shorten
+  770
+  771                      title = shorten(
+  772                          Message(role=&quot;user&quot;, content=user_input).extract_text(&quot; &quot;),
+  773                          width=50,
+  774                      )
+  775                      if title:
+  776                          from kimi_cli.session_state import (
+  777                              load_session_state,
+  778                              save_session_state,
+  779                          )
+  780
+  781                          # Read-modify-write: load fresh state to avoid
+  782                          # overwriting concurrent web changes
+  783                          fresh = load_session_state(session.dir)
+  784                          if fresh.custom_title is None:
+  785                              fresh.custom_title = title
+  786                              save_session_state(fresh, session.dir)
+  787                          session.state.custom_title = fresh.custom_title
+  788          except MaxStepsReached:
+  789              interrupt_reason = &quot;max_steps&quot;
+  790              raise
+  791          except asyncio.CancelledError:
+  792              interrupt_reason = &quot;user_cancelled&quot;
+  793              raise
+  794          except Exception:
+  795              interrupt_reason = &quot;error&quot;
+  796              raise
+  797          finally:
+  798              from kimi_cli.telemetry import get_current_trace_id
+  799
+  800              if turn_started and not turn_finished:
+  801                  wire_send(TurnEnd())
+  802                  from kimi_cli.telemetry import track as _track_telemetry
+  803
+  804                  _interrupt_kwargs: dict[str, Any] = dict(
+  805                      mode=&quot;plan&quot; if self._plan_mode else &quot;agent&quot;,
+  806                      at_step=getattr(self, &quot;_current_step_no&quot;, 0),
+  807                      interrupt_reason=interrupt_reason or &quot;error&quot;,
+  808                      **_provider_telemetry_kwargs(self._runtime.llm),
+  809                  )
+  810                  if _tid := get_current_trace_id():
+  811                      _interrupt_kwargs[&quot;trace_id&quot;] = _tid
+  812                  _track_telemetry(&quot;turn_interrupted&quot;, **_interrupt_kwargs)
+  813              if turn_started:</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>659</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    async def run(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>660</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        self,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>661</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        user_input: str | list[ContentPart],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>662</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        *,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>663</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        skip_user_prompt_hook: bool = False,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>664</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    ):</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>665</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        approval_source_token = None</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>666</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        created_approval_source: ApprovalSource | None = None</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>667</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        turn_started = False</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>668</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        turn_finished = False</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>669</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        interrupt_reason: str | None = None</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>670</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        turn_t0 = time.monotonic()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>671</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        self._set_trace_id(None)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>672</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if get_current_approval_source_or_none() is None:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>673</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            created_approval_source = ApprovalSource(kind=&quot;foreground_turn&quot;, id=uuid.uuid4().hex)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>674</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            approval_source_token = set_current_approval_source(created_approval_source)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>675</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        try:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>676</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            # Refresh OAuth tokens on each turn to avoid idle-time expirations.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>677</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>            await self._runtime.oauth.ensure_fresh(self._runtime)</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>678</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>679</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            # Set session_id ContextVar for toolset hooks</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>680</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            from kimi_cli.soul.toolset import set_session_id</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>681</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>682</td><th><span class="line-kind-state">STATE</span></th><td><code>            set_session_id(self._runtime.session.id)</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>683</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>684</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            from kimi_cli.hooks import events</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>685</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>686</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            # --- UserPromptSubmit hook ---</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="kimi-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 每 step 先注入通知/动态约束，再一次生成并等待并发工具</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>root 每 step 最多领取 4 条 pending notification；Plan/AFK 等 injection 合并成 user-side system reminder；历史归一化后调用 kosong.step，流式回调消息和工具结果，随后 await 所有 tool results 并 shield 写回上下文。</p></section><section><span>PLAIN LANGUAGE</span><p>模型每次再开口前都会先收新通知和当前模式规则；工具可以边生成边启动，结果到齐后才记账。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>实时性和并行性强；动态注入是上下文的一部分，会影响 token 与缓存。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1132–1162</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1163–1194</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1132-L1194" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/kimisoul.py:1132–1194</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1132-L1194" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1132          # ═══════════════════════════════════════════════════════════════════════
+ 1133          # 2e.1. NOTIFICATION DELIVERY (root role only)
+ 1134          # ═══════════════════════════════════════════════════════════════════════
+ 1135          if self.is_root:
+ 1136
+ 1137              async def _append_notification(view: NotificationView) -&gt; None:
+ 1138                  await self._context.append_message(build_notification_message(view, self._runtime))
+ 1139                  # --- Notification hook ---
+ 1140                  from kimi_cli.hooks import events
+ 1141
+ 1142                  _hook_task = asyncio.create_task(
+ 1143                      self._hook_engine.trigger(
+ 1144                          &quot;Notification&quot;,
+ 1145                          matcher_value=view.event.type,
+ 1146                          input_data=events.notification(
+ 1147                              session_id=self._runtime.session.id,
+ 1148                              cwd=str(Path.cwd()),
+ 1149                              sink=&quot;llm&quot;,
+ 1150                              notification_type=view.event.type,
+ 1151                              title=view.event.title,
+ 1152                              body=view.event.body,
+ 1153                              severity=view.event.severity,
+ 1154                          ),
+ 1155                      )
+ 1156                  )
+ 1157                  _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+ 1158
+ 1159              await self._runtime.notifications.deliver_pending(
+ 1160                  &quot;llm&quot;,
+ 1161                  limit=4,
+ 1162                  before_claim=self._runtime.background_tasks.reconcile,
+ 1163                  on_notification=_append_notification,
+ 1164              )
+ 1165
+ 1166          # ═══════════════════════════════════════════════════════════════════════
+ 1167          # 2e.2. DYNAMIC INJECTION
+ 1168          # ═══════════════════════════════════════════════════════════════════════
+ 1169          injections = await self._collect_injections()
+ 1170          if injections:
+ 1171              combined_reminders = &quot;\n&quot;.join(system_reminder(inj.content).text for inj in injections)
+ 1172              await self._context.append_message(
+ 1173                  Message(
+ 1174                      role=&quot;user&quot;,
+ 1175                      content=[TextPart(text=combined_reminders)],
+ 1176                  )
+ 1177              )
+ 1178
+ 1179          # ═══════════════════════════════════════════════════════════════════════
+ 1180          # 2e.3. HISTORY NORMALIZATION
+ 1181          # ═══════════════════════════════════════════════════════════════════════
+ 1182          effective_history = normalize_history(self._context.history)
+ 1183          generation_overrides = self._compute_completion_overrides(
+ 1184              chat_provider,
+ 1185              system_prompt=self._agent.system_prompt,
+ 1186              tools=self._agent.toolset.tools,
+ 1187              history=effective_history,
+ 1188              input_tokens_floor=self._context.token_count_with_pending,
+ 1189          )
+ 1190          request_chat_provider = with_kimi_generation_overrides(chat_provider, generation_overrides)
+ 1191          request_chat_provider = with_trace_callback(
+ 1192              request_chat_provider,
+ 1193              self._set_trace_id,
+ 1194          )
+ 1195
+ 1196          # ═══════════════════════════════════════════════════════════════════════
+ 1197          # 2e.4. LLM CALL WITH RETRY
+ 1198          # ═══════════════════════════════════════════════════════════════════════
+ 1199          async def _run_step_once() -&gt; StepResult:
+ 1200              &quot;&quot;&quot;Single LLM invocation (wrapped by retry + connection recovery).&quot;&quot;&quot;
+ 1201              # ── 2e.4.1. Toolset begin_step ────────────────────────────────────
+ 1202              if isinstance(self._agent.toolset, KimiToolset):
+ 1203                  self._agent.toolset.begin_step(
+ 1204                      self._last_tool_calls,
+ 1205                      step_no=self._current_step_no,
+ 1206                  )
+ 1207              # ── 2e.4.2. kosong.step ───────────────────────────────────────────
+ 1208              # run an LLM step (may be interrupted)
+ 1209              return await kosong.step(
+ 1210                  request_chat_provider,
+ 1211                  self._agent.system_prompt,
+ 1212                  self._agent.toolset,
+ 1213                  effective_history,
+ 1214                  on_message_part=wire_send,
+ 1215                  on_tool_result=wire_send,
+ 1216              )
+ 1217
+ 1218          max_attempts = self._loop_control.max_retries_per_step
+ 1219
+ 1220          def _before_step_retry_sleep(retry_state: RetryCallState) -&gt; None:
+ 1221              self._retry_log(&quot;step&quot;, retry_state)
+ 1222              self._emit_step_retry(retry_state, max_attempts=max_attempts)
+ 1223
+ 1224          @tenacity.retry(
+ 1225              retry=retry_if_exception(self._is_retryable_error),
+ 1226              before_sleep=_before_step_retry_sleep,
+ 1227              wait=wait_exponential_jitter(initial=0.3, max=5, jitter=0.5),
+ 1228              stop=stop_after_attempt(max_attempts),
+ 1229              reraise=True,
+ 1230          )
+ 1231          async def _kosong_step_with_retry() -&gt; StepResult:
+ 1232              return await self._run_with_connection_recovery(
+ 1233                  &quot;step&quot;,
+ 1234                  _run_step_once,
+ 1235                  chat_provider=chat_provider,
+ 1236              )
+ 1237
+ 1238          t0 = time.monotonic()
+ 1239          try:
+ 1240              result = await _kosong_step_with_retry()
+ 1241          except Exception as _step_exc:
+ 1242              if isinstance(_step_exc, ChatProviderError):
+ 1243                  _track_api_error(
+ 1244                      _step_exc,
+ 1245                      llm=self._runtime.llm,
+ 1246                      duration_ms=int((time.monotonic() - t0) * 1000),
+ 1247                      input_tokens=self._context.token_count,
+ 1248                  )
+ 1249              raise
+ 1250
+ 1251          # ═══════════════════════════════════════════════════════════════════════
+ 1252          # 2e.5. USAGE &amp; STATUS UPDATE
+ 1253          # ═══════════════════════════════════════════════════════════════════════
+ 1254          llm_elapsed = time.monotonic() - t0
+ 1255          usage = result.usage
+ 1256          logger.info(
+ 1257              &quot;LLM step completed in {elapsed:.1f}s (input={input_tokens}, output={output_tokens})&quot;,
+ 1258              elapsed=llm_elapsed,
+ 1259              input_tokens=usage.input if usage else &quot;?&quot;,
+ 1260              output_tokens=usage.output if usage else &quot;?&quot;,
+ 1261          )
+ 1262          status_update = StatusUpdate(
+ 1263              token_usage=usage, message_id=result.id, plan_mode=self._plan_mode
+ 1264          )
+ 1265          if usage is not None:</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>1132</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        # ═══════════════════════════════════════════════════════════════════════</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1133</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        # 2e.1. NOTIFICATION DELIVERY (root role only)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1134</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        # ═══════════════════════════════════════════════════════════════════════</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1135</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if self.is_root:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>1136</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1137</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            async def _append_notification(view: NotificationView) -&gt; None:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1138</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>                await self._context.append_message(build_notification_message(view, self._runtime))</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>1139</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                # --- Notification hook ---</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1140</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                from kimi_cli.hooks import events</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1141</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1142</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                _hook_task = asyncio.create_task(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1143</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    self._hook_engine.trigger(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1144</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                        &quot;Notification&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1145</td><th><span class="line-kind-input">INPUT</span></th><td><code>                        matcher_value=view.event.type,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1146</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                        input_data=events.notification(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1147</td><th><span class="line-kind-state">STATE</span></th><td><code>                            session_id=self._runtime.session.id,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>1148</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                            cwd=str(Path.cwd()),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1149</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                            sink=&quot;llm&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1150</td><th><span class="line-kind-input">INPUT</span></th><td><code>                            notification_type=view.event.type,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1151</td><th><span class="line-kind-input">INPUT</span></th><td><code>                            title=view.event.title,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1152</td><th><span class="line-kind-input">INPUT</span></th><td><code>                            body=view.event.body,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1153</td><th><span class="line-kind-input">INPUT</span></th><td><code>                            severity=view.event.severity,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>1154</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                        ),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1155</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1156</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1157</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>                _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>1158</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1159</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>            await self._runtime.notifications.deliver_pending(</code></td><td>Calls model, tools, files, network, or processes</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="kimi-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · steer 与 D-Mail 提供两种中途改道机制</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>steer queue 会在 step 结束或相邻 step 间作为新的 user message 注入；SendDMail 可携 checkpoint id 触发 BackToTheFuture，主循环旋转并回退 context，再注入未来消息并清空重复调用状态。</p></section><section><span>PLAIN LANGUAGE</span><p>用户插话是在当前路线后追加新指令；D-Mail 则像读档，把对话回到旧存档再塞入一张“未来经验”纸条。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>适合长程纠偏和探索回溯，但文件系统副作用不会随 context 自动回滚。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>622–636</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>637–653</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><div class="finding-caveat"><span>CAVEAT / RISK</span><ul><li>回滚的是对话 JSONL，不是 git/worktree 或外部服务事务。</li></ul></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L622-L653" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/kimisoul.py:622–653</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L622-L653" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  622      def steer(self, content: str | list[ContentPart]) -&gt; None:
+  623          &quot;&quot;&quot;Queue a steer message for injection into the current turn.&quot;&quot;&quot;
+  624          self._steer_queue.put_nowait(content)
+  625
+  626      async def _consume_pending_steers(self) -&gt; bool:
+  627          &quot;&quot;&quot;Drain the steer queue and inject as follow-up user messages.
+  628
+  629          Returns True if any steers were consumed.
+  630
+  631          Note: /btw is intercepted at the UI layer (``classify_input``) before
+  632          reaching the steer queue, so it never appears here.
+  633          &quot;&quot;&quot;
+  634          consumed = False
+  635          while not self._steer_queue.empty():
+  636              content = self._steer_queue.get_nowait()
+  637              await self._inject_steer(content)
+  638              wire_send(SteerInput(user_input=content))
+  639              consumed = True
+  640          return consumed
+  641
+  642      async def _inject_steer(self, content: str | list[ContentPart]) -&gt; None:
+  643          &quot;&quot;&quot;Inject a single steer as a regular follow-up user message.&quot;&quot;&quot;
+  644          parts = cast(
+  645              list[ContentPart],
+  646              [TextPart(text=content)] if isinstance(content, str) else list(content),
+  647          )
+  648          message = Message(role=&quot;user&quot;, content=parts)
+  649          if self._runtime.llm is None:
+  650              raise LLMNotSet()
+  651          if missing_caps := check_message(message, self._runtime.llm.capabilities):
+  652              raise LLMNotSupported(self._runtime.llm, list(missing_caps))
+  653          await self._context.append_message(message)
+  654
+  655      @property
+  656      def available_slash_commands(self) -&gt; list[SlashCommand[Any]]:
+  657          return self._slash_commands
+  658
+  659      async def run(
+  660          self,
+  661          user_input: str | list[ContentPart],
+  662          *,
+  663          skip_user_prompt_hook: bool = False,
+  664      ):
+  665          approval_source_token = None
+  666          created_approval_source: ApprovalSource | None = None
+  667          turn_started = False
+  668          turn_finished = False
+  669          interrupt_reason: str | None = None
+  670          turn_t0 = time.monotonic()
+  671          self._set_trace_id(None)
+  672          if get_current_approval_source_or_none() is None:
+  673              created_approval_source = ApprovalSource(kind=&quot;foreground_turn&quot;, id=uuid.uuid4().hex)
+  674              approval_source_token = set_current_approval_source(created_approval_source)
+  675          try:
+  676              # Refresh OAuth tokens on each turn to avoid idle-time expirations.
+  677              await self._runtime.oauth.ensure_fresh(self._runtime)
+  678
+  679              # Set session_id ContextVar for toolset hooks
+  680              from kimi_cli.soul.toolset import set_session_id
+  681
+  682              set_session_id(self._runtime.session.id)
+  683
+  684              from kimi_cli.hooks import events
+  685
+  686              # --- UserPromptSubmit hook ---
+  687              # Synthetic internal prompts (e.g. background-task notification
+  688              # follow-ups injected by ``Print`` after a bg task finishes or
+  689              # the wait ceiling is hit) must bypass ``UserPromptSubmit``:
+  690              # they are not user input, and a user-configured prompt-blocking
+  691              # hook would drop the notification and hang the wait loop.
+  692              if not skip_user_prompt_hook:
+  693                  text_input_for_hook = user_input if isinstance(user_input, str) else &quot;&quot;
+  694
+  695                  hook_results = await self._hook_engine.trigger(
+  696                      &quot;UserPromptSubmit&quot;,
+  697                      matcher_value=text_input_for_hook,
+  698                      input_data=events.user_prompt_submit(
+  699                          session_id=self._runtime.session.id,
+  700                          cwd=str(Path.cwd()),
+  701                          prompt=text_input_for_hook,
+  702                      ),
+  703                  )
+  704                  for result in hook_results:
+  705                      if result.action == &quot;block&quot;:
+  706                          wire_send(TurnBegin(user_input=user_input))
+  707                          turn_started = True
+  708                          wire_send(TextPart(text=result.reason or &quot;Prompt blocked by hook.&quot;))
+  709                          wire_send(TurnEnd())
+  710                          turn_finished = True
+  711                          return
+  712
+  713              wire_send(TurnBegin(user_input=user_input))
+  714              turn_started = True
+  715              from kimi_cli.telemetry import track as _track_telemetry
+  716
+  717              _track_telemetry(
+  718                  &quot;turn_started&quot;,
+  719                  mode=&quot;plan&quot; if self._plan_mode else &quot;agent&quot;,
+  720                  **_provider_telemetry_kwargs(self._runtime.llm),
+  721              )
+  722              user_message = Message(role=&quot;user&quot;, content=user_input)
+  723              text_input = user_message.extract_text(&quot; &quot;).strip()
+  724</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>622</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    def steer(self, content: str | list[ContentPart]) -&gt; None:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>623</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        &quot;&quot;&quot;Queue a steer message for injection into the current turn.&quot;&quot;&quot;</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>624</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        self._steer_queue.put_nowait(content)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>625</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>626</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    async def _consume_pending_steers(self) -&gt; bool:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>627</td><th><span class="line-kind-state">STATE</span></th><td><code>        &quot;&quot;&quot;Drain the steer queue and inject as follow-up user messages.</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>628</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>629</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        Returns True if any steers were consumed.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>630</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>631</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        Note: /btw is intercepted at the UI layer (``classify_input``) before</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>632</td><th><span class="line-kind-state">STATE</span></th><td><code>        reaching the steer queue, so it never appears here.</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>633</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;&quot;&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>634</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        consumed = False</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>635</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        while not self._steer_queue.empty():</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>636</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            content = self._steer_queue.get_nowait()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>637</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>            await self._inject_steer(content)</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>638</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            wire_send(SteerInput(user_input=content))</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>639</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            consumed = True</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>640</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>        return consumed</code></td><td>Returns a result, error, or next step</td></tr><tr><td>641</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>642</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    async def _inject_steer(self, content: str | list[ContentPart]) -&gt; None:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>643</td><th><span class="line-kind-input">INPUT</span></th><td><code>        &quot;&quot;&quot;Inject a single steer as a regular follow-up user message.&quot;&quot;&quot;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>644</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        parts = cast(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>645</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            list[ContentPart],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>646</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            [TextPart(text=content)] if isinstance(content, str) else list(content),</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>647</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>648</td><th><span class="line-kind-input">INPUT</span></th><td><code>        message = Message(role=&quot;user&quot;, content=parts)</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>649</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if self._runtime.llm is None:</code></td><td>Chooses continue, stop, retry, or another path</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="kimi-loop-004" data-finding-dimension="architecture"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>04 · 错误恢复分 OAuth、连接、空响应和 HTTP 状态码</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>step/compaction 使用指数抖动重试；401 仅对 OAuth provider 强制刷新一次；连接/超时可调用 RetryableChatProvider.on_retryable_error 并只恢复一次；空响应和 429/500/502/503/504 进入 tenacity。</p></section><section><span>PLAIN LANGUAGE</span><p>不是遇错一律重试：令牌过期先换令牌，连接坏了让 provider 重建连接，服务繁忙才退避。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>恢复语义清楚；408/409/529 在遥测里可标 retryable，但当前 Python 重试循环并不重试它们。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1220–1233</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1234–1249</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1220-L1249" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/kimisoul.py:1220–1249</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1220-L1249" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1220          def _before_step_retry_sleep(retry_state: RetryCallState) -&gt; None:
+ 1221              self._retry_log(&quot;step&quot;, retry_state)
+ 1222              self._emit_step_retry(retry_state, max_attempts=max_attempts)
+ 1223
+ 1224          @tenacity.retry(
+ 1225              retry=retry_if_exception(self._is_retryable_error),
+ 1226              before_sleep=_before_step_retry_sleep,
+ 1227              wait=wait_exponential_jitter(initial=0.3, max=5, jitter=0.5),
+ 1228              stop=stop_after_attempt(max_attempts),
+ 1229              reraise=True,
+ 1230          )
+ 1231          async def _kosong_step_with_retry() -&gt; StepResult:
+ 1232              return await self._run_with_connection_recovery(
+ 1233                  &quot;step&quot;,
+ 1234                  _run_step_once,
+ 1235                  chat_provider=chat_provider,
+ 1236              )
+ 1237
+ 1238          t0 = time.monotonic()
+ 1239          try:
+ 1240              result = await _kosong_step_with_retry()
+ 1241          except Exception as _step_exc:
+ 1242              if isinstance(_step_exc, ChatProviderError):
+ 1243                  _track_api_error(
+ 1244                      _step_exc,
+ 1245                      llm=self._runtime.llm,
+ 1246                      duration_ms=int((time.monotonic() - t0) * 1000),
+ 1247                      input_tokens=self._context.token_count,
+ 1248                  )
+ 1249              raise
+ 1250
+ 1251          # ═══════════════════════════════════════════════════════════════════════
+ 1252          # 2e.5. USAGE &amp; STATUS UPDATE
+ 1253          # ═══════════════════════════════════════════════════════════════════════
+ 1254          llm_elapsed = time.monotonic() - t0
+ 1255          usage = result.usage
+ 1256          logger.info(
+ 1257              &quot;LLM step completed in {elapsed:.1f}s (input={input_tokens}, output={output_tokens})&quot;,
+ 1258              elapsed=llm_elapsed,
+ 1259              input_tokens=usage.input if usage else &quot;?&quot;,
+ 1260              output_tokens=usage.output if usage else &quot;?&quot;,
+ 1261          )
+ 1262          status_update = StatusUpdate(
+ 1263              token_usage=usage, message_id=result.id, plan_mode=self._plan_mode
+ 1264          )
+ 1265          if usage is not None:
+ 1266              # mark the token count for the context before the step
+ 1267              await self._context.update_token_count(usage.input)
+ 1268              snap = self.status
+ 1269              status_update.context_usage = snap.context_usage
+ 1270              status_update.context_tokens = snap.context_tokens
+ 1271              status_update.max_context_tokens = snap.max_context_tokens
+ 1272          wire_send(status_update)
+ 1273
+ 1274          # ═══════════════════════════════════════════════════════════════════════
+ 1275          # 2e.6. TOOL EXECUTION
+ 1276          # ═══════════════════════════════════════════════════════════════════════
+ 1277          # wait for all tool results (may be interrupted)
+ 1278          plan_mode_before_tools = self._plan_mode
+ 1279          results = await result.tool_results()
+ 1280          logger.debug(&quot;Got tool results: {results}&quot;, results=results)
+ 1281
+ 1282          # Update dedup tracking for the next step
+ 1283          if isinstance(self._agent.toolset, KimiToolset):
+ 1284              self._last_tool_calls = self._agent.toolset.end_step()
+ 1285
+ 1286          # If a tool (EnterPlanMode/ExitPlanMode) changed plan mode during execution,
+ 1287          # send a corrected StatusUpdate so the client sees the up-to-date state.
+ 1288          if self._plan_mode != plan_mode_before_tools:
+ 1289              wire_send(StatusUpdate(plan_mode=self._plan_mode))
+ 1290
+ 1291          # ═══════════════════════════════════════════════════════════════════════
+ 1292          # 2e.7. CONTEXT GROWTH
+ 1293          # ═══════════════════════════════════════════════════════════════════════
+ 1294          # shield the context manipulation from interruption
+ 1295          await asyncio.shield(self._grow_context(result, results))
+ 1296
+ 1297          # ═══════════════════════════════════════════════════════════════════════
+ 1298          # 2e.8. OUTCOME RESOLUTION
+ 1299          # ═══════════════════════════════════════════════════════════════════════
+ 1300          rejected_errors = [
+ 1301              result.return_value
+ 1302              for result in results
+ 1303              if isinstance(result.return_value, ToolRejectedError)
+ 1304          ]
+ 1305          if rejected_errors and not any(e.has_feedback for e in rejected_errors) and self.is_root:
+ 1306              # Pure rejection (no user feedback) — stop the turn.
+ 1307              # Subagents skip this so the LLM can see the rejection and try
+ 1308              # an alternative approach instead of terminating immediately.
+ 1309              _ = self._denwa_renji.fetch_pending_dmail()
+ 1310              return StepOutcome(stop_reason=&quot;tool_rejected&quot;, assistant_message=result.message)
+ 1311
+ 1312          # handle pending D-Mail
+ 1313          if dmail := self._denwa_renji.fetch_pending_dmail():
+ 1314              assert dmail.checkpoint_id &gt;= 0, &quot;DenwaRenji guarantees checkpoint_id &gt;= 0&quot;
+ 1315              assert dmail.checkpoint_id &lt; self._context.n_checkpoints, (
+ 1316                  &quot;DenwaRenji guarantees checkpoint_id &lt; n_checkpoints&quot;
+ 1317              )
+ 1318              # raise to let the main loop take us back to the future
+ 1319              raise BackToTheFuture(
+ 1320                  dmail.checkpoint_id,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>1220</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        def _before_step_retry_sleep(retry_state: RetryCallState) -&gt; None:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1221</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            self._retry_log(&quot;step&quot;, retry_state)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1222</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            self._emit_step_retry(retry_state, max_attempts=max_attempts)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1223</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1224</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        @tenacity.retry(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1225</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            retry=retry_if_exception(self._is_retryable_error),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1226</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            before_sleep=_before_step_retry_sleep,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1227</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            wait=wait_exponential_jitter(initial=0.3, max=5, jitter=0.5),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1228</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            stop=stop_after_attempt(max_attempts),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1229</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            reraise=True,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1230</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1231</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        async def _kosong_step_with_retry() -&gt; StepResult:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1232</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>            return await self._run_with_connection_recovery(</code></td><td>Returns a result, error, or next step</td></tr><tr><td>1233</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                &quot;step&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1234</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                _run_step_once,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1235</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                chat_provider=chat_provider,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1236</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1237</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1238</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        t0 = time.monotonic()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1239</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        try:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>1240</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>            result = await _kosong_step_with_retry()</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>1241</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        except Exception as _step_exc:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1242</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            if isinstance(_step_exc, ChatProviderError):</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>1243</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                _track_api_error(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1244</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    _step_exc,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1245</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    llm=self._runtime.llm,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1246</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    duration_ms=int((time.monotonic() - t0) * 1000),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>1247</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    input_tokens=self._context.token_count,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="kimi-tools-001" data-finding-dimension="tools"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>05 · 工具表由 agent spec 动态装配，插件和 MCP 追加进入同一 Toolset</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>load_agent 从 YAML 选 tools/allowed_tools 并应用 exclude_tools，通过依赖注入实例化；插件冲突时跳过；MCP config 验证后可后台加载或延迟到首轮。</p></section><section><span>PLAIN LANGUAGE</span><p>工具箱不是写死在循环里，而是由角色配置装配；本地插件和远程 MCP 最终都变成模型看到的同类工具。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>角色最小权限容易表达；工具名称冲突按先到内建优先。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>411–430</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>431–451</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/agent.py:411–451</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  411      # Register built-in subagent types before loading tools because some tools render
+  412      # descriptions from the labor market on initialization.
+  413      for subagent_name, subagent_spec in agent_spec.subagents.items():
+  414          logger.debug(
+  415              &quot;Registering builtin subagent type: {subagent_name}&quot;, subagent_name=subagent_name
+  416          )
+  417          builtin_spec = load_agent_spec(subagent_spec.path)
+  418          tool_policy = (
+  419              ToolPolicy(mode=&quot;allowlist&quot;, tools=tuple(builtin_spec.allowed_tools))
+  420              if builtin_spec.allowed_tools is not None
+  421              else ToolPolicy(mode=&quot;inherit&quot;)
+  422          )
+  423          runtime.labor_market.add_builtin_type(
+  424              AgentTypeDefinition(
+  425                  name=subagent_name,
+  426                  description=subagent_spec.description,
+  427                  agent_file=subagent_spec.path,
+  428                  when_to_use=builtin_spec.when_to_use,
+  429                  default_model=builtin_spec.model,
+  430                  tool_policy=tool_policy,
+  431              )
+  432          )
+  433
+  434      toolset = KimiToolset()
+  435      tool_deps = {
+  436          KimiToolset: toolset,
+  437          Runtime: runtime,
+  438          # TODO: remove all the following dependencies and use Runtime instead
+  439          Config: runtime.config,
+  440          BuiltinSystemPromptArgs: runtime.builtin_args,
+  441          Session: runtime.session,
+  442          DenwaRenji: runtime.denwa_renji,
+  443          Approval: runtime.approval,
+  444          LaborMarket: runtime.labor_market,
+  445          Environment: runtime.environment,
+  446      }
+  447      tools = agent_spec.allowed_tools if agent_spec.allowed_tools is not None else agent_spec.tools
+  448      if agent_spec.exclude_tools:
+  449          logger.debug(&quot;Excluding tools: {tools}&quot;, tools=agent_spec.exclude_tools)
+  450          tools = [tool for tool in tools if tool not in agent_spec.exclude_tools]
+  451      toolset.load_tools(tools, tool_deps)
+  452
+  453      # Load plugin tools
+  454      from kimi_cli.plugin.manager import get_plugins_dir
+  455      from kimi_cli.plugin.tool import load_plugin_tools
+  456
+  457      plugin_tools = load_plugin_tools(get_plugins_dir(), runtime.config, approval=runtime.approval)
+  458      for plugin_tool in plugin_tools:
+  459          if toolset.find(plugin_tool.name) is not None:
+  460              logger.warning(
+  461                  &quot;Plugin tool &#39;{name}&#39; conflicts with an existing tool, skipping&quot;,
+  462                  name=plugin_tool.name,
+  463              )
+  464              continue
+  465          toolset.add(plugin_tool)
+  466
+  467      if mcp_configs:
+  468          validated_mcp_configs: list[MCPConfig] = []
+  469          if mcp_configs:
+  470              from fastmcp.mcp_config import MCPConfig
+  471
+  472              for mcp_config in mcp_configs:
+  473                  try:
+  474                      validated_mcp_configs.append(
+  475                          mcp_config
+  476                          if isinstance(mcp_config, MCPConfig)
+  477                          else MCPConfig.model_validate(mcp_config)
+  478                      )
+  479                  except pydantic.ValidationError as e:
+  480                      raise MCPConfigError(f&quot;Invalid MCP config: {e}&quot;) from e
+  481          if start_mcp_loading:
+  482              await toolset.load_mcp_tools(validated_mcp_configs, runtime, in_background=True)
+  483          else:
+  484              toolset.defer_mcp_tool_loading(validated_mcp_configs, runtime)
+  485
+  486      return Agent(
+  487          name=agent_spec.name,
+  488          system_prompt=system_prompt,
+  489          toolset=toolset,
+  490          runtime=runtime,
+  491      )
+  492
+  493
+  494  def _load_system_prompt(
+  495      path: Path, args: dict[str, str], builtin_args: BuiltinSystemPromptArgs
+  496  ) -&gt; str:
+  497      logger.info(&quot;Loading system prompt: {path}&quot;, path=path)
+  498      system_prompt = path.read_text(encoding=&quot;utf-8&quot;).strip()
+  499      logger.debug(
+  500          &quot;Substituting system prompt with builtin args: {builtin_args}, spec args: {spec_args}&quot;,
+  501          builtin_args=builtin_args,
+  502          spec_args=args,
+  503      )
+  504      env = JinjaEnvironment(
+  505          loader=FileSystemLoader(path.parent),
+  506          keep_trailing_newline=True,
+  507          lstrip_blocks=True,
+  508          trim_blocks=True,
+  509          variable_start_string=&quot;${&quot;,
+  510          variable_end_string=&quot;}&quot;,
+  511          undefined=StrictUndefined,
+  512      )
+  513      try:
+  514          template = env.from_string(system_prompt)
+  515          return template.render(asdict(builtin_args), **args)
+  516      except UndefinedError as exc:
+  517          raise SystemPromptTemplateError(f&quot;Missing system prompt arg in {path}: {exc}&quot;) from exc
+  518      except TemplateError as exc:
+  519          raise SystemPromptTemplateError(f&quot;Invalid system prompt template: {path}: {exc}&quot;) from exc
+  520</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>411</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    # Register built-in subagent types before loading tools because some tools render</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>412</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    # descriptions from the labor market on initialization.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>413</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    for subagent_name, subagent_spec in agent_spec.subagents.items():</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>414</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        logger.debug(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>415</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            &quot;Registering builtin subagent type: {subagent_name}&quot;, subagent_name=subagent_name</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>416</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>417</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        builtin_spec = load_agent_spec(subagent_spec.path)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>418</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        tool_policy = (</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>419</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            ToolPolicy(mode=&quot;allowlist&quot;, tools=tuple(builtin_spec.allowed_tools))</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>420</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            if builtin_spec.allowed_tools is not None</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>421</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            else ToolPolicy(mode=&quot;inherit&quot;)</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>422</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>423</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        runtime.labor_market.add_builtin_type(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>424</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            AgentTypeDefinition(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>425</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                name=subagent_name,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>426</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                description=subagent_spec.description,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>427</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                agent_file=subagent_spec.path,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>428</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                when_to_use=builtin_spec.when_to_use,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>429</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                default_model=builtin_spec.model,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>430</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                tool_policy=tool_policy,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>431</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>432</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>433</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>434</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    toolset = KimiToolset()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>435</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    tool_deps = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>436</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        KimiToolset: toolset,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>437</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        Runtime: runtime,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>438</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        # TODO: remove all the following dependencies and use Runtime instead</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="kimi-tools-002" data-finding-dimension="tools"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>06 · 同一模型回复里的不同工具并发启动，完全重复调用共享结果</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Kosong 收到完整 tool call 即调用 Toolset.handle；KimiToolset 为每个新 call 创建 asyncio task。同 step 相同 name+canonical args 不重复执行，而是等待原 task 并复制 result。</p></section><section><span>PLAIN LANGUAGE</span><p>模型一口气开多张不同工单会一起跑；两张完全相同的工单只做一次，第二张拿同一结果。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>吞吐高且减少重复副作用；不同工具之间没有全局串行保证。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>134–149</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>150–167</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/packages/kosong/src/kosong/__init__.py#L134-L167" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/kosong/src/kosong/__init__.py:134–167</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/packages/kosong/src/kosong/__init__.py#L134-L167" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  134      tool_calls: list[ToolCall] = []
+  135      tool_result_futures: dict[str, ToolResultFuture] = {}
+  136
+  137      def future_done_callback(future: ToolResultFuture):
+  138          if on_tool_result:
+  139              try:
+  140                  result = future.result()
+  141                  on_tool_result(result)
+  142              except asyncio.CancelledError:
+  143                  return
+  144
+  145      async def on_tool_call(tool_call: ToolCall):
+  146          tool_calls.append(tool_call)
+  147          result = toolset.handle(tool_call)
+  148
+  149          if isinstance(result, ToolResult):
+  150              future = ToolResultFuture()
+  151              future.add_done_callback(future_done_callback)
+  152              future.set_result(result)
+  153              tool_result_futures[tool_call.id] = future
+  154          else:
+  155              result.add_done_callback(future_done_callback)
+  156              tool_result_futures[tool_call.id] = result
+  157
+  158      try:
+  159          result = await generate(
+  160              chat_provider,
+  161              system_prompt,
+  162              toolset.tools,
+  163              history,
+  164              on_message_part=on_message_part,
+  165              on_tool_call=on_tool_call,
+  166              on_trace_id=on_trace_id,
+  167          )
+  168      except (ChatProviderError, asyncio.CancelledError):
+  169          # cancel all the futures to avoid hanging tasks
+  170          for future in tool_result_futures.values():
+  171              future.remove_done_callback(future_done_callback)
+  172              future.cancel()
+  173          await asyncio.gather(*tool_result_futures.values(), return_exceptions=True)
+  174          raise
+  175
+  176      return StepResult(
+  177          result.id,
+  178          result.message,
+  179          result.usage,
+  180          tool_calls,
+  181          tool_result_futures,
+  182          trace_id=result.trace_id,
+  183      )
+  184
+  185
+  186  @dataclass(frozen=True, slots=True)
+  187  class StepResult:
+  188      id: str | None
+  189      &quot;&quot;&quot;The ID of the generated message.&quot;&quot;&quot;
+  190
+  191      message: Message
+  192      &quot;&quot;&quot;The message generated in this step.&quot;&quot;&quot;
+  193
+  194      usage: TokenUsage | None
+  195      &quot;&quot;&quot;The token usage in this step.&quot;&quot;&quot;
+  196
+  197      tool_calls: list[ToolCall]
+  198      &quot;&quot;&quot;All the tool calls generated in this step.&quot;&quot;&quot;
+  199
+  200      _tool_result_futures: dict[str, ToolResultFuture]
+  201      &quot;&quot;&quot;@private The futures of the results of the spawned tool calls.&quot;&quot;&quot;
+  202
+  203      trace_id: str | None = None
+  204      &quot;&quot;&quot;The ``x-trace-id`` response header of the request, if the provider exposes it.&quot;&quot;&quot;
+  205
+  206      async def tool_results(self) -&gt; list[ToolResult]:
+  207          &quot;&quot;&quot;All the tool results returned by corresponding tool calls.&quot;&quot;&quot;
+  208          if not self._tool_result_futures:
+  209              return []
+  210
+  211          try:
+  212              results: list[ToolResult] = []
+  213              for tool_call in self.tool_calls:
+  214                  future = self._tool_result_futures[tool_call.id]
+  215                  result = await future
+  216                  results.append(result)
+  217              return results
+  218          finally:
+  219              # one exception should cancel all the futures to avoid hanging tasks
+  220              for future in self._tool_result_futures.values():
+  221                  future.cancel()
+  222              await asyncio.gather(*self._tool_result_futures.values(), return_exceptions=True)
+  223</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>134</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    tool_calls: list[ToolCall] = []</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>135</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    tool_result_futures: dict[str, ToolResultFuture] = {}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>136</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>137</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    def future_done_callback(future: ToolResultFuture):</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>138</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if on_tool_result:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>139</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            try:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>140</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                result = future.result()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>141</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                on_tool_result(result)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>142</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            except asyncio.CancelledError:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>143</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>                return</code></td><td>Returns a result, error, or next step</td></tr><tr><td>144</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>145</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    async def on_tool_call(tool_call: ToolCall):</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>146</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>        tool_calls.append(tool_call)</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>147</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>        result = toolset.handle(tool_call)</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>148</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>149</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        if isinstance(result, ToolResult):</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>150</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            future = ToolResultFuture()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>151</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            future.add_done_callback(future_done_callback)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>152</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            future.set_result(result)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>153</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>            tool_result_futures[tool_call.id] = future</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>154</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        else:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>155</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            result.add_done_callback(future_done_callback)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>156</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>            tool_result_futures[tool_call.id] = result</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>157</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>158</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    try:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>159</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>        result = await generate(</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>160</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            chat_provider,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>161</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            system_prompt,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="kimi-tools-003" data-finding-dimension="tools"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>07 · 跨 step 重复调用按 3/5/8/12 阶梯提醒并强停</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Toolset 对 canonical tool call 维护连续 streak：第 3 次开始提示换方法，第 5 次展示调用细节，第 8 次要求停止工具并总结，第 12 次设置 force_stop_turn。</p></section><section><span>PLAIN LANGUAGE</span><p>不是第一次重复就封杀，而是逐级提醒；连续十二次原地打转才硬踩刹车。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>降低模型卡死和费用失控，也允许合理重试；canonicalization 只比较名称和 JSON 参数，不判断外部状态是否变化。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>116–143</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>144–172</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/toolset.py#L116-L172" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/toolset.py:116–172</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/toolset.py#L116-L172" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  116  _REMINDER_TEXT_1 = (
+  117      &quot;\n\n&lt;system-reminder&gt;\n&quot;
+  118      &quot;You are repeating the exact same tool call with identical parameters.&quot;
+  119      &quot; Please carefully analyze the previous result. If the task is not yet complete,&quot;
+  120      &quot; try a different method or parameters instead of repeating the same call.&quot;
+  121      &quot;\n&lt;/system-reminder&gt;&quot;
+  122  )
+  123
+  124
+  125  def _make_reminder_text_2(tool_name: str, repeat_count: int, canonical_args: str) -&gt; str:
+  126      return (
+  127          &quot;\n\n&lt;system-reminder&gt;\n&quot;
+  128          &quot;You have repeatedly called the same tool with identical parameters many times.\n&quot;
+  129          &quot;Repeated tool call detected:\n&quot;
+  130          f&quot;- tool: {tool_name}\n&quot;
+  131          f&quot;- repeated_times: {repeat_count}\n&quot;
+  132          f&quot;- arguments: {canonical_args}\n&quot;
+  133          &quot;The previous repeated calls did not make progress. Do not call this exact same tool &quot;
+  134          &quot;with the exact same arguments again.\n&quot;
+  135          &quot;Carefully inspect the latest tool result and choose a different next action, &quot;
+  136          &quot;different parameters, or finish the task if enough evidence has been gathered.&quot;
+  137          &quot;\n&lt;/system-reminder&gt;&quot;
+  138      )
+  139
+  140
+  141  _REMINDER_TEXT_3 = (
+  142      &quot;\n\n&lt;system-reminder&gt;\n&quot;
+  143      &quot;You are stuck in a dead end and have repeatedly made the same function call without &quot;
+  144      &quot;progress.\n&quot;
+  145      &quot;Stop all function calls immediately. Do not call any tool in your next response.\n&quot;
+  146      &quot;In analysis, review the current execution state and identify why progress is blocked.\n&quot;
+  147      &quot;Then return a text-only summary to the user that reports the current problem, what has &quot;
+  148      &quot;already been tried, and what information or decision is needed next.&quot;
+  149      &quot;\n&lt;/system-reminder&gt;&quot;
+  150  )
+  151
+  152
+  153  _REPEAT_REMINDER_1_START = 3
+  154  _REPEAT_REMINDER_2_START = 5
+  155  _REPEAT_REMINDER_3_START = 8
+  156  _REPEAT_FORCE_STOP_STREAK = 12
+  157
+  158  type RepeatAction = Literal[&quot;none&quot;, &quot;r1&quot;, &quot;r2&quot;, &quot;r3&quot;, &quot;stop&quot;]
+  159
+  160
+  161  def _build_repeat_reminder(
+  162      streak: int, tool_name: str, canonical_args: str
+  163  ) -&gt; tuple[RepeatAction, str | None]:
+  164      if streak &gt;= _REPEAT_FORCE_STOP_STREAK:
+  165          return &quot;stop&quot;, _REMINDER_TEXT_3
+  166      if streak &gt;= _REPEAT_REMINDER_3_START:
+  167          return &quot;r3&quot;, _REMINDER_TEXT_3
+  168      if streak &gt;= _REPEAT_REMINDER_2_START:
+  169          return &quot;r2&quot;, _make_reminder_text_2(tool_name, streak, canonical_args)
+  170      if streak &gt;= _REPEAT_REMINDER_1_START:
+  171          return &quot;r1&quot;, _REMINDER_TEXT_1
+  172      return &quot;none&quot;, None
+  173
+  174
+  175  def _sort_json_value(value: object) -&gt; object:
+  176      if isinstance(value, list):
+  177          return [_sort_json_value(item) for item in cast(&quot;list[object]&quot;, value)]
+  178      if isinstance(value, dict):
+  179          value_dict = cast(&quot;dict[str, object]&quot;, value)
+  180          return {key: _sort_json_value(value_dict[key]) for key in sorted(value_dict)}
+  181      return value
+  182
+  183
+  184  def _canonical_tool_arguments(arguments: Any) -&gt; str:
+  185      try:
+  186          return json.dumps(
+  187              _sort_json_value(arguments),
+  188              ensure_ascii=False,
+  189              separators=(&quot;,&quot;, &quot;:&quot;),
+  190          )
+  191      except (TypeError, ValueError):
+  192          return str(arguments)
+  193
+  194
+  195  def _canonical_tool_arguments_text(arguments: str) -&gt; str:
+  196      try:
+  197          return _canonical_tool_arguments(json.loads(arguments, strict=False))
+  198      except json.JSONDecodeError:
+  199          return arguments
+  200
+  201
+  202  def _normalize_call_key(tool_name: str, arguments: str) -&gt; ToolCallKey:
+  203      return (tool_name, _canonical_tool_arguments_text(arguments))
+  204
+  205
+  206  def _append_reminder_to_return_value(
+  207      return_value: Any, reminder_text: str = _REMINDER_TEXT_1
+  208  ) -&gt; Any:
+  209      &quot;&quot;&quot;Append dedup reminder text to a ToolReturnValue output.&quot;&quot;&quot;
+  210      from kosong.tooling import ToolReturnValue
+  211
+  212      if not isinstance(return_value, ToolReturnValue):
+  213          return return_value
+  214
+  215      output = return_value.output
+  216
+  217      if isinstance(output, str):
+  218          new_output = output + reminder_text
+  219      else:
+  220          new_output = list(output)
+  221          if new_output and isinstance(new_output[-1], TextPart):
+  222              new_output[-1] = TextPart(text=new_output[-1].text + reminder_text)
+  223          else:
+  224              new_output.append(TextPart(text=reminder_text))
+  225
+  226      return return_value.model_copy(update={&quot;output&quot;: new_output})
+  227
+  228
+  229  class KimiToolset:
+  230      def __init__(self) -&gt; None:
+  231          self._tool_dict: dict[str, ToolType] = {}
+  232          self._hidden_tools: set[str] = set()
+  233          self._mcp_servers: dict[str, MCPServerInfo] = {}
+  234          self._mcp_loading_task: asyncio.Task[None] | None = None
+  235          self._deferred_mcp_load: tuple[list[MCPConfig], Runtime] | None = None
+  236          self._hook_engine: HookEngine = HookEngine()
+  237
+  238          # Deduplication state
+  239          self._previous_step_calls: list[ToolCallKey] = []
+  240          self._current_step_calls: list[ToolCallKey] = []
+  241          self._current_step_tasks: dict[ToolCallKey, asyncio.Task[ToolResult]] = {}
+  242          self._seen_call_keys: set[ToolCallKey] = set()
+  243          self._consecutive_key: ToolCallKey | None = None</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>116</td><th><span class="line-kind-flow">FLOW</span></th><td><code>_REMINDER_TEXT_1 = (</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>117</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    &quot;\n\n&lt;system-reminder&gt;\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>118</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    &quot;You are repeating the exact same tool call with identical parameters.&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>119</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    &quot; Please carefully analyze the previous result. If the task is not yet complete,&quot;</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>120</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    &quot; try a different method or parameters instead of repeating the same call.&quot;</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>121</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    &quot;\n&lt;/system-reminder&gt;&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>122</td><th><span class="line-kind-flow">FLOW</span></th><td><code>)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>123</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>124</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>125</td><th><span class="line-kind-flow">FLOW</span></th><td><code>def _make_reminder_text_2(tool_name: str, repeat_count: int, canonical_args: str) -&gt; str:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>126</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>    return (</code></td><td>Returns a result, error, or next step</td></tr><tr><td>127</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;\n\n&lt;system-reminder&gt;\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>128</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;You have repeatedly called the same tool with identical parameters many times.\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>129</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;Repeated tool call detected:\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>130</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        f&quot;- tool: {tool_name}\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>131</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        f&quot;- repeated_times: {repeat_count}\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>132</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        f&quot;- arguments: {canonical_args}\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>133</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;The previous repeated calls did not make progress. Do not call this exact same tool &quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>134</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;with the exact same arguments again.\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>135</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;Carefully inspect the latest tool result and choose a different next action, &quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>136</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        &quot;different parameters, or finish the task if enough evidence has been gathered.&quot;</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>137</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        &quot;\n&lt;/system-reminder&gt;&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>138</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>139</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>140</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>141</td><th><span class="line-kind-flow">FLOW</span></th><td><code>_REMINDER_TEXT_3 = (</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>142</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    &quot;\n\n&lt;system-reminder&gt;\n&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>143</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    &quot;You are stuck in a dead end and have repeatedly made the same function call without &quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="kimi-tools-004" data-finding-dimension="tools"><header><span class="finding-index">08</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>08 · 前台 Shell 有 5 分钟上限，后台任务可到 24 小时并持久通知</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Shell 参数限制前台 timeout &lt;=300s、后台 &lt;=86400s；两者都先 approval。前台通过 KAOS 流式读 stdout/stderr，取消/超时 kill 当前进程；后台交 BackgroundTaskManager 持久化，完成后自动通知，并可 TaskList/Output/Stop 管理。</p></section><section><span>PLAIN LANGUAGE</span><p>短命令当场等，长 build/server 作为有编号的后台任务继续跑，不用让对话一直卡住。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长任务体验完整；前台 LocalKaos.kill 只 kill 直接子进程，后台 worker 才显式管理整个进程组。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>22–38</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>39–57</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/tools/shell/__init__.py#L22-L57" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/tools/shell/__init__.py:22–57</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/tools/shell/__init__.py#L22-L57" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   22  MAX_FOREGROUND_TIMEOUT = 5 * 60
+   23  MAX_BACKGROUND_TIMEOUT = 24 * 60 * 60
+   24
+   25
+   26  class Params(BaseModel):
+   27      command: str = Field(description=&quot;The command to execute.&quot;)
+   28      timeout: int = Field(
+   29          description=(
+   30              &quot;The timeout in seconds for the command to execute. &quot;
+   31              &quot;If the command takes longer than this, it will be killed.&quot;
+   32          ),
+   33          default=60,
+   34          ge=1,
+   35          le=MAX_BACKGROUND_TIMEOUT,
+   36      )
+   37      run_in_background: bool = Field(
+   38          default=False,
+   39          description=&quot;Whether to run the command as a background task.&quot;,
+   40      )
+   41      description: str = Field(
+   42          default=&quot;&quot;,
+   43          description=(
+   44              &quot;A short description for the background task. Required when run_in_background=true.&quot;
+   45          ),
+   46      )
+   47
+   48      @model_validator(mode=&quot;after&quot;)
+   49      def _validate_background_fields(self) -&gt; Self:
+   50          if self.run_in_background and not self.description.strip():
+   51              raise ValueError(&quot;description is required when run_in_background is true&quot;)
+   52          if not self.run_in_background and self.timeout &gt; MAX_FOREGROUND_TIMEOUT:
+   53              raise ValueError(
+   54                  f&quot;timeout must be &lt;= {MAX_FOREGROUND_TIMEOUT}s for foreground commands; &quot;
+   55                  f&quot;use run_in_background=true for longer timeouts (up to {MAX_BACKGROUND_TIMEOUT}s)&quot;
+   56              )
+   57          return self
+   58
+   59
+   60  class Shell(CallableTool2[Params]):
+   61      name: str = &quot;Shell&quot;
+   62      params: type[Params] = Params
+   63
+   64      def __init__(self, approval: Approval, environment: Environment, runtime: Runtime):
+   65          super().__init__(
+   66              description=load_desc(
+   67                  Path(__file__).parent / &quot;bash.md&quot;,
+   68                  {&quot;SHELL&quot;: f&quot;{environment.shell_name} (`{environment.shell_path}`)&quot;},
+   69              )
+   70          )
+   71          self._approval = approval
+   72          self._shell_path = environment.shell_path
+   73          self._on_windows = environment.os_kind == &quot;Windows&quot;
+   74          self._runtime = runtime
+   75
+   76      def _preprocess_command(self, command: str) -&gt; str:
+   77          &quot;&quot;&quot;Apply platform-specific defensive rewrites before execution.&quot;&quot;&quot;
+   78          return rewrite_windows_null_redirect(command, on_windows=self._on_windows)
+   79
+   80      @override
+   81      async def __call__(self, params: Params) -&gt; ToolReturnValue:
+   82          builder = ToolResultBuilder()
+   83
+   84          if not params.command:
+   85              return builder.error(&quot;Command cannot be empty.&quot;, brief=&quot;Empty command&quot;)
+   86
+   87          if params.run_in_background:
+   88              return await self._run_in_background(params)
+   89
+   90          command = self._preprocess_command(params.command)
+   91
+   92          result = await self._approval.request(
+   93              self.name,
+   94              &quot;run command&quot;,
+   95              f&quot;Run command `{command}`&quot;,
+   96              display=[
+   97                  ShellDisplayBlock(
+   98                      language=&quot;bash&quot;,
+   99                      command=command,
+  100                  )
+  101              ],
+  102          )
+  103          if not result:
+  104              return result.rejection_error()
+  105
+  106          def stdout_cb(line: bytes):
+  107              line_str = line.decode(encoding=&quot;utf-8&quot;, errors=&quot;replace&quot;)
+  108              builder.write(line_str)
+  109
+  110          def stderr_cb(line: bytes):
+  111              line_str = line.decode(encoding=&quot;utf-8&quot;, errors=&quot;replace&quot;)
+  112              builder.write(line_str)
+  113
+  114          try:
+  115              exitcode = await self._run_shell_command(command, stdout_cb, stderr_cb, params.timeout)
+  116
+  117              if exitcode == 0:
+  118                  return builder.ok(&quot;Command executed successfully.&quot;)
+  119              else:
+  120                  brief = f&quot;Failed with exit code: {exitcode}&quot;
+  121                  tail = builder.tail()
+  122                  if tail:
+  123                      brief += f&quot;\n{tail}&quot;
+  124                  return builder.error(
+  125                      f&quot;Command failed with exit code: {exitcode}.&quot;,
+  126                      brief=brief,
+  127                  )
+  128          except TimeoutError:</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>22</td><th><span class="line-kind-flow">FLOW</span></th><td><code>MAX_FOREGROUND_TIMEOUT = 5 * 60</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>MAX_BACKGROUND_TIMEOUT = 24 * 60 * 60</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-flow">FLOW</span></th><td><code>class Params(BaseModel):</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>27</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    command: str = Field(description=&quot;The command to execute.&quot;)</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    timeout: int = Field(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>29</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        description=(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>30</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            &quot;The timeout in seconds for the command to execute. &quot;</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>31</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            &quot;If the command takes longer than this, it will be killed.&quot;</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>32</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        ),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>33</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        default=60,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>34</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        ge=1,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>35</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        le=MAX_BACKGROUND_TIMEOUT,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>36</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>37</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    run_in_background: bool = Field(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        default=False,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        description=&quot;Whether to run the command as a background task.&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>40</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>41</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    description: str = Field(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>42</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        default=&quot;&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>43</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        description=(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>44</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            &quot;A short description for the background task. Required when run_in_background=true.&quot;</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>45</td><th><span class="line-kind-flow">FLOW</span></th><td><code>        ),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>46</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>47</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>48</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    @model_validator(mode=&quot;after&quot;)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>49</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    def _validate_background_fields(self) -&gt; Self:</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--help</code></h3><small>flag · src/kimi_cli/cli/__init__.py:46</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L41-L58" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   41      cls=LazySubcommandGroup,
+   42      epilog=&quot;&quot;&quot;\b\
+   43  Documentation:        https://moonshotai.github.io/kimi-cli/\n
+   44  LLM friendly version: https://moonshotai.github.io/kimi-cli/llms.txt&quot;&quot;&quot;,
+   45      add_completion=False,
+   46      context_settings={&quot;help_option_names&quot;: [&quot;-h&quot;, &quot;--help&quot;]},
+   47      help=&quot;Kimi, your next CLI agent.&quot;,
+   48  )
+   49
+   50  UIMode = Literal[&quot;shell&quot;, &quot;print&quot;, &quot;acp&quot;, &quot;wire&quot;]
+   51
+   52
+   53  class ExitCode:
+   54      SUCCESS = 0
+   55      FAILURE = 1
+   56      RETRYABLE = 75  # EX_TEMPFAIL from sysexits.h
+   57
+   58
+   59  InputFormat = Literal[&quot;text&quot;, &quot;stream-json&quot;]
+   60  OutputFormat = Literal[&quot;text&quot;, &quot;stream-json&quot;]
+   61
+   62
+   63  def _strip_session_id_suffix(title: str, session_id: str) -&gt; str:
+   64      &quot;&quot;&quot;Remove the trailing `` (session_id)`` suffix from a session title, if present.&quot;&quot;&quot;
+   65      suffix = f&quot; ({session_id})&quot;
+   66      return title.rsplit(suffix, 1)[0] if title.endswith(suffix) else title
+   67
+   68
+   69  def _version_callback(value: bool) -&gt; None:
+   70      if value:
+   71          from kimi_cli.constant import get_version
+   72
+   73          typer.echo(f&quot;kimi, version {get_version()}&quot;)
+   74          raise typer.Exit()
+   75
+   76
+   77  @cli.callback(invoke_without_command=True)
+   78  def kimi(
+   79      ctx: typer.Context,
+   80      # Meta
+   81      version: Annotated[
+   82          bool,
+   83          typer.Option(
+   84              &quot;--version&quot;,
+   85              &quot;-V&quot;,
+   86              help=&quot;Show version and exit.&quot;,
+   87              callback=_version_callback,
+   88              is_eager=True,
+   89          ),
+   90      ] = False,
+   91      verbose: Annotated[
+   92          bool,
+   93          typer.Option(
+   94              &quot;--verbose&quot;,
+   95              help=&quot;Print verbose information. Default: no.&quot;,
+   96          ),
+   97      ] = False,
+   98      debug: Annotated[
+   99          bool,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--help#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--version</code></h3><small>flag · src/kimi_cli/cli/__init__.py:84</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L79-L96" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   79      ctx: typer.Context,
+   80      # Meta
+   81      version: Annotated[
+   82          bool,
+   83          typer.Option(
+   84              &quot;--version&quot;,
+   85              &quot;-V&quot;,
+   86              help=&quot;Show version and exit.&quot;,
+   87              callback=_version_callback,
+   88              is_eager=True,
+   89          ),
+   90      ] = False,
+   91      verbose: Annotated[
+   92          bool,
+   93          typer.Option(
+   94              &quot;--verbose&quot;,
+   95              help=&quot;Print verbose information. Default: no.&quot;,
+   96          ),
+   97      ] = False,
+   98      debug: Annotated[
+   99          bool,
+  100          typer.Option(
+  101              &quot;--debug&quot;,
+  102              help=&quot;Log debug information. Default: no.&quot;,
+  103          ),
+  104      ] = False,
+  105      # Basic configuration
+  106      local_work_dir: Annotated[
+  107          Path | None,
+  108          typer.Option(
+  109              &quot;--work-dir&quot;,
+  110              &quot;-w&quot;,
+  111              exists=True,
+  112              file_okay=False,
+  113              dir_okay=True,
+  114              readable=True,
+  115              writable=True,
+  116              help=&quot;Working directory for the agent. Default: current directory.&quot;,
+  117          ),
+  118      ] = None,
+  119      local_add_dirs: Annotated[
+  120          list[Path] | None,
+  121          typer.Option(
+  122              &quot;--add-dir&quot;,
+  123              exists=True,
+  124              file_okay=False,
+  125              dir_okay=True,
+  126              readable=True,
+  127              help=(
+  128                  &quot;Add an additional directory to the workspace scope. &quot;
+  129                  &quot;Can be specified multiple times.&quot;
+  130              ),
+  131          ),
+  132      ] = None,
+  133      session_id: Annotated[
+  134          str | None,
+  135          typer.Option(
+  136              &quot;--session&quot;,
+  137              &quot;--resume&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--version#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--verbose</code></h3><small>flag · src/kimi_cli/cli/__init__.py:94</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L89-L106" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   89          ),
+   90      ] = False,
+   91      verbose: Annotated[
+   92          bool,
+   93          typer.Option(
+   94              &quot;--verbose&quot;,
+   95              help=&quot;Print verbose information. Default: no.&quot;,
+   96          ),
+   97      ] = False,
+   98      debug: Annotated[
+   99          bool,
+  100          typer.Option(
+  101              &quot;--debug&quot;,
+  102              help=&quot;Log debug information. Default: no.&quot;,
+  103          ),
+  104      ] = False,
+  105      # Basic configuration
+  106      local_work_dir: Annotated[
+  107          Path | None,
+  108          typer.Option(
+  109              &quot;--work-dir&quot;,
+  110              &quot;-w&quot;,
+  111              exists=True,
+  112              file_okay=False,
+  113              dir_okay=True,
+  114              readable=True,
+  115              writable=True,
+  116              help=&quot;Working directory for the agent. Default: current directory.&quot;,
+  117          ),
+  118      ] = None,
+  119      local_add_dirs: Annotated[
+  120          list[Path] | None,
+  121          typer.Option(
+  122              &quot;--add-dir&quot;,
+  123              exists=True,
+  124              file_okay=False,
+  125              dir_okay=True,
+  126              readable=True,
+  127              help=(
+  128                  &quot;Add an additional directory to the workspace scope. &quot;
+  129                  &quot;Can be specified multiple times.&quot;
+  130              ),
+  131          ),
+  132      ] = None,
+  133      session_id: Annotated[
+  134          str | None,
+  135          typer.Option(
+  136              &quot;--session&quot;,
+  137              &quot;--resume&quot;,
+  138              &quot;-S&quot;,
+  139              &quot;-r&quot;,
+  140              help=(
+  141                  &quot;Resume a session. &quot;
+  142                  &quot;With ID: resume that session. &quot;
+  143                  &quot;Without ID: interactively pick a session.&quot;
+  144              ),
+  145          ),
+  146      ] = None,
+  147      continue_: Annotated[</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--verbose#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--debug</code></h3><small>flag · src/kimi_cli/cli/__init__.py:101</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L96-L113" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   96          ),
+   97      ] = False,
+   98      debug: Annotated[
+   99          bool,
+  100          typer.Option(
+  101              &quot;--debug&quot;,
+  102              help=&quot;Log debug information. Default: no.&quot;,
+  103          ),
+  104      ] = False,
+  105      # Basic configuration
+  106      local_work_dir: Annotated[
+  107          Path | None,
+  108          typer.Option(
+  109              &quot;--work-dir&quot;,
+  110              &quot;-w&quot;,
+  111              exists=True,
+  112              file_okay=False,
+  113              dir_okay=True,
+  114              readable=True,
+  115              writable=True,
+  116              help=&quot;Working directory for the agent. Default: current directory.&quot;,
+  117          ),
+  118      ] = None,
+  119      local_add_dirs: Annotated[
+  120          list[Path] | None,
+  121          typer.Option(
+  122              &quot;--add-dir&quot;,
+  123              exists=True,
+  124              file_okay=False,
+  125              dir_okay=True,
+  126              readable=True,
+  127              help=(
+  128                  &quot;Add an additional directory to the workspace scope. &quot;
+  129                  &quot;Can be specified multiple times.&quot;
+  130              ),
+  131          ),
+  132      ] = None,
+  133      session_id: Annotated[
+  134          str | None,
+  135          typer.Option(
+  136              &quot;--session&quot;,
+  137              &quot;--resume&quot;,
+  138              &quot;-S&quot;,
+  139              &quot;-r&quot;,
+  140              help=(
+  141                  &quot;Resume a session. &quot;
+  142                  &quot;With ID: resume that session. &quot;
+  143                  &quot;Without ID: interactively pick a session.&quot;
+  144              ),
+  145          ),
+  146      ] = None,
+  147      continue_: Annotated[
+  148          bool,
+  149          typer.Option(
+  150              &quot;--continue&quot;,
+  151              &quot;-C&quot;,
+  152              help=&quot;Continue the previous session for the working directory. Default: no.&quot;,
+  153          ),
+  154      ] = False,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--debug#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--work-dir</code></h3><small>flag · src/kimi_cli/cli/__init__.py:109</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L104-L121" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  104      ] = False,
+  105      # Basic configuration
+  106      local_work_dir: Annotated[
+  107          Path | None,
+  108          typer.Option(
+  109              &quot;--work-dir&quot;,
+  110              &quot;-w&quot;,
+  111              exists=True,
+  112              file_okay=False,
+  113              dir_okay=True,
+  114              readable=True,
+  115              writable=True,
+  116              help=&quot;Working directory for the agent. Default: current directory.&quot;,
+  117          ),
+  118      ] = None,
+  119      local_add_dirs: Annotated[
+  120          list[Path] | None,
+  121          typer.Option(
+  122              &quot;--add-dir&quot;,
+  123              exists=True,
+  124              file_okay=False,
+  125              dir_okay=True,
+  126              readable=True,
+  127              help=(
+  128                  &quot;Add an additional directory to the workspace scope. &quot;
+  129                  &quot;Can be specified multiple times.&quot;
+  130              ),
+  131          ),
+  132      ] = None,
+  133      session_id: Annotated[
+  134          str | None,
+  135          typer.Option(
+  136              &quot;--session&quot;,
+  137              &quot;--resume&quot;,
+  138              &quot;-S&quot;,
+  139              &quot;-r&quot;,
+  140              help=(
+  141                  &quot;Resume a session. &quot;
+  142                  &quot;With ID: resume that session. &quot;
+  143                  &quot;Without ID: interactively pick a session.&quot;
+  144              ),
+  145          ),
+  146      ] = None,
+  147      continue_: Annotated[
+  148          bool,
+  149          typer.Option(
+  150              &quot;--continue&quot;,
+  151              &quot;-C&quot;,
+  152              help=&quot;Continue the previous session for the working directory. Default: no.&quot;,
+  153          ),
+  154      ] = False,
+  155      config_string: Annotated[
+  156          str | None,
+  157          typer.Option(
+  158              &quot;--config&quot;,
+  159              help=&quot;Config TOML/JSON string to load. Default: none.&quot;,
+  160          ),
+  161      ] = None,
+  162      config_file: Annotated[</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--work-dir#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--add-dir</code></h3><small>flag · src/kimi_cli/cli/__init__.py:122</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L117-L134" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  117          ),
+  118      ] = None,
+  119      local_add_dirs: Annotated[
+  120          list[Path] | None,
+  121          typer.Option(
+  122              &quot;--add-dir&quot;,
+  123              exists=True,
+  124              file_okay=False,
+  125              dir_okay=True,
+  126              readable=True,
+  127              help=(
+  128                  &quot;Add an additional directory to the workspace scope. &quot;
+  129                  &quot;Can be specified multiple times.&quot;
+  130              ),
+  131          ),
+  132      ] = None,
+  133      session_id: Annotated[
+  134          str | None,
+  135          typer.Option(
+  136              &quot;--session&quot;,
+  137              &quot;--resume&quot;,
+  138              &quot;-S&quot;,
+  139              &quot;-r&quot;,
+  140              help=(
+  141                  &quot;Resume a session. &quot;
+  142                  &quot;With ID: resume that session. &quot;
+  143                  &quot;Without ID: interactively pick a session.&quot;
+  144              ),
+  145          ),
+  146      ] = None,
+  147      continue_: Annotated[
+  148          bool,
+  149          typer.Option(
+  150              &quot;--continue&quot;,
+  151              &quot;-C&quot;,
+  152              help=&quot;Continue the previous session for the working directory. Default: no.&quot;,
+  153          ),
+  154      ] = False,
+  155      config_string: Annotated[
+  156          str | None,
+  157          typer.Option(
+  158              &quot;--config&quot;,
+  159              help=&quot;Config TOML/JSON string to load. Default: none.&quot;,
+  160          ),
+  161      ] = None,
+  162      config_file: Annotated[
+  163          Path | None,
+  164          typer.Option(
+  165              &quot;--config-file&quot;,
+  166              exists=True,
+  167              file_okay=True,
+  168              dir_okay=False,
+  169              readable=True,
+  170              help=&quot;Config TOML/JSON file to load. Default: ~/.kimi/config.toml.&quot;,
+  171          ),
+  172      ] = None,
+  173      model_name: Annotated[
+  174          str | None,
+  175          typer.Option(</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--add-dir#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--session</code></h3><small>flag · src/kimi_cli/cli/__init__.py:136</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L131-L148" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  131          ),
+  132      ] = None,
+  133      session_id: Annotated[
+  134          str | None,
+  135          typer.Option(
+  136              &quot;--session&quot;,
+  137              &quot;--resume&quot;,
+  138              &quot;-S&quot;,
+  139              &quot;-r&quot;,
+  140              help=(
+  141                  &quot;Resume a session. &quot;
+  142                  &quot;With ID: resume that session. &quot;
+  143                  &quot;Without ID: interactively pick a session.&quot;
+  144              ),
+  145          ),
+  146      ] = None,
+  147      continue_: Annotated[
+  148          bool,
+  149          typer.Option(
+  150              &quot;--continue&quot;,
+  151              &quot;-C&quot;,
+  152              help=&quot;Continue the previous session for the working directory. Default: no.&quot;,
+  153          ),
+  154      ] = False,
+  155      config_string: Annotated[
+  156          str | None,
+  157          typer.Option(
+  158              &quot;--config&quot;,
+  159              help=&quot;Config TOML/JSON string to load. Default: none.&quot;,
+  160          ),
+  161      ] = None,
+  162      config_file: Annotated[
+  163          Path | None,
+  164          typer.Option(
+  165              &quot;--config-file&quot;,
+  166              exists=True,
+  167              file_okay=True,
+  168              dir_okay=False,
+  169              readable=True,
+  170              help=&quot;Config TOML/JSON file to load. Default: ~/.kimi/config.toml.&quot;,
+  171          ),
+  172      ] = None,
+  173      model_name: Annotated[
+  174          str | None,
+  175          typer.Option(
+  176              &quot;--model&quot;,
+  177              &quot;-m&quot;,
+  178              help=&quot;LLM model to use. Default: default model set in config file.&quot;,
+  179          ),
+  180      ] = None,
+  181      thinking: Annotated[
+  182          bool | None,
+  183          typer.Option(
+  184              &quot;--thinking/--no-thinking&quot;,
+  185              help=&quot;Enable thinking mode. Default: default thinking mode set in config file.&quot;,
+  186          ),
+  187      ] = None,
+  188      # Run mode
+  189      yolo: Annotated[</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--session#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--resume</code></h3><small>flag · src/kimi_cli/cli/__init__.py:137</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L132-L149" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  132      ] = None,
+  133      session_id: Annotated[
+  134          str | None,
+  135          typer.Option(
+  136              &quot;--session&quot;,
+  137              &quot;--resume&quot;,
+  138              &quot;-S&quot;,
+  139              &quot;-r&quot;,
+  140              help=(
+  141                  &quot;Resume a session. &quot;
+  142                  &quot;With ID: resume that session. &quot;
+  143                  &quot;Without ID: interactively pick a session.&quot;
+  144              ),
+  145          ),
+  146      ] = None,
+  147      continue_: Annotated[
+  148          bool,
+  149          typer.Option(
+  150              &quot;--continue&quot;,
+  151              &quot;-C&quot;,
+  152              help=&quot;Continue the previous session for the working directory. Default: no.&quot;,
+  153          ),
+  154      ] = False,
+  155      config_string: Annotated[
+  156          str | None,
+  157          typer.Option(
+  158              &quot;--config&quot;,
+  159              help=&quot;Config TOML/JSON string to load. Default: none.&quot;,
+  160          ),
+  161      ] = None,
+  162      config_file: Annotated[
+  163          Path | None,
+  164          typer.Option(
+  165              &quot;--config-file&quot;,
+  166              exists=True,
+  167              file_okay=True,
+  168              dir_okay=False,
+  169              readable=True,
+  170              help=&quot;Config TOML/JSON file to load. Default: ~/.kimi/config.toml.&quot;,
+  171          ),
+  172      ] = None,
+  173      model_name: Annotated[
+  174          str | None,
+  175          typer.Option(
+  176              &quot;--model&quot;,
+  177              &quot;-m&quot;,
+  178              help=&quot;LLM model to use. Default: default model set in config file.&quot;,
+  179          ),
+  180      ] = None,
+  181      thinking: Annotated[
+  182          bool | None,
+  183          typer.Option(
+  184              &quot;--thinking/--no-thinking&quot;,
+  185              help=&quot;Enable thinking mode. Default: default thinking mode set in config file.&quot;,
+  186          ),
+  187      ] = None,
+  188      # Run mode
+  189      yolo: Annotated[
+  190          bool,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--resume#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--continue</code></h3><small>flag · src/kimi_cli/cli/__init__.py:150</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L145-L162" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  145          ),
+  146      ] = None,
+  147      continue_: Annotated[
+  148          bool,
+  149          typer.Option(
+  150              &quot;--continue&quot;,
+  151              &quot;-C&quot;,
+  152              help=&quot;Continue the previous session for the working directory. Default: no.&quot;,
+  153          ),
+  154      ] = False,
+  155      config_string: Annotated[
+  156          str | None,
+  157          typer.Option(
+  158              &quot;--config&quot;,
+  159              help=&quot;Config TOML/JSON string to load. Default: none.&quot;,
+  160          ),
+  161      ] = None,
+  162      config_file: Annotated[
+  163          Path | None,
+  164          typer.Option(
+  165              &quot;--config-file&quot;,
+  166              exists=True,
+  167              file_okay=True,
+  168              dir_okay=False,
+  169              readable=True,
+  170              help=&quot;Config TOML/JSON file to load. Default: ~/.kimi/config.toml.&quot;,
+  171          ),
+  172      ] = None,
+  173      model_name: Annotated[
+  174          str | None,
+  175          typer.Option(
+  176              &quot;--model&quot;,
+  177              &quot;-m&quot;,
+  178              help=&quot;LLM model to use. Default: default model set in config file.&quot;,
+  179          ),
+  180      ] = None,
+  181      thinking: Annotated[
+  182          bool | None,
+  183          typer.Option(
+  184              &quot;--thinking/--no-thinking&quot;,
+  185              help=&quot;Enable thinking mode. Default: default thinking mode set in config file.&quot;,
+  186          ),
+  187      ] = None,
+  188      # Run mode
+  189      yolo: Annotated[
+  190          bool,
+  191          typer.Option(
+  192              &quot;--yolo&quot;,
+  193              &quot;--yes&quot;,
+  194              &quot;-y&quot;,
+  195              &quot;--auto-approve&quot;,
+  196              help=&quot;Automatically approve all actions. Default: no.&quot;,
+  197          ),
+  198      ] = False,
+  199      plan: Annotated[
+  200          bool,
+  201          typer.Option(
+  202              &quot;--plan&quot;,
+  203              help=&quot;Start in plan mode. Default: no.&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--continue#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--config</code></h3><small>flag · src/kimi_cli/cli/__init__.py:158</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L153-L170" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  153          ),
+  154      ] = False,
+  155      config_string: Annotated[
+  156          str | None,
+  157          typer.Option(
+  158              &quot;--config&quot;,
+  159              help=&quot;Config TOML/JSON string to load. Default: none.&quot;,
+  160          ),
+  161      ] = None,
+  162      config_file: Annotated[
+  163          Path | None,
+  164          typer.Option(
+  165              &quot;--config-file&quot;,
+  166              exists=True,
+  167              file_okay=True,
+  168              dir_okay=False,
+  169              readable=True,
+  170              help=&quot;Config TOML/JSON file to load. Default: ~/.kimi/config.toml.&quot;,
+  171          ),
+  172      ] = None,
+  173      model_name: Annotated[
+  174          str | None,
+  175          typer.Option(
+  176              &quot;--model&quot;,
+  177              &quot;-m&quot;,
+  178              help=&quot;LLM model to use. Default: default model set in config file.&quot;,
+  179          ),
+  180      ] = None,
+  181      thinking: Annotated[
+  182          bool | None,
+  183          typer.Option(
+  184              &quot;--thinking/--no-thinking&quot;,
+  185              help=&quot;Enable thinking mode. Default: default thinking mode set in config file.&quot;,
+  186          ),
+  187      ] = None,
+  188      # Run mode
+  189      yolo: Annotated[
+  190          bool,
+  191          typer.Option(
+  192              &quot;--yolo&quot;,
+  193              &quot;--yes&quot;,
+  194              &quot;-y&quot;,
+  195              &quot;--auto-approve&quot;,
+  196              help=&quot;Automatically approve all actions. Default: no.&quot;,
+  197          ),
+  198      ] = False,
+  199      plan: Annotated[
+  200          bool,
+  201          typer.Option(
+  202              &quot;--plan&quot;,
+  203              help=&quot;Start in plan mode. Default: no.&quot;,
+  204          ),
+  205      ] = False,
+  206      afk: Annotated[
+  207          bool,
+  208          typer.Option(
+  209              &quot;--afk&quot;,
+  210              help=(
+  211                  &quot;Run in afk (away-from-keyboard) mode: no user is present, &quot;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--config#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--config-file</code></h3><small>flag · src/kimi_cli/cli/__init__.py:165</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L160-L177" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  160          ),
+  161      ] = None,
+  162      config_file: Annotated[
+  163          Path | None,
+  164          typer.Option(
+  165              &quot;--config-file&quot;,
+  166              exists=True,
+  167              file_okay=True,
+  168              dir_okay=False,
+  169              readable=True,
+  170              help=&quot;Config TOML/JSON file to load. Default: ~/.kimi/config.toml.&quot;,
+  171          ),
+  172      ] = None,
+  173      model_name: Annotated[
+  174          str | None,
+  175          typer.Option(
+  176              &quot;--model&quot;,
+  177              &quot;-m&quot;,
+  178              help=&quot;LLM model to use. Default: default model set in config file.&quot;,
+  179          ),
+  180      ] = None,
+  181      thinking: Annotated[
+  182          bool | None,
+  183          typer.Option(
+  184              &quot;--thinking/--no-thinking&quot;,
+  185              help=&quot;Enable thinking mode. Default: default thinking mode set in config file.&quot;,
+  186          ),
+  187      ] = None,
+  188      # Run mode
+  189      yolo: Annotated[
+  190          bool,
+  191          typer.Option(
+  192              &quot;--yolo&quot;,
+  193              &quot;--yes&quot;,
+  194              &quot;-y&quot;,
+  195              &quot;--auto-approve&quot;,
+  196              help=&quot;Automatically approve all actions. Default: no.&quot;,
+  197          ),
+  198      ] = False,
+  199      plan: Annotated[
+  200          bool,
+  201          typer.Option(
+  202              &quot;--plan&quot;,
+  203              help=&quot;Start in plan mode. Default: no.&quot;,
+  204          ),
+  205      ] = False,
+  206      afk: Annotated[
+  207          bool,
+  208          typer.Option(
+  209              &quot;--afk&quot;,
+  210              help=(
+  211                  &quot;Run in afk (away-from-keyboard) mode: no user is present, &quot;
+  212                  &quot;AskUserQuestion is auto-dismissed, and tool calls are auto-approved. &quot;
+  213                  &quot;Default: no.&quot;
+  214              ),
+  215          ),
+  216      ] = False,
+  217      prompt: Annotated[
+  218          str | None,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--config-file#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--model</code></h3><small>flag · src/kimi_cli/cli/__init__.py:176</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/cli/__init__.py#L171-L188" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  171          ),
+  172      ] = None,
+  173      model_name: Annotated[
+  174          str | None,
+  175          typer.Option(
+  176              &quot;--model&quot;,
+  177              &quot;-m&quot;,
+  178              help=&quot;LLM model to use. Default: default model set in config file.&quot;,
+  179          ),
+  180      ] = None,
+  181      thinking: Annotated[
+  182          bool | None,
+  183          typer.Option(
+  184              &quot;--thinking/--no-thinking&quot;,
+  185              help=&quot;Enable thinking mode. Default: default thinking mode set in config file.&quot;,
+  186          ),
+  187      ] = None,
+  188      # Run mode
+  189      yolo: Annotated[
+  190          bool,
+  191          typer.Option(
+  192              &quot;--yolo&quot;,
+  193              &quot;--yes&quot;,
+  194              &quot;-y&quot;,
+  195              &quot;--auto-approve&quot;,
+  196              help=&quot;Automatically approve all actions. Default: no.&quot;,
+  197          ),
+  198      ] = False,
+  199      plan: Annotated[
+  200          bool,
+  201          typer.Option(
+  202              &quot;--plan&quot;,
+  203              help=&quot;Start in plan mode. Default: no.&quot;,
+  204          ),
+  205      ] = False,
+  206      afk: Annotated[
+  207          bool,
+  208          typer.Option(
+  209              &quot;--afk&quot;,
+  210              help=(
+  211                  &quot;Run in afk (away-from-keyboard) mode: no user is present, &quot;
+  212                  &quot;AskUserQuestion is auto-dismissed, and tool calls are auto-approved. &quot;
+  213                  &quot;Default: no.&quot;
+  214              ),
+  215          ),
+  216      ] = False,
+  217      prompt: Annotated[
+  218          str | None,
+  219          typer.Option(
+  220              &quot;--prompt&quot;,
+  221              &quot;-p&quot;,
+  222              &quot;--command&quot;,
+  223              &quot;-c&quot;,
+  224              help=&quot;User prompt to the agent. Default: prompt interactively.&quot;,
+  225          ),
+  226      ] = None,
+  227      print_mode: Annotated[
+  228          bool,
+  229          typer.Option(</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--model#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>run 先刷新 OAuth、建立 approval source、运行 UserPromptSubmit hook，再进入 _turn；_turn 先 checkpoint、持久化 user message，然后 _agent_loop 逐 step 做压缩、checkpoint、LLM+工具执行，直到无工具调用、拒绝或重复调用强停。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L659-L742" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:659–742 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>root 每 step 最多领取 4 条 pending notification；Plan/AFK 等 injection 合并成 user-side system reminder；历史归一化后调用 kosong.step，流式回调消息和工具结果，随后 await 所有 tool results 并 shield 写回上下文。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1132-L1194" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:1132–1194 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>steer queue 会在 step 结束或相邻 step 间作为新的 user message 注入；SendDMail 可携 checkpoint id 触发 BackToTheFuture，主循环旋转并回退 context，再注入未来消息并清空重复调用状态。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L622-L653" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:622–653 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>step/compaction 使用指数抖动重试；401 仅对 OAuth provider 强制刷新一次；连接/超时可调用 RetryableChatProvider.on_retryable_error 并只恢复一次；空响应和 429/500/502/503/504 进入 tenacity。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/kimisoul.py#L1220-L1249" target="_blank" rel="noreferrer">src/kimi_cli/soul/kimisoul.py:1220–1249 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>tests/core/test_kimisoul_slash_commands.py</b><small>3971 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests/core/test_kimisoul_slash_commands.py#L16-L31" target="_blank" rel="noreferrer">L16–31 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   16  from kimi_cli.utils.slashcmd import SlashCommand
+   17
+   18
+   19  def _make_flow() -&gt; Flow:
+   20      nodes = {
+   21          &quot;BEGIN&quot;: FlowNode(id=&quot;BEGIN&quot;, label=&quot;Begin&quot;, kind=&quot;begin&quot;),
+   22          &quot;END&quot;: FlowNode(id=&quot;END&quot;, label=&quot;End&quot;, kind=&quot;end&quot;),
+   23      }
+   24      outgoing = {
+   25          &quot;BEGIN&quot;: [FlowEdge(src=&quot;BEGIN&quot;, dst=&quot;END&quot;, label=None)],
+   26          &quot;END&quot;: [],
+   27      }
+   28      return Flow(nodes=nodes, outgoing=outgoing, begin_id=&quot;BEGIN&quot;, end_id=&quot;END&quot;)
+   29
+   30
+   31  def test_flow_skill_registers_skill_and_flow_commands(runtime: Runtime, tmp_path: Path) -&gt; None:
+   32      flow = _make_flow()
+   33      skill_dir = tmp_path / &quot;flow-skill&quot;
+   34      skill_dir.mkdir()
+   35      skill_dir_kp = KaosPath.unsafe_from_local_path(skill_dir)
+   36      flow_skill = Skill(
+   37          name=&quot;flow-skill&quot;,
+   38          description=&quot;Flow skill&quot;,
+   39          type=&quot;flow&quot;,
+   40          dir=skill_dir_kp,
+   41          skill_md_file=skill_dir_kp / &quot;SKILL.md&quot;,
+   42          flow=flow,
+   43          scope=&quot;user&quot;,
+   44      )
+   45      runtime.skills = {&quot;flow-skill&quot;: flow_skill}
+   46
+   47      agent = Agent(
+   48          name=&quot;Test Agent&quot;,</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>tests/core/test_plan_slash.py</b><small>6252 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests/core/test_plan_slash.py#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    1  &quot;&quot;&quot;Tests for /plan slash command.&quot;&quot;&quot;
+    2
+    3  from __future__ import annotations
+    4
+    5  from pathlib import Path
+    6
+    7  import pytest
+    8  from kosong.tooling.empty import EmptyToolset
+    9
+   10  from kimi_cli.soul.agent import Agent, Runtime
+   11  from kimi_cli.soul.context import Context
+   12  from kimi_cli.soul.kimisoul import KimiSoul
+   13  from kimi_cli.soul.slash import plan
+   14  from kimi_cli.tools.plan.heroes import _slug_cache
+   15  from kimi_cli.wire.types import TextPart
+   16
+   17
+   18  @pytest.fixture(autouse=True)
+   19  def _clear_slug_cache():
+   20      _slug_cache.clear()
+   21      yield
+   22      _slug_cache.clear()
+   23
+   24
+   25  def _make_soul(runtime: Runtime, tmp_path: Path) -&gt; KimiSoul:
+   26      agent = Agent(
+   27          name=&quot;Test Agent&quot;,
+   28          system_prompt=&quot;Test system prompt.&quot;,
+   29          toolset=EmptyToolset(),
+   30          runtime=runtime,
+   31      )
+   32      return KimiSoul(agent, context=Context(file_backend=tmp_path / &quot;history.jsonl&quot;))
+   33</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>tests/ui_and_conv/test_shell_slash_commands.py</b><small>11156 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests/ui_and_conv/test_shell_slash_commands.py#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    1  &quot;&quot;&quot;Tests for shell-level slash commands.&quot;&quot;&quot;
+    2
+    3  from __future__ import annotations
+    4
+    5  from collections.abc import Awaitable
+    6  from pathlib import Path
+    7  from typing import Any
+    8  from unittest.mock import Mock
+    9
+   10  import pytest
+   11  from kaos.path import KaosPath
+   12  from kosong.message import Message
+   13
+   14  from kimi_cli.cli import Reload
+   15  from kimi_cli.session import Session
+   16  from kimi_cli.ui.shell.slash import (
+   17      ShellSlashCmdFunc,
+   18      _expanded_command_items,
+   19      shell_mode_registry,
+   20  )
+   21  from kimi_cli.ui.shell.slash import registry as shell_slash_registry
+   22  from kimi_cli.utils.slashcmd import SlashCommand
+   23  from kimi_cli.wire.types import TextPart
+   24
+   25
+   26  async def _invoke_slash_command(command: SlashCommand[ShellSlashCmdFunc], shell: Any) -&gt; None:
+   27      ret = command.func(shell, &quot;&quot;)
+   28      if isinstance(ret, Awaitable):
+   29          await ret
+   30
+   31
+   32  # ---------------------------------------------------------------------------
+   33  # Fixtures</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>tests/utils/test_slash_command.py</b><small>7195 bytes · .py</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/tests/utils/test_slash_command.py#L1-L16" target="_blank" rel="noreferrer">L1–16 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    1  &quot;&quot;&quot;Tests for slash command functionality using inline-snapshot.&quot;&quot;&quot;
+    2
+    3  from __future__ import annotations
+    4
+    5  from typing import Any
+    6
+    7  import pytest
+    8  from inline_snapshot import snapshot
+    9
+   10  from kimi_cli.utils.slashcmd import (
+   11      SlashCommand,
+   12      SlashCommandCall,
+   13      SlashCommandRegistry,
+   14      parse_slash_command_call,
+   15  )
+   16
+   17
+   18  def check_slash_commands(registry: SlashCommandRegistry[Any], snapshot: Any):
+   19      &quot;&quot;&quot;Check slash commands match snapshot.&quot;&quot;&quot;
+   20      import json
+   21
+   22      pretty_commands = json.dumps(
+   23          {
+   24              trigger: f&quot;{cmd.display_name(trigger)}: {cmd.description}&quot;
+   25              for (trigger, cmd) in sorted(registry.iter_command_entries(), key=lambda item: item[0])
+   26          },
+   27          indent=2,
+   28          sort_keys=True,
+   29      )
+   30      assert pretty_commands == snapshot
+   31
+   32
+   33  def _noop(app: object, args: str) -&gt; None:</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>web/src/features/chat/slash-command-menu.tsx</b><small>3393 bytes · .tsx</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/web/src/features/chat/slash-command-menu.tsx#L4-L19" target="_blank" rel="noreferrer">L4–19 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    4  import type { SlashCommandOption } from &quot;./useSlashCommands&quot;;
+    5
+    6  type SlashCommandMenuProps = {
+    7    open: boolean;
+    8    query: string;
+    9    options: SlashCommandOption[];
+   10    activeIndex: number;
+   11    onSelect: (option: SlashCommandOption) =&gt; void;
+   12    onHover: (index: number) =&gt; void;
+   13  };
+   14
+   15  export const SlashCommandMenu = ({
+   16    open,
+   17    query,
+   18    options,
+   19    activeIndex,
+   20    onSelect,
+   21    onHover,
+   22  }: SlashCommandMenuProps) =&gt; {
+   23    const activeItemRef = useRef&lt;HTMLButtonElement | null&gt;(null);
+   24
+   25    // Scroll active item into view when activeIndex changes
+   26    // biome-ignore lint/correctness/useExhaustiveDependencies: keep activeIndex to scroll on selection
+   27    useEffect(() =&gt; {
+   28      if (open &amp;&amp; activeItemRef.current) {
+   29        activeItemRef.current.scrollIntoView({
+   30          block: &quot;nearest&quot;,
+   31          behavior: &quot;smooth&quot;,
+   32        });
+   33      }
+   34    }, [open, activeIndex]);
+   35
+   36    if (!open) {</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>web/src/features/chat/useSlashCommands.ts</b><small>8459 bytes · .ts</small></div><a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/web/src/features/chat/useSlashCommands.ts#L3-L18" target="_blank" rel="noreferrer">L3–18 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    3  import type { SlashCommandDef } from &quot;@/hooks/useSessionStream&quot;;
+    4
+    5  export type { SlashCommandDef };
+    6
+    7  export type SlashCommandOption = {
+    8    id: string;
+    9    name: string;
+   10    description: string;
+   11    aliases: string[];
+   12    insertValue: string;
+   13  };
+   14
+   15  type SlashRange = {
+   16    start: number;
+   17    end: number;
+   18    query: string;
+   19  };
+   20
+   21  const WHITESPACE_REGEX = /\s/;
+   22
+   23  type UseSlashCommandsArgs = {
+   24    text: string;
+   25    setText: (value: string) =&gt; void;
+   26    textareaRef: React.RefObject&lt;HTMLTextAreaElement | null&gt;;
+   27    commands: SlashCommandDef[];
+   28  };
+   29
+   30  type UseSlashCommandsReturn = {
+   31    isOpen: boolean;
+   32    query: string;
+   33    options: SlashCommandOption[];
+   34    activeIndex: number;
+   35    setActiveIndex: (value: number) =&gt; void;</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Kimi CLI commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

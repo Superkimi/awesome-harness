@@ -1,0 +1,1199 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>MiMo-Code · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">MiMo-Code · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>MiMo-Code</strong><small>Coding agent with microkernel and Compose</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>332d7b0db65c</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · MiMo-Code · 332d7b0db65c</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>4 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Think of MiMo-Code as a machine with interchangeable sockets: the microkernel turns, Compose controls, and plugins/skills are replaceable bits.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="mimo-code-architecture-1" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · Architecture &amp; ownership</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>The microkernel stays stable while Compose, plugins, global sync, and context budgets inject higher-level capability—a kernel/orchestration/extension stack.</p></section><section><span>PLAIN LANGUAGE</span><p>Like tracing a building&#39;s pipes: entry, control, execution, and records each have a job, and edges show handoff.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>4–17</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>18–33</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture/codex-microkernel-runtime.md:4–33</span><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/docs/architecture/codex-microkernel-runtime.md#L4-L33" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    4
+    5  ## 摘要
+    6
+    7  MiMoCode 在共享 Session 引擎上运行 GPT/Codex 模型，同时向它们暴露一套更小的 Codex 风格工具 ABI：`bash`、`apply_patch`、`view_image` 和 `exec`。`exec` 在 QuickJS 中组合经过授权的宿主工具；权限、路径、子进程、取消、持久化和 UI 始终由宿主控制。
+    8
+    9  ## 核心设计
+   10
+   11  MiMoCode 没有为 GPT 新建一套 Agent 引擎，而是在统一 Session runtime 上做三件事：
+   12
+   13  1. 使用 GPT/Codex 专属 system prompt，约定工具选择和调度方式；
+   14  2. 通过 `ToolRegistry` 装配更小的模型专属工具 ABI；
+   15  3. 提供 QuickJS `exec`，在不扩大权限的前提下组合宿主工具。
+   16
+   17  ```mermaid
+   18  flowchart LR
+   19      Model[GPT / Codex] --&gt; Registry[SystemPrompt + ToolRegistry]
+   20      Registry --&gt; Direct[bash / apply_patch / view_image]
+   21      Registry --&gt; Exec[exec / QuickJS]
+   22      Exec --&gt; Tools[Filtered host tools]
+   23      Direct --&gt; Host[Permission + path guards]
+   24      Tools --&gt; Host
+   25      Host --&gt; Effects[Filesystem / Shell / MCP]
+   26      Effects --&gt; Session[SessionProcessor / MessageV2 / TUI]
+   27  ```
+   28
+   29  核心原则是：
+   30
+   31  &gt; 模型决定做什么，`exec` 负责如何组合，宿主决定是否允许以及如何产生副作用。
+   32
+   33  ## GPT 工具 ABI
+   34
+   35  [`ToolRegistry.available()`](../../packages/opencode/src/tool/registry.ts#L363) 当前通过模型 ID 判断是否启用 GPT profile：ID 包含 `gpt-`，同时排除 `oss` 和 `gpt-4`。
+   36
+   37  | GPT 可见工具 | 作用 |
+   38  | --- | --- |
+   39  | `bash` | 使用 `rg`、`sed` 等检查和搜索文件，并执行命令 |
+   40  | `apply_patch` | 以结构化 patch 修改文本文件 |
+   41  | `view_image` | 将本地 JPEG、PNG、GIF、WebP 转为模型附件 |
+   42  | `exec` | 在 QuickJS 中批量调用和聚合宿主工具 |
+   43
+   44  GPT profile 会隐藏能力重叠的 `read`、`write`、`edit`、`multiedit`、`grep`、`glob` 和 `notebook_edit`。其他工具仍按 provider、agent allowlist 和运行时 permission 治理。
+   45
+   46  [`SystemPrompt.provider()`](../../packages/opencode/src/session/system.ts#L24) 独立选择 `gpt.txt`、`codex.txt` 或 `beast.txt`。Prompt 路由与工具 profile 目前是两套字符串规则，尚未统一成模型能力协商层。
+   47
+   48  ## `exec` 微内核
+   49
+   50  [`ToolScriptTool`](../../packages/opencode/src/tool/tool-script.ts#L303) 对模型暴露为 `exec`。模型提交一个 TypeScript/JavaScript async function body，通过 `tools.&lt;name&gt;()` 调用宿主工具。
+   51
+   52  ### 为什么不会绕过权限
+   53
+   54  [`tool-script-ref.ts`](../../packages/opencode/src/tool/tool-script-ref.ts#L1) 使用 late-bound registry，让 `exec` 取得和外层相同、已经过 model/agent 过滤的 `Tool.Def`：
+   55
+   56  - 外层不可见的 `read`、`write`、`edit` 不会在 `exec` 内重新出现；
+   57  - builtin 子调用执行原来的 `Tool.Def.execute()` 和 `Tool.Context`；
+   58  - MCP 子调用仍逐次执行 `ctx.ask()`；
+   59  - `exec_command` 只是 `bash` 的别名，权限和执行路径相同。
+   60
+   61  `task`、`actor`、`question`、`skill`、`workflow`、`cron`、`session` 等控制流工具被排除，因为它们改变对话或调度状态，不适合隐藏在一次脚本调用中。
+   62
+   63  ### 两层安全边界
+   64
+   65  1. [`evalScript()`](../../packages/opencode/src/workflow/sandbox.ts#L106) 用 QuickJS 隔离 guest code，不提供 Node、`process`、`fetch`、timer 或模块加载；
+   66  2. 真正副作用仍由宿主工具执行，并经过 permission、external-directory、memory guard 和工具自身校验。
+   67
+   68  QuickJS 只隔离 `exec` 代码。`bash` 仍是真实 Shell，不是容器 sandbox。
+   69
+   70  ### 资源限制
+   71
+   72  | 资源 | 默认值 / 上限 |
+   73  | --- | --- |
+   74  | 嵌套工具调用 | 默认 50，最高 500 |
+   75  | 并发调用 | 8 |
+   76  | 活跃计算 | 默认 60 秒，最高 600 秒 |
+   77  | Wall clock | 30 分钟 |
+   78  | Guest 内存 | 默认 64 MiB |
+   79  | 代码 / 返回值 / 日志 | 128 KiB / 256 KiB / 64 KiB |
+   80  | `files.*` 单文件 | 10 MiB |
+   81
+   82  `files.readText` 只能读取 worktree 或 OS tmp 内的 UTF-8 文本；`files.writeText` 只能写 OS tmp。项目变更必须调用受权限控制的宿主工具。
+   83
+   84  ## 其他关键原语
+   85
+   86  ### `apply_patch`
+   87
+   88  [`ApplyPatchTool`](../../packages/opencode/src/tool/apply_patch.ts#L24) 在写入前解析所有 hunks、检查路径、计算 diff 并请求 `edit` permission；写入后发布文件事件、运行格式化并刷新 LSP。
+   89
+   90  它会预验证全部 patch，但多文件写入不是事务性的，中途失败不会自动回滚已写文件。
+   91
+   92  ### `view_image`
+   93
+   94  [`ViewImageTool`](../../packages/opencode/src/tool/view-image.ts#L23) 检查模型 image capability、external-directory 和 `read` permission，再验证图片格式并返回 data URL attachment。
+   95
+   96  当前限制：
+   97
+   98  - `detail` 只写入 metadata，不改变图片处理；
+   99  - 没有独立的图片大小限制；
+  100  - `exec` 只传递文本、metadata 和 JSON 值，不能透传图片 attachment，因此图片应直接调用 `view_image`。
+  101
+  102  ## OpenAI Responses
+  103
+  104  OpenAI provider 通过 [`sdk.responses(modelID)`](../../packages/opencode/src/provider/provider.ts#L203) 发送请求。[`ProviderTransform.options()`](../../packages/opencode/src/provider/transform.ts#L1275) 默认设置 `store: false`，并为 GPT-5 reasoning 模型请求 `reasoning.encrypted_content`。</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>4</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>5</td><th><span class="line-kind-flow">FLOW</span></th><td><code>## 摘要</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>6</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>7</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>MiMoCode 在共享 Session 引擎上运行 GPT/Codex 模型，同时向它们暴露一套更小的 Codex 风格工具 ABI：`bash`、`apply_patch`、`view_image` 和 `exec`。`exec` 在 QuickJS 中组合经过授权的宿主工具；权限、路径、子进程、取消、持久化和 UI 始终由宿主控制。</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>8</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>9</td><th><span class="line-kind-flow">FLOW</span></th><td><code>## 核心设计</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>10</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>11</td><th><span class="line-kind-state">STATE</span></th><td><code>MiMoCode 没有为 GPT 新建一套 Agent 引擎，而是在统一 Session runtime 上做三件事：</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>12</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>13</td><th><span class="line-kind-flow">FLOW</span></th><td><code>1. 使用 GPT/Codex 专属 system prompt，约定工具选择和调度方式；</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>14</td><th><span class="line-kind-flow">FLOW</span></th><td><code>2. 通过 `ToolRegistry` 装配更小的模型专属工具 ABI；</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>15</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>3. 提供 QuickJS `exec`，在不扩大权限的前提下组合宿主工具。</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>16</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>17</td><th><span class="line-kind-flow">FLOW</span></th><td><code>```mermaid</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>18</td><th><span class="line-kind-flow">FLOW</span></th><td><code>flowchart LR</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>19</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    Model[GPT / Codex] --&gt; Registry[SystemPrompt + ToolRegistry]</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>20</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    Registry --&gt; Direct[bash / apply_patch / view_image]</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>21</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    Registry --&gt; Exec[exec / QuickJS]</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>22</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    Exec --&gt; Tools[Filtered host tools]</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    Direct --&gt; Host[Permission + path guards]</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    Tools --&gt; Host</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    Host --&gt; Effects[Filesystem / Shell / MCP]</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>26</td><th><span class="line-kind-state">STATE</span></th><td><code>    Effects --&gt; Session[SessionProcessor / MessageV2 / TUI]</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code>```</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>29</td><th><span class="line-kind-flow">FLOW</span></th><td><code>核心原则是：</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>30</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>31</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>&gt; 模型决定做什么，`exec` 负责如何组合，宿主决定是否允许以及如何产生副作用。</code></td><td>Calls model, tools, files, network, or processes</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="mimo-code-tools-5" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · Tool registration &amp; execution</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>The plugin Tool/handler/context API provides a common registration surface, while Compose decides which tools enter an Agent.</p></section><section><span>PLAIN LANGUAGE</span><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1–12</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>13–26</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/plugin/src/tool.ts:1–26</span><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/plugin/src/tool.ts#L1-L26" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    1  import { z } from &quot;zod&quot;
+    2  import { Effect } from &quot;effect&quot;
+    3
+    4  export type ToolContext = {
+    5    sessionID: string
+    6    messageID: string
+    7    agent: string
+    8    /**
+    9     * Current project directory for this session.
+   10     * Prefer this over process.cwd() when resolving relative paths.
+   11     */
+   12    directory: string
+   13    /**
+   14     * Project worktree root for this session.
+   15     * Useful for generating stable relative paths (e.g. path.relative(worktree, absPath)).
+   16     */
+   17    worktree: string
+   18    abort: AbortSignal
+   19    metadata(input: { title?: string; metadata?: { [key: string]: any } }): void
+   20    ask(input: AskInput): Effect.Effect&lt;void&gt;
+   21  }
+   22
+   23  type AskInput = {
+   24    permission: string
+   25    patterns: string[]
+   26    always: string[]
+   27    metadata: { [key: string]: any }
+   28  }
+   29
+   30  export type ToolResult = string | { output: string; metadata?: { [key: string]: any } }
+   31
+   32  export function tool&lt;Args extends z.ZodRawShape&gt;(input: {
+   33    description: string
+   34    args: Args
+   35    execute(args: z.infer&lt;z.ZodObject&lt;Args&gt;&gt;, context: ToolContext): Promise&lt;ToolResult&gt;
+   36  }) {
+   37    return input
+   38  }
+   39  tool.schema = z
+   40
+   41  export type ToolDefinition = ReturnType&lt;typeof tool&gt;
+   42</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>1</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import { z } from &quot;zod&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>2</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import { Effect } from &quot;effect&quot;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>3</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>4</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type ToolContext = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>5</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  sessionID: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>6</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  messageID: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>7</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  agent: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>8</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  /**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>9</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>   * Current project directory for this session.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>10</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   * Prefer this over process.cwd() when resolving relative paths.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>11</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>12</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  directory: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>13</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  /**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>14</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>   * Project worktree root for this session.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>15</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>   * Useful for generating stable relative paths (e.g. path.relative(worktree, absPath)).</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>16</td><th><span class="line-kind-flow">FLOW</span></th><td><code>   */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>17</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  worktree: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>18</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  abort: AbortSignal</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>19</td><th><span class="line-kind-input">INPUT</span></th><td><code>  metadata(input: { title?: string; metadata?: { [key: string]: any } }): void</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>20</td><th><span class="line-kind-input">INPUT</span></th><td><code>  ask(input: AskInput): Effect.Effect&lt;void&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>21</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>22</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type AskInput = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  permission: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  patterns: string[]</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  always: string[]</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  metadata: { [key: string]: any }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="mimo-code-connectors-6" data-finding-dimension="connectors"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>03 · Connectors, plugins &amp; MCP</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Think of MiMo-Code as a machine with interchangeable sockets: the microkernel turns, Compose controls, and plugins/skills are replaceable bits.</p></section><section><span>PLAIN LANGUAGE</span><p>Treat the project as a workshop: find the entrypoint, workbench, toolbox, and delivery desk before memorizing APIs.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>50–63</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>64–79</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/plugin/src/index.ts:50–79</span><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/plugin/src/index.ts#L50-L79" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   50    description: string
+   51    configure(config: WorkspaceInfo): WorkspaceInfo | Promise&lt;WorkspaceInfo&gt;
+   52    create(config: WorkspaceInfo, env: Record&lt;string, string | undefined&gt;, from?: WorkspaceInfo): Promise&lt;void&gt;
+   53    remove(config: WorkspaceInfo): Promise&lt;void&gt;
+   54    target(config: WorkspaceInfo): WorkspaceTarget | Promise&lt;WorkspaceTarget&gt;
+   55  }
+   56
+   57  export type PluginInput = {
+   58    client: ReturnType&lt;typeof createOpencodeClient&gt;
+   59    project: Project
+   60    directory: string
+   61    worktree: string
+   62    experimental_workspace: {
+   63      register(type: string, adaptor: WorkspaceAdaptor): void
+   64    }
+   65    serverUrl: URL
+   66    $: BunShell
+   67  }
+   68
+   69  export type PluginOptions = Record&lt;string, unknown&gt;
+   70
+   71  export type Config = Omit&lt;SDKConfig, &quot;plugin&quot;&gt; &amp; {
+   72    plugin?: Array&lt;string | [string, PluginOptions]&gt;
+   73  }
+   74
+   75  export type Plugin = (input: PluginInput, options?: PluginOptions) =&gt; Promise&lt;Hooks&gt;
+   76
+   77  export type PluginModule = {
+   78    id?: string
+   79    server: Plugin
+   80    tui?: never
+   81  }
+   82
+   83  type Rule = {
+   84    key: string
+   85    op: &quot;eq&quot; | &quot;neq&quot;
+   86    value: string
+   87  }
+   88
+   89  export type AuthHook = {
+   90    provider: string
+   91    loader?: (auth: () =&gt; Promise&lt;Auth&gt;, provider: Provider) =&gt; Promise&lt;Record&lt;string, any&gt;&gt;
+   92    methods: (
+   93      | {
+   94          type: &quot;oauth&quot;
+   95          label: string
+   96          prompts?: Array&lt;
+   97            | {
+   98                type: &quot;text&quot;
+   99                key: string
+  100                message: string
+  101                placeholder?: string
+  102                validate?: (value: string) =&gt; string | undefined
+  103                /** @deprecated Use `when` instead */
+  104                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  105                when?: Rule
+  106              }
+  107            | {
+  108                type: &quot;select&quot;
+  109                key: string
+  110                message: string
+  111                options: Array&lt;{
+  112                  label: string
+  113                  value: string
+  114                  hint?: string
+  115                }&gt;
+  116                /** @deprecated Use `when` instead */
+  117                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  118                when?: Rule
+  119              }
+  120          &gt;
+  121          authorize(inputs?: Record&lt;string, string&gt;): Promise&lt;AuthOAuthResult&gt;
+  122        }
+  123      | {
+  124          type: &quot;api&quot;
+  125          label: string
+  126          prompts?: Array&lt;
+  127            | {
+  128                type: &quot;text&quot;
+  129                key: string
+  130                message: string
+  131                placeholder?: string
+  132                validate?: (value: string) =&gt; string | undefined
+  133                /** @deprecated Use `when` instead */
+  134                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  135                when?: Rule
+  136              }
+  137            | {
+  138                type: &quot;select&quot;
+  139                key: string
+  140                message: string
+  141                options: Array&lt;{
+  142                  label: string
+  143                  value: string
+  144                  hint?: string
+  145                }&gt;
+  146                /** @deprecated Use `when` instead */
+  147                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  148                when?: Rule
+  149              }
+  150          &gt;</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>50</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  description: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>51</td><th><span class="line-kind-input">INPUT</span></th><td><code>  configure(config: WorkspaceInfo): WorkspaceInfo | Promise&lt;WorkspaceInfo&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>52</td><th><span class="line-kind-input">INPUT</span></th><td><code>  create(config: WorkspaceInfo, env: Record&lt;string, string | undefined&gt;, from?: WorkspaceInfo): Promise&lt;void&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>53</td><th><span class="line-kind-input">INPUT</span></th><td><code>  remove(config: WorkspaceInfo): Promise&lt;void&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>54</td><th><span class="line-kind-input">INPUT</span></th><td><code>  target(config: WorkspaceInfo): WorkspaceTarget | Promise&lt;WorkspaceTarget&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>55</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>56</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>57</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type PluginInput = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>58</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  client: ReturnType&lt;typeof createOpencodeClient&gt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>59</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  project: Project</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>60</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  directory: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>61</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  worktree: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>62</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  experimental_workspace: {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>63</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    register(type: string, adaptor: WorkspaceAdaptor): void</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>64</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>65</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  serverUrl: URL</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>66</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  $: BunShell</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>67</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>68</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>69</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type PluginOptions = Record&lt;string, unknown&gt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>70</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>71</td><th><span class="line-kind-input">INPUT</span></th><td><code>export type Config = Omit&lt;SDKConfig, &quot;plugin&quot;&gt; &amp; {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>72</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  plugin?: Array&lt;string | [string, PluginOptions]&gt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>73</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>74</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>75</td><th><span class="line-kind-input">INPUT</span></th><td><code>export type Plugin = (input: PluginInput, options?: PluginOptions) =&gt; Promise&lt;Hooks&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>76</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>77</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type PluginModule = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="mimo-code-instructions-10" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · Instructions &amp; extension surface</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Compose specs, skill injection, plugin index, and tool API each define an extension/instruction contract; a skill is not arbitrary prompt concatenation.</p></section><section><span>PLAIN LANGUAGE</span><p>Treat the project as a workshop: find the entrypoint, workbench, toolbox, and delivery desk before memorizing APIs.</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>50–63</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>64–79</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/plugin/src/index.ts:50–79</span><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/plugin/src/index.ts#L50-L79" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   50    description: string
+   51    configure(config: WorkspaceInfo): WorkspaceInfo | Promise&lt;WorkspaceInfo&gt;
+   52    create(config: WorkspaceInfo, env: Record&lt;string, string | undefined&gt;, from?: WorkspaceInfo): Promise&lt;void&gt;
+   53    remove(config: WorkspaceInfo): Promise&lt;void&gt;
+   54    target(config: WorkspaceInfo): WorkspaceTarget | Promise&lt;WorkspaceTarget&gt;
+   55  }
+   56
+   57  export type PluginInput = {
+   58    client: ReturnType&lt;typeof createOpencodeClient&gt;
+   59    project: Project
+   60    directory: string
+   61    worktree: string
+   62    experimental_workspace: {
+   63      register(type: string, adaptor: WorkspaceAdaptor): void
+   64    }
+   65    serverUrl: URL
+   66    $: BunShell
+   67  }
+   68
+   69  export type PluginOptions = Record&lt;string, unknown&gt;
+   70
+   71  export type Config = Omit&lt;SDKConfig, &quot;plugin&quot;&gt; &amp; {
+   72    plugin?: Array&lt;string | [string, PluginOptions]&gt;
+   73  }
+   74
+   75  export type Plugin = (input: PluginInput, options?: PluginOptions) =&gt; Promise&lt;Hooks&gt;
+   76
+   77  export type PluginModule = {
+   78    id?: string
+   79    server: Plugin
+   80    tui?: never
+   81  }
+   82
+   83  type Rule = {
+   84    key: string
+   85    op: &quot;eq&quot; | &quot;neq&quot;
+   86    value: string
+   87  }
+   88
+   89  export type AuthHook = {
+   90    provider: string
+   91    loader?: (auth: () =&gt; Promise&lt;Auth&gt;, provider: Provider) =&gt; Promise&lt;Record&lt;string, any&gt;&gt;
+   92    methods: (
+   93      | {
+   94          type: &quot;oauth&quot;
+   95          label: string
+   96          prompts?: Array&lt;
+   97            | {
+   98                type: &quot;text&quot;
+   99                key: string
+  100                message: string
+  101                placeholder?: string
+  102                validate?: (value: string) =&gt; string | undefined
+  103                /** @deprecated Use `when` instead */
+  104                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  105                when?: Rule
+  106              }
+  107            | {
+  108                type: &quot;select&quot;
+  109                key: string
+  110                message: string
+  111                options: Array&lt;{
+  112                  label: string
+  113                  value: string
+  114                  hint?: string
+  115                }&gt;
+  116                /** @deprecated Use `when` instead */
+  117                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  118                when?: Rule
+  119              }
+  120          &gt;
+  121          authorize(inputs?: Record&lt;string, string&gt;): Promise&lt;AuthOAuthResult&gt;
+  122        }
+  123      | {
+  124          type: &quot;api&quot;
+  125          label: string
+  126          prompts?: Array&lt;
+  127            | {
+  128                type: &quot;text&quot;
+  129                key: string
+  130                message: string
+  131                placeholder?: string
+  132                validate?: (value: string) =&gt; string | undefined
+  133                /** @deprecated Use `when` instead */
+  134                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  135                when?: Rule
+  136              }
+  137            | {
+  138                type: &quot;select&quot;
+  139                key: string
+  140                message: string
+  141                options: Array&lt;{
+  142                  label: string
+  143                  value: string
+  144                  hint?: string
+  145                }&gt;
+  146                /** @deprecated Use `when` instead */
+  147                condition?: (inputs: Record&lt;string, string&gt;) =&gt; boolean
+  148                when?: Rule
+  149              }
+  150          &gt;</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>50</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  description: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>51</td><th><span class="line-kind-input">INPUT</span></th><td><code>  configure(config: WorkspaceInfo): WorkspaceInfo | Promise&lt;WorkspaceInfo&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>52</td><th><span class="line-kind-input">INPUT</span></th><td><code>  create(config: WorkspaceInfo, env: Record&lt;string, string | undefined&gt;, from?: WorkspaceInfo): Promise&lt;void&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>53</td><th><span class="line-kind-input">INPUT</span></th><td><code>  remove(config: WorkspaceInfo): Promise&lt;void&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>54</td><th><span class="line-kind-input">INPUT</span></th><td><code>  target(config: WorkspaceInfo): WorkspaceTarget | Promise&lt;WorkspaceTarget&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>55</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>56</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>57</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type PluginInput = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>58</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  client: ReturnType&lt;typeof createOpencodeClient&gt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>59</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  project: Project</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>60</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  directory: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>61</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  worktree: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>62</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  experimental_workspace: {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>63</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    register(type: string, adaptor: WorkspaceAdaptor): void</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>64</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>65</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  serverUrl: URL</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>66</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  $: BunShell</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>67</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>68</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>69</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type PluginOptions = Record&lt;string, unknown&gt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>70</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>71</td><th><span class="line-kind-input">INPUT</span></th><td><code>export type Config = Omit&lt;SDKConfig, &quot;plugin&quot;&gt; &amp; {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>72</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  plugin?: Array&lt;string | [string, PluginOptions]&gt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>73</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>74</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>75</td><th><span class="line-kind-input">INPUT</span></th><td><code>export type Plugin = (input: PluginInput, options?: PluginOptions) =&gt; Promise&lt;Hooks&gt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>76</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>77</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type PluginModule = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--surface-raised-stronger-non-alpha</code></h3><small>flag · packages/app/src/components/prompt-input.tsx:1404</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/app/src/components/prompt-input.tsx#L1399-L1416" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1399              aria-hidden=&quot;true&quot;
+ 1400              class=&quot;pointer-events-none absolute inset-x-0 bottom-0&quot;
+ 1401              style={{
+ 1402                height: space,
+ 1403                background:
+ 1404                  &quot;linear-gradient(to top, var(--surface-raised-stronger-non-alpha) calc(100% - 20px), transparent)&quot;,
+ 1405              }}
+ 1406            /&gt;
+ 1407
+ 1408            &lt;div class=&quot;pointer-events-none absolute bottom-2 right-2 flex items-center gap-2&quot;&gt;
+ 1409              &lt;input
+ 1410                ref={fileInputRef}
+ 1411                type=&quot;file&quot;
+ 1412                multiple
+ 1413                accept={ACCEPTED_FILE_TYPES.join(&quot;,&quot;)}
+ 1414                class=&quot;hidden&quot;
+ 1415                onChange={(e) =&gt; {
+ 1416                  const list = e.currentTarget.files
+ 1417                  if (list) void addAttachments(Array.from(list))
+ 1418                  e.currentTarget.value = &quot;&quot;
+ 1419                }}
+ 1420              /&gt;
+ 1421
+ 1422              &lt;div class=&quot;flex items-center gap-1 pointer-events-auto&quot;&gt;
+ 1423                &lt;Tooltip placement=&quot;top&quot; inactive={!working() &amp;&amp; blank()} value={tip()}&gt;
+ 1424                  &lt;IconButton
+ 1425                    data-action=&quot;prompt-submit&quot;
+ 1426                    type=&quot;submit&quot;
+ 1427                    disabled={store.mode !== &quot;normal&quot; || (!working() &amp;&amp; blank())}
+ 1428                    tabIndex={store.mode === &quot;normal&quot; ? undefined : -1}
+ 1429                    icon={stopping() ? &quot;stop&quot; : &quot;arrow-up&quot;}
+ 1430                    variant=&quot;primary&quot;
+ 1431                    class=&quot;size-8&quot;
+ 1432                    style={buttons()}
+ 1433                    aria-label={stopping() ? language.t(&quot;prompt.action.stop&quot;) : language.t(&quot;prompt.action.send&quot;)}
+ 1434                  /&gt;
+ 1435                &lt;/Tooltip&gt;
+ 1436              &lt;/div&gt;
+ 1437            &lt;/div&gt;
+ 1438
+ 1439            &lt;div class=&quot;pointer-events-none absolute bottom-2 left-2&quot;&gt;
+ 1440              &lt;div
+ 1441                aria-hidden={store.mode !== &quot;normal&quot;}
+ 1442                class=&quot;pointer-events-auto&quot;
+ 1443                style={{
+ 1444                  &quot;pointer-events&quot;: buttonsSpring() &gt; 0.5 ? &quot;auto&quot; : &quot;none&quot;,
+ 1445                }}
+ 1446              &gt;
+ 1447                &lt;TooltipKeybind
+ 1448                  placement=&quot;top&quot;
+ 1449                  title={language.t(&quot;prompt.action.attachFile&quot;)}
+ 1450                  keybind={command.keybind(&quot;file.attach&quot;)}
+ 1451                &gt;
+ 1452                  &lt;Button
+ 1453                    data-action=&quot;prompt-attach&quot;
+ 1454                    type=&quot;button&quot;
+ 1455                    variant=&quot;ghost&quot;
+ 1456                    class=&quot;size-8 p-0&quot;
+ 1457                    style={buttons()}</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--surface-raised-stronger-non-alpha#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--shadow-lg-border-base</code></h3><small>flag · packages/app/src/components/prompt-input/slash-popover.tsx:49</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/app/src/components/prompt-input/slash-popover.tsx#L44-L61" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   44          ref={(el) =&gt; {
+   45            if (props.popover === &quot;slash&quot;) props.setSlashPopoverRef(el)
+   46          }}
+   47          class=&quot;absolute inset-x-0 -top-2 -translate-y-full origin-bottom-left max-h-80 min-h-10
+   48                   overflow-auto no-scrollbar flex flex-col p-2 rounded-[12px]
+   49                   bg-surface-raised-stronger-non-alpha shadow-[var(--shadow-lg-border-base)]&quot;
+   50          onMouseDown={(e) =&gt; e.preventDefault()}
+   51        &gt;
+   52          &lt;Switch&gt;
+   53            &lt;Match when={props.popover === &quot;at&quot;}&gt;
+   54              &lt;Show
+   55                when={props.atFlat.length &gt; 0}
+   56                fallback={&lt;div class=&quot;text-text-weak px-2 py-1&quot;&gt;{props.t(&quot;prompt.popover.emptyResults&quot;)}&lt;/div&gt;}
+   57              &gt;
+   58                &lt;For each={props.atFlat.slice(0, 10)}&gt;
+   59                  {(item) =&gt; {
+   60                    const key = props.atKey(item)
+   61                    const isDirectory = item.path.endsWith(&quot;/&quot;)
+   62                    const directory = isDirectory ? item.path : getDirectory(item.path)
+   63                    const filename = isDirectory ? &quot;&quot; : getFilename(item.path)
+   64
+   65                    return (
+   66                      &lt;button
+   67                        class=&quot;w-full flex items-center gap-x-2 rounded-md px-2 py-0.5&quot;
+   68                        classList={{ &quot;bg-surface-raised-base-hover&quot;: props.atActive === key }}
+   69                        onClick={() =&gt; props.onAtSelect(item)}
+   70                        onMouseEnter={() =&gt; props.setAtActive(key)}
+   71                      &gt;
+   72                        &lt;FileIcon node={{ path: item.path, type: &quot;file&quot; }} class=&quot;shrink-0 size-4&quot; /&gt;
+   73                        &lt;div class=&quot;flex items-center text-14-regular min-w-0&quot;&gt;
+   74                          &lt;span class=&quot;text-text-weak whitespace-nowrap truncate min-w-0&quot;&gt;{directory}&lt;/span&gt;
+   75                          &lt;Show when={!isDirectory}&gt;
+   76                            &lt;span class=&quot;text-text-strong whitespace-nowrap&quot;&gt;{filename}&lt;/span&gt;
+   77                          &lt;/Show&gt;
+   78                        &lt;/div&gt;
+   79                      &lt;/button&gt;
+   80                    )
+   81                  }}
+   82                &lt;/For&gt;
+   83              &lt;/Show&gt;
+   84            &lt;/Match&gt;
+   85            &lt;Match when={props.popover === &quot;agent&quot;}&gt;
+   86              &lt;Show
+   87                when={props.agentFlat.length &gt; 0}
+   88                fallback={&lt;div class=&quot;text-text-weak px-2 py-1&quot;&gt;{props.t(&quot;prompt.popover.emptyResults&quot;)}&lt;/div&gt;}
+   89              &gt;
+   90                &lt;For each={props.agentFlat.slice(0, 10)}&gt;
+   91                  {(item) =&gt; {
+   92                    const key = props.agentKey(item)
+   93                    return (
+   94                      &lt;button
+   95                        class=&quot;w-full flex items-center gap-x-2 rounded-md px-2 py-0.5&quot;
+   96                        classList={{ &quot;bg-surface-raised-base-hover&quot;: props.agentActive === key }}
+   97                        onClick={() =&gt; props.onAgentSelect(item)}
+   98                        onMouseEnter={() =&gt; props.setAgentActive(key)}
+   99                      &gt;
+  100                        &lt;Icon name=&quot;brain&quot; size=&quot;small&quot; class=&quot;text-icon-info-active shrink-0&quot; /&gt;
+  101                        &lt;span class=&quot;text-14-regular text-text-strong whitespace-nowrap&quot;&gt;${item.name}&lt;/span&gt;
+  102                      &lt;/button&gt;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--shadow-lg-border-base#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--params</code></h3><small>flag · packages/opencode/src/cli/cmd/debug/agent.ts:115</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/debug/agent.ts#L110-L127" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  110      } catch (jsonError) {
+  111        try {
+  112          return new Function(`return (${trimmed})`)()
+  113        } catch (evalError) {
+  114          throw new Error(
+  115            `Failed to parse --params. Use JSON or a JS object literal. JSON error: ${jsonError}. Eval error: ${evalError}.`,
+  116            { cause: evalError },
+  117          )
+  118        }
+  119      }
+  120    })
+  121
+  122    if (!parsed || typeof parsed !== &quot;object&quot; || Array.isArray(parsed)) {
+  123      throw new Error(&quot;Tool params must be an object.&quot;)
+  124    }
+  125    return parsed as Record&lt;string, unknown&gt;
+  126  }
+  127
+  128  async function createToolContext(agent: Agent.Info) {
+  129    const { session, messageID } = await AppRuntime.runPromise(
+  130      Effect.gen(function* () {
+  131        const session = yield* Session.Service
+  132        const result = yield* session.create({ title: `Debug tool run (${agent.name})` })
+  133        const messageID = MessageID.ascending()
+  134        const model = agent.model
+  135          ? agent.model
+  136          : yield* Effect.gen(function* () {
+  137              const provider = yield* Provider.Service
+  138              return yield* provider.defaultModel()
+  139            })
+  140        const now = Date.now()
+  141        const message: MessageV2.Assistant = {
+  142          id: messageID,
+  143          sessionID: result.id,
+  144          role: &quot;assistant&quot;,
+  145          time: {
+  146            created: now,
+  147          },
+  148          parentID: messageID,
+  149          modelID: model.modelID,
+  150          providerID: model.providerID,
+  151          mode: &quot;debug&quot;,
+  152          agent: agent.name,
+  153          path: {
+  154            cwd: Instance.directory,
+  155            root: Instance.worktree,
+  156          },
+  157          cost: 0,
+  158          tokens: {
+  159            input: 0,
+  160            output: 0,
+  161            reasoning: 0,
+  162            cache: {
+  163              read: 0,
+  164              write: 0,
+  165            },
+  166          },
+  167        }
+  168        yield* session.updateMessage(message)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--params#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--local</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1074</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1069-L1086" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1069
+ 1070          console.log(&quot;Configuring git...&quot;)
+ 1071          const config = &quot;http.https://github.com/.extraheader&quot;
+ 1072          // actions/checkout@v6 no longer stores credentials in .git/config,
+ 1073          // so this may not exist - use nothrow() to handle gracefully
+ 1074          const ret = await gitStatus([&quot;config&quot;, &quot;--local&quot;, &quot;--get&quot;, config])
+ 1075          if (ret.exitCode === 0) {
+ 1076            gitConfig = ret.stdout.toString().trim()
+ 1077            await gitRun([&quot;config&quot;, &quot;--local&quot;, &quot;--unset-all&quot;, config])
+ 1078          }
+ 1079
+ 1080          const newCredentials = Buffer.from(`x-access-token:${appToken}`, &quot;utf8&quot;).toString(&quot;base64&quot;)
+ 1081
+ 1082          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, `AUTHORIZATION: basic ${newCredentials}`])
+ 1083          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.name&quot;, AGENT_USERNAME])
+ 1084          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.email&quot;, `${AGENT_USERNAME}@users.noreply.github.com`])
+ 1085        }
+ 1086
+ 1087        async function restoreGitConfig() {
+ 1088          if (gitConfig === undefined) return
+ 1089          const config = &quot;http.https://github.com/.extraheader&quot;
+ 1090          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, gitConfig])
+ 1091        }
+ 1092
+ 1093        async function checkoutNewBranch(type: &quot;issue&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1094          console.log(&quot;Checking out new branch...&quot;)
+ 1095          const branch = generateBranchName(type)
+ 1096          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, branch])
+ 1097          return branch
+ 1098        }
+ 1099
+ 1100        async function checkoutLocalBranch(pr: GitHubPullRequest) {
+ 1101          console.log(&quot;Checking out local branch...&quot;)
+ 1102
+ 1103          const branch = pr.headRefName
+ 1104          const depth = Math.max(pr.commits.totalCount, 20)
+ 1105
+ 1106          await gitRun([&quot;fetch&quot;, &quot;origin&quot;, `--depth=${depth}`, branch])
+ 1107          await gitRun([&quot;checkout&quot;, branch])
+ 1108        }
+ 1109
+ 1110        async function checkoutForkBranch(pr: GitHubPullRequest) {
+ 1111          console.log(&quot;Checking out fork branch...&quot;)
+ 1112
+ 1113          const remoteBranch = pr.headRefName
+ 1114          const localBranch = generateBranchName(&quot;pr&quot;)
+ 1115          const depth = Math.max(pr.commits.totalCount, 20)
+ 1116
+ 1117          await gitRun([&quot;remote&quot;, &quot;add&quot;, &quot;fork&quot;, `https://github.com/${pr.headRepository.nameWithOwner}.git`])
+ 1118          await gitRun([&quot;fetch&quot;, &quot;fork&quot;, `--depth=${depth}`, remoteBranch])
+ 1119          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, localBranch, `fork/${remoteBranch}`])
+ 1120          return localBranch
+ 1121        }
+ 1122
+ 1123        function generateBranchName(type: &quot;issue&quot; | &quot;pr&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1124          const timestamp = new Date()
+ 1125            .toISOString()
+ 1126            .replace(/[:-]/g, &quot;&quot;)
+ 1127            .replace(/\.\d{3}Z/, &quot;&quot;)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--local#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--get</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1074</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1069-L1086" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1069
+ 1070          console.log(&quot;Configuring git...&quot;)
+ 1071          const config = &quot;http.https://github.com/.extraheader&quot;
+ 1072          // actions/checkout@v6 no longer stores credentials in .git/config,
+ 1073          // so this may not exist - use nothrow() to handle gracefully
+ 1074          const ret = await gitStatus([&quot;config&quot;, &quot;--local&quot;, &quot;--get&quot;, config])
+ 1075          if (ret.exitCode === 0) {
+ 1076            gitConfig = ret.stdout.toString().trim()
+ 1077            await gitRun([&quot;config&quot;, &quot;--local&quot;, &quot;--unset-all&quot;, config])
+ 1078          }
+ 1079
+ 1080          const newCredentials = Buffer.from(`x-access-token:${appToken}`, &quot;utf8&quot;).toString(&quot;base64&quot;)
+ 1081
+ 1082          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, `AUTHORIZATION: basic ${newCredentials}`])
+ 1083          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.name&quot;, AGENT_USERNAME])
+ 1084          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.email&quot;, `${AGENT_USERNAME}@users.noreply.github.com`])
+ 1085        }
+ 1086
+ 1087        async function restoreGitConfig() {
+ 1088          if (gitConfig === undefined) return
+ 1089          const config = &quot;http.https://github.com/.extraheader&quot;
+ 1090          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, gitConfig])
+ 1091        }
+ 1092
+ 1093        async function checkoutNewBranch(type: &quot;issue&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1094          console.log(&quot;Checking out new branch...&quot;)
+ 1095          const branch = generateBranchName(type)
+ 1096          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, branch])
+ 1097          return branch
+ 1098        }
+ 1099
+ 1100        async function checkoutLocalBranch(pr: GitHubPullRequest) {
+ 1101          console.log(&quot;Checking out local branch...&quot;)
+ 1102
+ 1103          const branch = pr.headRefName
+ 1104          const depth = Math.max(pr.commits.totalCount, 20)
+ 1105
+ 1106          await gitRun([&quot;fetch&quot;, &quot;origin&quot;, `--depth=${depth}`, branch])
+ 1107          await gitRun([&quot;checkout&quot;, branch])
+ 1108        }
+ 1109
+ 1110        async function checkoutForkBranch(pr: GitHubPullRequest) {
+ 1111          console.log(&quot;Checking out fork branch...&quot;)
+ 1112
+ 1113          const remoteBranch = pr.headRefName
+ 1114          const localBranch = generateBranchName(&quot;pr&quot;)
+ 1115          const depth = Math.max(pr.commits.totalCount, 20)
+ 1116
+ 1117          await gitRun([&quot;remote&quot;, &quot;add&quot;, &quot;fork&quot;, `https://github.com/${pr.headRepository.nameWithOwner}.git`])
+ 1118          await gitRun([&quot;fetch&quot;, &quot;fork&quot;, `--depth=${depth}`, remoteBranch])
+ 1119          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, localBranch, `fork/${remoteBranch}`])
+ 1120          return localBranch
+ 1121        }
+ 1122
+ 1123        function generateBranchName(type: &quot;issue&quot; | &quot;pr&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1124          const timestamp = new Date()
+ 1125            .toISOString()
+ 1126            .replace(/[:-]/g, &quot;&quot;)
+ 1127            .replace(/\.\d{3}Z/, &quot;&quot;)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--get#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--unset-all</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1077</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1072-L1089" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1072          // actions/checkout@v6 no longer stores credentials in .git/config,
+ 1073          // so this may not exist - use nothrow() to handle gracefully
+ 1074          const ret = await gitStatus([&quot;config&quot;, &quot;--local&quot;, &quot;--get&quot;, config])
+ 1075          if (ret.exitCode === 0) {
+ 1076            gitConfig = ret.stdout.toString().trim()
+ 1077            await gitRun([&quot;config&quot;, &quot;--local&quot;, &quot;--unset-all&quot;, config])
+ 1078          }
+ 1079
+ 1080          const newCredentials = Buffer.from(`x-access-token:${appToken}`, &quot;utf8&quot;).toString(&quot;base64&quot;)
+ 1081
+ 1082          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, `AUTHORIZATION: basic ${newCredentials}`])
+ 1083          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.name&quot;, AGENT_USERNAME])
+ 1084          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.email&quot;, `${AGENT_USERNAME}@users.noreply.github.com`])
+ 1085        }
+ 1086
+ 1087        async function restoreGitConfig() {
+ 1088          if (gitConfig === undefined) return
+ 1089          const config = &quot;http.https://github.com/.extraheader&quot;
+ 1090          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, gitConfig])
+ 1091        }
+ 1092
+ 1093        async function checkoutNewBranch(type: &quot;issue&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1094          console.log(&quot;Checking out new branch...&quot;)
+ 1095          const branch = generateBranchName(type)
+ 1096          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, branch])
+ 1097          return branch
+ 1098        }
+ 1099
+ 1100        async function checkoutLocalBranch(pr: GitHubPullRequest) {
+ 1101          console.log(&quot;Checking out local branch...&quot;)
+ 1102
+ 1103          const branch = pr.headRefName
+ 1104          const depth = Math.max(pr.commits.totalCount, 20)
+ 1105
+ 1106          await gitRun([&quot;fetch&quot;, &quot;origin&quot;, `--depth=${depth}`, branch])
+ 1107          await gitRun([&quot;checkout&quot;, branch])
+ 1108        }
+ 1109
+ 1110        async function checkoutForkBranch(pr: GitHubPullRequest) {
+ 1111          console.log(&quot;Checking out fork branch...&quot;)
+ 1112
+ 1113          const remoteBranch = pr.headRefName
+ 1114          const localBranch = generateBranchName(&quot;pr&quot;)
+ 1115          const depth = Math.max(pr.commits.totalCount, 20)
+ 1116
+ 1117          await gitRun([&quot;remote&quot;, &quot;add&quot;, &quot;fork&quot;, `https://github.com/${pr.headRepository.nameWithOwner}.git`])
+ 1118          await gitRun([&quot;fetch&quot;, &quot;fork&quot;, `--depth=${depth}`, remoteBranch])
+ 1119          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, localBranch, `fork/${remoteBranch}`])
+ 1120          return localBranch
+ 1121        }
+ 1122
+ 1123        function generateBranchName(type: &quot;issue&quot; | &quot;pr&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1124          const timestamp = new Date()
+ 1125            .toISOString()
+ 1126            .replace(/[:-]/g, &quot;&quot;)
+ 1127            .replace(/\.\d{3}Z/, &quot;&quot;)
+ 1128            .split(&quot;T&quot;)
+ 1129            .join(&quot;&quot;)
+ 1130          if (type === &quot;schedule&quot; || type === &quot;dispatch&quot;) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--unset-all#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--global</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1083</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1078-L1095" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1078          }
+ 1079
+ 1080          const newCredentials = Buffer.from(`x-access-token:${appToken}`, &quot;utf8&quot;).toString(&quot;base64&quot;)
+ 1081
+ 1082          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, `AUTHORIZATION: basic ${newCredentials}`])
+ 1083          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.name&quot;, AGENT_USERNAME])
+ 1084          await gitRun([&quot;config&quot;, &quot;--global&quot;, &quot;user.email&quot;, `${AGENT_USERNAME}@users.noreply.github.com`])
+ 1085        }
+ 1086
+ 1087        async function restoreGitConfig() {
+ 1088          if (gitConfig === undefined) return
+ 1089          const config = &quot;http.https://github.com/.extraheader&quot;
+ 1090          await gitRun([&quot;config&quot;, &quot;--local&quot;, config, gitConfig])
+ 1091        }
+ 1092
+ 1093        async function checkoutNewBranch(type: &quot;issue&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1094          console.log(&quot;Checking out new branch...&quot;)
+ 1095          const branch = generateBranchName(type)
+ 1096          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, branch])
+ 1097          return branch
+ 1098        }
+ 1099
+ 1100        async function checkoutLocalBranch(pr: GitHubPullRequest) {
+ 1101          console.log(&quot;Checking out local branch...&quot;)
+ 1102
+ 1103          const branch = pr.headRefName
+ 1104          const depth = Math.max(pr.commits.totalCount, 20)
+ 1105
+ 1106          await gitRun([&quot;fetch&quot;, &quot;origin&quot;, `--depth=${depth}`, branch])
+ 1107          await gitRun([&quot;checkout&quot;, branch])
+ 1108        }
+ 1109
+ 1110        async function checkoutForkBranch(pr: GitHubPullRequest) {
+ 1111          console.log(&quot;Checking out fork branch...&quot;)
+ 1112
+ 1113          const remoteBranch = pr.headRefName
+ 1114          const localBranch = generateBranchName(&quot;pr&quot;)
+ 1115          const depth = Math.max(pr.commits.totalCount, 20)
+ 1116
+ 1117          await gitRun([&quot;remote&quot;, &quot;add&quot;, &quot;fork&quot;, `https://github.com/${pr.headRepository.nameWithOwner}.git`])
+ 1118          await gitRun([&quot;fetch&quot;, &quot;fork&quot;, `--depth=${depth}`, remoteBranch])
+ 1119          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, localBranch, `fork/${remoteBranch}`])
+ 1120          return localBranch
+ 1121        }
+ 1122
+ 1123        function generateBranchName(type: &quot;issue&quot; | &quot;pr&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1124          const timestamp = new Date()
+ 1125            .toISOString()
+ 1126            .replace(/[:-]/g, &quot;&quot;)
+ 1127            .replace(/\.\d{3}Z/, &quot;&quot;)
+ 1128            .split(&quot;T&quot;)
+ 1129            .join(&quot;&quot;)
+ 1130          if (type === &quot;schedule&quot; || type === &quot;dispatch&quot;) {
+ 1131            const hex = crypto.randomUUID().slice(0, 6)
+ 1132            return `opencode/${type}-${hex}-${timestamp}`
+ 1133          }
+ 1134          return `opencode/${type}${issueId}-${timestamp}`
+ 1135        }
+ 1136</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--global#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--depth</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1106</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1101-L1118" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1101          console.log(&quot;Checking out local branch...&quot;)
+ 1102
+ 1103          const branch = pr.headRefName
+ 1104          const depth = Math.max(pr.commits.totalCount, 20)
+ 1105
+ 1106          await gitRun([&quot;fetch&quot;, &quot;origin&quot;, `--depth=${depth}`, branch])
+ 1107          await gitRun([&quot;checkout&quot;, branch])
+ 1108        }
+ 1109
+ 1110        async function checkoutForkBranch(pr: GitHubPullRequest) {
+ 1111          console.log(&quot;Checking out fork branch...&quot;)
+ 1112
+ 1113          const remoteBranch = pr.headRefName
+ 1114          const localBranch = generateBranchName(&quot;pr&quot;)
+ 1115          const depth = Math.max(pr.commits.totalCount, 20)
+ 1116
+ 1117          await gitRun([&quot;remote&quot;, &quot;add&quot;, &quot;fork&quot;, `https://github.com/${pr.headRepository.nameWithOwner}.git`])
+ 1118          await gitRun([&quot;fetch&quot;, &quot;fork&quot;, `--depth=${depth}`, remoteBranch])
+ 1119          await gitRun([&quot;checkout&quot;, &quot;-b&quot;, localBranch, `fork/${remoteBranch}`])
+ 1120          return localBranch
+ 1121        }
+ 1122
+ 1123        function generateBranchName(type: &quot;issue&quot; | &quot;pr&quot; | &quot;schedule&quot; | &quot;dispatch&quot;) {
+ 1124          const timestamp = new Date()
+ 1125            .toISOString()
+ 1126            .replace(/[:-]/g, &quot;&quot;)
+ 1127            .replace(/\.\d{3}Z/, &quot;&quot;)
+ 1128            .split(&quot;T&quot;)
+ 1129            .join(&quot;&quot;)
+ 1130          if (type === &quot;schedule&quot; || type === &quot;dispatch&quot;) {
+ 1131            const hex = crypto.randomUUID().slice(0, 6)
+ 1132            return `opencode/${type}-${hex}-${timestamp}`
+ 1133          }
+ 1134          return `opencode/${type}${issueId}-${timestamp}`
+ 1135        }
+ 1136
+ 1137        async function pushToNewBranch(summary: string, branch: string, commit: boolean, isSchedule: boolean) {
+ 1138          console.log(&quot;Pushing to new branch...&quot;)
+ 1139          if (commit) {
+ 1140            await gitRun([&quot;add&quot;, &quot;.&quot;])
+ 1141            if (isSchedule) {
+ 1142              await commitChanges(summary)
+ 1143            } else {
+ 1144              await commitChanges(summary, actor)
+ 1145            }
+ 1146          }
+ 1147          await gitRun([&quot;push&quot;, &quot;-u&quot;, &quot;origin&quot;, branch])
+ 1148        }
+ 1149
+ 1150        async function pushToLocalBranch(summary: string, commit: boolean) {
+ 1151          console.log(&quot;Pushing to local branch...&quot;)
+ 1152          if (commit) {
+ 1153            await gitRun([&quot;add&quot;, &quot;.&quot;])
+ 1154            await commitChanges(summary, actor)
+ 1155          }
+ 1156          await gitRun([&quot;push&quot;])
+ 1157        }
+ 1158
+ 1159        async function pushToForkBranch(summary: string, pr: GitHubPullRequest, commit: boolean) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--depth#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--abbrev-ref</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1175</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1170-L1187" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1170
+ 1171        async function branchIsDirty(originalHead: string, expectedBranch: string) {
+ 1172          console.log(&quot;Checking if branch is dirty...&quot;)
+ 1173          // Detect if the agent switched branches during chat (e.g. created
+ 1174          // its own branch, committed, and possibly pushed/created a PR).
+ 1175          const current = await gitText([&quot;rev-parse&quot;, &quot;--abbrev-ref&quot;, &quot;HEAD&quot;])
+ 1176          if (current !== expectedBranch) {
+ 1177            console.log(`Branch changed during chat: expected ${expectedBranch}, now on ${current}`)
+ 1178            return { dirty: true, uncommittedChanges: false, switched: true }
+ 1179          }
+ 1180
+ 1181          const ret = await gitStatus([&quot;status&quot;, &quot;--porcelain&quot;])
+ 1182          const status = ret.stdout.toString().trim()
+ 1183          if (status.length &gt; 0) {
+ 1184            return { dirty: true, uncommittedChanges: true, switched: false }
+ 1185          }
+ 1186          const head = await gitText([&quot;rev-parse&quot;, &quot;HEAD&quot;])
+ 1187          return {
+ 1188            dirty: head !== originalHead,
+ 1189            uncommittedChanges: false,
+ 1190            switched: false,
+ 1191          }
+ 1192        }
+ 1193
+ 1194        // Verify commits exist between base ref and a branch using rev-list.
+ 1195        // Falls back to fetching from origin when local refs are missing
+ 1196        // (common in shallow clones from actions/checkout).
+ 1197        async function hasNewCommits(base: string, head: string) {
+ 1198          const result = await gitStatus([&quot;rev-list&quot;, &quot;--count&quot;, `${base}..${head}`])
+ 1199          if (result.exitCode !== 0) {
+ 1200            console.log(`rev-list failed, fetching origin/${base}...`)
+ 1201            await gitStatus([&quot;fetch&quot;, &quot;origin&quot;, base, &quot;--depth=1&quot;])
+ 1202            const retry = await gitStatus([&quot;rev-list&quot;, &quot;--count&quot;, `origin/${base}..${head}`])
+ 1203            if (retry.exitCode !== 0) return true // assume dirty if we can&#39;t tell
+ 1204            return parseInt(retry.stdout.toString().trim()) &gt; 0
+ 1205          }
+ 1206          return parseInt(result.stdout.toString().trim()) &gt; 0
+ 1207        }
+ 1208
+ 1209        async function assertPermissions() {
+ 1210          // Only called for non-schedule events, so actor is defined
+ 1211          console.log(`Asserting permissions for user ${actor}...`)
+ 1212
+ 1213          let permission
+ 1214          try {
+ 1215            const response = await octoRest.repos.getCollaboratorPermissionLevel({
+ 1216              owner,
+ 1217              repo,
+ 1218              username: actor!,
+ 1219            })
+ 1220
+ 1221            permission = response.data.permission
+ 1222            console.log(`  permission: ${permission}`)
+ 1223          } catch (error) {
+ 1224            console.error(`Failed to check permissions: ${error}`)
+ 1225            throw new Error(`Failed to check permissions for user ${actor}: ${error}`, { cause: error })
+ 1226          }
+ 1227
+ 1228          if (![&quot;admin&quot;, &quot;write&quot;].includes(permission)) throw new Error(`User ${actor} does not have write permissions`)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--abbrev-ref#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--porcelain</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1181</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1176-L1193" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1176          if (current !== expectedBranch) {
+ 1177            console.log(`Branch changed during chat: expected ${expectedBranch}, now on ${current}`)
+ 1178            return { dirty: true, uncommittedChanges: false, switched: true }
+ 1179          }
+ 1180
+ 1181          const ret = await gitStatus([&quot;status&quot;, &quot;--porcelain&quot;])
+ 1182          const status = ret.stdout.toString().trim()
+ 1183          if (status.length &gt; 0) {
+ 1184            return { dirty: true, uncommittedChanges: true, switched: false }
+ 1185          }
+ 1186          const head = await gitText([&quot;rev-parse&quot;, &quot;HEAD&quot;])
+ 1187          return {
+ 1188            dirty: head !== originalHead,
+ 1189            uncommittedChanges: false,
+ 1190            switched: false,
+ 1191          }
+ 1192        }
+ 1193
+ 1194        // Verify commits exist between base ref and a branch using rev-list.
+ 1195        // Falls back to fetching from origin when local refs are missing
+ 1196        // (common in shallow clones from actions/checkout).
+ 1197        async function hasNewCommits(base: string, head: string) {
+ 1198          const result = await gitStatus([&quot;rev-list&quot;, &quot;--count&quot;, `${base}..${head}`])
+ 1199          if (result.exitCode !== 0) {
+ 1200            console.log(`rev-list failed, fetching origin/${base}...`)
+ 1201            await gitStatus([&quot;fetch&quot;, &quot;origin&quot;, base, &quot;--depth=1&quot;])
+ 1202            const retry = await gitStatus([&quot;rev-list&quot;, &quot;--count&quot;, `origin/${base}..${head}`])
+ 1203            if (retry.exitCode !== 0) return true // assume dirty if we can&#39;t tell
+ 1204            return parseInt(retry.stdout.toString().trim()) &gt; 0
+ 1205          }
+ 1206          return parseInt(result.stdout.toString().trim()) &gt; 0
+ 1207        }
+ 1208
+ 1209        async function assertPermissions() {
+ 1210          // Only called for non-schedule events, so actor is defined
+ 1211          console.log(`Asserting permissions for user ${actor}...`)
+ 1212
+ 1213          let permission
+ 1214          try {
+ 1215            const response = await octoRest.repos.getCollaboratorPermissionLevel({
+ 1216              owner,
+ 1217              repo,
+ 1218              username: actor!,
+ 1219            })
+ 1220
+ 1221            permission = response.data.permission
+ 1222            console.log(`  permission: ${permission}`)
+ 1223          } catch (error) {
+ 1224            console.error(`Failed to check permissions: ${error}`)
+ 1225            throw new Error(`Failed to check permissions for user ${actor}: ${error}`, { cause: error })
+ 1226          }
+ 1227
+ 1228          if (![&quot;admin&quot;, &quot;write&quot;].includes(permission)) throw new Error(`User ${actor} does not have write permissions`)
+ 1229        }
+ 1230
+ 1231        async function addReaction(commentType?: &quot;issue&quot; | &quot;pr_review&quot;) {
+ 1232          // Only called for non-schedule events, so triggerCommentId is defined
+ 1233          console.log(&quot;Adding reaction...&quot;)
+ 1234          if (triggerCommentId) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--porcelain#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--count</code></h3><small>flag · packages/opencode/src/cli/cmd/github.ts:1198</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/github.ts#L1193-L1210" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code> 1193
+ 1194        // Verify commits exist between base ref and a branch using rev-list.
+ 1195        // Falls back to fetching from origin when local refs are missing
+ 1196        // (common in shallow clones from actions/checkout).
+ 1197        async function hasNewCommits(base: string, head: string) {
+ 1198          const result = await gitStatus([&quot;rev-list&quot;, &quot;--count&quot;, `${base}..${head}`])
+ 1199          if (result.exitCode !== 0) {
+ 1200            console.log(`rev-list failed, fetching origin/${base}...`)
+ 1201            await gitStatus([&quot;fetch&quot;, &quot;origin&quot;, base, &quot;--depth=1&quot;])
+ 1202            const retry = await gitStatus([&quot;rev-list&quot;, &quot;--count&quot;, `origin/${base}..${head}`])
+ 1203            if (retry.exitCode !== 0) return true // assume dirty if we can&#39;t tell
+ 1204            return parseInt(retry.stdout.toString().trim()) &gt; 0
+ 1205          }
+ 1206          return parseInt(result.stdout.toString().trim()) &gt; 0
+ 1207        }
+ 1208
+ 1209        async function assertPermissions() {
+ 1210          // Only called for non-schedule events, so actor is defined
+ 1211          console.log(`Asserting permissions for user ${actor}...`)
+ 1212
+ 1213          let permission
+ 1214          try {
+ 1215            const response = await octoRest.repos.getCollaboratorPermissionLevel({
+ 1216              owner,
+ 1217              repo,
+ 1218              username: actor!,
+ 1219            })
+ 1220
+ 1221            permission = response.data.permission
+ 1222            console.log(`  permission: ${permission}`)
+ 1223          } catch (error) {
+ 1224            console.error(`Failed to check permissions: ${error}`)
+ 1225            throw new Error(`Failed to check permissions for user ${actor}: ${error}`, { cause: error })
+ 1226          }
+ 1227
+ 1228          if (![&quot;admin&quot;, &quot;write&quot;].includes(permission)) throw new Error(`User ${actor} does not have write permissions`)
+ 1229        }
+ 1230
+ 1231        async function addReaction(commentType?: &quot;issue&quot; | &quot;pr_review&quot;) {
+ 1232          // Only called for non-schedule events, so triggerCommentId is defined
+ 1233          console.log(&quot;Adding reaction...&quot;)
+ 1234          if (triggerCommentId) {
+ 1235            if (commentType === &quot;pr_review&quot;) {
+ 1236              return await octoRest.rest.reactions.createForPullRequestReviewComment({
+ 1237                owner,
+ 1238                repo,
+ 1239                comment_id: triggerCommentId!,
+ 1240                content: AGENT_REACTION,
+ 1241              })
+ 1242            }
+ 1243            return await octoRest.rest.reactions.createForIssueComment({
+ 1244              owner,
+ 1245              repo,
+ 1246              comment_id: triggerCommentId!,
+ 1247              content: AGENT_REACTION,
+ 1248            })
+ 1249          }
+ 1250          return await octoRest.rest.reactions.createForIssue({
+ 1251            owner,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--count#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--branch</code></h3><small>flag · packages/opencode/src/cli/cmd/pr.ts:33</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/pr.ts#L28-L45" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   28          const localBranchName = `pr/${prNumber}`
+   29          UI.println(`Fetching and checking out PR #${prNumber}...`)
+   30
+   31          // Use gh pr checkout with custom branch name
+   32          const result = await Process.run(
+   33            [&quot;gh&quot;, &quot;pr&quot;, &quot;checkout&quot;, `${prNumber}`, &quot;--branch&quot;, localBranchName, &quot;--force&quot;],
+   34            {
+   35              nothrow: true,
+   36            },
+   37          )
+   38
+   39          if (result.code !== 0) {
+   40            UI.error(`Failed to checkout PR #${prNumber}. Make sure you have gh CLI installed and authenticated.`)
+   41            await Log.exit(1)
+   42          }
+   43
+   44          // Fetch PR info for fork handling and session link detection
+   45          const prInfoResult = await Process.text(
+   46            [
+   47              &quot;gh&quot;,
+   48              &quot;pr&quot;,
+   49              &quot;view&quot;,
+   50              `${prNumber}`,
+   51              &quot;--json&quot;,
+   52              &quot;headRepository,headRepositoryOwner,isCrossRepository,headRefName,body&quot;,
+   53            ],
+   54            { nothrow: true },
+   55          )
+   56
+   57          let sessionId: string | undefined
+   58
+   59          if (prInfoResult.code === 0) {
+   60            const prInfoText = prInfoResult.text
+   61            if (prInfoText.trim()) {
+   62              const prInfo = JSON.parse(prInfoText)
+   63
+   64              // Handle fork PRs
+   65              if (prInfo &amp;&amp; prInfo.isCrossRepository &amp;&amp; prInfo.headRepository &amp;&amp; prInfo.headRepositoryOwner) {
+   66                const forkOwner = prInfo.headRepositoryOwner.login
+   67                const forkName = prInfo.headRepository.name
+   68                const remoteName = forkOwner
+   69
+   70                // Check if remote already exists
+   71                const remotes = await AppRuntime.runPromise(
+   72                  Git.Service.use((git) =&gt; git.run([&quot;remote&quot;], { cwd: Instance.worktree })),
+   73                ).then((x) =&gt; x.text().trim())
+   74                if (!remotes.split(&quot;\n&quot;).includes(remoteName)) {
+   75                  await AppRuntime.runPromise(
+   76                    Git.Service.use((git) =&gt;
+   77                      git.run([&quot;remote&quot;, &quot;add&quot;, remoteName, `https://github.com/${forkOwner}/${forkName}.git`], {
+   78                        cwd: Instance.worktree,
+   79                      }),
+   80                    ),
+   81                  )
+   82                  UI.println(`Added fork remote: ${remoteName}`)
+   83                }
+   84
+   85                // Set upstream to the fork so pushes go there
+   86                const headRefName = prInfo.headRefName</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--branch#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>The microkernel stays stable while Compose, plugins, global sync, and context budgets inject higher-level capability—a kernel/orchestration/extension stack.</blockquote><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/docs/architecture/codex-microkernel-runtime.md#L4-L33" target="_blank" rel="noreferrer">docs/architecture/codex-microkernel-runtime.md:4–33 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>The plugin Tool/handler/context API provides a common registration surface, while Compose decides which tools enter an Agent.</blockquote><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/plugin/src/tool.ts#L1-L26" target="_blank" rel="noreferrer">packages/plugin/src/tool.ts:1–26 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>Think of MiMo-Code as a machine with interchangeable sockets: the microkernel turns, Compose controls, and plugins/skills are replaceable bits.</blockquote><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/plugin/src/index.ts#L50-L79" target="_blank" rel="noreferrer">packages/plugin/src/index.ts:50–79 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>Compose specs, skill injection, plugin index, and tool API each define an extension/instruction contract; a skill is not arbitrary prompt concatenation.</blockquote><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/plugin/src/index.ts#L50-L79" target="_blank" rel="noreferrer">packages/plugin/src/index.ts:50–79 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>packages/opencode/src/cli/cmd/tui/i18n/slash-command.ts</b><small>334 bytes · .ts</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/opencode/src/cli/cmd/tui/i18n/slash-command.ts#L3-L12" target="_blank" rel="noreferrer">L3–12 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    3  export function slashCommandDescription(
+    4    t: (key: string) =&gt; string,
+    5    name: string,
+    6    fallback?: string,
+    7  ) {
+    8    if (!BUILTIN.has(name)) return fallback
+    9    const translated = t(`tui.slash.${name}.description`)
+   10    return translated || fallback
+   11  }
+   12</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>packages/app/src/context/command-keybind.test.ts</b><small>2516 bytes · .ts</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/app/src/context/command-keybind.test.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import { formatKeybind, matchKeybind, parseKeybind } from &quot;./command&quot;
+    3
+    4  describe(&quot;command keybind helpers&quot;, () =&gt; {
+    5    test(&quot;parseKeybind handles aliases and multiple combos&quot;, () =&gt; {
+    6      const keybinds = parseKeybind(&quot;control+option+k, mod+shift+comma&quot;)
+    7
+    8      expect(keybinds).toHaveLength(2)
+    9      expect(keybinds[0]).toEqual({
+   10        key: &quot;k&quot;,
+   11        ctrl: true,
+   12        meta: false,
+   13        shift: false,
+   14        alt: true,
+   15      })
+   16      expect(keybinds[1]?.shift).toBe(true)
+   17      expect(keybinds[1]?.key).toBe(&quot;comma&quot;)
+   18      expect(Boolean(keybinds[1]?.ctrl || keybinds[1]?.meta)).toBe(true)
+   19    })
+   20
+   21    test(&quot;parseKeybind treats none and empty as disabled&quot;, () =&gt; {
+   22      expect(parseKeybind(&quot;none&quot;)).toEqual([])
+   23      expect(parseKeybind(&quot;&quot;)).toEqual([])
+   24    })
+   25
+   26    test(&quot;matchKeybind normalizes punctuation keys&quot;, () =&gt; {
+   27      const keybinds = parseKeybind(&quot;ctrl+comma, shift+plus, meta+space&quot;)
+   28
+   29      expect(matchKeybind(keybinds, new KeyboardEvent(&quot;keydown&quot;, { key: &quot;,&quot;, ctrlKey: true }))).toBe(true)
+   30      expect(matchKeybind(keybinds, new KeyboardEvent(&quot;keydown&quot;, { key: &quot;+&quot;, shiftKey: true }))).toBe(true)
+   31      expect(matchKeybind(keybinds, new KeyboardEvent(&quot;keydown&quot;, { key: &quot; &quot;, metaKey: true }))).toBe(true)
+   32      expect(matchKeybind(keybinds, new KeyboardEvent(&quot;keydown&quot;, { key: &quot;,&quot;, ctrlKey: true, altKey: true }))).toBe(false)
+   33    })
+   34</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>packages/app/src/context/command.test.ts</b><small>854 bytes · .ts</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/app/src/context/command.test.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import { upsertCommandRegistration } from &quot;./command&quot;
+    3
+    4  describe(&quot;upsertCommandRegistration&quot;, () =&gt; {
+    5    test(&quot;replaces keyed registrations&quot;, () =&gt; {
+    6      const one = () =&gt; [{ id: &quot;one&quot;, title: &quot;One&quot; }]
+    7      const two = () =&gt; [{ id: &quot;two&quot;, title: &quot;Two&quot; }]
+    8
+    9      const next = upsertCommandRegistration([{ key: &quot;layout&quot;, options: one }], { key: &quot;layout&quot;, options: two })
+   10
+   11      expect(next).toHaveLength(1)
+   12      expect(next[0]?.options).toBe(two)
+   13    })
+   14
+   15    test(&quot;keeps unkeyed registrations additive&quot;, () =&gt; {
+   16      const one = () =&gt; [{ id: &quot;one&quot;, title: &quot;One&quot; }]
+   17      const two = () =&gt; [{ id: &quot;two&quot;, title: &quot;Two&quot; }]
+   18
+   19      const next = upsertCommandRegistration([{ options: one }], { options: two })
+   20
+   21      expect(next).toHaveLength(2)
+   22      expect(next[0]?.options).toBe(two)
+   23      expect(next[1]?.options).toBe(one)
+   24    })
+   25  })
+   26</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>packages/app/src/pages/layout/helpers.test.ts</b><small>7572 bytes · .ts</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/app/src/pages/layout/helpers.test.ts#L106-L121" target="_blank" rel="noreferrer">L106–121 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>  106    test(&quot;normalizes trailing slash in workspace key&quot;, () =&gt; {
+  107      expect(workspaceKey(&quot;/tmp/demo///&quot;)).toBe(&quot;/tmp/demo&quot;)
+  108      expect(workspaceKey(&quot;C:\\tmp\\demo\\\\&quot;)).toBe(&quot;C:/tmp/demo&quot;)
+  109    })
+  110
+  111    test(&quot;preserves posix and drive roots in workspace key&quot;, () =&gt; {
+  112      expect(workspaceKey(&quot;/&quot;)).toBe(&quot;/&quot;)
+  113      expect(workspaceKey(&quot;///&quot;)).toBe(&quot;/&quot;)
+  114      expect(workspaceKey(&quot;C:\\&quot;)).toBe(&quot;C:/&quot;)
+  115      expect(workspaceKey(&quot;C://&quot;)).toBe(&quot;C:/&quot;)
+  116      expect(workspaceKey(&quot;C:///&quot;)).toBe(&quot;C:/&quot;)
+  117    })
+  118
+  119    test(&quot;keeps local first while preserving known order&quot;, () =&gt; {
+  120      const result = effectiveWorkspaceOrder(&quot;/root&quot;, [&quot;/root&quot;, &quot;/b&quot;, &quot;/c&quot;], [&quot;/root&quot;, &quot;/c&quot;, &quot;/a&quot;, &quot;/b&quot;])
+  121      expect(result).toEqual([&quot;/root&quot;, &quot;/c&quot;, &quot;/b&quot;])
+  122    })
+  123
+  124    test(&quot;finds the latest root session across workspaces&quot;, () =&gt; {
+  125      const result = latestRootSession(
+  126        [
+  127          {
+  128            path: { directory: &quot;/root&quot; },
+  129            session: [session({ id: &quot;root&quot;, directory: &quot;/root&quot;, time: { created: 1, updated: 1, archived: undefined } })],
+  130          },
+  131          {
+  132            path: { directory: &quot;/workspace&quot; },
+  133            session: [
+  134              session({
+  135                id: &quot;workspace&quot;,
+  136                directory: &quot;/workspace&quot;,
+  137                time: { created: 2, updated: 2, archived: undefined },
+  138              }),</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>packages/app/src/pages/session/helpers.test.ts</b><small>6371 bytes · .ts</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/app/src/pages/session/helpers.test.ts#L11-L26" target="_blank" rel="noreferrer">L11–26 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   11  } from &quot;./helpers&quot;
+   12
+   13  describe(&quot;createOpenReviewFile&quot;, () =&gt; {
+   14    test(&quot;opens and loads selected review file&quot;, () =&gt; {
+   15      const calls: string[] = []
+   16      const openReviewFile = createOpenReviewFile({
+   17        showAllFiles: () =&gt; calls.push(&quot;show&quot;),
+   18        tabForPath: (path) =&gt; {
+   19          calls.push(`tab:${path}`)
+   20          return `file://${path}`
+   21        },
+   22        openTab: (tab) =&gt; calls.push(`open:${tab}`),
+   23        setActive: (tab) =&gt; calls.push(`active:${tab}`),
+   24        loadFile: (path) =&gt; calls.push(`load:${path}`),
+   25      })
+   26
+   27      openReviewFile(&quot;src/a.ts&quot;)
+   28
+   29      expect(calls).toEqual([&quot;show&quot;, &quot;load:src/a.ts&quot;, &quot;tab:src/a.ts&quot;, &quot;open:file://src/a.ts&quot;, &quot;active:file://src/a.ts&quot;])
+   30    })
+   31  })
+   32
+   33  describe(&quot;createOpenSessionFileTab&quot;, () =&gt; {
+   34    test(&quot;activates the opened file tab&quot;, () =&gt; {
+   35      const calls: string[] = []
+   36      const openTab = createOpenSessionFileTab({
+   37        normalizeTab: (value) =&gt; {
+   38          calls.push(`normalize:${value}`)
+   39          return `file://${value}`
+   40        },
+   41        openTab: (tab) =&gt; calls.push(`open:${tab}`),
+   42        pathFromTab: (tab) =&gt; {
+   43          calls.push(`path:${tab}`)</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>packages/app/src/pages/session/session-model-helpers.test.ts</b><small>1336 bytes · .ts</small></div><a href="https://github.com/XiaomiMiMo/MiMo-Code/blob/332d7b0db65ccbcdd31a67b897e80dd6f3671b9b/packages/app/src/pages/session/session-model-helpers.test.ts#L3-L18" target="_blank" rel="noreferrer">L3–18 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    3  import { resetSessionModel, syncSessionModel } from &quot;./session-model-helpers&quot;
+    4
+    5  const message = (input?: { agent?: string; model?: UserMessage[&quot;model&quot;] }) =&gt;
+    6    ({
+    7      id: &quot;msg&quot;,
+    8      sessionID: &quot;session&quot;,
+    9      role: &quot;user&quot;,
+   10      time: { created: 1 },
+   11      agent: input?.agent ?? &quot;build&quot;,
+   12      model: input?.model ?? { providerID: &quot;anthropic&quot;, modelID: &quot;claude-sonnet-4&quot; },
+   13    }) as UserMessage
+   14
+   15  describe(&quot;syncSessionModel&quot;, () =&gt; {
+   16    test(&quot;restores the last message through session state&quot;, () =&gt; {
+   17      const calls: unknown[] = []
+   18
+   19      syncSessionModel(
+   20        {
+   21          session: {
+   22            restore(value) {
+   23              calls.push(value)
+   24            },
+   25            reset() {},
+   26          },
+   27        },
+   28        message({ model: { providerID: &quot;anthropic&quot;, modelID: &quot;claude-sonnet-4&quot;, variant: &quot;high&quot; } }),
+   29      )
+   30
+   31      expect(calls).toEqual([
+   32        message({ model: { providerID: &quot;anthropic&quot;, modelID: &quot;claude-sonnet-4&quot;, variant: &quot;high&quot; } }),
+   33      ])
+   34    })
+   35  })</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="MiMo-Code commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,0 +1,2449 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>Pi · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Pi · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Pi</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>581d75a89cea</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Pi · 581d75a89cea</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>8 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 8 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="pi-architecture-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 仓库是“通用 Harness 内核 + 完整 Coding Agent 产品层”的双轨架构</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>packages/agent 的 AgentHarness 直接拥有 session、model、tools、resources、queue 和 hooks；packages/coding-agent 的 AgentSession 仍有自己的 runtime build、resource loader、tool registry、retry 与 compaction 适配。</p></section><section><span>PLAIN LANGUAGE</span><p>一边是可嵌入任何产品的发动机，一边是已经带 CLI、会话、扩展和交互界面的整车；当前两套代码有重叠，不能把发动机的新接口直接当成整车每条路径都已采用。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>架构抽象领先，但迁移期会产生两个 session/compaction/tool 生命周期，需要明确长期收敛边界。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>171–196</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>197–223</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/harness/agent-harness.ts#L171-L223" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/harness/agent-harness.ts:171–223</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/harness/agent-harness.ts#L171-L223" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  171  export class AgentHarness&lt;
+  172  	TContext extends object | undefined = undefined,
+  173  	TSkill extends Skill = Skill,
+  174  	TPromptTemplate extends PromptTemplate = PromptTemplate,
+  175  	TTool extends AgentHarnessTool&lt;TContext&gt; = AgentHarnessTool&lt;TContext&gt;,
+  176  &gt; {
+  177  	private session: Session;
+  178  	readonly models: Models;
+  179  	private phase: AgentHarnessPhase = &quot;idle&quot;;
+  180  	private runAbortController?: AbortController;
+  181  	private runPromise?: Promise&lt;void&gt;;
+  182  	private pendingSessionWrites: PendingSessionWrite[] = [];
+  183  	private model: Model&lt;any&gt;;
+  184  	private thinkingLevel: ThinkingLevel;
+  185  	private systemPrompt: AgentHarnessSystemPrompt&lt;TContext, TSkill, TPromptTemplate, TTool&gt; | undefined;
+  186  	private toolContext: AgentHarnessToolContextSource&lt;TContext&gt; | undefined;
+  187  	private streamOptions: AgentHarnessStreamOptions;
+  188  	private retry: RetryPolicy | undefined;
+  189  	private resources: AgentHarnessResources&lt;TSkill, TPromptTemplate&gt;;
+  190  	private tools = new Map&lt;string, TTool&gt;();
+  191  	private activeToolNames: string[];
+  192  	private steerQueue: UserMessage[] = [];
+  193  	private steeringQueueMode: QueueMode;
+  194  	private followUpQueue: UserMessage[] = [];
+  195  	private followUpQueueMode: QueueMode;
+  196  	private nextTurnQueue: AgentMessage[] = [];
+  197  	private handlers = new Map&lt;string, Set&lt;AgentHarnessHandler&gt;&gt;();
+  198
+  199  	constructor(options: AgentHarnessOptions&lt;TContext, TSkill, TPromptTemplate, TTool&gt;) {
+  200  		this.session = options.session;
+  201  		this.models = options.models;
+  202  		this.resources = options.resources ?? {};
+  203  		this.streamOptions = cloneStreamOptions(options.streamOptions);
+  204  		this.retry = options.retry;
+  205  		this.systemPrompt = options.systemPrompt;
+  206  		this.toolContext = options.toolContext;
+  207  		this.validateUniqueNames(
+  208  			(options.tools ?? []).map((tool) =&gt; tool.name),
+  209  			&quot;Duplicate tool name(s)&quot;,
+  210  		);
+  211  		for (const tool of options.tools ?? []) {
+  212  			this.tools.set(tool.name, tool);
+  213  		}
+  214  		this.model = options.model;
+  215  		this.thinkingLevel = options.thinkingLevel ?? &quot;off&quot;;
+  216  		this.activeToolNames = options.activeToolNames
+  217  			? [...options.activeToolNames]
+  218  			: (options.tools ?? []).map((tool) =&gt; tool.name);
+  219  		this.validateUniqueNames(this.activeToolNames, &quot;Duplicate active tool name(s)&quot;);
+  220  		this.validateToolNames(this.activeToolNames);
+  221  		this.steeringQueueMode = options.steeringMode ?? &quot;one-at-a-time&quot;;
+  222  		this.followUpQueueMode = options.followUpMode ?? &quot;one-at-a-time&quot;;
+  223  	}
+  224
+  225  	private getHandlers(type: string): Set&lt;AgentHarnessHandler&gt; | undefined {
+  226  		return this.handlers.get(type);
+  227  	}
+  228
+  229  	private async emitOwn(event: AgentHarnessOwnEvent&lt;TSkill, TPromptTemplate&gt;, signal?: AbortSignal): Promise&lt;void&gt; {
+  230  		for (const listener of this.getHandlers(SUBSCRIBER_EVENT_TYPE) ?? []) {
+  231  			try {
+  232  				await listener(event, signal);
+  233  			} catch (error) {
+  234  				throw normalizeHookError(error);
+  235  			}
+  236  		}
+  237  	}
+  238
+  239  	private async emitAny(event: AgentHarnessEvent&lt;TSkill, TPromptTemplate&gt;, signal?: AbortSignal): Promise&lt;void&gt; {
+  240  		for (const listener of this.getHandlers(SUBSCRIBER_EVENT_TYPE) ?? []) {
+  241  			try {
+  242  				await listener(event, signal);
+  243  			} catch (error) {
+  244  				throw normalizeHookError(error);
+  245  			}
+  246  		}
+  247  	}
+  248
+  249  	private async emitHook&lt;TType extends keyof AgentHarnessEventResultMap&gt;(
+  250  		event: Extract&lt;AgentHarnessOwnEvent, { type: TType }&gt;,
+  251  	): Promise&lt;AgentHarnessEventResultMap[TType] | undefined&gt; {
+  252  		const handlers = this.getHandlers(event.type as TType);
+  253  		if (!handlers || handlers.size === 0) return undefined;
+  254  		let lastResult: AgentHarnessEventResultMap[TType] | undefined;
+  255  		for (const handler of handlers) {
+  256  			try {
+  257  				const result = await handler(event);
+  258  				if (result !== undefined) {
+  259  					lastResult = result;
+  260  				}
+  261  			} catch (error) {
+  262  				throw normalizeHookError(error);
+  263  			}
+  264  		}
+  265  		return lastResult;
+  266  	}
+  267
+  268  	private retryCallbacks(operation: &quot;compaction&quot; | &quot;branch_summary&quot;): RetryCallbacks {
+  269  		return {
+  270  			onRetryScheduled: (attempt, maxAttempts, delayMs, errorMessage) =&gt;
+  271  				this.emitOwn({ type: &quot;retry_scheduled&quot;, operation, attempt, maxAttempts, delayMs, errorMessage }),
+  272  			onRetryAttemptStart: () =&gt; this.emitOwn({ type: &quot;retry_attempt_start&quot;, operation }),
+  273  			onRetryFinished: () =&gt; this.emitOwn({ type: &quot;retry_finished&quot;, operation }),
+  274  		};
+  275  	}
+  276
+  277  	private async emitBeforeProviderRequest(
+  278  		model: Model&lt;any&gt;,
+  279  		sessionId: string,
+  280  		streamOptions: AgentHarnessStreamOptions,
+  281  	): Promise&lt;AgentHarnessStreamOptions&gt; {
+  282  		const handlers = this.getHandlers(&quot;before_provider_request&quot;);
+  283  		let current = cloneStreamOptions(streamOptions);
+  284  		if (!handlers || handlers.size === 0) return current;
+  285  		for (const handler of handlers) {
+  286  			try {
+  287  				const result = await handler({
+  288  					type: &quot;before_provider_request&quot;,
+  289  					model,
+  290  					sessionId,
+  291  					streamOptions: cloneStreamOptions(current),
+  292  				});
+  293  				if (result?.streamOptions) {
+  294  					current = applyStreamOptionsPatch(current, result.streamOptions);</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>171</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export class AgentHarness&lt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>172</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	TContext extends object | undefined = undefined,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>173</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	TSkill extends Skill = Skill,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>174</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	TPromptTemplate extends PromptTemplate = PromptTemplate,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>175</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	TTool extends AgentHarnessTool&lt;TContext&gt; = AgentHarnessTool&lt;TContext&gt;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>176</td><th><span class="line-kind-flow">FLOW</span></th><td><code>&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>177</td><th><span class="line-kind-state">STATE</span></th><td><code>	private session: Session;</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>178</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	readonly models: Models;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>179</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private phase: AgentHarnessPhase = &quot;idle&quot;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>180</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private runAbortController?: AbortController;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>181</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private runPromise?: Promise&lt;void&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>182</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private pendingSessionWrites: PendingSessionWrite[] = [];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>183</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private model: Model&lt;any&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>184</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private thinkingLevel: ThinkingLevel;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>185</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private systemPrompt: AgentHarnessSystemPrompt&lt;TContext, TSkill, TPromptTemplate, TTool&gt; | undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>186</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private toolContext: AgentHarnessToolContextSource&lt;TContext&gt; | undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>187</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private streamOptions: AgentHarnessStreamOptions;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>188</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private retry: RetryPolicy | undefined;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>189</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private resources: AgentHarnessResources&lt;TSkill, TPromptTemplate&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>190</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private tools = new Map&lt;string, TTool&gt;();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>191</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private activeToolNames: string[];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>192</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private steerQueue: UserMessage[] = [];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>193</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private steeringQueueMode: QueueMode;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>194</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private followUpQueue: UserMessage[] = [];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>195</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private followUpQueueMode: QueueMode;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>196</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private nextTurnQueue: AgentMessage[] = [];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>197</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private handlers = new Map&lt;string, Set&lt;AgentHarnessHandler&gt;&gt;();</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>198</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>packages/agent/src/harness/agent-harness.ts · 581d75a89cea</span><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/agent/src/harness/agent-harness.ts#L171-L223" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  171  	operation: LaneInfo[&quot;operation&quot;];
+  172  	queues: { steer: QueuedItem[]; followUp: QueuedItem[]; nextRun: QueuedItem[] };
+  173  	pendingWrites: { id: string; entry: ProvisionedEntry }[];
+  174  	faulted: boolean;
+  175  }
+  176
+  177  export interface SessionSnapshot {
+  178  	lanes: (LaneInfo &amp; { suspended?: SuspendedOperation })[];
+  179  	faulted: boolean;
+  180  }
+  181
+  182  export type ActionInfo =
+  183  	| { kind: &quot;append_entry&quot;; entryType: Entry[&quot;type&quot;]; entryId: string }
+  184  	| { kind: &quot;append_record&quot;; recordType: string }
+  185  	| { kind: &quot;move_lane&quot;; to: string | null }
+  186  	| { kind: &quot;set_fact&quot;; fact: &quot;name&quot; | &quot;label&quot; }
+  187  	| { kind: &quot;try_finish_run&quot;; outcome: &quot;completed&quot; | &quot;failed&quot; }
+  188  	| { kind: &quot;finish_operation&quot;; outcome: &quot;completed&quot; | &quot;declined&quot; | &quot;failed&quot; | &quot;aborted&quot; }
+  189  	| { kind: &quot;commit_follow_up&quot; }
+  190  	| { kind: &quot;consume_queue_item&quot;; queue: &quot;steer&quot; | &quot;followUp&quot;; entryId: string }
+  191  	| { kind: &quot;apply_pending_write&quot;; entryId: string }
+  192  	| { kind: &quot;stream_assistant&quot;; step: &quot;assistant&quot; | &quot;compaction&quot; | &quot;branch_summary&quot;; attempt: number }
+  193  	| { kind: &quot;execute_tool&quot;; toolCallId: string; toolName: string }
+  194  	| { kind: &quot;fetch_deferred&quot; | &quot;cancel_deferred&quot;; provider: string; id: string }
+  195  	| { kind: &quot;hook&quot;; name: HookName }
+  196  	| { kind: &quot;sleep&quot;; delayMs: number };
+  197
+  198  export type HookName =
+  199  	| &quot;before_run&quot;
+  200  	| &quot;before_resume&quot;
+  201  	| &quot;before_run_end&quot;
+  202  	| &quot;transform_context&quot;
+  203  	| &quot;before_request&quot;
+  204  	| &quot;before_payload&quot;
+  205  	| &quot;after_response&quot;
+  206  	| &quot;before_tool&quot;
+  207  	| &quot;after_tool&quot;
+  208  	| &quot;before_compaction&quot;
+  209  	| &quot;before_navigation&quot;;
+  210
+  211  export interface Hooks {
+  212  	on(name: HookName, handler: (event: unknown) =&gt; unknown | Promise&lt;unknown&gt;, options?: { id?: string }): () =&gt; void;
+  213  }
+  214
+  215  export interface Events {
+  216  	on(type: string, listener: (event: unknown) =&gt; void | Promise&lt;void&gt;): () =&gt; void;
+  217  }
+  218
+  219  class UnavailableRegistry implements Hooks, Events {
+  220  	private readonly operation: string;
+  221  	private readonly isClosed: () =&gt; boolean;
+  222
+  223  	constructor(operation: string, isClosed: () =&gt; boolean) {
+  224  		this.operation = operation;
+  225  		this.isClosed = isClosed;
+  226  	}
+  227
+  228  	on(
+  229  		_name: HookName | string,
+  230  		_handler: (event: unknown) =&gt; unknown | Promise&lt;unknown&gt;,
+  231  		_options?: { id?: string },
+  232  	): () =&gt; void {
+  233  		throw this.isClosed() ? new HarnessClosed() : new HarnessNotImplemented(this.operation);
+  234  	}
+  235  }
+  236
+  237  export type HarnessTool = AgentTool &amp; { replay?: &quot;never&quot; | &quot;safe&quot; };
+  238  export type Resources = AgentHarnessResources&lt;Skill, PromptTemplate&gt;;
+  239  export type StreamOptions = SimpleStreamOptions;
+  240  export type StreamOptionsPatch = Partial&lt;SimpleStreamOptions&gt;;
+  241  export type EntryProjector = (entry: Entry) =&gt; AgentMessage[] | Promise&lt;AgentMessage[]&gt;;
+  242
+  243  export interface AgentHarnessOptions {
+  244  	session: Session;
+  245  	models: Models;
+  246  	model: Model&lt;Api&gt;;
+  247  	thinkingLevel?: ThinkingLevel;
+  248  	activeToolNames?: string[];
+  249  	tools?: HarnessTool[];
+  250  	toolContext?: object | (() =&gt; object | Promise&lt;object&gt;);
+  251  	systemPrompt?: string | (() =&gt; string | Promise&lt;string&gt;);
+  252  	resources?: Resources;
+  253  	streamOptions?: StreamOptions;
+  254  	retry?: RetryPolicy;
+  255  	compaction?: CompactionSettings;
+  256  	steeringMode?: QueueMode;
+  257  	followUpMode?: QueueMode;
+  258  	toolExecution?: &quot;sequential&quot; | &quot;parallel&quot;;
+  259  	drive?: &quot;automatic&quot; | &quot;manual&quot;;
+  260  	toProviderMessages?: (messages: AgentMessage[]) =&gt; Message[] | Promise&lt;Message[]&gt;;
+  261  	entryProjectors?: Record&lt;string, EntryProjector&gt;;
+  262  	context?: TelemetryContext;
+  263  }
+  264
+  265  export interface WatchHandle&lt;TSnapshot&gt; {
+  266  	snapshot: TSnapshot;
+  267  	start(listener: (event: unknown) =&gt; void): void;
+  268  	unsubscribe(): void;
+  269  }
+  270
+  271  export interface AgentLane {
+  272  	readonly name: string;
+  273  	getLeafId(): Promise&lt;string | null&gt;;
+  274  	prompt(text: string, images?: ImageContent[]): Promise&lt;RunResult&gt;;
+  275  	prompt(message: AgentMessage | AgentMessage[]): Promise&lt;RunResult&gt;;
+  276  	skill(name: string, additionalInstructions?: string): Promise&lt;RunResult&gt;;
+  277  	promptFromTemplate(name: string, args?: string[]): Promise&lt;RunResult&gt;;
+  278  	compact(options?: { customInstructions?: string }): Promise&lt;CompactionResult&gt;;
+  279  	navigateTree(targetId: string | null, options?: NavigateOptions): Promise&lt;NavigationResult&gt;;
+  280  	resume(): Promise&lt;ResumeResult&gt;;
+  281  	abort(): Promise&lt;AbortResult&gt;;
+  282  	steer(text: string, images?: ImageContent[]): Promise&lt;QueueResult&gt;;
+  283  	steer(message: AgentMessage): Promise&lt;QueueResult&gt;;
+  284  	followUp(text: string, images?: ImageContent[]): Promise&lt;QueueResult&gt;;
+  285  	followUp(message: AgentMessage): Promise&lt;QueueResult&gt;;
+  286  	nextRun(text: string, images?: ImageContent[]): Promise&lt;QueueResult&gt;;
+  287  	nextRun(message: AgentMessage): Promise&lt;QueueResult&gt;;
+  288  	cancelQueued(entryId: string): Promise&lt;CancelQueuedResult&gt;;
+  289  	recordUsage(usage: Usage, options?: { entryId?: string; details?: JsonValue }): Promise&lt;RecordUsageResult&gt;;
+  290  	waitForIdle(): Promise&lt;void&gt;;
+  291  	runWhenIdle(callback: () =&gt; void | Promise&lt;void&gt;): Promise&lt;void&gt;;
+  292  	peekAction(): Promise&lt;ActionInfo | undefined&gt;;
+  293  	executeAction(): Promise&lt;ActionInfo | undefined&gt;;
+  294  	runToCompletion(): Promise&lt;void&gt;;</code></pre></details></div></div></article><article class="finding-card compact" id="pi-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 低层循环把 steering、工具执行和 follow-up 分成内外两层</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>agentLoop 外层消费 follow-up，内层在 assistant tool call 或 steering 消息存在时继续；每轮发出 agent/turn/message 事件并把工具结果加入上下文。</p></section><section><span>PLAIN LANGUAGE</span><p>用户中途插话会先纠偏当前工作，排队的新任务则等当前回合稳定后再接着做。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>交互打断与自治续跑共享同一 loop，而不是 UI 另开旁路。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>155–214</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>215–275</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L155-L275" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:155–275</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L155-L275" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  155  async function runLoop(
+  156  	initialContext: AgentContext,
+  157  	newMessages: AgentMessage[],
+  158  	initialConfig: AgentLoopConfig,
+  159  	signal: AbortSignal | undefined,
+  160  	emit: AgentEventSink,
+  161  	streamFunction: StreamFn,
+  162  ): Promise&lt;void&gt; {
+  163  	let currentContext = initialContext;
+  164  	let config = initialConfig;
+  165  	let firstTurn = true;
+  166  	// Check for steering messages at start (user may have typed while waiting)
+  167  	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+  168
+  169  	// Outer loop: continues when queued follow-up messages arrive after agent would stop
+  170  	while (true) {
+  171  		let hasMoreToolCalls = true;
+  172
+  173  		// Inner loop: process tool calls and steering messages
+  174  		while (hasMoreToolCalls || pendingMessages.length &gt; 0) {
+  175  			if (!firstTurn) {
+  176  				await emit({ type: &quot;turn_start&quot; });
+  177  			} else {
+  178  				firstTurn = false;
+  179  			}
+  180
+  181  			// Process pending messages (inject before next assistant response)
+  182  			if (pendingMessages.length &gt; 0) {
+  183  				for (const message of pendingMessages) {
+  184  					await emit({ type: &quot;message_start&quot;, message });
+  185  					await emit({ type: &quot;message_end&quot;, message });
+  186  					currentContext.messages.push(message);
+  187  					newMessages.push(message);
+  188  				}
+  189  				pendingMessages = [];
+  190  			}
+  191
+  192  			// Stream assistant response
+  193  			const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFunction);
+  194  			newMessages.push(message);
+  195
+  196  			if (message.stopReason === &quot;error&quot; || message.stopReason === &quot;aborted&quot;) {
+  197  				await emit({ type: &quot;turn_end&quot;, message, toolResults: [] });
+  198  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  199  				return;
+  200  			}
+  201
+  202  			// Check for tool calls
+  203  			const toolCalls = message.content.filter((c) =&gt; c.type === &quot;toolCall&quot;);
+  204
+  205  			const toolResults: ToolResultMessage[] = [];
+  206  			hasMoreToolCalls = false;
+  207  			if (toolCalls.length &gt; 0) {
+  208  				// A &quot;length&quot; stop means the output was cut off by the token limit, so
+  209  				// every tool call in the message may carry truncated arguments. Fail
+  210  				// them all instead of executing potentially borked calls.
+  211  				const executedToolBatch =
+  212  					message.stopReason === &quot;length&quot;
+  213  						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
+  214  						: await executeToolCalls(currentContext, message, config, signal, emit);
+  215  				toolResults.push(...executedToolBatch.messages);
+  216  				hasMoreToolCalls = !executedToolBatch.terminate;
+  217
+  218  				for (const result of toolResults) {
+  219  					currentContext.messages.push(result);
+  220  					newMessages.push(result);
+  221  				}
+  222  			}
+  223
+  224  			await emit({ type: &quot;turn_end&quot;, message, toolResults });
+  225
+  226  			const nextTurnContext = {
+  227  				message,
+  228  				toolResults,
+  229  				context: currentContext,
+  230  				newMessages,
+  231  			};
+  232  			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
+  233  			if (nextTurnSnapshot) {
+  234  				currentContext = nextTurnSnapshot.context ?? currentContext;
+  235  				config = {
+  236  					...config,
+  237  					model: nextTurnSnapshot.model ?? config.model,
+  238  					reasoning:
+  239  						nextTurnSnapshot.thinkingLevel === undefined
+  240  							? config.reasoning
+  241  							: nextTurnSnapshot.thinkingLevel === &quot;off&quot;
+  242  								? undefined
+  243  								: nextTurnSnapshot.thinkingLevel,
+  244  				};
+  245  			}
+  246
+  247  			if (
+  248  				await config.shouldStopAfterTurn?.({
+  249  					message,
+  250  					toolResults,
+  251  					context: currentContext,
+  252  					newMessages,
+  253  				})
+  254  			) {
+  255  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  256  				return;
+  257  			}
+  258
+  259  			pendingMessages = (await config.getSteeringMessages?.()) || [];
+  260  		}
+  261
+  262  		// Agent would stop here. Check for follow-up messages.
+  263  		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
+  264  		if (followUpMessages.length &gt; 0) {
+  265  			// Set as pending so inner loop processes them
+  266  			pendingMessages = followUpMessages;
+  267  			continue;
+  268  		}
+  269
+  270  		// No more messages, exit
+  271  		break;
+  272  	}
+  273
+  274  	await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  275  }
+  276
+  277  /**
+  278   * Stream an assistant response from the LLM.
+  279   * This is where AgentMessage[] gets transformed to Message[] for the LLM.
+  280   */
+  281  async function streamAssistantResponse(
+  282  	context: AgentContext,
+  283  	config: AgentLoopConfig,
+  284  	signal: AbortSignal | undefined,
+  285  	emit: AgentEventSink,
+  286  	streamFunction: StreamFn,
+  287  ): Promise&lt;AssistantMessage&gt; {
+  288  	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
+  289  	let messages = context.messages;
+  290  	if (config.transformContext) {
+  291  		messages = await config.transformContext(messages, signal);
+  292  	}
+  293
+  294  	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
+  295  	const llmMessages = await config.convertToLlm(messages);
+  296
+  297  	// Build LLM context
+  298  	const llmContext: Context = {
+  299  		systemPrompt: context.systemPrompt,
+  300  		messages: llmMessages,
+  301  		tools: context.tools,
+  302  	};
+  303
+  304  	// Resolve API key (important for expiring tokens)
+  305  	const resolvedApiKey =
+  306  		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
+  307
+  308  	const response = await streamFunction(config.model, llmContext, {
+  309  		...config,
+  310  		apiKey: resolvedApiKey,
+  311  		signal,
+  312  	});
+  313
+  314  	let partialMessage: AssistantMessage | null = null;
+  315  	let addedPartial = false;
+  316
+  317  	for await (const event of response) {
+  318  		switch (event.type) {
+  319  			case &quot;start&quot;:
+  320  				partialMessage = event.partial;
+  321  				context.messages.push(partialMessage);
+  322  				addedPartial = true;
+  323  				await emit({ type: &quot;message_start&quot;, message: { ...partialMessage } });
+  324  				break;
+  325
+  326  			case &quot;text_start&quot;:
+  327  			case &quot;text_delta&quot;:
+  328  			case &quot;text_end&quot;:
+  329  			case &quot;thinking_start&quot;:
+  330  			case &quot;thinking_delta&quot;:
+  331  			case &quot;thinking_end&quot;:
+  332  			case &quot;toolcall_start&quot;:
+  333  			case &quot;toolcall_delta&quot;:
+  334  			case &quot;toolcall_end&quot;:
+  335  				if (partialMessage) {
+  336  					partialMessage = event.partial;
+  337  					context.messages[context.messages.length - 1] = partialMessage;
+  338  					await emit({
+  339  						type: &quot;message_update&quot;,
+  340  						assistantMessageEvent: event,
+  341  						message: { ...partialMessage },
+  342  					});
+  343  				}
+  344  				break;
+  345
+  346  			case &quot;done&quot;:</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>155</td><th><span class="line-kind-flow">FLOW</span></th><td><code>async function runLoop(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>156</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	initialContext: AgentContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>157</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	newMessages: AgentMessage[],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>158</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	initialConfig: AgentLoopConfig,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>159</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	signal: AbortSignal | undefined,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>160</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	emit: AgentEventSink,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>161</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	streamFunction: StreamFn,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>162</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): Promise&lt;void&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>163</td><th><span class="line-kind-input">INPUT</span></th><td><code>	let currentContext = initialContext;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>164</td><th><span class="line-kind-input">INPUT</span></th><td><code>	let config = initialConfig;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>165</td><th><span class="line-kind-input">INPUT</span></th><td><code>	let firstTurn = true;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>166</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	// Check for steering messages at start (user may have typed while waiting)</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>167</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>168</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>169</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	// Outer loop: continues when queued follow-up messages arrive after agent would stop</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>170</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	while (true) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>171</td><th><span class="line-kind-input">INPUT</span></th><td><code>		let hasMoreToolCalls = true;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>172</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>173</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		// Inner loop: process tool calls and steering messages</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>174</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		while (hasMoreToolCalls || pendingMessages.length &gt; 0) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>175</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if (!firstTurn) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>176</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>				await emit({ type: &quot;turn_start&quot; });</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>177</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			} else {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>178</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				firstTurn = false;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>179</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>180</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>181</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			// Process pending messages (inject before next assistant response)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>182</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if (pendingMessages.length &gt; 0) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="pi-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 截断响应禁止执行工具；每回合可热刷新完整运行状态</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>assistant stopReason 为 length 时，即使带 tool call 也不执行，因为参数可能被截断；prepareNextTurn 可替换 context、model、thinking、system prompt 和 tools。</p></section><section><span>PLAIN LANGUAGE</span><p>模型半句话里拼出的命令不会贸然执行；同时下一轮可以换模型、换工具或换说明书。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>工具安全包含协议完整性检查，动态配置不必重启会话。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>208–225</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>226–245</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L208-L245" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:208–245</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L208-L245" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  208  				// A &quot;length&quot; stop means the output was cut off by the token limit, so
+  209  				// every tool call in the message may carry truncated arguments. Fail
+  210  				// them all instead of executing potentially borked calls.
+  211  				const executedToolBatch =
+  212  					message.stopReason === &quot;length&quot;
+  213  						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
+  214  						: await executeToolCalls(currentContext, message, config, signal, emit);
+  215  				toolResults.push(...executedToolBatch.messages);
+  216  				hasMoreToolCalls = !executedToolBatch.terminate;
+  217
+  218  				for (const result of toolResults) {
+  219  					currentContext.messages.push(result);
+  220  					newMessages.push(result);
+  221  				}
+  222  			}
+  223
+  224  			await emit({ type: &quot;turn_end&quot;, message, toolResults });
+  225
+  226  			const nextTurnContext = {
+  227  				message,
+  228  				toolResults,
+  229  				context: currentContext,
+  230  				newMessages,
+  231  			};
+  232  			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
+  233  			if (nextTurnSnapshot) {
+  234  				currentContext = nextTurnSnapshot.context ?? currentContext;
+  235  				config = {
+  236  					...config,
+  237  					model: nextTurnSnapshot.model ?? config.model,
+  238  					reasoning:
+  239  						nextTurnSnapshot.thinkingLevel === undefined
+  240  							? config.reasoning
+  241  							: nextTurnSnapshot.thinkingLevel === &quot;off&quot;
+  242  								? undefined
+  243  								: nextTurnSnapshot.thinkingLevel,
+  244  				};
+  245  			}
+  246
+  247  			if (
+  248  				await config.shouldStopAfterTurn?.({
+  249  					message,
+  250  					toolResults,
+  251  					context: currentContext,
+  252  					newMessages,
+  253  				})
+  254  			) {
+  255  				await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  256  				return;
+  257  			}
+  258
+  259  			pendingMessages = (await config.getSteeringMessages?.()) || [];
+  260  		}
+  261
+  262  		// Agent would stop here. Check for follow-up messages.
+  263  		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
+  264  		if (followUpMessages.length &gt; 0) {
+  265  			// Set as pending so inner loop processes them
+  266  			pendingMessages = followUpMessages;
+  267  			continue;
+  268  		}
+  269
+  270  		// No more messages, exit
+  271  		break;
+  272  	}
+  273
+  274  	await emit({ type: &quot;agent_end&quot;, messages: newMessages });
+  275  }
+  276
+  277  /**
+  278   * Stream an assistant response from the LLM.
+  279   * This is where AgentMessage[] gets transformed to Message[] for the LLM.
+  280   */
+  281  async function streamAssistantResponse(
+  282  	context: AgentContext,
+  283  	config: AgentLoopConfig,
+  284  	signal: AbortSignal | undefined,
+  285  	emit: AgentEventSink,
+  286  	streamFunction: StreamFn,
+  287  ): Promise&lt;AssistantMessage&gt; {
+  288  	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
+  289  	let messages = context.messages;
+  290  	if (config.transformContext) {
+  291  		messages = await config.transformContext(messages, signal);
+  292  	}
+  293
+  294  	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
+  295  	const llmMessages = await config.convertToLlm(messages);
+  296
+  297  	// Build LLM context
+  298  	const llmContext: Context = {
+  299  		systemPrompt: context.systemPrompt,
+  300  		messages: llmMessages,
+  301  		tools: context.tools,
+  302  	};
+  303
+  304  	// Resolve API key (important for expiring tokens)
+  305  	const resolvedApiKey =
+  306  		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
+  307
+  308  	const response = await streamFunction(config.model, llmContext, {
+  309  		...config,
+  310  		apiKey: resolvedApiKey,
+  311  		signal,
+  312  	});
+  313
+  314  	let partialMessage: AssistantMessage | null = null;
+  315  	let addedPartial = false;
+  316</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>208</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				// A &quot;length&quot; stop means the output was cut off by the token limit, so</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>209</td><th><span class="line-kind-input">INPUT</span></th><td><code>				// every tool call in the message may carry truncated arguments. Fail</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>210</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				// them all instead of executing potentially borked calls.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>211</td><th><span class="line-kind-input">INPUT</span></th><td><code>				const executedToolBatch =</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>212</td><th><span class="line-kind-input">INPUT</span></th><td><code>					message.stopReason === &quot;length&quot;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>213</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>						? await failToolCallsFromTruncatedMessage(toolCalls, emit)</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>214</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>						: await executeToolCalls(currentContext, message, config, signal, emit);</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>215</td><th><span class="line-kind-state">STATE</span></th><td><code>				toolResults.push(...executedToolBatch.messages);</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>216</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				hasMoreToolCalls = !executedToolBatch.terminate;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>217</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>218</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>				for (const result of toolResults) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>219</td><th><span class="line-kind-state">STATE</span></th><td><code>					currentContext.messages.push(result);</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>220</td><th><span class="line-kind-state">STATE</span></th><td><code>					newMessages.push(result);</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>221</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>222</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>223</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>224</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>			await emit({ type: &quot;turn_end&quot;, message, toolResults });</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>225</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>226</td><th><span class="line-kind-input">INPUT</span></th><td><code>			const nextTurnContext = {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>227</td><th><span class="line-kind-input">INPUT</span></th><td><code>				message,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>228</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				toolResults,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>229</td><th><span class="line-kind-state">STATE</span></th><td><code>				context: currentContext,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>230</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				newMessages,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>231</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			};</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>232</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>233</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>			if (nextTurnSnapshot) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>234</td><th><span class="line-kind-state">STATE</span></th><td><code>				currentContext = nextTurnSnapshot.context ?? currentContext;</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>235</td><th><span class="line-kind-input">INPUT</span></th><td><code>				config = {</code></td><td>Receives arguments, events, or configuration</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="pi-harness-001" data-finding-dimension="architecture"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>04 · 新 AgentHarness 把请求 hooks、消息持久化和运行时变更统一到 turn boundary</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Harness 在每轮创建 state snapshot，通过 beforeProviderRequest/beforeProviderPayload/afterProviderResponse 包装模型请求；message_end 串行写 session，turn 结束后刷新状态并消费 steer/follow-up；model/tool/resource 变更也持久化并发事件。</p></section><section><span>PLAIN LANGUAGE</span><p>每轮开始先拍一张配置快照，模型请求前后都能挂钩；消息落盘和配置变化在明确边界完成，减少并发写乱序。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>适合作为自研 Harness 的可复用内核参考，尤其是 transport、storage 和 execution capability 的解耦。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>354–424</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>425–497</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/harness/agent-harness.ts#L354-L497" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/harness/agent-harness.ts:354–497</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/harness/agent-harness.ts#L354-L497" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  354  	private async createTurnState(): Promise&lt;AgentHarnessTurnState&lt;TContext, TSkill, TPromptTemplate, TTool&gt;&gt; {
+  355  		const context = await this.session.buildContext();
+  356  		const resources = this.getResources();
+  357  		const sessionMetadata = await this.session.getMetadata();
+  358  		const toolContext = await this.resolveToolContext();
+  359  		const tools = [...this.tools.values()];
+  360  		const activeTools = this.activeToolNames
+  361  			.map((name) =&gt; this.tools.get(name))
+  362  			.filter((tool): tool is TTool =&gt; tool !== undefined);
+  363  		let systemPrompt = &quot;You are a helpful assistant.&quot;;
+  364  		if (typeof this.systemPrompt === &quot;string&quot;) {
+  365  			systemPrompt = this.systemPrompt;
+  366  		} else if (this.systemPrompt) {
+  367  			systemPrompt = await this.systemPrompt({
+  368  				session: this.session,
+  369  				model: this.model,
+  370  				thinkingLevel: this.thinkingLevel,
+  371  				activeTools,
+  372  				resources,
+  373  			});
+  374  		}
+  375  		return {
+  376  			messages: context.messages,
+  377  			resources,
+  378  			toolContext,
+  379  			streamOptions: cloneStreamOptions(this.streamOptions),
+  380  			sessionId: sessionMetadata.id,
+  381  			systemPrompt,
+  382  			model: this.model,
+  383  			thinkingLevel: this.thinkingLevel,
+  384  			tools,
+  385  			activeTools,
+  386  		};
+  387  	}
+  388
+  389  	private createContext(
+  390  		turnState: AgentHarnessTurnState&lt;TContext, TSkill, TPromptTemplate, TTool&gt;,
+  391  		systemPrompt?: string,
+  392  	): AgentContext {
+  393  		return {
+  394  			systemPrompt: systemPrompt ?? turnState.systemPrompt,
+  395  			messages: turnState.messages.slice(),
+  396  			tools: turnState.activeTools.map((tool) =&gt; this.bindToolContext(tool, turnState.toolContext)),
+  397  		};
+  398  	}
+  399
+  400  	private createStreamFn(
+  401  		getTurnState: () =&gt; AgentHarnessTurnState&lt;TContext, TSkill, TPromptTemplate, TTool&gt;,
+  402  	): StreamFn {
+  403  		return async (model, context, streamOptions) =&gt; {
+  404  			const turnState = getTurnState();
+  405  			const snapshotOptions: AgentHarnessStreamOptions = { ...turnState.streamOptions };
+  406  			const requestOptions = await this.emitBeforeProviderRequest(model, turnState.sessionId, snapshotOptions);
+  407  			return this.models.streamSimple(model, context, {
+  408  				cacheRetention: requestOptions.cacheRetention,
+  409  				headers: requestOptions.headers,
+  410  				maxRetries: requestOptions.maxRetries,
+  411  				maxRetryDelayMs: requestOptions.maxRetryDelayMs,
+  412  				metadata: requestOptions.metadata,
+  413  				onPayload: async (payload) =&gt; await this.emitBeforeProviderPayload(model, payload),
+  414  				onResponse: async (response) =&gt; {
+  415  					const headers = { ...(response.headers as Record&lt;string, string&gt;) };
+  416  					await this.emitOwn(
+  417  						{ type: &quot;after_provider_response&quot;, status: response.status, headers },
+  418  						streamOptions?.signal,
+  419  					);
+  420  				},
+  421  				reasoning: streamOptions?.reasoning,
+  422  				signal: streamOptions?.signal,
+  423  				sessionId: turnState.sessionId,
+  424  				timeoutMs: requestOptions.timeoutMs,
+  425  				transport: requestOptions.transport,
+  426  			});
+  427  		};
+  428  	}
+  429
+  430  	private async drainQueuedMessages(queue: AgentMessage[], mode: QueueMode): Promise&lt;AgentMessage[]&gt; {
+  431  		const messages = mode === &quot;all&quot; ? queue.splice(0) : queue.splice(0, 1);
+  432  		if (messages.length === 0) return messages;
+  433  		try {
+  434  			await this.emitQueueUpdate();
+  435  			return messages;
+  436  		} catch (error) {
+  437  			queue.unshift(...messages);
+  438  			throw normalizeHookError(error);
+  439  		}
+  440  	}
+  441
+  442  	private createLoopConfig(
+  443  		getTurnState: () =&gt; AgentHarnessTurnState&lt;TContext, TSkill, TPromptTemplate, TTool&gt;,
+  444  		setTurnState: (turnState: AgentHarnessTurnState&lt;TContext, TSkill, TPromptTemplate, TTool&gt;) =&gt; void,
+  445  	): AgentLoopConfig {
+  446  		const turnState = getTurnState();
+  447  		return {
+  448  			model: turnState.model,
+  449  			reasoning: turnState.thinkingLevel === &quot;off&quot; ? undefined : turnState.thinkingLevel,
+  450  			convertToLlm,
+  451  			transformContext: async (messages) =&gt; {
+  452  				const result = await this.emitHook({ type: &quot;context&quot;, messages: [...messages] });
+  453  				return result?.messages ?? messages;
+  454  			},
+  455  			beforeToolCall: async ({ toolCall, args }) =&gt; {
+  456  				const result = await this.emitHook({
+  457  					type: &quot;tool_call&quot;,
+  458  					toolCallId: toolCall.id,
+  459  					toolName: toolCall.name,
+  460  					input: args as Record&lt;string, unknown&gt;,
+  461  				});
+  462  				return result ? { block: result.block, reason: result.reason } : undefined;
+  463  			},
+  464  			afterToolCall: async ({ toolCall, args, result, isError }) =&gt; {
+  465  				const patch = await this.emitHook({
+  466  					type: &quot;tool_result&quot;,
+  467  					toolCallId: toolCall.id,
+  468  					toolName: toolCall.name,
+  469  					input: args as Record&lt;string, unknown&gt;,
+  470  					content: result.content,
+  471  					details: result.details,
+  472  					isError,
+  473  					usage: result.usage,
+  474  				});
+  475  				return patch
+  476  					? {
+  477  							content: patch.content,
+  478  							details: patch.details,
+  479  							isError: patch.isError,
+  480  							usage: patch.usage,
+  481  							terminate: patch.terminate,
+  482  						}
+  483  					: undefined;
+  484  			},
+  485  			prepareNextTurn: async () =&gt; {
+  486  				await this.flushPendingSessionWrites();
+  487  				const nextTurnState = await this.createTurnState();
+  488  				setTurnState(nextTurnState);
+  489  				return {
+  490  					context: this.createContext(nextTurnState),
+  491  					model: nextTurnState.model,
+  492  					thinkingLevel: nextTurnState.thinkingLevel,
+  493  				};
+  494  			},
+  495  			getSteeringMessages: async () =&gt; this.drainQueuedMessages(this.steerQueue, this.steeringQueueMode),
+  496  			getFollowUpMessages: async () =&gt; this.drainQueuedMessages(this.followUpQueue, this.followUpQueueMode),
+  497  		};
+  498  	}
+  499
+  500  	private validateUniqueNames(names: string[], message: string): void {
+  501  		const duplicates = findDuplicateNames(names);
+  502  		if (duplicates.length &gt; 0)
+  503  			throw new AgentHarnessError(&quot;invalid_argument&quot;, `${message}: ${duplicates.join(&quot;, &quot;)}`);
+  504  	}
+  505
+  506  	private validateToolNames(toolNames: string[], tools: Map&lt;string, TTool&gt; = this.tools): void {
+  507  		this.validateUniqueNames(toolNames, &quot;Duplicate active tool name(s)&quot;);
+  508  		const missing = toolNames.filter((name) =&gt; !tools.has(name));
+  509  		if (missing.length &gt; 0) throw new AgentHarnessError(&quot;invalid_argument&quot;, `Unknown tool(s): ${missing.join(&quot;, &quot;)}`);
+  510  	}
+  511
+  512  	private async flushPendingSessionWrites(): Promise&lt;void&gt; {
+  513  		while (this.pendingSessionWrites.length &gt; 0) {
+  514  			const write = this.pendingSessionWrites[0]!;
+  515  			if (write.type === &quot;message&quot;) {
+  516  				await this.session.appendMessage(write.message);
+  517  			} else if (write.type === &quot;model_change&quot;) {
+  518  				await this.session.appendModelChange(write.provider, write.modelId);
+  519  			} else if (write.type === &quot;thinking_level_change&quot;) {
+  520  				await this.session.appendThinkingLevelChange(write.thinkingLevel);
+  521  			} else if (write.type === &quot;active_tools_change&quot;) {
+  522  				await this.session.appendActiveToolsChange(write.activeToolNames);
+  523  			} else if (write.type === &quot;custom&quot;) {
+  524  				await this.session.appendCustomEntry(write.customType, write.data);
+  525  			} else if (write.type === &quot;custom_message&quot;) {
+  526  				await this.session.appendCustomMessageEntry(write.customType, write.content, write.display, write.details);
+  527  			} else if (write.type === &quot;label&quot;) {
+  528  				await this.session.appendLabel(write.targetId, write.label);
+  529  			} else if (write.type === &quot;session_info&quot;) {
+  530  				await this.session.appendSessionName(write.name ?? &quot;&quot;);
+  531  			} else if (write.type === &quot;leaf&quot;) {
+  532  				await this.session.getStorage().setLeafId(write.targetId);
+  533  			}
+  534  			this.pendingSessionWrites.shift();
+  535  		}
+  536  	}
+  537
+  538  	private async handleAgentEvent(event: AgentEvent, signal?: AbortSignal): Promise&lt;void&gt; {
+  539  		if (event.type === &quot;message_end&quot;) {
+  540  			await this.session.appendMessage(event.message);
+  541  			await this.emitAny(event, signal);
+  542  			return;
+  543  		}
+  544  		if (event.type === &quot;turn_end&quot;) {
+  545  			let eventError: unknown;
+  546  			try {
+  547  				await this.emitAny(event, signal);
+  548  			} catch (error) {
+  549  				eventError = error;
+  550  			}
+  551  			const hadPendingMutations = this.pendingSessionWrites.length &gt; 0;
+  552  			await this.flushPendingSessionWrites();
+  553  			if (eventError) throw eventError;
+  554  			await this.emitOwn({ type: &quot;save_point&quot;, hadPendingMutations });
+  555  			return;
+  556  		}
+  557  		if (event.type === &quot;agent_end&quot;) {
+  558  			await this.flushPendingSessionWrites();
+  559  			this.phase = &quot;idle&quot;;
+  560  			await this.emitAny(event, signal);
+  561  			await this.emitOwn({ type: &quot;settled&quot;, nextTurnCount: this.nextTurnQueue.length }, signal);
+  562  			return;
+  563  		}
+  564  		await this.emitAny(event, signal);
+  565  	}
+  566
+  567  	private async emitRunFailure(
+  568  		model: Model&lt;any&gt;,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>354</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	private async createTurnState(): Promise&lt;AgentHarnessTurnState&lt;TContext, TSkill, TPromptTemplate, TTool&gt;&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>355</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>		const context = await this.session.buildContext();</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>356</td><th><span class="line-kind-input">INPUT</span></th><td><code>		const resources = this.getResources();</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>357</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>		const sessionMetadata = await this.session.getMetadata();</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>358</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>		const toolContext = await this.resolveToolContext();</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>359</td><th><span class="line-kind-input">INPUT</span></th><td><code>		const tools = [...this.tools.values()];</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>360</td><th><span class="line-kind-input">INPUT</span></th><td><code>		const activeTools = this.activeToolNames</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>361</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			.map((name) =&gt; this.tools.get(name))</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>362</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			.filter((tool): tool is TTool =&gt; tool !== undefined);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>363</td><th><span class="line-kind-input">INPUT</span></th><td><code>		let systemPrompt = &quot;You are a helpful assistant.&quot;;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>364</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if (typeof this.systemPrompt === &quot;string&quot;) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>365</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			systemPrompt = this.systemPrompt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>366</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		} else if (this.systemPrompt) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>367</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>			systemPrompt = await this.systemPrompt({</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>368</td><th><span class="line-kind-state">STATE</span></th><td><code>				session: this.session,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>369</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				model: this.model,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>370</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				thinkingLevel: this.thinkingLevel,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>371</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				activeTools,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>372</td><th><span class="line-kind-flow">FLOW</span></th><td><code>				resources,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>373</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			});</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>374</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>375</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return {</code></td><td>Returns a result, error, or next step</td></tr><tr><td>376</td><th><span class="line-kind-state">STATE</span></th><td><code>			messages: context.messages,</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>377</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			resources,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>378</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			toolContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>379</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			streamOptions: cloneStreamOptions(this.streamOptions),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>380</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			sessionId: sessionMetadata.id,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>381</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			systemPrompt,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>packages/agent/src/harness/agent-harness.ts · 581d75a89cea</span><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/agent/src/harness/agent-harness.ts#L354-L497" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  354
+  355  	private unavailable&lt;T&gt;(operation: string): Promise&lt;T&gt; {
+  356  		return Promise.reject(this.closed ? new HarnessClosed() : new HarnessNotImplemented(operation));
+  357  	}
+  358
+  359  	async getLeafId(): Promise&lt;string | null&gt; {
+  360  		return this.durableSession.getLeafId();
+  361  	}
+  362
+  363  	async prompt(_text: string, _images?: ImageContent[]): Promise&lt;RunResult&gt;;
+  364  	async prompt(_message: AgentMessage | AgentMessage[]): Promise&lt;RunResult&gt;;
+  365  	async prompt(_input: string | AgentMessage | AgentMessage[], _images?: ImageContent[]): Promise&lt;RunResult&gt; {
+  366  		return this.unavailable(&quot;prompt&quot;);
+  367  	}
+  368  	async skill(_name: string, _additionalInstructions?: string): Promise&lt;RunResult&gt; {
+  369  		return this.unavailable(&quot;skill&quot;);
+  370  	}
+  371  	async promptFromTemplate(_name: string, _args?: string[]): Promise&lt;RunResult&gt; {
+  372  		return this.unavailable(&quot;promptFromTemplate&quot;);
+  373  	}
+  374  	async compact(_options?: { customInstructions?: string }): Promise&lt;CompactionResult&gt; {
+  375  		return this.unavailable(&quot;compact&quot;);
+  376  	}
+  377  	async navigateTree(_targetId: string | null, _options?: NavigateOptions): Promise&lt;NavigationResult&gt; {
+  378  		return this.unavailable(&quot;navigateTree&quot;);
+  379  	}
+  380  	async resume(): Promise&lt;ResumeResult&gt; {
+  381  		return this.unavailable(&quot;resume&quot;);
+  382  	}
+  383  	async abort(): Promise&lt;AbortResult&gt; {
+  384  		return this.unavailable(&quot;abort&quot;);
+  385  	}
+  386  	async steer(_text: string, _images?: ImageContent[]): Promise&lt;QueueResult&gt;;
+  387  	async steer(_message: AgentMessage): Promise&lt;QueueResult&gt;;
+  388  	async steer(_input: string | AgentMessage, _images?: ImageContent[]): Promise&lt;QueueResult&gt; {
+  389  		return this.unavailable(&quot;steer&quot;);
+  390  	}
+  391  	async followUp(_text: string, _images?: ImageContent[]): Promise&lt;QueueResult&gt;;
+  392  	async followUp(_message: AgentMessage): Promise&lt;QueueResult&gt;;
+  393  	async followUp(_input: string | AgentMessage, _images?: ImageContent[]): Promise&lt;QueueResult&gt; {
+  394  		return this.unavailable(&quot;followUp&quot;);
+  395  	}
+  396  	async nextRun(_text: string, _images?: ImageContent[]): Promise&lt;QueueResult&gt;;
+  397  	async nextRun(_message: AgentMessage): Promise&lt;QueueResult&gt;;
+  398  	async nextRun(_input: string | AgentMessage, _images?: ImageContent[]): Promise&lt;QueueResult&gt; {
+  399  		return this.unavailable(&quot;nextRun&quot;);
+  400  	}
+  401  	async cancelQueued(_entryId: string): Promise&lt;CancelQueuedResult&gt; {
+  402  		return this.unavailable(&quot;cancelQueued&quot;);
+  403  	}
+  404  	async recordUsage(_usage: Usage, _options?: { entryId?: string; details?: JsonValue }): Promise&lt;RecordUsageResult&gt; {
+  405  		return this.unavailable(&quot;recordUsage&quot;);
+  406  	}
+  407  	async waitForIdle(): Promise&lt;void&gt; {
+  408  		return this.unavailable(&quot;waitForIdle&quot;);
+  409  	}
+  410  	async runWhenIdle(_callback: () =&gt; void | Promise&lt;void&gt;): Promise&lt;void&gt; {
+  411  		return this.unavailable(&quot;runWhenIdle&quot;);
+  412  	}
+  413  	async peekAction(): Promise&lt;ActionInfo | undefined&gt; {
+  414  		return this.unavailable(&quot;peekAction&quot;);
+  415  	}
+  416  	async executeAction(): Promise&lt;ActionInfo | undefined&gt; {
+  417  		return this.unavailable(&quot;executeAction&quot;);
+  418  	}
+  419  	async runToCompletion(): Promise&lt;void&gt; {
+  420  		return this.unavailable(&quot;runToCompletion&quot;);
+  421  	}
+  422  	async getModel(): Promise&lt;Model&lt;Api&gt;&gt; {
+  423  		return this.model;
+  424  	}
+  425  	async setModel(model: Model&lt;Api&gt;): Promise&lt;void&gt; {
+  426  		this.model = model;
+  427  	}
+  428  	async getThinkingLevel(): Promise&lt;ThinkingLevel&gt; {
+  429  		return this.thinkingLevel;
+  430  	}
+  431  	async setThinkingLevel(level: ThinkingLevel): Promise&lt;void&gt; {
+  432  		this.thinkingLevel = level;
+  433  	}
+  434  	async getActiveTools(): Promise&lt;string[]&gt; {
+  435  		return [...this.activeToolNames];
+  436  	}
+  437  	async setActiveTools(names: string[]): Promise&lt;void&gt; {
+  438  		this.activeToolNames = [...names];
+  439  	}
+  440  	async watch(): Promise&lt;WatchHandle&lt;LaneSnapshot&gt;&gt; {
+  441  		return this.unavailable(&quot;watch&quot;);
+  442  	}
+  443
+  444  	async lane(_name: string): Promise&lt;AgentLane | undefined&gt; {
+  445  		return this.unavailable(&quot;lane&quot;);
+  446  	}
+  447  	async createLane(_name: string, _at: string | null): Promise&lt;CreateLaneResult&gt; {
+  448  		return this.unavailable(&quot;createLane&quot;);
+  449  	}
+  450  	async lanes(): Promise&lt;LaneInfo[]&gt; {
+  451  		return this.unavailable(&quot;lanes&quot;);
+  452  	}
+  453  	async getTools(): Promise&lt;HarnessTool[]&gt; {
+  454  		return [...this.tools];
+  455  	}
+  456  	async setTools(tools: HarnessTool[], activeNames?: string[]): Promise&lt;void&gt; {
+  457  		this.tools = [...tools];
+  458  		this.activeToolNames = [...(activeNames ?? tools.map((tool) =&gt; tool.name))];
+  459  	}
+  460  	async getResources(): Promise&lt;Resources&gt; {
+  461  		return {
+  462  			skills: this.resources.skills ? [...this.resources.skills] : undefined,
+  463  			promptTemplates: this.resources.promptTemplates ? [...this.resources.promptTemplates] : undefined,
+  464  		};
+  465  	}
+  466  	async setResources(resources: Resources): Promise&lt;void&gt; {
+  467  		this.resources = {
+  468  			skills: resources.skills ? [...resources.skills] : undefined,
+  469  			promptTemplates: resources.promptTemplates ? [...resources.promptTemplates] : undefined,
+  470  		};
+  471  	}
+  472  	async getStreamOptions(): Promise&lt;StreamOptions&gt; {
+  473  		return { ...this.streamOptions };
+  474  	}
+  475  	async setStreamOptions(options: StreamOptions): Promise&lt;void&gt; {
+  476  		this.streamOptions = { ...options };
+  477  	}
+  478  	async getRetryPolicy(): Promise&lt;RetryPolicy&gt; {
+  479  		return { ...this.retryPolicy };
+  480  	}
+  481  	async setRetryPolicy(policy: RetryPolicy): Promise&lt;void&gt; {
+  482  		this.retryPolicy = { ...policy };
+  483  	}
+  484  	async getCompactionSettings(): Promise&lt;CompactionSettings&gt; {
+  485  		return { ...this.compactionSettings };
+  486  	}
+  487  	async setCompactionSettings(settings: CompactionSettings): Promise&lt;void&gt; {
+  488  		this.compactionSettings = { ...settings };
+  489  	}
+  490  	async getSteeringMode(): Promise&lt;QueueMode&gt; {
+  491  		return this.steeringMode;
+  492  	}
+  493  	async setSteeringMode(mode: QueueMode): Promise&lt;void&gt; {
+  494  		this.steeringMode = mode;
+  495  	}
+  496  	async getFollowUpMode(): Promise&lt;QueueMode&gt; {
+  497  		return this.followUpMode;
+  498  	}
+  499  	async setFollowUpMode(mode: QueueMode): Promise&lt;void&gt; {
+  500  		this.followUpMode = mode;
+  501  	}
+  502  	async watchSession(): Promise&lt;WatchHandle&lt;SessionSnapshot&gt;&gt; {
+  503  		return this.unavailable(&quot;watchSession&quot;);
+  504  	}
+  505  	async close(): Promise&lt;void&gt; {
+  506  		this.closed = true;
+  507  	}
+  508  }
+  509</code></pre></details></div></div></article><article class="finding-card compact" id="pi-tool-dispatch-001" data-finding-dimension="tools"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>05 · 工具默认可并行，声明 sequential 或全局策略才串行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>同一 assistant message 的 tool calls 默认 Promise 并发；任一工具 executionMode=sequential 或配置顺序执行时改为串行。结果按原 tool call 顺序返回，before hook 可阻断，after hook 可改写结果、usage 和 terminate。</p></section><section><span>PLAIN LANGUAGE</span><p>互不冲突的工具一起跑更快；有副作用的工具可以声明排队。即使并发完成顺序不同，交给模型的账本仍按原顺序。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>吞吐高，但自定义工具作者必须正确声明副作用和并发语义。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>411–481</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>482–553</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:411–553</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  411  async function executeToolCalls(
+  412  	currentContext: AgentContext,
+  413  	assistantMessage: AssistantMessage,
+  414  	config: AgentLoopConfig,
+  415  	signal: AbortSignal | undefined,
+  416  	emit: AgentEventSink,
+  417  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  418  	const toolCalls = assistantMessage.content.filter((c) =&gt; c.type === &quot;toolCall&quot;);
+  419  	const hasSequentialToolCall = toolCalls.some(
+  420  		(tc) =&gt; currentContext.tools?.find((t) =&gt; t.name === tc.name)?.executionMode === &quot;sequential&quot;,
+  421  	);
+  422  	if (config.toolExecution === &quot;sequential&quot; || hasSequentialToolCall) {
+  423  		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+  424  	}
+  425  	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+  426  }
+  427
+  428  type ExecutedToolCallBatch = {
+  429  	messages: ToolResultMessage[];
+  430  	terminate: boolean;
+  431  };
+  432
+  433  async function executeToolCallsSequential(
+  434  	currentContext: AgentContext,
+  435  	assistantMessage: AssistantMessage,
+  436  	toolCalls: AgentToolCall[],
+  437  	config: AgentLoopConfig,
+  438  	signal: AbortSignal | undefined,
+  439  	emit: AgentEventSink,
+  440  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  441  	const finalizedCalls: FinalizedToolCallOutcome[] = [];
+  442  	const messages: ToolResultMessage[] = [];
+  443
+  444  	for (const toolCall of toolCalls) {
+  445  		await emit({
+  446  			type: &quot;tool_execution_start&quot;,
+  447  			toolCallId: toolCall.id,
+  448  			toolName: toolCall.name,
+  449  			args: toolCall.arguments,
+  450  		});
+  451
+  452  		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+  453  		let finalized: FinalizedToolCallOutcome;
+  454  		if (preparation.kind === &quot;immediate&quot;) {
+  455  			finalized = {
+  456  				toolCall,
+  457  				result: preparation.result,
+  458  				isError: preparation.isError,
+  459  			};
+  460  		} else {
+  461  			const executed = await executePreparedToolCall(preparation, signal, emit);
+  462  			finalized = await finalizeExecutedToolCall(
+  463  				currentContext,
+  464  				assistantMessage,
+  465  				preparation,
+  466  				executed,
+  467  				config,
+  468  				signal,
+  469  			);
+  470  		}
+  471
+  472  		await emitToolExecutionEnd(finalized, emit);
+  473  		const toolResultMessage = createToolResultMessage(finalized);
+  474  		await emitToolResultMessage(toolResultMessage, emit);
+  475  		finalizedCalls.push(finalized);
+  476  		messages.push(toolResultMessage);
+  477
+  478  		if (signal?.aborted) {
+  479  			break;
+  480  		}
+  481  	}
+  482
+  483  	return {
+  484  		messages,
+  485  		terminate: shouldTerminateToolBatch(finalizedCalls),
+  486  	};
+  487  }
+  488
+  489  async function executeToolCallsParallel(
+  490  	currentContext: AgentContext,
+  491  	assistantMessage: AssistantMessage,
+  492  	toolCalls: AgentToolCall[],
+  493  	config: AgentLoopConfig,
+  494  	signal: AbortSignal | undefined,
+  495  	emit: AgentEventSink,
+  496  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  497  	const finalizedCalls: FinalizedToolCallEntry[] = [];
+  498
+  499  	for (const toolCall of toolCalls) {
+  500  		await emit({
+  501  			type: &quot;tool_execution_start&quot;,
+  502  			toolCallId: toolCall.id,
+  503  			toolName: toolCall.name,
+  504  			args: toolCall.arguments,
+  505  		});
+  506
+  507  		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+  508  		if (preparation.kind === &quot;immediate&quot;) {
+  509  			const finalized = {
+  510  				toolCall,
+  511  				result: preparation.result,
+  512  				isError: preparation.isError,
+  513  			} satisfies FinalizedToolCallOutcome;
+  514  			await emitToolExecutionEnd(finalized, emit);
+  515  			finalizedCalls.push(finalized);
+  516  			if (signal?.aborted) {
+  517  				break;
+  518  			}
+  519  			continue;
+  520  		}
+  521
+  522  		finalizedCalls.push(async () =&gt; {
+  523  			const executed = await executePreparedToolCall(preparation, signal, emit);
+  524  			const finalized = await finalizeExecutedToolCall(
+  525  				currentContext,
+  526  				assistantMessage,
+  527  				preparation,
+  528  				executed,
+  529  				config,
+  530  				signal,
+  531  			);
+  532  			await emitToolExecutionEnd(finalized, emit);
+  533  			return finalized;
+  534  		});
+  535  		if (signal?.aborted) {
+  536  			break;
+  537  		}
+  538  	}
+  539
+  540  	const orderedFinalizedCalls = await Promise.all(
+  541  		finalizedCalls.map((entry) =&gt; (typeof entry === &quot;function&quot; ? entry() : Promise.resolve(entry))),
+  542  	);
+  543  	const messages: ToolResultMessage[] = [];
+  544  	for (const finalized of orderedFinalizedCalls) {
+  545  		const toolResultMessage = createToolResultMessage(finalized);
+  546  		await emitToolResultMessage(toolResultMessage, emit);
+  547  		messages.push(toolResultMessage);
+  548  	}
+  549
+  550  	return {
+  551  		messages,
+  552  		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
+  553  	};
+  554  }
+  555
+  556  type PreparedToolCall = {
+  557  	kind: &quot;prepared&quot;;
+  558  	toolCall: AgentToolCall;
+  559  	tool: AgentTool&lt;any&gt;;
+  560  	args: unknown;
+  561  };
+  562
+  563  type ImmediateToolCallOutcome = {
+  564  	kind: &quot;immediate&quot;;
+  565  	result: AgentToolResult&lt;any&gt;;
+  566  	isError: boolean;
+  567  };
+  568
+  569  type ExecutedToolCallOutcome = {
+  570  	result: AgentToolResult&lt;any&gt;;
+  571  	isError: boolean;
+  572  };
+  573
+  574  type FinalizedToolCallOutcome = {
+  575  	toolCall: AgentToolCall;
+  576  	result: AgentToolResult&lt;any&gt;;
+  577  	isError: boolean;
+  578  };
+  579
+  580  type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() =&gt; Promise&lt;FinalizedToolCallOutcome&gt;);
+  581
+  582  function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
+  583  	return finalizedCalls.length &gt; 0 &amp;&amp; finalizedCalls.every((finalized) =&gt; finalized.result.terminate === true);
+  584  }
+  585
+  586  function prepareToolCallArguments(tool: AgentTool&lt;any&gt;, toolCall: AgentToolCall): AgentToolCall {
+  587  	if (!tool.prepareArguments) {
+  588  		return toolCall;
+  589  	}
+  590  	const preparedArguments = tool.prepareArguments(toolCall.arguments);
+  591  	if (preparedArguments === toolCall.arguments) {
+  592  		return toolCall;
+  593  	}
+  594  	return {
+  595  		...toolCall,
+  596  		arguments: preparedArguments as Record&lt;string, any&gt;,
+  597  	};
+  598  }
+  599
+  600  async function prepareToolCall(
+  601  	currentContext: AgentContext,
+  602  	assistantMessage: AssistantMessage,
+  603  	toolCall: AgentToolCall,
+  604  	config: AgentLoopConfig,
+  605  	signal: AbortSignal | undefined,
+  606  ): Promise&lt;PreparedToolCall | ImmediateToolCallOutcome&gt; {
+  607  	const tool = currentContext.tools?.find((t) =&gt; t.name === toolCall.name);
+  608  	if (!tool) {
+  609  		return {
+  610  			kind: &quot;immediate&quot;,
+  611  			result: createErrorToolResult(`Tool ${toolCall.name} not found`),
+  612  			isError: true,
+  613  		};
+  614  	}
+  615
+  616  	try {
+  617  		const preparedToolCall = prepareToolCallArguments(tool, toolCall);
+  618  		const validatedArgs = validateToolArguments(tool, preparedToolCall);
+  619  		if (config.beforeToolCall) {
+  620  			const beforeResult = await config.beforeToolCall(
+  621  				{
+  622  					assistantMessage,
+  623  					toolCall,
+  624  					args: validatedArgs,</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>411</td><th><span class="line-kind-flow">FLOW</span></th><td><code>async function executeToolCalls(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>412</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	currentContext: AgentContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>413</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	assistantMessage: AssistantMessage,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>414</td><th><span class="line-kind-input">INPUT</span></th><td><code>	config: AgentLoopConfig,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>415</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	signal: AbortSignal | undefined,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>416</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	emit: AgentEventSink,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>417</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): Promise&lt;ExecutedToolCallBatch&gt; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>418</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const toolCalls = assistantMessage.content.filter((c) =&gt; c.type === &quot;toolCall&quot;);</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>419</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const hasSequentialToolCall = toolCalls.some(</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>420</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		(tc) =&gt; currentContext.tools?.find((t) =&gt; t.name === tc.name)?.executionMode === &quot;sequential&quot;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>421</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>422</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if (config.toolExecution === &quot;sequential&quot; || hasSequentialToolCall) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>423</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);</code></td><td>Returns a result, error, or next step</td></tr><tr><td>424</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>425</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);</code></td><td>Returns a result, error, or next step</td></tr><tr><td>426</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>427</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>428</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type ExecutedToolCallBatch = {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>429</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	messages: ToolResultMessage[];</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>430</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	terminate: boolean;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>431</td><th><span class="line-kind-flow">FLOW</span></th><td><code>};</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>432</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>433</td><th><span class="line-kind-flow">FLOW</span></th><td><code>async function executeToolCallsSequential(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>434</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	currentContext: AgentContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>435</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	assistantMessage: AssistantMessage,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>436</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	toolCalls: AgentToolCall[],</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>437</td><th><span class="line-kind-input">INPUT</span></th><td><code>	config: AgentLoopConfig,</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>438</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	signal: AbortSignal | undefined,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="pi-edit-001" data-finding-dimension="tools"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>06 · 编辑采用唯一精确替换，并对同一文件串行化</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>edit 要求 oldText 在文件中唯一且 replacement 不重叠，保留 BOM/行尾，写回后返回 diff/patch；同 canonical path 的 edit/write 进入 mutation queue，不同文件仍可并行。</p></section><section><span>PLAIN LANGUAGE</span><p>它不凭模糊相似度猜改哪里；目标文字必须只出现一次。同一文件上的两把手术刀要排队，避免互相覆盖。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>机制简单可审计，面对漂移代码时会失败并要求模型重新读取。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>33–42</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>43–53</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/edit.ts:33–53</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   33  const replaceEditSchema = Type.Object(
+   34  	{
+   35  		oldText: Type.String({
+   36  			description:
+   37  				&quot;Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.&quot;,
+   38  		}),
+   39  		newText: Type.String({ description: &quot;Replacement text for this targeted edit.&quot; }),
+   40  	},
+   41  	{},
+   42  );
+   43
+   44  const editSchema = Type.Object(
+   45  	{
+   46  		path: Type.String({ description: &quot;Path to the file to edit (relative or absolute)&quot; }),
+   47  		edits: Type.Array(replaceEditSchema, {
+   48  			description:
+   49  				&quot;One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.&quot;,
+   50  		}),
+   51  	},
+   52  	{},
+   53  );
+   54
+   55  export type EditToolInput = Static&lt;typeof editSchema&gt;;
+   56  type LegacyEditToolInput = EditToolInput &amp; {
+   57  	oldText?: unknown;
+   58  	newText?: unknown;
+   59  };
+   60
+   61  export interface EditToolDetails {
+   62  	/** Display-oriented diff of the changes made */
+   63  	diff: string;
+   64  	/** Standard unified patch of the changes made */
+   65  	patch: string;
+   66  	/** Line number of the first change in the new file (for editor navigation) */
+   67  	firstChangedLine?: number;
+   68  }
+   69
+   70  /**
+   71   * Pluggable operations for the edit tool.
+   72   * Override these to delegate file editing to remote systems (for example SSH).
+   73   */
+   74  export interface EditOperations {
+   75  	/** Read file contents as a Buffer */
+   76  	readFile: (absolutePath: string) =&gt; Promise&lt;Buffer&gt;;
+   77  	/** Write content to a file */
+   78  	writeFile: (absolutePath: string, content: string) =&gt; Promise&lt;void&gt;;
+   79  	/** Check if file is readable and writable (throw if not) */
+   80  	access: (absolutePath: string) =&gt; Promise&lt;void&gt;;
+   81  }
+   82
+   83  const defaultEditOperations: EditOperations = {
+   84  	readFile: (path) =&gt; fsReadFile(path),
+   85  	writeFile: (path, content) =&gt; fsWriteFile(path, content, &quot;utf-8&quot;),
+   86  	access: (path) =&gt; fsAccess(path, constants.R_OK | constants.W_OK),
+   87  };
+   88
+   89  export interface EditToolOptions {
+   90  	/** Custom operations for file editing. Default: local filesystem */
+   91  	operations?: EditOperations;
+   92  }
+   93
+   94  function prepareEditArguments(input: unknown): EditToolInput {
+   95  	if (!input || typeof input !== &quot;object&quot;) {
+   96  		return input as EditToolInput;
+   97  	}
+   98
+   99  	const args = input as Record&lt;string, unknown&gt;;
+  100
+  101  	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+  102  	if (typeof args.edits === &quot;string&quot;) {
+  103  		try {
+  104  			const parsed = JSON.parse(args.edits);
+  105  			if (Array.isArray(parsed)) args.edits = parsed;
+  106  		} catch {}
+  107  	}
+  108
+  109  	const legacy = args as LegacyEditToolInput;
+  110  	if (typeof legacy.oldText !== &quot;string&quot; || typeof legacy.newText !== &quot;string&quot;) {
+  111  		return args as EditToolInput;
+  112  	}
+  113
+  114  	const edits = Array.isArray(legacy.edits) ? [...legacy.edits] : [];
+  115  	edits.push({ oldText: legacy.oldText, newText: legacy.newText });
+  116  	const { oldText: _oldText, newText: _newText, ...rest } = legacy;
+  117  	return { ...rest, edits } as EditToolInput;
+  118  }
+  119
+  120  function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] } {
+  121  	if (!Array.isArray(input.edits) || input.edits.length === 0) {
+  122  		throw new Error(&quot;Edit tool input is invalid. edits must contain at least one replacement.&quot;);
+  123  	}
+  124  	return { path: input.path, edits: input.edits };</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>33</td><th><span class="line-kind-input">INPUT</span></th><td><code>const replaceEditSchema = Type.Object(</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>34</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>35</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		oldText: Type.String({</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>36</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			description:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>37</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>				&quot;Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.&quot;,</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		newText: Type.String({ description: &quot;Replacement text for this targeted edit.&quot; }),</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>40</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>41</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	{},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>42</td><th><span class="line-kind-flow">FLOW</span></th><td><code>);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>43</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>44</td><th><span class="line-kind-input">INPUT</span></th><td><code>const editSchema = Type.Object(</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>45</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	{</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>46</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		path: Type.String({ description: &quot;Path to the file to edit (relative or absolute)&quot; }),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>47</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		edits: Type.Array(replaceEditSchema, {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>48</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			description:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>49</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>				&quot;One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.&quot;,</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>50</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>51</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>52</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	{},</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>53</td><th><span class="line-kind-flow">FLOW</span></th><td><code>);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>54</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>55</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export type EditToolInput = Static&lt;typeof editSchema&gt;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>56</td><th><span class="line-kind-flow">FLOW</span></th><td><code>type LegacyEditToolInput = EditToolInput &amp; {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>57</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	oldText?: unknown;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>58</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	newText?: unknown;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>59</td><th><span class="line-kind-flow">FLOW</span></th><td><code>};</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>60</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/edit.ts · 581d75a89cea</span><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   33
+   34  const replaceEditSchema = Type.Object(
+   35  	{
+   36  		oldText: Type.String({
+   37  			description:
+   38  				&quot;Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.&quot;,
+   39  		}),
+   40  		newText: Type.String({ description: &quot;Replacement text for this targeted edit.&quot; }),
+   41  	},
+   42  	{},
+   43  );
+   44
+   45  const editSchema = Type.Object(
+   46  	{
+   47  		path: Type.String({ description: &quot;Path to the file to edit (relative or absolute)&quot; }),
+   48  		edits: Type.Array(replaceEditSchema, {
+   49  			description:
+   50  				&quot;One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.&quot;,
+   51  		}),
+   52  	},
+   53  	{},
+   54  );
+   55
+   56  export const editToolSystemPromptContribution = {
+   57  	snippet: &quot;Make precise file edits with exact text replacement, including multiple disjoint edits in one call&quot;,
+   58  	guidelines: [
+   59  		&quot;Use edit for precise changes (edits[].oldText must match exactly)&quot;,
+   60  		&quot;When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls&quot;,
+   61  		&quot;Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.&quot;,
+   62  		&quot;Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.&quot;,
+   63  	],
+   64  } as const;
+   65
+   66  export type EditToolInput = Static&lt;typeof editSchema&gt;;
+   67  type LegacyEditToolInput = EditToolInput &amp; {
+   68  	oldText?: unknown;
+   69  	newText?: unknown;
+   70  };
+   71
+   72  export interface EditToolDetails {
+   73  	/** Display-oriented diff of the changes made */
+   74  	diff: string;
+   75  	/** Standard unified patch of the changes made */
+   76  	patch: string;
+   77  	/** Line number of the first change in the new file (for editor navigation) */
+   78  	firstChangedLine?: number;
+   79  }
+   80
+   81  /**
+   82   * Pluggable operations for the edit tool.
+   83   * Override these to delegate file editing to remote systems (for example SSH).
+   84   */
+   85  export interface EditOperations {
+   86  	/** Read file contents as a Buffer */
+   87  	readFile: (absolutePath: string) =&gt; Promise&lt;Buffer&gt;;
+   88  	/** Write content to a file */
+   89  	writeFile: (absolutePath: string, content: string) =&gt; Promise&lt;void&gt;;
+   90  	/** Check if file is readable and writable (throw if not) */
+   91  	access: (absolutePath: string) =&gt; Promise&lt;void&gt;;
+   92  }
+   93
+   94  const defaultEditOperations: EditOperations = {
+   95  	readFile: (path) =&gt; fsReadFile(path),
+   96  	writeFile: (path, content) =&gt; fsWriteFile(path, content, &quot;utf-8&quot;),
+   97  	access: (path) =&gt; fsAccess(path, constants.R_OK | constants.W_OK),
+   98  };
+   99
+  100  export interface EditToolOptions {
+  101  	/** Custom operations for file editing. Default: local filesystem */
+  102  	operations?: EditOperations;
+  103  }
+  104
+  105  function prepareEditArguments(input: unknown): EditToolInput {
+  106  	if (!input || typeof input !== &quot;object&quot;) {
+  107  		return input as EditToolInput;
+  108  	}
+  109
+  110  	const args = input as Record&lt;string, unknown&gt;;
+  111
+  112  	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+  113  	if (typeof args.edits === &quot;string&quot;) {
+  114  		try {
+  115  			const parsed = JSON.parse(args.edits);
+  116  			if (Array.isArray(parsed)) args.edits = parsed;
+  117  		} catch {}
+  118  	}
+  119
+  120  	const legacy = args as LegacyEditToolInput;
+  121  	if (typeof legacy.oldText !== &quot;string&quot; || typeof legacy.newText !== &quot;string&quot;) {
+  122  		return args as EditToolInput;
+  123  	}
+  124</code></pre></details></div></div></article><article class="finding-card compact" id="pi-tool-output-001" data-finding-dimension="tools"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>07 · read 与 bash 使用不同方向的双阈值截断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>默认输出上限 2000 行或 50KB；read 保留头部并给 offset 续读提示，bash 保留尾部并把完整超长输出写入 /tmp/pi-bash-*.log。</p></section><section><span>PLAIN LANGUAGE</span><p>读文件通常从开头看，命令日志通常看结尾报错；超出的内容没有直接消失，而是留全文路径。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>减少工具输出占满上下文，同时维持可追溯性。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1–5</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>6–12</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/truncate.ts:1–12</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    1  /**
+    2   * Shared truncation utilities for tool outputs.
+    3   *
+    4   * Truncation is based on two independent limits - whichever is hit first wins:
+    5   * - Line limit (default: 2000 lines)
+    6   * - Byte limit (default: 50KB)
+    7   *
+    8   * Never returns partial lines (except bash tail truncation edge case).
+    9   */
+   10
+   11  export const DEFAULT_MAX_LINES = 2000;
+   12  export const DEFAULT_MAX_BYTES = 50 * 1024; // 50KB
+   13  export const GREP_MAX_LINE_LENGTH = 500; // Max chars per grep match line
+   14
+   15  export interface TruncationResult {
+   16  	/** The truncated content */
+   17  	content: string;
+   18  	/** Whether truncation occurred */
+   19  	truncated: boolean;
+   20  	/** Which limit was hit: &quot;lines&quot;, &quot;bytes&quot;, or null if not truncated */
+   21  	truncatedBy: &quot;lines&quot; | &quot;bytes&quot; | null;
+   22  	/** Total number of lines in the original content */
+   23  	totalLines: number;
+   24  	/** Total number of bytes in the original content */
+   25  	totalBytes: number;
+   26  	/** Number of complete lines in the truncated output */
+   27  	outputLines: number;
+   28  	/** Number of bytes in the truncated output */
+   29  	outputBytes: number;
+   30  	/** Whether the last line was partially truncated (only for tail truncation edge case) */
+   31  	lastLinePartial: boolean;
+   32  	/** Whether the first line exceeded the byte limit (for head truncation) */
+   33  	firstLineExceedsLimit: boolean;
+   34  	/** The max lines limit that was applied */
+   35  	maxLines: number;
+   36  	/** The max bytes limit that was applied */
+   37  	maxBytes: number;
+   38  }
+   39
+   40  export interface TruncationOptions {
+   41  	/** Maximum number of lines (default: 2000) */
+   42  	maxLines?: number;
+   43  	/** Maximum number of bytes (default: 50KB) */
+   44  	maxBytes?: number;
+   45  }
+   46
+   47  function splitLinesForCounting(content: string): string[] {
+   48  	if (content.length === 0) {
+   49  		return [];
+   50  	}
+   51  	const lines = content.split(&quot;\n&quot;);
+   52  	if (content.endsWith(&quot;\n&quot;)) {
+   53  		lines.pop();
+   54  	}
+   55  	return lines;
+   56  }
+   57
+   58  /**
+   59   * Format bytes as human-readable size.
+   60   */
+   61  export function formatSize(bytes: number): string {
+   62  	if (bytes &lt; 1024) {
+   63  		return `${bytes}B`;
+   64  	} else if (bytes &lt; 1024 * 1024) {
+   65  		return `${(bytes / 1024).toFixed(1)}KB`;
+   66  	} else {
+   67  		return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+   68  	}
+   69  }
+   70
+   71  /**
+   72   * Truncate content from the head (keep first N lines/bytes).
+   73   * Suitable for file reads where you want to see the beginning.
+   74   *
+   75   * Never returns partial lines. If first line exceeds byte limit,
+   76   * returns empty content with firstLineExceedsLimit=true.
+   77   */
+   78  export function truncateHead(content: string, options: TruncationOptions = {}): TruncationResult {
+   79  	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
+   80  	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+   81
+   82  	const totalBytes = Buffer.byteLength(content, &quot;utf-8&quot;);
+   83  	const lines = splitLinesForCounting(content);</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>1</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>2</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * Shared truncation utilities for tool outputs.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>3</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>4</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * Truncation is based on two independent limits - whichever is hit first wins:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>5</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * - Line limit (default: 2000 lines)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>6</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * - Byte limit (default: 50KB)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>7</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>8</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * Never returns partial lines (except bash tail truncation edge case).</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>9</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>10</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>11</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export const DEFAULT_MAX_LINES = 2000;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>12</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export const DEFAULT_MAX_BYTES = 50 * 1024; // 50KB</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>13</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>export const GREP_MAX_LINE_LENGTH = 500; // Max chars per grep match line</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>14</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>15</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export interface TruncationResult {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>16</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	/** The truncated content */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>17</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	content: string;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>18</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	/** Whether truncation occurred */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>19</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	truncated: boolean;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>20</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	/** Which limit was hit: &quot;lines&quot;, &quot;bytes&quot;, or null if not truncated */</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>21</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	truncatedBy: &quot;lines&quot; | &quot;bytes&quot; | null;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>22</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	/** Total number of lines in the original content */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	totalLines: number;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	/** Total number of bytes in the original content */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	totalBytes: number;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	/** Number of complete lines in the truncated output */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	outputLines: number;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	/** Number of bytes in the truncated output */</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="pi-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">08</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>08 · 系统指令由 tool、context files、skills、custom/append prompt 多层拼装</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>system prompt 动态包含活跃工具及其 guidelines、产品核心指令、全局和从 cwd 向上的 AGENTS.md/CLAUDE.md、可用 skills XML、cwd；custom system 可替换核心正文但仍追加项目 context/skills，append prompt 再叠加。</p></section><section><span>PLAIN LANGUAGE</span><p>模型看到的不是一段写死提示词，而是当前工具说明、用户规则、项目规则、技能目录和工作目录拼成的最终说明书。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>必须提供最终展开 prompt 的诊断视图，否则层级覆盖很难排查。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>28–48</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>49–71</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/system-prompt.ts#L28-L71" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/system-prompt.ts:28–71</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/system-prompt.ts#L28-L71" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   28  export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
+   29  	const {
+   30  		customPrompt,
+   31  		selectedTools,
+   32  		toolSnippets,
+   33  		promptGuidelines,
+   34  		appendSystemPrompt,
+   35  		cwd,
+   36  		contextFiles: providedContextFiles,
+   37  		skills: providedSkills,
+   38  	} = options;
+   39  	const promptCwd = cwd.replace(/\\/g, &quot;/&quot;);
+   40
+   41  	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : &quot;&quot;;
+   42
+   43  	const contextFiles = providedContextFiles ?? [];
+   44  	const skills = providedSkills ?? [];
+   45
+   46  	if (customPrompt) {
+   47  		let prompt = customPrompt;
+   48
+   49  		if (appendSection) {
+   50  			prompt += appendSection;
+   51  		}
+   52
+   53  		// Append project context files
+   54  		if (contextFiles.length &gt; 0) {
+   55  			prompt += &quot;\n\n&lt;project_context&gt;\n\n&quot;;
+   56  			prompt += &quot;Project-specific instructions and guidelines:\n\n&quot;;
+   57  			for (const { path: filePath, content } of contextFiles) {
+   58  				prompt += `&lt;project_instructions path=&quot;${filePath}&quot;&gt;\n${content}\n&lt;/project_instructions&gt;\n\n`;
+   59  			}
+   60  			prompt += &quot;&lt;/project_context&gt;\n&quot;;
+   61  		}
+   62
+   63  		// Append skills section (only if read tool is available)
+   64  		const customPromptHasRead = !selectedTools || selectedTools.includes(&quot;read&quot;);
+   65  		if (customPromptHasRead &amp;&amp; skills.length &gt; 0) {
+   66  			prompt += formatSkillsForPrompt(skills);
+   67  		}
+   68
+   69  		prompt += `\nCurrent working directory: ${promptCwd}`;
+   70
+   71  		return prompt;
+   72  	}
+   73
+   74  	// Get absolute paths to documentation and examples
+   75  	const readmePath = getReadmePath();
+   76  	const docsPath = getDocsPath();
+   77  	const examplesPath = getExamplesPath();
+   78
+   79  	// Build tools list based on selected tools.
+   80  	// A tool appears in Available tools only when the caller provides a one-line snippet.
+   81  	const tools = selectedTools || [&quot;read&quot;, &quot;bash&quot;, &quot;edit&quot;, &quot;write&quot;];
+   82  	const visibleTools = tools.filter((name) =&gt; !!toolSnippets?.[name]);
+   83  	const toolsList =
+   84  		visibleTools.length &gt; 0 ? visibleTools.map((name) =&gt; `- ${name}: ${toolSnippets![name]}`).join(&quot;\n&quot;) : &quot;(none)&quot;;
+   85
+   86  	// Build guidelines based on which tools are actually available
+   87  	const guidelinesList: string[] = [];
+   88  	const guidelinesSet = new Set&lt;string&gt;();
+   89  	const addGuideline = (guideline: string): void =&gt; {
+   90  		if (guidelinesSet.has(guideline)) {
+   91  			return;
+   92  		}
+   93  		guidelinesSet.add(guideline);
+   94  		guidelinesList.push(guideline);
+   95  	};
+   96
+   97  	const hasBash = tools.includes(&quot;bash&quot;);
+   98  	const hasGrep = tools.includes(&quot;grep&quot;);
+   99  	const hasFind = tools.includes(&quot;find&quot;);
+  100  	const hasLs = tools.includes(&quot;ls&quot;);
+  101  	const hasRead = tools.includes(&quot;read&quot;);
+  102
+  103  	// File exploration guidelines
+  104  	if (hasBash &amp;&amp; !hasGrep &amp;&amp; !hasFind &amp;&amp; !hasLs) {
+  105  		addGuideline(&quot;Use bash for file operations like ls, rg, find&quot;);
+  106  	}
+  107
+  108  	for (const guideline of promptGuidelines ?? []) {
+  109  		const normalized = guideline.trim();
+  110  		if (normalized.length &gt; 0) {
+  111  			addGuideline(normalized);
+  112  		}
+  113  	}
+  114
+  115  	// Always include these
+  116  	addGuideline(&quot;Be concise in your responses&quot;);
+  117  	addGuideline(&quot;Show file paths clearly when working with files&quot;);
+  118
+  119  	const guidelines = guidelinesList.map((g) =&gt; `- ${g}`).join(&quot;\n&quot;);
+  120
+  121  	let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+  122
+  123  Available tools:
+  124  ${toolsList}
+  125
+  126  In addition to the tools above, you may have access to other custom tools depending on the project.
+  127
+  128  Guidelines:
+  129  ${guidelines}
+  130
+  131  Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+  132  - Main documentation: ${readmePath}
+  133  - Additional docs: ${docsPath}
+  134  - Examples: ${examplesPath} (extensions, custom tools, SDK)
+  135  - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+  136  - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
+  137  - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
+  138  - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+  139
+  140  	if (appendSection) {
+  141  		prompt += appendSection;
+  142  	}</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export function buildSystemPrompt(options: BuildSystemPromptOptions): string {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>29</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>30</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		customPrompt,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>31</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		selectedTools,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>32</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		toolSnippets,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>33</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		promptGuidelines,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>34</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		appendSystemPrompt,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>35</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		cwd,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>36</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		contextFiles: providedContextFiles,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>37</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		skills: providedSkills,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code>	} = options;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const promptCwd = cwd.replace(/\\/g, &quot;/&quot;);</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>40</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>41</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : &quot;&quot;;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>42</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>43</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const contextFiles = providedContextFiles ?? [];</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>44</td><th><span class="line-kind-input">INPUT</span></th><td><code>	const skills = providedSkills ?? [];</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>45</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>46</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>	if (customPrompt) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>47</td><th><span class="line-kind-input">INPUT</span></th><td><code>		let prompt = customPrompt;</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>48</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>49</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if (appendSection) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>50</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			prompt += appendSection;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>51</td><th><span class="line-kind-flow">FLOW</span></th><td><code>		}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>52</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>53</td><th><span class="line-kind-state">STATE</span></th><td><code>		// Append project context files</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>54</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>		if (contextFiles.length &gt; 0) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>55</td><th><span class="line-kind-flow">FLOW</span></th><td><code>			prompt += &quot;\n\n&lt;project_context&gt;\n\n&quot;;</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>packages/coding-agent/src/core/system-prompt.ts · 581d75a89cea</span><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/core/system-prompt.ts#L28-L71" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   28  export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
+   29  	const {
+   30  		customPrompt,
+   31  		selectedTools,
+   32  		toolSnippets,
+   33  		promptGuidelines,
+   34  		appendSystemPrompt,
+   35  		cwd,
+   36  		contextFiles: providedContextFiles,
+   37  		skills: providedSkills,
+   38  	} = options;
+   39  	const promptCwd = cwd.replace(/\\/g, &quot;/&quot;);
+   40
+   41  	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : &quot;&quot;;
+   42
+   43  	const contextFiles = providedContextFiles ?? [];
+   44  	const skills = providedSkills ?? [];
+   45
+   46  	if (customPrompt) {
+   47  		let prompt = customPrompt;
+   48
+   49  		if (appendSection) {
+   50  			prompt += appendSection;
+   51  		}
+   52
+   53  		// Append project context files
+   54  		if (contextFiles.length &gt; 0) {
+   55  			prompt += &quot;\n\n&lt;project_context&gt;\n\n&quot;;
+   56  			prompt += &quot;Project-specific instructions and guidelines:\n\n&quot;;
+   57  			for (const { path: filePath, content } of contextFiles) {
+   58  				prompt += `&lt;project_instructions path=&quot;${filePath}&quot;&gt;\n${content}\n&lt;/project_instructions&gt;\n\n`;
+   59  			}
+   60  			prompt += &quot;&lt;/project_context&gt;\n&quot;;
+   61  		}
+   62
+   63  		// Append skills section (only if read tool is available)
+   64  		const customPromptHasRead = !selectedTools || selectedTools.includes(&quot;read&quot;);
+   65  		if (customPromptHasRead &amp;&amp; skills.length &gt; 0) {
+   66  			prompt += formatSkillsForPrompt(skills);
+   67  		}
+   68
+   69  		prompt += `\nCurrent working directory: ${promptCwd}\n`;
+   70
+   71  		return prompt;
+   72  	}
+   73
+   74  	// Get absolute paths to documentation and examples
+   75  	const readmePath = getReadmePath();
+   76  	const docsPath = getDocsPath();
+   77  	const examplesPath = getExamplesPath();
+   78
+   79  	// Build tools list based on selected tools.
+   80  	// A tool appears in Available tools only when the caller provides a one-line snippet.
+   81  	const tools = selectedTools || [&quot;read&quot;, &quot;bash&quot;, &quot;edit&quot;, &quot;write&quot;];
+   82  	const visibleTools = tools.filter((name) =&gt; !!toolSnippets?.[name]);
+   83  	const toolsList =
+   84  		visibleTools.length &gt; 0 ? visibleTools.map((name) =&gt; `- ${name}: ${toolSnippets![name]}`).join(&quot;\n&quot;) : &quot;(none)&quot;;
+   85
+   86  	// Build guidelines based on which tools are actually available
+   87  	const guidelinesList: string[] = [];
+   88  	const guidelinesSet = new Set&lt;string&gt;();
+   89  	const addGuideline = (guideline: string): void =&gt; {
+   90  		if (guidelinesSet.has(guideline)) {
+   91  			return;
+   92  		}
+   93  		guidelinesSet.add(guideline);
+   94  		guidelinesList.push(guideline);
+   95  	};
+   96
+   97  	const hasBash = tools.includes(&quot;bash&quot;);
+   98  	const hasGrep = tools.includes(&quot;grep&quot;);
+   99  	const hasFind = tools.includes(&quot;find&quot;);
+  100  	const hasLs = tools.includes(&quot;ls&quot;);
+  101  	const hasRead = tools.includes(&quot;read&quot;);
+  102
+  103  	// File exploration guidelines
+  104  	if (hasBash &amp;&amp; !hasGrep &amp;&amp; !hasFind &amp;&amp; !hasLs) {
+  105  		addGuideline(&quot;Use bash for file operations like ls, rg, find&quot;);
+  106  	}
+  107
+  108  	for (const guideline of promptGuidelines ?? []) {
+  109  		const normalized = guideline.trim();
+  110  		if (normalized.length &gt; 0) {
+  111  			addGuideline(normalized);
+  112  		}
+  113  	}
+  114
+  115  	// Always include these
+  116  	addGuideline(&quot;Be concise in your responses&quot;);
+  117  	addGuideline(&quot;Show file paths clearly when working with files&quot;);
+  118
+  119  	const guidelines = guidelinesList.map((g) =&gt; `- ${g}`).join(&quot;\n&quot;);
+  120
+  121  	let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+  122
+  123  Available tools:
+  124  ${toolsList}
+  125
+  126  In addition to the tools above, you may have access to other custom tools depending on the project.
+  127
+  128  Guidelines:
+  129  ${guidelines}
+  130
+  131  Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+  132  - Main documentation: ${readmePath}
+  133  - Additional docs: ${docsPath}
+  134  - Examples: ${examplesPath} (extensions, custom tools, SDK)
+  135  - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+  136  - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
+  137  - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
+  138  - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+  139
+  140  	if (appendSection) {
+  141  		prompt += appendSection;
+  142  	}</code></pre></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--json</code></h3><small>flag · .pi/extensions/prompt-url-widget.ts:150</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/.pi/extensions/prompt-url-widget.ts#L145-L162" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  145  		return fetchAdvisoryMetadata(pi, cwd, target);
+  146  	}
+  147
+  148  	const args =
+  149  		kind === &quot;pr&quot;
+  150  			? [&quot;pr&quot;, &quot;view&quot;, target, &quot;--json&quot;, &quot;title,author&quot;]
+  151  			: [&quot;issue&quot;, &quot;view&quot;, target, &quot;--json&quot;, &quot;title,author&quot;];
+  152
+  153  	try {
+  154  		const result = await pi.exec(&quot;gh&quot;, args);
+  155  		if (result.code !== 0 || !result.stdout) return undefined;
+  156  		return JSON.parse(result.stdout) as GhMetadata;
+  157  	} catch {
+  158  		return undefined;
+  159  	}
+  160  }
+  161
+  162  function formatAuthor(author?: GhMetadata[&quot;author&quot;]): string | undefined {
+  163  	if (!author) return undefined;
+  164  	const name = author.name?.trim();
+  165  	const login = author.login?.trim();
+  166  	if (name &amp;&amp; login) return `${name} (@${login})`;
+  167  	if (login) return `@${login}`;
+  168  	if (name) return name;
+  169  	return undefined;
+  170  }
+  171
+  172  export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
+  173  	const setWidget = (ctx: ExtensionContext, match: PromptMatch, metadata?: GhMetadata) =&gt; {
+  174  		ctx.ui.setWidget(&quot;prompt-url&quot;, (_tui, thm) =&gt; {
+  175  			const displayTarget = metadata?.displayUrl ?? match.target;
+  176  			const titleText = metadata?.title
+  177  				? thm.fg(&quot;accent&quot;, metadata.title)
+  178  				: hyperlink(thm.fg(&quot;accent&quot;, displayTarget), displayTarget);
+  179  			const detailText = metadata?.detail ?? formatAuthor(metadata?.author);
+  180  			const detailLine = detailText ? thm.fg(&quot;muted&quot;, detailText) : undefined;
+  181  			const urlLine = hyperlink(thm.fg(&quot;dim&quot;, displayTarget), displayTarget);
+  182
+  183  			const lines = [titleText];
+  184  			if (detailLine) lines.push(detailLine);
+  185  			lines.push(urlLine);
+  186
+  187  			const container = new Container();
+  188  			container.addChild(new DynamicBorder((s: string) =&gt; thm.fg(&quot;muted&quot;, s)));
+  189  			container.addChild(new Text(lines.join(&quot;\n&quot;), 1, 0));
+  190  			return container;
+  191  		});
+  192  	};
+  193
+  194  	const applySessionName = (ctx: ExtensionContext, match: PromptMatch, metadata?: GhMetadata) =&gt; {
+  195  		const label = getPromptLabel(match.kind);
+  196  		const displayTarget = metadata?.displayUrl ?? match.target;
+  197  		const trimmedTitle = metadata?.title?.trim();
+  198  		const fallbackName = `${label}: ${match.target}`;
+  199  		const desiredFallbackName = `${label}: ${displayTarget}`;
+  200  		const desiredName = trimmedTitle ? `${label}: ${trimmedTitle} (${displayTarget})` : desiredFallbackName;
+  201  		const currentName = pi.getSessionName()?.trim();
+  202  		if (!currentName) {
+  203  			pi.setSessionName(desiredName);</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--json#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--help</code></h3><small>flag · packages/ai/src/cli.ts:82</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/ai/src/cli.ts#L77-L94" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   77  }
+   78
+   79  async function main(): Promise&lt;void&gt; {
+   80  	const args = process.argv.slice(2);
+   81  	const command = args[0];
+   82  	if (!command || command === &quot;help&quot; || command === &quot;--help&quot; || command === &quot;-h&quot;) {
+   83  		const providerList = PROVIDERS.map((provider) =&gt; `  ${provider.id.padEnd(20)} ${provider.name}`).join(&quot;\n&quot;);
+   84  		console.log(
+   85  			`Usage: npx @earendil-works/pi-ai &lt;command&gt; [provider]\n\nCommands:\n  login [provider]  Login to an OAuth provider\n  list              List available providers\n\nProviders:\n${providerList}`,
+   86  		);
+   87  		return;
+   88  	}
+   89  	if (command === &quot;list&quot;) {
+   90  		for (const provider of PROVIDERS) console.log(`${provider.id.padEnd(20)} ${provider.name}`);
+   91  		return;
+   92  	}
+   93  	if (command === &quot;login&quot;) {
+   94  		let providerId = args[1];
+   95  		if (!providerId) {
+   96  			const rl = createInterface({ input: process.stdin, output: process.stdout });
+   97  			try {
+   98  				for (let index = 0; index &lt; PROVIDERS.length; index++) {
+   99  					console.log(`  ${index + 1}. ${PROVIDERS[index].name}`);
+  100  				}
+  101  				const index = Number.parseInt(await prompt(rl, `Enter number (1-${PROVIDERS.length}): `), 10) - 1;
+  102  				providerId = PROVIDERS[index]?.id;
+  103  			} finally {
+  104  				rl.close();
+  105  			}
+  106  		}
+  107  		if (!providerId || !PROVIDERS.some((provider) =&gt; provider.id === providerId)) {
+  108  			throw new Error(`Unknown provider: ${providerId ?? &quot;&quot;}`);
+  109  		}
+  110  		await login(providerId);
+  111  		return;
+  112  	}
+  113  	throw new Error(`Unknown command: ${command}`);
+  114  }
+  115
+  116  main().catch((error: unknown) =&gt; {
+  117  	console.error(&quot;Error:&quot;, error instanceof Error ? error.message : String(error));
+  118  	process.exit(1);
+  119  });
+  120</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--help#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--run</code></h3><small>flag · packages/client/package.json:28</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/client/package.json#L23-L40" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   23  		&quot;CHANGELOG.md&quot;
+   24  	],
+   25  	&quot;scripts&quot;: {
+   26  		&quot;clean&quot;: &quot;shx rm -rf dist&quot;,
+   27  		&quot;build&quot;: &quot;tsgo -p tsconfig.build.json&quot;,
+   28  		&quot;test&quot;: &quot;vitest --run&quot;,
+   29  		&quot;typecheck&quot;: &quot;tsgo -p tsconfig.test.json&quot;,
+   30  		&quot;prepublishOnly&quot;: &quot;npm run clean &amp;&amp; npm run build&quot;
+   31  	},
+   32  	&quot;keywords&quot;: [
+   33  		&quot;pi&quot;,
+   34  		&quot;client&quot;,
+   35  		&quot;protocol&quot;,
+   36  		&quot;cbor&quot;,
+   37  		&quot;binary&quot;
+   38  	],
+   39  	&quot;author&quot;: &quot;Earendil Works&quot;,
+   40  	&quot;license&quot;: &quot;MIT&quot;,
+   41  	&quot;repository&quot;: {
+   42  		&quot;type&quot;: &quot;git&quot;,
+   43  		&quot;url&quot;: &quot;git+https://github.com/earendil-works/pi.git&quot;,
+   44  		&quot;directory&quot;: &quot;packages/client&quot;
+   45  	},
+   46  	&quot;engines&quot;: {
+   47  		&quot;node&quot;: &quot;&gt;=22.19.0&quot;
+   48  	},
+   49  	&quot;dependencies&quot;: {
+   50  		&quot;@earendil-works/pi-protocol&quot;: &quot;^0.84.1&quot;
+   51  	},
+   52  	&quot;devDependencies&quot;: {
+   53  		&quot;shx&quot;: &quot;0.4.0&quot;,
+   54  		&quot;vitest&quot;: &quot;4.1.9&quot;
+   55  	}
+   56  }
+   57</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--run#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--version</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:79</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L74-L91" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   74  	for (let i = 0; i &lt; args.length; i++) {
+   75  		const arg = args[i];
+   76
+   77  		if (arg === &quot;--help&quot; || arg === &quot;-h&quot;) {
+   78  			result.help = true;
+   79  		} else if (arg === &quot;--version&quot; || arg === &quot;-v&quot;) {
+   80  			result.version = true;
+   81  		} else if (arg === &quot;--mode&quot; &amp;&amp; i + 1 &lt; args.length) {
+   82  			const mode = args[++i];
+   83  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot;) {
+   84  				result.mode = mode;
+   85  			}
+   86  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+   87  			result.continue = true;
+   88  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+   89  			result.resume = true;
+   90  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--version#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--mode</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:81</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L76-L93" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   76
+   77  		if (arg === &quot;--help&quot; || arg === &quot;-h&quot;) {
+   78  			result.help = true;
+   79  		} else if (arg === &quot;--version&quot; || arg === &quot;-v&quot;) {
+   80  			result.version = true;
+   81  		} else if (arg === &quot;--mode&quot; &amp;&amp; i + 1 &lt; args.length) {
+   82  			const mode = args[++i];
+   83  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot;) {
+   84  				result.mode = mode;
+   85  			}
+   86  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+   87  			result.continue = true;
+   88  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+   89  			result.resume = true;
+   90  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--mode#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--continue</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:86</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L81-L98" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   81  		} else if (arg === &quot;--mode&quot; &amp;&amp; i + 1 &lt; args.length) {
+   82  			const mode = args[++i];
+   83  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot;) {
+   84  				result.mode = mode;
+   85  			}
+   86  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+   87  			result.continue = true;
+   88  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+   89  			result.resume = true;
+   90  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];
+  135  			if (isValidThinkingLevel(level)) {
+  136  				result.thinking = level;
+  137  			} else {
+  138  				result.diagnostics.push({
+  139  					type: &quot;warning&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--continue#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--resume</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:88</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L83-L100" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   83  			if (mode === &quot;text&quot; || mode === &quot;json&quot; || mode === &quot;rpc&quot;) {
+   84  				result.mode = mode;
+   85  			}
+   86  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+   87  			result.continue = true;
+   88  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+   89  			result.resume = true;
+   90  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];
+  135  			if (isValidThinkingLevel(level)) {
+  136  				result.thinking = level;
+  137  			} else {
+  138  				result.diagnostics.push({
+  139  					type: &quot;warning&quot;,
+  140  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  141  				});</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--resume#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--provider</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:90</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L85-L102" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   85  			}
+   86  		} else if (arg === &quot;--continue&quot; || arg === &quot;-c&quot;) {
+   87  			result.continue = true;
+   88  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+   89  			result.resume = true;
+   90  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];
+  135  			if (isValidThinkingLevel(level)) {
+  136  				result.thinking = level;
+  137  			} else {
+  138  				result.diagnostics.push({
+  139  					type: &quot;warning&quot;,
+  140  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  141  				});
+  142  			}
+  143  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--provider#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--model</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:92</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L87-L104" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   87  			result.continue = true;
+   88  		} else if (arg === &quot;--resume&quot; || arg === &quot;-r&quot;) {
+   89  			result.resume = true;
+   90  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];
+  135  			if (isValidThinkingLevel(level)) {
+  136  				result.thinking = level;
+  137  			} else {
+  138  				result.diagnostics.push({
+  139  					type: &quot;warning&quot;,
+  140  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  141  				});
+  142  			}
+  143  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  144  			result.print = true;
+  145  			const next = args[i + 1];</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--model#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--api-key</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:94</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L89-L106" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   89  			result.resume = true;
+   90  		} else if (arg === &quot;--provider&quot; &amp;&amp; i + 1 &lt; args.length) {
+   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];
+  135  			if (isValidThinkingLevel(level)) {
+  136  				result.thinking = level;
+  137  			} else {
+  138  				result.diagnostics.push({
+  139  					type: &quot;warning&quot;,
+  140  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  141  				});
+  142  			}
+  143  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  144  			result.print = true;
+  145  			const next = args[i + 1];
+  146  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  147  				result.messages.push(next);</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--api-key#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--system-prompt</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:96</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L91-L108" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   91  			result.provider = args[++i];
+   92  		} else if (arg === &quot;--model&quot; &amp;&amp; i + 1 &lt; args.length) {
+   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];
+  135  			if (isValidThinkingLevel(level)) {
+  136  				result.thinking = level;
+  137  			} else {
+  138  				result.diagnostics.push({
+  139  					type: &quot;warning&quot;,
+  140  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  141  				});
+  142  			}
+  143  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  144  			result.print = true;
+  145  			const next = args[i + 1];
+  146  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  147  				result.messages.push(next);
+  148  				i++;
+  149  			}</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--system-prompt#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--append-system-prompt</code></h3><small>flag · packages/coding-agent/src/cli/args.ts:98</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/cli/args.ts#L93-L110" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   93  			result.model = args[++i];
+   94  		} else if (arg === &quot;--api-key&quot; &amp;&amp; i + 1 &lt; args.length) {
+   95  			result.apiKey = args[++i];
+   96  		} else if (arg === &quot;--system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   97  			result.systemPrompt = args[++i];
+   98  		} else if (arg === &quot;--append-system-prompt&quot; &amp;&amp; i + 1 &lt; args.length) {
+   99  			result.appendSystemPrompt = result.appendSystemPrompt ?? [];
+  100  			result.appendSystemPrompt.push(args[++i]);
+  101  		} else if (arg === &quot;--name&quot; || arg === &quot;-n&quot;) {
+  102  			if (i + 1 &lt; args.length) {
+  103  				result.name = args[++i];
+  104  			} else {
+  105  				result.diagnostics.push({ type: &quot;error&quot;, message: &quot;--name requires a value&quot; });
+  106  			}
+  107  		} else if (arg === &quot;--no-session&quot;) {
+  108  			result.noSession = true;
+  109  		} else if (arg === &quot;--session&quot; &amp;&amp; i + 1 &lt; args.length) {
+  110  			result.session = args[++i];
+  111  		} else if (arg === &quot;--session-id&quot; &amp;&amp; i + 1 &lt; args.length) {
+  112  			result.sessionId = args[++i];
+  113  		} else if (arg === &quot;--fork&quot; &amp;&amp; i + 1 &lt; args.length) {
+  114  			result.fork = args[++i];
+  115  		} else if (arg === &quot;--session-dir&quot; &amp;&amp; i + 1 &lt; args.length) {
+  116  			result.sessionDir = args[++i];
+  117  		} else if (arg === &quot;--models&quot; &amp;&amp; i + 1 &lt; args.length) {
+  118  			result.models = args[++i].split(&quot;,&quot;).map((s) =&gt; s.trim());
+  119  		} else if (arg === &quot;--no-tools&quot; || arg === &quot;-nt&quot;) {
+  120  			result.noTools = true;
+  121  		} else if (arg === &quot;--no-builtin-tools&quot; || arg === &quot;-nbt&quot;) {
+  122  			result.noBuiltinTools = true;
+  123  		} else if ((arg === &quot;--tools&quot; || arg === &quot;-t&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  124  			result.tools = args[++i]
+  125  				.split(&quot;,&quot;)
+  126  				.map((s) =&gt; s.trim())
+  127  				.filter((name) =&gt; name.length &gt; 0);
+  128  		} else if ((arg === &quot;--exclude-tools&quot; || arg === &quot;-xt&quot;) &amp;&amp; i + 1 &lt; args.length) {
+  129  			result.excludeTools = args[++i]
+  130  				.split(&quot;,&quot;)
+  131  				.map((s) =&gt; s.trim())
+  132  				.filter((name) =&gt; name.length &gt; 0);
+  133  		} else if (arg === &quot;--thinking&quot; &amp;&amp; i + 1 &lt; args.length) {
+  134  			const level = args[++i];
+  135  			if (isValidThinkingLevel(level)) {
+  136  				result.thinking = level;
+  137  			} else {
+  138  				result.diagnostics.push({
+  139  					type: &quot;warning&quot;,
+  140  					message: `Invalid thinking level &quot;${level}&quot;. Valid values: ${VALID_THINKING_LEVELS.join(&quot;, &quot;)}`,
+  141  				});
+  142  			}
+  143  		} else if (arg === &quot;--print&quot; || arg === &quot;-p&quot;) {
+  144  			result.print = true;
+  145  			const next = args[i + 1];
+  146  			if (next !== undefined &amp;&amp; !next.startsWith(&quot;@&quot;) &amp;&amp; (!next.startsWith(&quot;-&quot;) || next.startsWith(&quot;---&quot;))) {
+  147  				result.messages.push(next);
+  148  				i++;
+  149  			}
+  150  		} else if (arg === &quot;--export&quot; &amp;&amp; i + 1 &lt; args.length) {
+  151  			result.export = args[++i];</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--append-system-prompt#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>packages/agent 的 AgentHarness 直接拥有 session、model、tools、resources、queue 和 hooks；packages/coding-agent 的 AgentSession 仍有自己的 runtime build、resource loader、tool registry、retry 与 compaction 适配。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/harness/agent-harness.ts#L171-L223" target="_blank" rel="noreferrer">packages/agent/src/harness/agent-harness.ts:171–223 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>agentLoop 外层消费 follow-up，内层在 assistant tool call 或 steering 消息存在时继续；每轮发出 agent/turn/message 事件并把工具结果加入上下文。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L155-L275" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:155–275 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>assistant stopReason 为 length 时，即使带 tool call 也不执行，因为参数可能被截断；prepareNextTurn 可替换 context、model、thinking、system prompt 和 tools。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L208-L245" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:208–245 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>Harness 在每轮创建 state snapshot，通过 beforeProviderRequest/beforeProviderPayload/afterProviderResponse 包装模型请求；message_end 串行写 session，turn 结束后刷新状态并消费 steer/follow-up；model/tool/resource 变更也持久化并发事件。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/harness/agent-harness.ts#L354-L497" target="_blank" rel="noreferrer">packages/agent/src/harness/agent-harness.ts:354–497 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>packages/coding-agent/test/suite/regressions/2023-queued-slash-command-followup.test.ts</b><small>2520 bytes · .ts</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/test/suite/regressions/2023-queued-slash-command-followup.test.ts#L8-L23" target="_blank" rel="noreferrer">L8–23 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    8  describe(&quot;issue #2023 queued slash-command follow-up&quot;, () =&gt; {
+    9  	const harnesses: Harness[] = [];
+   10
+   11  	afterEach(() =&gt; {
+   12  		while (harnesses.length &gt; 0) {
+   13  			harnesses.pop()?.cleanup();
+   14  		}
+   15  	});
+   16
+   17  	it(&quot;treats extension-origin queued slash-command follow-ups as raw user text instead of dispatching the command&quot;, async () =&gt; {
+   18  		let extensionApi: ExtensionAPI | undefined;
+   19  		const commandRuns: string[] = [];
+   20  		let releaseToolExecution: (() =&gt; void) | undefined;
+   21  		const toolRelease = new Promise&lt;void&gt;((resolve) =&gt; {
+   22  			releaseToolExecution = resolve;
+   23  		});
+   24  		const waitTool: AgentTool = {
+   25  			name: &quot;wait&quot;,
+   26  			label: &quot;Wait&quot;,
+   27  			description: &quot;Wait for the test to release execution&quot;,
+   28  			parameters: Type.Object({}),
+   29  			execute: async () =&gt; {
+   30  				await toolRelease;
+   31  				return {
+   32  					content: [{ type: &quot;text&quot;, text: &quot;released&quot; }],
+   33  					details: {},
+   34  				};
+   35  			},
+   36  		};
+   37  		const harness = await createHarness({
+   38  			tools: [waitTool],
+   39  			extensionFactories: [
+   40  				(pi) =&gt; {</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>packages/coding-agent/src/core/slash-commands.ts</b><small>2157 bytes · .ts</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/core/slash-commands.ts#L4-L19" target="_blank" rel="noreferrer">L4–19 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    4  export type SlashCommandSource = &quot;extension&quot; | &quot;prompt&quot; | &quot;skill&quot;;
+    5
+    6  export interface SlashCommandInfo {
+    7  	name: string;
+    8  	description?: string;
+    9  	source: SlashCommandSource;
+   10  	sourceInfo: SourceInfo;
+   11  }
+   12
+   13  export interface BuiltinSlashCommand {
+   14  	name: string;
+   15  	description: string;
+   16  	argumentHint?: string;
+   17  }
+   18
+   19  export const BUILTIN_SLASH_COMMANDS: ReadonlyArray&lt;BuiltinSlashCommand&gt; = [
+   20  	{ name: &quot;settings&quot;, description: &quot;Open settings menu&quot; },
+   21  	{ name: &quot;model&quot;, description: &quot;Select model (opens selector UI)&quot;, argumentHint: &quot;&lt;provider/model&gt;&quot; },
+   22  	{ name: &quot;scoped-models&quot;, description: &quot;Enable/disable models for Ctrl+P cycling&quot; },
+   23  	{ name: &quot;export&quot;, description: &quot;Export session (HTML default, or specify path: .html/.jsonl)&quot; },
+   24  	{ name: &quot;import&quot;, description: &quot;Import and resume a session from a JSONL file&quot; },
+   25  	{ name: &quot;share&quot;, description: &quot;Share session as a secret GitHub gist&quot; },
+   26  	{ name: &quot;copy&quot;, description: &quot;Copy last agent message to clipboard&quot; },
+   27  	{ name: &quot;name&quot;, description: &quot;Set session display name&quot; },
+   28  	{ name: &quot;session&quot;, description: &quot;Show session info and stats&quot; },
+   29  	{ name: &quot;changelog&quot;, description: &quot;Show changelog entries&quot; },
+   30  	{ name: &quot;hotkeys&quot;, description: &quot;Show all keyboard shortcuts&quot; },
+   31  	{ name: &quot;fork&quot;, description: &quot;Create a new fork from a previous user message&quot; },
+   32  	{ name: &quot;clone&quot;, description: &quot;Duplicate the current session at the current position&quot; },
+   33  	{ name: &quot;tree&quot;, description: &quot;Navigate session tree (switch branches)&quot; },
+   34  	{ name: &quot;trust&quot;, description: &quot;Save project trust decision for future sessions&quot; },
+   35  	{ name: &quot;login&quot;, description: &quot;Configure provider authentication&quot;, argumentHint: &quot;&lt;provider&gt;&quot; },
+   36  	{ name: &quot;logout&quot;, description: &quot;Remove provider authentication&quot; },</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>packages/ai/test/openrouter-cache-control-models.test.ts</b><small>550 bytes · .ts</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/ai/test/openrouter-cache-control-models.test.ts#L4-L16" target="_blank" rel="noreferrer">L4–16 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    4  const OPENROUTER_ANTHROPIC_LATEST_MODEL_IDS = [
+    5  	&quot;~anthropic/claude-fable-latest&quot;,
+    6  	&quot;~anthropic/claude-haiku-latest&quot;,
+    7  	&quot;~anthropic/claude-opus-latest&quot;,
+    8  	&quot;~anthropic/claude-sonnet-latest&quot;,
+    9  ] as const;
+   10
+   11  describe(&quot;OpenRouter Anthropic cache control metadata&quot;, () =&gt; {
+   12  	it.each(OPENROUTER_ANTHROPIC_LATEST_MODEL_IDS)(&quot;enables cache control for %s&quot;, (modelId) =&gt; {
+   13  		expect(getModel(&quot;openrouter&quot;, modelId).compat?.cacheControlFormat).toBe(&quot;anthropic&quot;);
+   14  	});
+   15  });
+   16</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>packages/ai/test/openrouter-cache-write-repro.test.ts</b><small>2596 bytes · .ts</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/ai/test/openrouter-cache-write-repro.test.ts#L13-L28" target="_blank" rel="noreferrer">L13–28 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   13  describe.skipIf(!process.env.OPENROUTER_API_KEY)(&quot;OpenRouter cache_write repro E2E&quot;, () =&gt; {
+   14  	it(
+   15  		&quot;regression: preserves cache_write_tokens on openai-completions stream path&quot;,
+   16  		{ retry: 2, timeout: 90000 },
+   17  		async () =&gt; {
+   18  			const model = getModel(&quot;openrouter&quot;, &quot;google/gemini-2.5-flash&quot;);
+   19  			const context = {
+   20  				systemPrompt: createLongSystemPrompt(),
+   21  				messages: [
+   22  					{
+   23  						role: &quot;user&quot; as const,
+   24  						content: &quot;Reply with exactly: OK&quot;,
+   25  						timestamp: Date.now(),
+   26  					},
+   27  				],
+   28  			};
+   29
+   30  			const options = {
+   31  				apiKey: process.env.OPENROUTER_API_KEY!,
+   32  				maxTokens: 32,
+   33  				temperature: 0,
+   34  				onPayload: (payload: unknown) =&gt; {
+   35  					const params = payload as {
+   36  						messages?: Array&lt;{
+   37  							role?: string;
+   38  							content?: string | Array&lt;{ type?: string; text?: string; cache_control?: { type: string } }&gt;;
+   39  						}&gt;;
+   40  					};
+   41  					const messages = params.messages;
+   42  					if (!Array.isArray(messages)) return payload;
+   43
+   44  					for (let i = messages.length - 1; i &gt;= 0; i--) {
+   45  						const msg = messages[i];</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>packages/ai/test/openrouter-images.test.ts</b><small>4582 bytes · .ts</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/ai/test/openrouter-images.test.ts#L61-L76" target="_blank" rel="noreferrer">L61–76 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   61  describe(&quot;openrouter images&quot;, () =&gt; {
+   62  	beforeEach(() =&gt; {
+   63  		mockState.lastParams = undefined;
+   64  		mockState.lastRequestOptions = undefined;
+   65  	});
+   66
+   67  	it(&quot;returns text plus images in final output&quot;, async () =&gt; {
+   68  		const model: ImagesModel&lt;&quot;openrouter-images&quot;&gt; = {
+   69  			id: &quot;google/gemini-3.1-flash-image-preview&quot;,
+   70  			name: &quot;Gemini 3.1 Flash Image Preview&quot;,
+   71  			api: &quot;openrouter-images&quot;,
+   72  			provider: &quot;openrouter&quot;,
+   73  			baseUrl: &quot;https://openrouter.ai/api/v1&quot;,
+   74  			input: [&quot;text&quot;, &quot;image&quot;],
+   75  			output: [&quot;text&quot;, &quot;image&quot;],
+   76  			cost: { input: 0.015, output: 0.03, cacheRead: 0, cacheWrite: 0 },
+   77  			headers: { &quot;HTTP-Referer&quot;: &quot;https://example.com&quot; },
+   78  		};
+   79  		const context: ImagesContext = {
+   80  			input: [{ type: &quot;text&quot;, text: &quot;Generate a dog&quot; }],
+   81  		};
+   82
+   83  		const output = await generateImages(model, context, { apiKey: &quot;test&quot; });
+   84  		expect(output.stopReason).toBe(&quot;stop&quot;);
+   85  		expect(output.responseId).toBe(&quot;img-1&quot;);
+   86  		expect(output.output[0]).toMatchObject({ type: &quot;text&quot;, text: &quot;Here is your image.&quot; });
+   87  		expect(output.output[1]).toMatchObject({ type: &quot;image&quot;, mimeType: &quot;image/png&quot;, data: &quot;ZmFrZS1wbmc=&quot; });
+   88
+   89  		const params = mockState.lastParams as {
+   90  			stream?: boolean;
+   91  			modalities?: string[];
+   92  			messages?: [{ content?: [{ type: string; text?: string }] }];
+   93  		};</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>packages/ai/test/openrouter-oauth.test.ts</b><small>11947 bytes · .ts</small></div><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/ai/test/openrouter-oauth.test.ts#L3-L18" target="_blank" rel="noreferrer">L3–18 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    3  import { openRouterOAuth } from &quot;../src/auth/oauth/openrouter.ts&quot;;
+    4  import { createImagesModels } from &quot;../src/images-models.ts&quot;;
+    5  import { createModels } from &quot;../src/models.ts&quot;;
+    6  import { openrouterProvider } from &quot;../src/providers/openrouter.ts&quot;;
+    7  import { openrouterImagesProvider } from &quot;../src/providers/openrouter-images.ts&quot;;
+    8
+    9  const TOKEN_URL = &quot;https://openrouter.ai/api/v1/auth/keys&quot;;
+   10  const nativeFetch = globalThis.fetch;
+   11  const neverAbortedSignal = new AbortController().signal;
+   12
+   13  function jsonResponse(body: unknown, status = 200): Response {
+   14  	return new Response(JSON.stringify(body), { status, headers: { &quot;content-type&quot;: &quot;application/json&quot; } });
+   15  }
+   16
+   17  function base64url(bytes: Uint8Array): string {
+   18  	let binary = &quot;&quot;;
+   19  	for (const byte of bytes) binary += String.fromCharCode(byte);
+   20  	return btoa(binary).replaceAll(&quot;+&quot;, &quot;-&quot;).replaceAll(&quot;/&quot;, &quot;_&quot;).replaceAll(&quot;=&quot;, &quot;&quot;);
+   21  }
+   22
+   23  describe.sequential(&quot;OpenRouter OAuth&quot;, () =&gt; {
+   24  	afterEach(() =&gt; {
+   25  		vi.unstubAllGlobals();
+   26  		vi.unstubAllEnvs();
+   27  	});
+   28
+   29  	it(&quot;is exposed by both OpenRouter providers alongside API-key auth&quot;, () =&gt; {
+   30  		for (const provider of [openrouterProvider(), openrouterImagesProvider()]) {
+   31  			expect(provider.auth.apiKey).toBeDefined();
+   32  			expect(provider.auth.oauth).toBeDefined();
+   33  			expect(provider.auth.oauth?.loginLabel).toBe(&quot;Sign in with OpenRouter&quot;);
+   34  		}
+   35  	});</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Pi commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

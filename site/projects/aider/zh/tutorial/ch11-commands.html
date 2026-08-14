@@ -1,0 +1,896 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="一个内置指令如何被解析、路由、执行并写回会话？"><title>Aider · M11 · 指令执行：从 /goal 到回执</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Aider · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">源码教程</a><a href="ch11-commands.html">中</a><a href="../../en/tutorial/ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Aider</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><a class="active" href="ch11-commands.html"><span>M11</span>指令执行：从 /goal 到回执</a><div class="side-foot">main<br>5dc9490bb35f</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Aider · 5dc9490bb35f</p><h1>指令执行：从 /goal 到回执</h1><p class="lede">一个内置指令如何被解析、路由、执行并写回会话？</p><div class="chapter-meta"><span>第 11 / 11 章</span><span>1 条源码 finding</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>源码目录</b><i>→</i><b>交互图</b><i>→</i><b>逐行翻译</b></div><div class="callout"><b>先用一个生活比喻</b><p>指令像机场值机单：先认出航班，再检查登机规则，交给正确柜台执行，最后把登机和到达状态写回系统。</p></div><h2>先回答本章问题</h2><p>一个内置指令如何被解析、路由、执行并写回会话？ Aider 的循环很直接：你说一次，它生成修改；修改格式错了或检查失败，就把错误原样喂回模型再试，但不会无限自修。</p><h2>本章证据板：1 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="aider-tools-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>connectors</span></div><h3>01 · 核心不是 MCP/函数工具循环</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>核心 Coder 的外部能力来自固定 CLI 命令、Git、文件编辑格式、lint/test、网页抓取和可选单一 function edit schema；仓库核心未实现通用 MCP 工具注册与动态插件调度。</p></section><section><span>白话解释</span><p>Aider 专注“在 Git 仓库里改代码”，不是一个可随时挂几十种业务工具的通用 Agent 平台。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>专注带来可预测性和编辑深度，连接器生态与跨系统工作流则明显受限。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1006–1006</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1007–1009</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><div class="finding-caveat"><span>边界 / 风险</span><ul><li>结论针对该快照的核心仓库；第三方封装可在 Aider 外层增加 MCP。</li></ul></div></div><div class="finding-code"><div class="finding-code-head"><span>aider/models.py:1006–1009</span><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L1006-L1009" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1006          if functions is not None:
+ 1007              function = functions[0]
+ 1008              kwargs[&quot;tools&quot;] = [dict(type=&quot;function&quot;, function=function)]
+ 1009              kwargs[&quot;tool_choice&quot;] = {&quot;type&quot;: &quot;function&quot;, &quot;function&quot;: {&quot;name&quot;: function[&quot;name&quot;]}}
+ 1010          if self.extra_params:
+ 1011              kwargs.update(self.extra_params)
+ 1012          if self.is_ollama() and &quot;num_ctx&quot; not in kwargs:
+ 1013              num_ctx = int(self.token_count(messages) * 1.25) + 8192
+ 1014              kwargs[&quot;num_ctx&quot;] = num_ctx
+ 1015          key = json.dumps(kwargs, sort_keys=True).encode()
+ 1016
+ 1017          # dump(kwargs)
+ 1018
+ 1019          hash_object = hashlib.sha1(key)
+ 1020          if &quot;timeout&quot; not in kwargs:
+ 1021              kwargs[&quot;timeout&quot;] = request_timeout
+ 1022          if self.verbose:
+ 1023              dump(kwargs)
+ 1024          kwargs[&quot;messages&quot;] = messages
+ 1025
+ 1026          # Are we using github copilot?
+ 1027          if &quot;GITHUB_COPILOT_TOKEN&quot; in os.environ:
+ 1028              if &quot;extra_headers&quot; not in kwargs:
+ 1029                  kwargs[&quot;extra_headers&quot;] = {
+ 1030                      &quot;Editor-Version&quot;: f&quot;aider/{__version__}&quot;,
+ 1031                      &quot;Copilot-Integration-Id&quot;: &quot;vscode-chat&quot;,
+ 1032                  }
+ 1033
+ 1034              self.github_copilot_token_to_open_ai_key(kwargs[&quot;extra_headers&quot;])
+ 1035
+ 1036          res = litellm.completion(**kwargs)
+ 1037          return hash_object, res
+ 1038
+ 1039      def simple_send_with_retries(self, messages):
+ 1040          from aider.exceptions import LiteLLMExceptions
+ 1041
+ 1042          litellm_ex = LiteLLMExceptions()
+ 1043          if &quot;deepseek-reasoner&quot; in self.name:
+ 1044              messages = ensure_alternating_roles(messages)
+ 1045          retry_delay = 0.125
+ 1046
+ 1047          if self.verbose:
+ 1048              dump(messages)
+ 1049
+ 1050          while True:
+ 1051              try:
+ 1052                  kwargs = {
+ 1053                      &quot;messages&quot;: messages,
+ 1054                      &quot;functions&quot;: None,
+ 1055                      &quot;stream&quot;: False,
+ 1056                  }
+ 1057
+ 1058                  _hash, response = self.send_completion(**kwargs)
+ 1059                  if not response or not hasattr(response, &quot;choices&quot;) or not response.choices:
+ 1060                      return None
+ 1061                  res = response.choices[0].message.content
+ 1062                  from aider.reasoning_tags import remove_reasoning_content
+ 1063
+ 1064                  return remove_reasoning_content(res, self.reasoning_tag)
+ 1065
+ 1066              except litellm_ex.exceptions_tuple() as err:
+ 1067                  ex_info = litellm_ex.get_ex_info(err)
+ 1068                  print(str(err))
+ 1069                  if ex_info.description:
+ 1070                      print(ex_info.description)
+ 1071                  should_retry = ex_info.retry
+ 1072                  if should_retry:
+ 1073                      retry_delay *= 2
+ 1074                      if retry_delay &gt; RETRY_TIMEOUT:
+ 1075                          should_retry = False
+ 1076                  if not should_retry:
+ 1077                      return None
+ 1078                  print(f&quot;Retrying in {retry_delay:.1f} seconds...&quot;)
+ 1079                  time.sleep(retry_delay)
+ 1080                  continue</code></pre><details class="line-by-line"><summary>展开 28 行逐行翻译</summary><div class="line-by-line-scroll"><table><thead><tr><th>行</th><th>角色</th><th>源码</th><th>白话动作</th></tr></thead><tbody><tr><td>1006</td><th><span class="line-kind-branch">分支</span></th><td><code>        if functions is not None:</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>1007</td><th><span class="line-kind-flow">流转</span></th><td><code>            function = functions[0]</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1008</td><th><span class="line-kind-flow">流转</span></th><td><code>            kwargs[&quot;tools&quot;] = [dict(type=&quot;function&quot;, function=function)]</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1009</td><th><span class="line-kind-flow">流转</span></th><td><code>            kwargs[&quot;tool_choice&quot;] = {&quot;type&quot;: &quot;function&quot;, &quot;function&quot;: {&quot;name&quot;: function[&quot;name&quot;]}}</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1010</td><th><span class="line-kind-branch">分支</span></th><td><code>        if self.extra_params:</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>1011</td><th><span class="line-kind-state">状态</span></th><td><code>            kwargs.update(self.extra_params)</code></td><td>创建或修改 session、context、队列等状态</td></tr><tr><td>1012</td><th><span class="line-kind-branch">分支</span></th><td><code>        if self.is_ollama() and &quot;num_ctx&quot; not in kwargs:</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>1013</td><th><span class="line-kind-flow">流转</span></th><td><code>            num_ctx = int(self.token_count(messages) * 1.25) + 8192</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1014</td><th><span class="line-kind-flow">流转</span></th><td><code>            kwargs[&quot;num_ctx&quot;] = num_ctx</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1015</td><th><span class="line-kind-flow">流转</span></th><td><code>        key = json.dumps(kwargs, sort_keys=True).encode()</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1016</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1017</td><th><span class="line-kind-flow">流转</span></th><td><code>        # dump(kwargs)</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1018</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1019</td><th><span class="line-kind-flow">流转</span></th><td><code>        hash_object = hashlib.sha1(key)</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1020</td><th><span class="line-kind-branch">分支</span></th><td><code>        if &quot;timeout&quot; not in kwargs:</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>1021</td><th><span class="line-kind-flow">流转</span></th><td><code>            kwargs[&quot;timeout&quot;] = request_timeout</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1022</td><th><span class="line-kind-branch">分支</span></th><td><code>        if self.verbose:</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>1023</td><th><span class="line-kind-flow">流转</span></th><td><code>            dump(kwargs)</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1024</td><th><span class="line-kind-flow">流转</span></th><td><code>        kwargs[&quot;messages&quot;] = messages</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1025</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1026</td><th><span class="line-kind-flow">流转</span></th><td><code>        # Are we using github copilot?</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1027</td><th><span class="line-kind-branch">分支</span></th><td><code>        if &quot;GITHUB_COPILOT_TOKEN&quot; in os.environ:</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>1028</td><th><span class="line-kind-branch">分支</span></th><td><code>            if &quot;extra_headers&quot; not in kwargs:</code></td><td>决定继续、停止、重试或走哪条路径</td></tr><tr><td>1029</td><th><span class="line-kind-flow">流转</span></th><td><code>                kwargs[&quot;extra_headers&quot;] = {</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1030</td><th><span class="line-kind-flow">流转</span></th><td><code>                    &quot;Editor-Version&quot;: f&quot;aider/{__version__}&quot;,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1031</td><th><span class="line-kind-flow">流转</span></th><td><code>                    &quot;Copilot-Integration-Id&quot;: &quot;vscode-chat&quot;,</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1032</td><th><span class="line-kind-flow">流转</span></th><td><code>                }</code></td><td>组合、转换或把值传给下一层</td></tr><tr><td>1033</td><th><span class="line-kind-flow">流转</span></th><td><code></code></td><td>组合、转换或把值传给下一层</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 条指令线索</b></div><p>指令不是 UI 文案列表：每条线索都来自本地源码中的注册器、参数解析器或 slash token。点击源码行号，再用执行图查看从解析到回执的完整路径；未定位项会明确标注，不会被包装成事实。</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>/prime</code></h3><small>slash · aider/coders/udiff_prompts.py:51</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/coders/udiff_prompts.py#L46-L63" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>   46  -    for i in range(2, int(math.sqrt(x)) + 1):
+   47  -        if x % i == 0:
+   48  -            return False
+   49  -    return True
+   50  @@ ... @@
+   51  -@app.route(&#39;/prime/&lt;int:n&gt;&#39;)
+   52  -def nth_prime(n):
+   53  -    count = 0
+   54  -    num = 1
+   55  -    while count &lt; n:
+   56  -        num += 1
+   57  -        if is_prime(num):
+   58  -            count += 1
+   59  -    return str(num)
+   60  +@app.route(&#39;/prime/&lt;int:n&gt;&#39;)
+   61  +def nth_prime(n):
+   62  +    count = 0
+   63  +    num = 1
+   64  +    while count &lt; n:
+   65  +        num += 1
+   66  +        if sympy.isprime(num):
+   67  +            count += 1
+   68  +    return str(num)
+   69  ```
+   70  &quot;&quot;&quot;,
+   71          ),
+   72      ]
+   73
+   74      system_reminder = &quot;&quot;&quot;# File editing rules:
+   75
+   76  Return edits similar to unified diffs that `diff -U0` would produce.
+   77
+   78  Make sure you include the first 2 lines with the file paths.
+   79  Don&#39;t include timestamps with the file paths.
+   80
+   81  Start each hunk of changes with a `@@ ... @@` line.
+   82  Don&#39;t include line numbers like `diff -U0` does.
+   83  The user&#39;s patch tool doesn&#39;t need them.
+   84
+   85  The user&#39;s patch tool needs CORRECT patches that apply cleanly against the current contents of the file!
+   86  Think carefully and make sure you include and mark all lines that need to be removed or changed as `-` lines.
+   87  Make sure you mark all new or modified lines with `+`.
+   88  Don&#39;t leave out any lines or the diff patch won&#39;t apply correctly.
+   89
+   90  Indentation matters in the diffs!
+   91
+   92  Start a new hunk for each section of the file that needs changes.
+   93
+   94  Only output hunks that specify changes with `+` or `-` lines.
+   95  Skip any hunks that are entirely unchanging ` ` lines.
+   96
+   97  Output hunks in whatever order makes the most sense.
+   98  Hunks don&#39;t need to be in any particular order.
+   99
+  100  When editing a function, method, loop, etc use a hunk to replace the *entire* code block.
+  101  Delete the entire existing version with `-` lines and then add a new, updated version with `+` lines.
+  102  This will help you generate correct code and correct diffs.
+  103
+  104  To move code within a file, use 2 hunks: 1 to delete it from its current location, 1 to insert it in the new location.</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fprime#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--map-tokens</code></h3><small>flag · aider/commands.py:478</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/commands.py#L473-L490" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>  473          other_files = set(self.coder.get_all_abs_files()) - set(self.coder.abs_fnames)
+  474          if self.coder.repo_map:
+  475              repo_content = self.coder.repo_map.get_repo_map(self.coder.abs_fnames, other_files)
+  476              if repo_content:
+  477                  tokens = self.coder.main_model.token_count(repo_content)
+  478                  res.append((tokens, &quot;repository map&quot;, &quot;use --map-tokens to resize&quot;))
+  479
+  480          fence = &quot;`&quot; * 3
+  481
+  482          file_res = []
+  483          # files
+  484          for fname in self.coder.abs_fnames:
+  485              relative_fname = self.coder.get_rel_fname(fname)
+  486              content = self.io.read_text(fname)
+  487              if is_image_file(relative_fname):
+  488                  tokens = self.coder.main_model.token_count_for_image(fname)
+  489              else:
+  490                  # approximate
+  491                  content = f&quot;{relative_fname}\n{fence}\n&quot; + content + &quot;{fence}\n&quot;
+  492                  tokens = self.coder.main_model.token_count(content)
+  493              file_res.append((tokens, f&quot;{relative_fname}&quot;, &quot;/drop to remove&quot;))
+  494
+  495          # read-only files
+  496          for fname in self.coder.abs_read_only_fnames:
+  497              relative_fname = self.coder.get_rel_fname(fname)
+  498              content = self.io.read_text(fname)
+  499              if content is not None and not is_image_file(relative_fname):
+  500                  # approximate
+  501                  content = f&quot;{relative_fname}\n{fence}\n&quot; + content + &quot;{fence}\n&quot;
+  502                  tokens = self.coder.main_model.token_count(content)
+  503                  file_res.append((tokens, f&quot;{relative_fname} (read-only)&quot;, &quot;/drop to remove&quot;))
+  504
+  505          file_res.sort()
+  506          res.extend(file_res)
+  507
+  508          self.io.tool_output(
+  509              f&quot;Approximate context window usage for {self.coder.main_model.name}, in tokens:&quot;
+  510          )
+  511          self.io.tool_output()
+  512
+  513          width = 8
+  514          cost_width = 9
+  515
+  516          def fmt(v):
+  517              return format(int(v), &quot;,&quot;).rjust(width)
+  518
+  519          col_width = max(len(row[1]) for row in res)
+  520
+  521          cost_pad = &quot; &quot; * cost_width
+  522          total = 0
+  523          total_cost = 0.0
+  524          for tk, msg, tip in res:
+  525              total += tk
+  526              cost = tk * (self.coder.main_model.info.get(&quot;input_cost_per_token&quot;) or 0)
+  527              total_cost += cost
+  528              msg = msg.ljust(col_width)
+  529              self.io.tool_output(f&quot;${cost:7.4f} {fmt(tk)} {msg} {tip}&quot;)  # noqa: E231
+  530
+  531          self.io.tool_output(&quot;=&quot; * (width + cost_width + 1))</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--map-tokens#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--hard</code></h3><small>flag · aider/commands.py:576</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/commands.py#L571-L588" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>  571          last_commit_message = self.coder.repo.get_head_commit_message(&quot;(unknown)&quot;).strip()
+  572          last_commit_message = (last_commit_message.splitlines() or [&quot;&quot;])[0]
+  573          if last_commit_hash not in self.coder.aider_commit_hashes:
+  574              self.io.tool_error(&quot;The last commit was not made by aider in this chat session.&quot;)
+  575              self.io.tool_output(
+  576                  &quot;You could try `/git reset --hard HEAD^` but be aware that this is a destructive&quot;
+  577                  &quot; command!&quot;
+  578              )
+  579              return
+  580
+  581          if len(last_commit.parents) &gt; 1:
+  582              self.io.tool_error(
+  583                  f&quot;The last commit {last_commit.hexsha} has more than 1 parent, can&#39;t undo.&quot;
+  584              )
+  585              return
+  586
+  587          prev_commit = last_commit.parents[0]
+  588          changed_files_last_commit = [item.a_path for item in last_commit.diff(prev_commit)]
+  589
+  590          for fname in changed_files_last_commit:
+  591              if self.coder.repo.repo.is_dirty(path=fname):
+  592                  self.io.tool_error(
+  593                      f&quot;The file {fname} has uncommitted changes. Please stash them before undoing.&quot;
+  594                  )
+  595                  return
+  596
+  597              # Check if the file was in the repo in the previous commit
+  598              try:
+  599                  prev_commit.tree[fname]
+  600              except KeyError:
+  601                  self.io.tool_error(
+  602                      f&quot;The file {fname} was not in the repository in the previous commit. Cannot&quot;
+  603                      &quot; undo safely.&quot;
+  604                  )
+  605                  return
+  606
+  607          local_head = self.coder.repo.repo.git.rev_parse(&quot;HEAD&quot;)
+  608          current_branch = self.coder.repo.repo.active_branch.name
+  609          try:
+  610              remote_head = self.coder.repo.repo.git.rev_parse(f&quot;origin/{current_branch}&quot;)
+  611              has_origin = True
+  612          except ANY_GIT_ERROR:
+  613              has_origin = False
+  614
+  615          if has_origin:
+  616              if local_head == remote_head:
+  617                  self.io.tool_error(
+  618                      &quot;The last commit has already been pushed to the origin. Undoing is not&quot;
+  619                      &quot; possible.&quot;
+  620                  )
+  621                  return
+  622
+  623          # Reset only the files which are part of `last_commit`
+  624          restored = set()
+  625          unrestored = set()
+  626          for file_path in changed_files_last_commit:
+  627              try:
+  628                  self.coder.repo.repo.git.checkout(&quot;HEAD~1&quot;, file_path)
+  629                  restored.add(file_path)</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--hard#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--soft</code></h3><small>flag · aider/commands.py:644</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/commands.py#L639-L656" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>  639              for file in unrestored:
+  640                  self.io.tool_output(f&quot;  {file}&quot;)
+  641              return
+  642
+  643          # Move the HEAD back before the latest commit
+  644          self.coder.repo.repo.git.reset(&quot;--soft&quot;, &quot;HEAD~1&quot;)
+  645
+  646          self.io.tool_output(f&quot;Removed: {last_commit_hash} {last_commit_message}&quot;)
+  647
+  648          # Get the current HEAD after undo
+  649          current_head_hash = self.coder.repo.get_head_commit_sha(short=True)
+  650          current_head_message = self.coder.repo.get_head_commit_message(&quot;(unknown)&quot;).strip()
+  651          current_head_message = (current_head_message.splitlines() or [&quot;&quot;])[0]
+  652          self.io.tool_output(f&quot;Now at:  {current_head_hash} {current_head_message}&quot;)
+  653
+  654          if self.coder.main_model.send_undo_reply:
+  655              return prompts.undo_command_reply
+  656
+  657      def cmd_diff(self, args=&quot;&quot;):
+  658          &quot;Display the diff of changes since the last message&quot;
+  659          try:
+  660              self.raw_cmd_diff(args)
+  661          except ANY_GIT_ERROR as err:
+  662              self.io.tool_error(f&quot;Unable to complete diff: {err}&quot;)
+  663
+  664      def raw_cmd_diff(self, args=&quot;&quot;):
+  665          if not self.coder.repo:
+  666              self.io.tool_error(&quot;No git repository found.&quot;)
+  667              return
+  668
+  669          current_head = self.coder.repo.get_head_commit_sha()
+  670          if current_head is None:
+  671              self.io.tool_error(&quot;Unable to get current commit. The repository might be empty.&quot;)
+  672              return
+  673
+  674          if len(self.coder.commit_before_message) &lt; 2:
+  675              commit_before_message = current_head + &quot;^&quot;
+  676          else:
+  677              commit_before_message = self.coder.commit_before_message[-2]
+  678
+  679          if not commit_before_message or commit_before_message == current_head:
+  680              self.io.tool_warning(&quot;No changes to display since the last message.&quot;)
+  681              return
+  682
+  683          self.io.tool_output(f&quot;Diff since {commit_before_message[:7]}...&quot;)
+  684
+  685          if self.coder.pretty:
+  686              run_cmd(f&quot;git diff {commit_before_message}&quot;)
+  687              return
+  688
+  689          diff = self.coder.repo.diff_commits(
+  690              self.coder.pretty,
+  691              commit_before_message,
+  692              &quot;HEAD&quot;,
+  693          )
+  694
+  695          self.io.print(diff)
+  696
+  697      def quote_fname(self, fname):</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--soft#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--subtree-only</code></h3><small>flag · aider/commands.py:812</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/commands.py#L807-L824" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>  807                  fname = Path(word)
+  808              else:
+  809                  fname = Path(self.coder.root) / word
+  810
+  811              if self.coder.repo and self.coder.repo.ignored_file(fname):
+  812                  self.io.tool_warning(f&quot;Skipping {fname} due to aiderignore or --subtree-only.&quot;)
+  813                  continue
+  814
+  815              if fname.exists():
+  816                  if fname.is_file():
+  817                      all_matched_files.add(str(fname))
+  818                      continue
+  819                  # an existing dir, escape any special chars so they won&#39;t be globs
+  820                  word = re.sub(r&quot;([\*\?\[\]])&quot;, r&quot;[\1]&quot;, word)
+  821
+  822              matched_files = self.glob_filtered_to_repo(word)
+  823              if matched_files:
+  824                  all_matched_files.update(matched_files)
+  825                  continue
+  826
+  827              if &quot;*&quot; in str(fname) or &quot;?&quot; in str(fname):
+  828                  self.io.tool_error(
+  829                      f&quot;No match, and cannot create file with wildcard characters: {fname}&quot;
+  830                  )
+  831                  continue
+  832
+  833              if fname.exists() and fname.is_dir() and self.coder.repo:
+  834                  self.io.tool_error(f&quot;Directory {fname} is not in git.&quot;)
+  835                  self.io.tool_output(f&quot;You can add to git with: /git add {fname}&quot;)
+  836                  continue
+  837
+  838              if self.io.confirm_ask(f&quot;No files matched &#39;{word}&#39;. Do you want to create {fname}?&quot;):
+  839                  try:
+  840                      fname.parent.mkdir(parents=True, exist_ok=True)
+  841                      fname.touch()
+  842                      all_matched_files.add(str(fname))
+  843                  except OSError as e:
+  844                      self.io.tool_error(f&quot;Error creating file {fname}: {e}&quot;)
+  845
+  846          for matched_file in sorted(all_matched_files):
+  847              abs_file_path = self.coder.abs_root_path(matched_file)
+  848
+  849              if (
+  850                  not abs_file_path.startswith(self.coder.root)
+  851                  and not is_image_file(matched_file)
+  852                  and self.coder.auto_commits
+  853              ):
+  854                  self.io.tool_error(
+  855                      f&quot;Can not add {abs_file_path}, which is not within {self.coder.root}&quot;
+  856                  )
+  857                  continue
+  858
+  859              if (
+  860                  self.coder.repo
+  861                  and self.coder.repo.git_ignored_file(matched_file)
+  862                  and not self.coder.add_gitignore_files
+  863              ):
+  864                  self.io.tool_error(f&quot;Can&#39;t add {matched_file} which is in gitignore&quot;)
+  865                  continue</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--subtree-only#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>06</span><div><h3><code>/help</code></h3><small>slash · aider/commands.py:1117</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/commands.py#L1112-L1129" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code> 1112                  description = cmd_method.__doc__
+ 1113                  self.io.tool_output(f&quot;{cmd} {description}&quot;)
+ 1114              else:
+ 1115                  self.io.tool_output(f&quot;{cmd} No description available.&quot;)
+ 1116          self.io.tool_output()
+ 1117          self.io.tool_output(&quot;Use `/help &lt;question&gt;` to ask questions about how to use aider.&quot;)
+ 1118
+ 1119      def cmd_help(self, args):
+ 1120          &quot;Ask questions about aider&quot;
+ 1121
+ 1122          if not args.strip():
+ 1123              self.basic_help()
+ 1124              return
+ 1125
+ 1126          self.coder.event(&quot;interactive help&quot;)
+ 1127          from aider.coders.base_coder import Coder
+ 1128
+ 1129          if not self.help:
+ 1130              res = install_help_extra(self.io)
+ 1131              if not res:
+ 1132                  self.io.tool_error(&quot;Unable to initialize interactive help.&quot;)
+ 1133                  return
+ 1134
+ 1135              self.help = Help()
+ 1136
+ 1137          coder = Coder.create(
+ 1138              io=self.io,
+ 1139              from_coder=self.coder,
+ 1140              edit_format=&quot;help&quot;,
+ 1141              summarize_from_coder=False,
+ 1142              map_tokens=512,
+ 1143              map_mul_no_files=1,
+ 1144          )
+ 1145          user_msg = self.help.ask(args)
+ 1146          user_msg += &quot;&quot;&quot;
+ 1147  # Announcement lines from when this session of aider was launched:
+ 1148
+ 1149  &quot;&quot;&quot;
+ 1150          user_msg += &quot;\n&quot;.join(self.coder.get_announcements()) + &quot;\n&quot;
+ 1151
+ 1152          coder.run(user_msg, preproc=False)
+ 1153
+ 1154          if self.coder.repo_map:
+ 1155              map_tokens = self.coder.repo_map.max_map_tokens
+ 1156              map_mul_no_files = self.coder.repo_map.map_mul_no_files
+ 1157          else:
+ 1158              map_tokens = 0
+ 1159              map_mul_no_files = 1
+ 1160
+ 1161          raise SwitchCoder(
+ 1162              edit_format=self.coder.edit_format,
+ 1163              summarize_from_coder=False,
+ 1164              from_coder=coder,
+ 1165              map_tokens=map_tokens,
+ 1166              map_mul_no_files=map_mul_no_files,
+ 1167              show_announcements=False,
+ 1168          )
+ 1169
+ 1170      def completions_ask(self):</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fhelp#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>07</span><div><h3><code>/ask</code></h3><small>slash · aider/watch_prompts.py:9</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/watch_prompts.py#L4-L21" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>    4  Find them in the code files I&#39;ve shared with you, and follow their instructions.
+    5
+    6  After completing those instructions, also be sure to remove all the &quot;AI&quot; comments from the code too.
+    7  &quot;&quot;&quot;
+    8
+    9  watch_ask_prompt = &quot;&quot;&quot;/ask
+   10  Find the &quot;AI&quot; comments below (marked with █) in the code files I&#39;ve shared with you.
+   11  They contain my questions that I need you to answer and other instructions for you.
+   12  &quot;&quot;&quot;
+   13</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fask#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>08</span><div><h3><code>/add</code></h3><small>slash · tests/basic/test_commands.py:789</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/tests/basic/test_commands.py#L784-L801" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>  784                  # Verify the session file was created and contains the expected commands
+  785                  self.assertTrue(Path(session_file).exists())
+  786                  with open(session_file, encoding=io.encoding) as f:
+  787                      commands_text = f.read()
+  788                      commands_text = re.sub(
+  789                          r&quot;/add +&quot;, &quot;/add &quot;, commands_text
+  790                      )  # Normalize add command spaces
+  791                      self.assertIn(&quot;/add file1.txt&quot;, commands_text)
+  792                      # Split commands and check each one
+  793                      for line in commands_text.splitlines():
+  794                          if line.startswith(&quot;/read-only &quot;):
+  795                              saved_path = line.split(&quot; &quot;, 1)[1]
+  796                              if os.path.samefile(saved_path, external_file_path):
+  797                                  break
+  798                      else:
+  799                          self.fail(f&quot;No matching read-only command found for {external_file_path}&quot;)
+  800
+  801                  # Clear the current session
+  802                  commands.cmd_reset(&quot;&quot;)
+  803                  self.assertEqual(len(coder.abs_fnames), 0)
+  804                  self.assertEqual(len(coder.abs_read_only_fnames), 0)
+  805
+  806                  # Load the session back
+  807                  commands.cmd_load(session_file)
+  808
+  809                  # Verify files were restored correctly
+  810                  added_files = {coder.get_rel_fname(f) for f in coder.abs_fnames}
+  811                  read_only_files = {coder.get_rel_fname(f) for f in coder.abs_read_only_fnames}
+  812
+  813                  self.assertEqual(added_files, {str(Path(&quot;file1.txt&quot;))})
+  814                  self.assertTrue(
+  815                      any(os.path.samefile(external_file_path, f) for f in read_only_files)
+  816                  )
+  817
+  818                  # Clean up
+  819                  Path(session_file).unlink()
+  820
+  821          finally:
+  822              os.unlink(external_file_path)
+  823
+  824      def test_cmd_save_and_load_with_multiple_external_files(self):
+  825          with (
+  826              tempfile.NamedTemporaryFile(mode=&quot;w&quot;, delete=False) as external_file1,
+  827              tempfile.NamedTemporaryFile(mode=&quot;w&quot;, delete=False) as external_file2,
+  828          ):
+  829              external_file1.write(&quot;External file 1 content&quot;)
+  830              external_file2.write(&quot;External file 2 content&quot;)
+  831              external_file1_path = external_file1.name
+  832              external_file2_path = external_file2.name
+  833
+  834          try:
+  835              with GitTemporaryDirectory() as repo_dir:
+  836                  io = InputOutput(pretty=False, fancy_input=False, yes=True)
+  837                  coder = Coder.create(self.GPT35, None, io)
+  838                  commands = Commands(io, coder)
+  839
+  840                  # Create some test files in the repo
+  841                  test_files = {
+  842                      &quot;internal1.txt&quot;: &quot;Content of internal file 1&quot;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fadd#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>09</span><div><h3><code>/model</code></h3><small>slash · tests/basic/test_commands.py:2118</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/tests/basic/test_commands.py#L2113-L2130" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code> 2113              commands_file = Path(repo_dir) / &quot;test_commands.txt&quot;
+ 2114              commands_file.write_text(&quot;/ask Tell me about the code\n/model gpt-4\n&quot;)
+ 2115
+ 2116              # Mock run to raise SwitchCoder for /ask and /model
+ 2117              def mock_run(cmd):
+ 2118                  if cmd.startswith((&quot;/ask&quot;, &quot;/model&quot;)):
+ 2119                      raise SwitchCoder()
+ 2120                  return None
+ 2121
+ 2122              with mock.patch.object(commands, &quot;run&quot;, side_effect=mock_run):
+ 2123                  # Capture tool_error output
+ 2124                  with mock.patch.object(io, &quot;tool_error&quot;) as mock_tool_error:
+ 2125                      commands.cmd_load(str(commands_file))
+ 2126
+ 2127                      # Check that appropriate error messages were shown
+ 2128                      mock_tool_error.assert_any_call(
+ 2129                          &quot;Command &#39;/ask Tell me about the code&#39; is only supported in interactive&quot;
+ 2130                          &quot; mode, skipping.&quot;
+ 2131                      )
+ 2132                      mock_tool_error.assert_any_call(
+ 2133                          &quot;Command &#39;/model gpt-4&#39; is only supported in interactive mode, skipping.&quot;
+ 2134                      )
+ 2135
+ 2136      def test_reset_after_coder_clone_preserves_original_read_only_files(self):
+ 2137          with GitTemporaryDirectory() as _:
+ 2138              repo_dir = str(&quot;.&quot;)
+ 2139              io = InputOutput(pretty=False, fancy_input=False, yes=True)
+ 2140
+ 2141              orig_ro_path = Path(repo_dir) / &quot;orig_ro.txt&quot;
+ 2142              orig_ro_path.write_text(&quot;original read only&quot;)
+ 2143
+ 2144              editable_path = Path(repo_dir) / &quot;editable.txt&quot;
+ 2145              editable_path.write_text(&quot;editable content&quot;)
+ 2146
+ 2147              other_ro_path = Path(repo_dir) / &quot;other_ro.txt&quot;
+ 2148              other_ro_path.write_text(&quot;other read only&quot;)
+ 2149
+ 2150              original_read_only_fnames_set = {str(orig_ro_path)}
+ 2151
+ 2152              # Create the initial Coder
+ 2153              orig_coder = Coder.create(main_model=self.GPT35, io=io, fnames=[], repo=None)
+ 2154              orig_coder.root = repo_dir  # Set root for path operations
+ 2155
+ 2156              # Replace its commands object with one that has the original_read_only_fnames
+ 2157              orig_coder.commands = Commands(
+ 2158                  io, orig_coder, original_read_only_fnames=list(original_read_only_fnames_set)
+ 2159              )
+ 2160              orig_coder.commands.coder = orig_coder
+ 2161
+ 2162              # Populate coder&#39;s file sets
+ 2163              orig_coder.abs_read_only_fnames.add(str(orig_ro_path))
+ 2164              orig_coder.abs_fnames.add(str(editable_path))
+ 2165              orig_coder.abs_read_only_fnames.add(str(other_ro_path))
+ 2166
+ 2167              # Simulate SwitchCoder by creating a new coder from the original one
+ 2168              new_coder = Coder.create(from_coder=orig_coder)
+ 2169              new_commands = new_coder.commands
+ 2170
+ 2171              # Perform /reset</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2Fmodel#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>10</span><div><h3><code>/REDACTED</code></h3><small>slash · aider/analytics.py:203</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/analytics.py#L198-L215" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。</p><pre><code>  198
+  199          info = model_info_manager.get_model_from_cached_json_db(model.name)
+  200          if info:
+  201              return model.name
+  202          elif &quot;/&quot; in model.name:
+  203              return model.name.split(&quot;/&quot;)[0] + &quot;/REDACTED&quot;
+  204          return None
+  205
+  206      def posthog_error(self):
+  207          &quot;&quot;&quot;disable posthog if we get an error&quot;&quot;&quot;
+  208          print(&quot;X&quot; * 100)
+  209          # https://github.com/PostHog/posthog-python/blob/9e1bb8c58afaa229da24c4fb576c08bb88a75752/posthog/consumer.py#L86
+  210          # https://github.com/Aider-AI/aider/issues/2532
+  211          self.ph = None
+  212
+  213      def event(self, event_name, main_model=None, **kwargs):
+  214          if not self.mp and not self.ph and not self.logfile:
+  215              return
+  216
+  217          properties = {}
+  218
+  219          if main_model:
+  220              properties[&quot;main_model&quot;] = self._redact_model_name(main_model)
+  221              properties[&quot;weak_model&quot;] = self._redact_model_name(main_model.weak_model)
+  222              properties[&quot;editor_model&quot;] = self._redact_model_name(main_model.editor_model)
+  223
+  224          properties.update(kwargs)
+  225
+  226          # Handle numeric values
+  227          for key, value in properties.items():
+  228              if isinstance(value, (int, float)):
+  229                  properties[key] = value
+  230              else:
+  231                  properties[key] = str(value)
+  232
+  233          if self.mp:
+  234              try:
+  235                  self.mp.track(self.user_id, event_name, dict(properties))
+  236              except MixpanelException:
+  237                  self.mp = None  # Disable mixpanel on connection errors
+  238
+  239          if self.ph:
+  240              self.ph.capture(event_name, distinct_id=self.user_id, properties=dict(properties))
+  241
+  242          if self.logfile:
+  243              log_entry = {
+  244                  &quot;event&quot;: event_name,
+  245                  &quot;properties&quot;: properties,
+  246                  &quot;user_id&quot;: self.user_id,
+  247                  &quot;time&quot;: int(time.time()),
+  248              }
+  249              try:
+  250                  with open(self.logfile, &quot;a&quot;) as f:
+  251                      json.dump(log_entry, f)
+  252                      f.write(&quot;\n&quot;)
+  253              except OSError:
+  254                  pass  # Ignore OS errors when writing to logfile
+  255
+  256</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=%2FREDACTED#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--env</code></h3><small>flag · aider/args_formatter.py:23</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/args_formatter.py#L18-L35" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。</p><pre><code>   18      def _format_text(self, text):
+   19          return f&quot;&quot;&quot;
+   20  ##########################################################
+   21  # Sample aider .env file.
+   22  # Place at the root of your git repo.
+   23  # Or use `aider --env &lt;fname&gt;` to specify.
+   24  ##########################################################
+   25
+   26  #################
+   27  # LLM parameters:
+   28  #
+   29  # Include xxx_API_KEY parameters and other params needed for your LLMs.
+   30  # See {urls.llms} for details.
+   31
+   32  ## OpenAI
+   33  #OPENAI_API_KEY=
+   34
+   35  ## Anthropic
+   36  #ANTHROPIC_API_KEY=
+   37
+   38  ##...
+   39  &quot;&quot;&quot;
+   40
+   41      def _format_action(self, action):
+   42          if not action.option_strings:
+   43              return &quot;&quot;
+   44
+   45          if not action.env_var:
+   46              return
+   47
+   48          parts = [&quot;&quot;]
+   49
+   50          default = action.default
+   51          if default == argparse.SUPPRESS:
+   52              default = &quot;&quot;
+   53          elif isinstance(default, str):
+   54              pass
+   55          elif isinstance(default, list) and not default:
+   56              default = &quot;&quot;
+   57          elif action.default is not None:
+   58              default = &quot;true&quot; if default else &quot;false&quot;
+   59          else:
+   60              default = &quot;&quot;
+   61
+   62          if action.help:
+   63              parts.append(f&quot;## {action.help}&quot;)
+   64
+   65          if action.env_var:
+   66              env_var = action.env_var
+   67              if default:
+   68                  parts.append(f&quot;#{env_var}={default}\n&quot;)
+   69              else:
+   70                  parts.append(f&quot;#{env_var}=\n&quot;)
+   71
+   72          return &quot;\n&quot;.join(parts) + &quot;\n&quot;
+   73
+   74      def _format_action_invocation(self, action):
+   75          return &quot;&quot;
+   76</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--env#command-flow">打开这条指令的执行图 →</a></article><article class="command-card"><header><span>12</span><div><h3><code>files</code></h3><small>registered · aider/args.py:56</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/args.py#L51-L68" target="_blank" rel="noreferrer">源码 ↗</a></header><p>这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。</p><pre><code>   51              for c in _aider_coders.__all__
+   52              if hasattr(c, &quot;edit_format&quot;) and c.edit_format is not None
+   53          }
+   54      )
+   55      group = parser.add_argument_group(&quot;Main model&quot;)
+   56      group.add_argument(
+   57          &quot;files&quot;, metavar=&quot;FILE&quot;, nargs=&quot;*&quot;, help=&quot;files to edit with an LLM (optional)&quot;
+   58      ).complete = shtab.FILE
+   59      group.add_argument(
+   60          &quot;--model&quot;,
+   61          metavar=&quot;MODEL&quot;,
+   62          default=None,
+   63          help=&quot;Specify the model to use for the main chat&quot;,
+   64      )
+   65
+   66      ##########
+   67      group = parser.add_argument_group(&quot;API Keys and settings&quot;)
+   68      group.add_argument(
+   69          &quot;--openai-api-key&quot;,
+   70          help=&quot;Specify the OpenAI API key&quot;,
+   71      )
+   72      group.add_argument(
+   73          &quot;--anthropic-api-key&quot;,
+   74          help=&quot;Specify the Anthropic API key&quot;,
+   75      )
+   76      group.add_argument(
+   77          &quot;--openai-api-base&quot;,
+   78          help=&quot;Specify the api base url&quot;,
+   79      )
+   80      group.add_argument(
+   81          &quot;--openai-api-type&quot;,
+   82          help=&quot;(deprecated, use --set-env OPENAI_API_TYPE=&lt;value&gt;)&quot;,
+   83      )
+   84      group.add_argument(
+   85          &quot;--openai-api-version&quot;,
+   86          help=&quot;(deprecated, use --set-env OPENAI_API_VERSION=&lt;value&gt;)&quot;,
+   87      )
+   88      group.add_argument(
+   89          &quot;--openai-api-deployment-id&quot;,
+   90          help=&quot;(deprecated, use --set-env OPENAI_API_DEPLOYMENT_ID=&lt;value&gt;)&quot;,
+   91      )
+   92      group.add_argument(
+   93          &quot;--openai-organization-id&quot;,
+   94          help=&quot;(deprecated, use --set-env OPENAI_ORGANIZATION=&lt;value&gt;)&quot;,
+   95      )
+   96      group.add_argument(
+   97          &quot;--set-env&quot;,
+   98          action=&quot;append&quot;,
+   99          metavar=&quot;ENV_VAR_NAME=value&quot;,
+  100          help=&quot;Set an environment variable (to control API settings, can be used multiple times)&quot;,
+  101          default=[],
+  102      )
+  103      group.add_argument(
+  104          &quot;--api-key&quot;,
+  105          action=&quot;append&quot;,
+  106          metavar=&quot;PROVIDER=KEY&quot;,
+  107          help=(
+  108              &quot;Set an API key for a provider (eg: --api-key provider=&lt;key&gt; sets&quot;
+  109              &quot; PROVIDER_API_KEY=&lt;key&gt;)&quot;</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=files#command-flow">打开这条指令的执行图 →</a></article></div></section><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>核心 Coder 的外部能力来自固定 CLI 命令、Git、文件编辑格式、lint/test、网页抓取和可选单一 function edit schema；仓库核心未实现通用 MCP 工具注册与动态插件调度。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L1006-L1009" target="_blank" rel="noreferrer">aider/models.py:1006–1009 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>核心 Coder 的外部能力来自固定 CLI 命令、Git、文件编辑格式、lint/test、网页抓取和可选单一 function edit schema；仓库核心未实现通用 MCP 工具注册与动态插件调度。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L1006-L1009" target="_blank" rel="noreferrer">aider/models.py:1006–1009 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>核心 Coder 的外部能力来自固定 CLI 命令、Git、文件编辑格式、lint/test、网页抓取和可选单一 function edit schema；仓库核心未实现通用 MCP 工具注册与动态插件调度。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L1006-L1009" target="_blank" rel="noreferrer">aider/models.py:1006–1009 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>核心 Coder 的外部能力来自固定 CLI 命令、Git、文件编辑格式、lint/test、网页抓取和可选单一 function edit schema；仓库核心未实现通用 MCP 工具注册与动态插件调度。</blockquote><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/models.py#L1006-L1009" target="_blank" rel="noreferrer">aider/models.py:1006–1009 ↗</a></article></div></section><h2>本章源码地图：不要只读一个文件</h2><section class="source-reading-map"><div class="source-reading-head"><span>源码目录 → 命中段落</span><b>6 个真实文件</b></div><p>这不是 README 文件清单：生成器在本地仓库中按本章关键词定位真实文件，并从固定提交抽取带行号的短段。点击每个路径可以继续沿调用者、类型和测试追踪。</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>tests/basic/test_commands.py</b><small>90081 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/tests/basic/test_commands.py#L15-L30" target="_blank" rel="noreferrer">L15–30 ↗</a></header><p>1. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   15  from aider.commands import Commands, SwitchCoder
+   16  from aider.dump import dump  # noqa: F401
+   17  from aider.io import InputOutput
+   18  from aider.models import Model
+   19  from aider.repo import GitRepo
+   20  from aider.utils import ChdirTemporaryDirectory, GitTemporaryDirectory, make_repo
+   21
+   22
+   23  class TestCommands(TestCase):
+   24      def setUp(self):
+   25          self.original_cwd = os.getcwd()
+   26          self.tempdir = tempfile.mkdtemp()
+   27          os.chdir(self.tempdir)
+   28
+   29          self.GPT35 = Model(&quot;gpt-3.5-turbo&quot;)
+   30
+   31      def tearDown(self):
+   32          os.chdir(self.original_cwd)
+   33          shutil.rmtree(self.tempdir, ignore_errors=True)
+   34
+   35      def test_cmd_add(self):
+   36          # Initialize the Commands and InputOutput objects
+   37          io = InputOutput(pretty=False, fancy_input=False, yes=True)
+   38          from aider.coders import Coder
+   39
+   40          coder = Coder.create(self.GPT35, None, io)
+   41          commands = Commands(io, coder)
+   42
+   43          # Call the cmd_add method with &#39;foo.txt&#39; and &#39;bar.txt&#39; as a single string
+   44          commands.cmd_add(&quot;foo.txt bar.txt&quot;)
+   45
+   46          # Check if both files have been created in the temporary directory
+   47          self.assertTrue(os.path.exists(&quot;foo.txt&quot;))</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>tests/basic/test_openrouter.py</b><small>2338 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/tests/basic/test_openrouter.py#L4-L19" target="_blank" rel="noreferrer">L4–19 ↗</a></header><p>2. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    4  from aider.openrouter import OpenRouterModelManager
+    5
+    6
+    7  class DummyResponse:
+    8      &quot;&quot;&quot;Minimal stand-in for requests.Response used in tests.&quot;&quot;&quot;
+    9
+   10      def __init__(self, json_data):
+   11          self.status_code = 200
+   12          self._json_data = json_data
+   13
+   14      def json(self):
+   15          return self._json_data
+   16
+   17
+   18  def test_openrouter_get_model_info_from_cache(monkeypatch, tmp_path):
+   19      &quot;&quot;&quot;
+   20      OpenRouterModelManager should return correct metadata taken from the
+   21      downloaded (and locally cached) models JSON payload.
+   22      &quot;&quot;&quot;
+   23      payload = {
+   24          &quot;data&quot;: [
+   25              {
+   26                  &quot;id&quot;: &quot;mistralai/mistral-medium-3&quot;,
+   27                  &quot;context_length&quot;: 32768,
+   28                  &quot;pricing&quot;: {&quot;prompt&quot;: &quot;100&quot;, &quot;completion&quot;: &quot;200&quot;},
+   29                  &quot;top_provider&quot;: {&quot;context_length&quot;: 32768},
+   30              }
+   31          ]
+   32      }
+   33
+   34      # Fake out the network call and the HOME directory used for the cache file
+   35      monkeypatch.setattr(&quot;requests.get&quot;, lambda *a, **k: DummyResponse(payload))
+   36      monkeypatch.setattr(Path, &quot;home&quot;, staticmethod(lambda: tmp_path))</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>tests/help/test_help.py</b><small>5286 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/tests/help/test_help.py#L9-L24" target="_blank" rel="noreferrer">L9–24 ↗</a></header><p>3. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    9  from aider.commands import Commands
+   10  from aider.help import Help, fname_to_url
+   11  from aider.io import InputOutput
+   12  from aider.models import Model
+   13
+   14
+   15  class TestHelp(unittest.TestCase):
+   16      @staticmethod
+   17      def retry_with_backoff(func, max_time=60, initial_delay=1, backoff_factor=2):
+   18          &quot;&quot;&quot;
+   19          Execute a function with exponential backoff retry logic.
+   20
+   21          Args:
+   22              func: Function to execute
+   23              max_time: Maximum time in seconds to keep retrying
+   24              initial_delay: Initial delay between retries in seconds
+   25              backoff_factor: Multiplier for delay after each retry
+   26
+   27          Returns:
+   28              The result of the function if successful
+   29
+   30          Raises:
+   31              The last exception encountered if all retries fail
+   32          &quot;&quot;&quot;
+   33          start_time = time.time()
+   34          delay = initial_delay
+   35          last_exception = None
+   36
+   37          while time.time() - start_time &lt; max_time:
+   38              try:
+   39                  return func()
+   40              except (ReadTimeout, ConnectionError) as e:
+   41                  last_exception = e</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>aider/coders/help_coder.py</b><small>355 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/coders/help_coder.py#L3-L17" target="_blank" rel="noreferrer">L3–17 ↗</a></header><p>4. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    3  from .help_prompts import HelpPrompts
+    4
+    5
+    6  class HelpCoder(Coder):
+    7      &quot;&quot;&quot;Interactive help and documentation about aider.&quot;&quot;&quot;
+    8
+    9      edit_format = &quot;help&quot;
+   10      gpt_prompts = HelpPrompts()
+   11
+   12      def get_edits(self, mode=&quot;update&quot;):
+   13          return []
+   14
+   15      def apply_edits(self, edits):
+   16          pass
+   17</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>aider/coders/help_prompts.py</b><small>1524 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/coders/help_prompts.py#L6-L21" target="_blank" rel="noreferrer">L6–21 ↗</a></header><p>5. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>    6  class HelpPrompts(CoderPrompts):
+    7      main_system = &quot;&quot;&quot;You are an expert on the AI coding tool called Aider.
+    8  Answer the user&#39;s questions about how to use aider.
+    9
+   10  The user is currently chatting with you using aider, to write and edit code.
+   11
+   12  Use the provided aider documentation *if it is relevant to the user&#39;s question*.
+   13
+   14  Include a bulleted list of urls to the aider docs that might be relevant for the user to read.
+   15  Include *bare* urls. *Do not* make [markdown links](http://...).
+   16  For example:
+   17  - https://aider.chat/docs/usage.html
+   18  - https://aider.chat/docs/faq.html
+   19
+   20  If you don&#39;t know the answer, say so and suggest some relevant aider doc urls.
+   21
+   22  If asks for something that isn&#39;t possible with aider, be clear about that.
+   23  Don&#39;t suggest a solution that isn&#39;t supported.
+   24
+   25  Be helpful but concise.
+   26
+   27  Unless the question indicates otherwise, assume the user wants to use aider as a CLI tool.
+   28
+   29  Keep this info about the user&#39;s system in mind:
+   30  {platform}
+   31  &quot;&quot;&quot;
+   32
+   33      example_messages = []
+   34      system_reminder = &quot;&quot;
+   35
+   36      files_content_prefix = &quot;&quot;&quot;These are some files we have been discussing that we may want to edit after you answer my questions:
+   37  &quot;&quot;&quot;
+   38</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>aider/commands.py</b><small>62230 bytes · .py</small></div><a href="https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/commands.py#L20-L35" target="_blank" rel="noreferrer">L20–35 ↗</a></header><p>6. 与“指令执行：从 /goal 到回执”直接相关的源码入口；先看这一段的输入、状态和返回值。</p><pre><code>   20  from aider.io import CommandCompletionException
+   21  from aider.llm import litellm
+   22  from aider.repo import ANY_GIT_ERROR
+   23  from aider.run_cmd import run_cmd
+   24  from aider.scrape import Scraper, install_playwright
+   25  from aider.utils import is_image_file
+   26
+   27  from .dump import dump  # noqa: F401
+   28
+   29
+   30  class SwitchCoder(Exception):
+   31      def __init__(self, placeholder=None, **kwargs):
+   32          self.kwargs = kwargs
+   33          self.placeholder = placeholder
+   34
+   35
+   36  class Commands:
+   37      voice = None
+   38      scraper = None
+   39
+   40      def clone(self):
+   41          return Commands(
+   42              self.io,
+   43              None,
+   44              voice_language=self.voice_language,
+   45              verify_ssl=self.verify_ssl,
+   46              args=self.args,
+   47              parser=self.parser,
+   48              verbose=self.verbose,
+   49              editor=self.editor,
+   50              original_read_only_fnames=self.original_read_only_fnames,
+   51          )
+   52</code></pre></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Aider commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← 证据与取舍：把源码结论带回自研</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

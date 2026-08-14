@@ -520,5 +520,6 @@ export const chapterDefs = [
   { id: "security", number: "07", title: { zh: "安全：审批、权限和边界", en: "Security: approvals, permissions, boundaries" }, question: { zh: "问用户、限制能力和隔离执行分别解决什么问题？", en: "What do approval, capability restriction, and isolation each solve?" } },
   { id: "ecosystem", number: "08", title: { zh: "扩展：MCP、Skill、插件如何接入", en: "Extensions: MCP, Skills, and plugins" }, question: { zh: "新能力如何被发现、加载、调用和卸载？", en: "How are new capabilities discovered, loaded, called, and removed?" } },
   { id: "collaboration", number: "09", title: { zh: "协作：子 Agent 与工作流", en: "Collaboration: sub-agents and workflows" }, question: { zh: "什么时候是工具，什么时候才是协作单元？", en: "When is something a tool, and when is it a collaboration unit?" } },
-  { id: "evidence", number: "10", title: { zh: "证据与取舍：把源码结论带回自研", en: "Evidence and trade-offs: bringing lessons home" }, question: { zh: "哪些是源码事实，哪些是推断，哪些风险必须补？", en: "Which claims are facts, inferences, and risks to address?" } }
+  { id: "evidence", number: "10", title: { zh: "证据与取舍：把源码结论带回自研", en: "Evidence and trade-offs: bringing lessons home" }, question: { zh: "哪些是源码事实，哪些是推断，哪些风险必须补？", en: "Which claims are facts, inferences, and risks to address?" } },
+  { id: "commands", number: "11", title: { zh: "指令执行：从 /goal 到回执", en: "Command execution: from /goal to receipt" }, question: { zh: "一个内置指令如何被解析、路由、执行并写回会话？", en: "How is a built-in command parsed, routed, executed, and written back to the session?" } }
 ];

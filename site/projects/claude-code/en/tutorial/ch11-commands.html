@@ -1,0 +1,1991 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How is a built-in command parsed, routed, executed, and written back to the session?"><title>Claude Code（复原） · M11 · Command execution: from /goal to receipt</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Source course</a><a href="../../zh/tutorial/ch11-commands.html">中</a><a href="ch11-commands.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><a class="active" href="ch11-commands.html"><span>M11</span>Command execution: from /goal to receipt</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M11 · Claude Code（复原） · 3bb6b5746238</p><h1>Command execution: from /goal to receipt</h1><p class="lede">How is a built-in command parsed, routed, executed, and written back to the session?</p><div class="chapter-meta"><span>Chapter 11 / 11</span><span>8 source findings</span><span>main</span></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Source map</b><i>→</i><b>Map</b><i>→</i><b>Line reading</b></div><div class="callout"><b>Start with a concrete analogy</b><p>A command is an airport check-in record: identify it, enforce the gate, hand it to the right counter, and write boarding and arrival receipts back to the session.</p></div><h2>Answer the chapter question first</h2><p>How is a built-in command parsed, routed, executed, and written back to the session? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 8 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 是一个持续循环的消息变换与工具执行流水线</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</p></section><section><span>PLAIN LANGUAGE</span><p>每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文、工具、权限和恢复都在同一编排循环交汇，修改其中任何一步都可能影响缓存与 transcript 一致性。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>460–562</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>563–666</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:460–666</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  460    while (true) {
+  461      // Destructure state at the top of each iteration. toolUseContext alone
+  462      // is reassigned within an iteration (queryTracking, messages updates);
+  463      // the rest are read-only between continue sites.
+  464      let { toolUseContext } = state
+  465      const {
+  466        messages,
+  467        autoCompactTracking,
+  468        maxOutputTokensRecoveryCount,
+  469        hasAttemptedReactiveCompact,
+  470        maxOutputTokensOverride,
+  471        pendingToolUseSummary,
+  472        stopHookActive,
+  473        turnCount,
+  474      } = state
+  475
+  476      // Skill discovery prefetch — per-iteration (uses findWritePivot guard
+  477      // that returns early on non-write iterations). Discovery runs while the
+  478      // model streams and tools execute; awaited post-tools alongside the
+  479      // memory prefetch consume. Replaces the blocking assistant_turn path
+  480      // that ran inside getAttachmentMessages (97% of those calls found
+  481      // nothing in prod). Turn-0 user-input discovery still blocks in
+  482      // userInputAttachments — that&#39;s the one signal where there&#39;s no prior
+  483      // work to hide under.
+  484      const pendingSkillPrefetch = skillPrefetch?.startSkillDiscoveryPrefetch(
+  485        null,
+  486        messages,
+  487        toolUseContext,
+  488      )
+  489      const pendingToolPrefetch =
+  490        searchExtraToolsPrefetch?.startSearchExtraToolsPrefetch(
+  491          toolUseContext.options.tools ?? [],
+  492          messages,
+  493        )
+  494
+  495      yield { type: &#39;stream_request_start&#39; }
+  496
+  497      queryCheckpoint(&#39;query_fn_entry&#39;)
+  498
+  499      // Record query start for headless latency tracking (skip for subagents)
+  500      if (!toolUseContext.agentId) {
+  501        headlessProfilerCheckpoint(&#39;query_started&#39;)
+  502      }
+  503
+  504      // Initialize or increment query chain tracking
+  505      const queryTracking = toolUseContext.queryTracking
+  506        ? {
+  507            chainId: toolUseContext.queryTracking.chainId,
+  508            depth: toolUseContext.queryTracking.depth + 1,
+  509          }
+  510        : {
+  511            chainId: deps.uuid(),
+  512            depth: 0,
+  513          }
+  514
+  515      const queryChainIdForAnalytics =
+  516        queryTracking.chainId as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+  517
+  518      toolUseContext = {
+  519        ...toolUseContext,
+  520        queryTracking,
+  521      }
+  522
+  523      let messagesForQuery = getMessagesAfterCompactBoundary(messages)
+  524
+  525      // Release toolUseResult payloads from previous turns — the next API call
+  526      // only needs message.message.content (tool_result blocks), not the raw
+  527      // output object. This prevents unbounded memory growth in long sessions
+  528      // before compact triggers (a single FileRead of a 400KB file would
+  529      // otherwise stay in mutableMessages forever).
+  530      //
+  531      // IMPORTANT: shallow-copy rather than mutate. messagesForQuery elements
+  532      // are references shared with mutableMessages (UI state); deleting
+  533      // toolUseResult in place strips it from the live message while React may
+  534      // still be rendering it. The next query can start within milliseconds of
+  535      // tool_result creation (model immediately calls the next tool), before
+  536      // the UI commit lands — UserToolSuccessMessage reads
+  537      // message.toolUseResult to delegate to tool.renderToolResultMessage, so a
+  538      // mutation race makes tool-result rows render blank. Map to a stripped
+  539      // copy so mutableMessages keeps the original for the UI; downstream API
+  540      // transformations (applyToolResultBudget, snip, microcompact) already
+  541      // build new arrays via .map(), so they compose cleanly with this copy.
+  542      messagesForQuery = messagesForQuery.map(msg =&gt; {
+  543        if (
+  544          msg.type !== &#39;user&#39; ||
+  545          !(&#39;toolUseResult&#39; in msg) ||
+  546          (msg as { toolUseResult?: unknown }).toolUseResult === undefined
+  547        ) {
+  548          return msg
+  549        }
+  550        const copy: typeof msg = { ...msg }
+  551        delete (copy as Message &amp; { toolUseResult?: unknown }).toolUseResult
+  552        return copy
+  553      })
+  554
+  555      let tracking = autoCompactTracking
+  556
+  557      // Enforce per-message budget on aggregate tool result size. Runs BEFORE
+  558      // microcompact — cached MC operates purely by tool_use_id (never inspects
+  559      // content), so content replacement is invisible to it and the two compose
+  560      // cleanly. No-ops when contentReplacementState is undefined (feature off).
+  561      // Persist only for querySources that read records back on resume: agentId
+  562      // routes to sidechain file (AgentTool resume) or session file (/resume).
+  563      // Ephemeral runForkedAgent callers (agent_summary etc.) don&#39;t persist.
+  564      const persistReplacements =
+  565        querySource.startsWith(&#39;agent:&#39;) ||
+  566        querySource.startsWith(&#39;repl_main_thread&#39;)
+  567      messagesForQuery = await applyToolResultBudget(
+  568        messagesForQuery,
+  569        toolUseContext.contentReplacementState,
+  570        persistReplacements
+  571          ? records =&gt;
+  572              void recordContentReplacement(
+  573                records,
+  574                toolUseContext.agentId,
+  575              ).catch(logError)
+  576          : undefined,
+  577        new Set(
+  578          toolUseContext.options.tools
+  579            .filter(t =&gt; !Number.isFinite(t.maxResultSizeChars))
+  580            .map(t =&gt; t.name),
+  581        ),
+  582      )
+  583
+  584      // Apply snip before microcompact (both may run — they are not mutually exclusive).
+  585      // snipTokensFreed is plumbed to autocompact so its threshold check reflects
+  586      // what snip removed; tokenCountWithEstimation alone can&#39;t see it (reads usage
+  587      // from the protected-tail assistant, which survives snip unchanged).
+  588      let snipTokensFreed = 0
+  589      if (feature(&#39;HISTORY_SNIP&#39;)) {
+  590        queryCheckpoint(&#39;query_snip_start&#39;)
+  591        const snipResult = snipModule!.snipCompactIfNeeded(messagesForQuery)
+  592        messagesForQuery = snipResult.messages
+  593        snipTokensFreed = snipResult.tokensFreed
+  594        if (snipResult.boundaryMessage) {
+  595          yield snipResult.boundaryMessage
+  596        }
+  597        queryCheckpoint(&#39;query_snip_end&#39;)
+  598      }
+  599
+  600      // Apply microcompact before autocompact
+  601      queryCheckpoint(&#39;query_microcompact_start&#39;)
+  602      const microcompactResult = await deps.microcompact(
+  603        messagesForQuery,
+  604        toolUseContext,
+  605        querySource,
+  606      )
+  607      messagesForQuery = microcompactResult.messages
+  608      // Release original strings from contentReplacementState.replacements for
+  609      // tool results whose content was replaced with the cleared message.
+  610      if (microcompactResult.clearedToolUseIds?.length) {
+  611        const replacements = toolUseContext?.contentReplacementState?.replacements
+  612        if (replacements) {
+  613          for (const id of microcompactResult.clearedToolUseIds) {
+  614            replacements.delete(id)
+  615          }
+  616        }
+  617      }
+  618      // For cached microcompact (cache editing), defer boundary message until after
+  619      // the API response so we can use actual cache_deleted_input_tokens.
+  620      // Gated behind feature() so the string is eliminated from external builds.
+  621      const pendingCacheEdits = feature(&#39;CACHED_MICROCOMPACT&#39;)
+  622        ? microcompactResult.compactionInfo?.pendingCacheEdits
+  623        : undefined
+  624      queryCheckpoint(&#39;query_microcompact_end&#39;)
+  625
+  626      // Project the collapsed context view and maybe commit more collapses.
+  627      // Runs BEFORE autocompact so that if collapse gets us under the
+  628      // autocompact threshold, autocompact is a no-op and we keep granular
+  629      // context instead of a single summary.
+  630      //
+  631      // Nothing is yielded — the collapsed view is a read-time projection
+  632      // over the REPL&#39;s full history. Summary messages live in the collapse
+  633      // store, not the REPL array. This is what makes collapses persist
+  634      // across turns: projectView() replays the commit log on every entry.
+  635      // Within a turn, the view flows forward via state.messages at the
+  636      // continue site (query.ts:1192), and the next projectView() no-ops
+  637      // because the archived messages are already gone from its input.
+  638      if (feature(&#39;CONTEXT_COLLAPSE&#39;) &amp;&amp; contextCollapse) {
+  639        const collapseResult = await contextCollapse.applyCollapsesIfNeeded(
+  640          messagesForQuery,
+  641          toolUseContext,
+  642          querySource,
+  643        )
+  644        messagesForQuery = collapseResult.messages
+  645      }
+  646
+  647      const fullSystemPrompt = asSystemPrompt(
+  648        appendSystemContext(systemPrompt, systemContext),
+  649      )
+  650
+  651      queryCheckpoint(&#39;query_autocompact_start&#39;)
+  652      const { compactionResult, consecutiveFailures } = await deps.autocompact(
+  653        messagesForQuery,
+  654        toolUseContext,
+  655        {
+  656          systemPrompt,
+  657          userContext,
+  658          systemContext,
+  659          toolUseContext,
+  660          forkContextMessages: messagesForQuery,
+  661        },
+  662        querySource,
+  663        tracking,
+  664        snipTokensFreed,
+  665      )
+  666      queryCheckpoint(&#39;query_autocompact_end&#39;)
+  667
+  668      if (compactionResult) {
+  669        const {
+  670          preCompactTokenCount,
+  671          postCompactTokenCount,
+  672          truePostCompactTokenCount,
+  673          compactionUsage,
+  674        } = compactionResult
+  675
+  676        logEvent(&#39;tengu_auto_compact_succeeded&#39;, {
+  677          originalMessageCount: messages.length,
+  678          compactedMessageCount:
+  679            compactionResult.summaryMessages.length +
+  680            compactionResult.attachments.length +
+  681            compactionResult.hookResults.length,
+  682          preCompactTokenCount,
+  683          postCompactTokenCount,
+  684          truePostCompactTokenCount,
+  685          compactionInputTokens: compactionUsage?.input_tokens,
+  686          compactionOutputTokens: compactionUsage?.output_tokens,
+  687          compactionCacheReadTokens:
+  688            compactionUsage?.cache_read_input_tokens ?? 0,
+  689          compactionCacheCreationTokens:
+  690            compactionUsage?.cache_creation_input_tokens ?? 0,
+  691          compactionTotalTokens: compactionUsage
+  692            ? compactionUsage.input_tokens +
+  693              (compactionUsage.cache_creation_input_tokens ?? 0) +
+  694              (compactionUsage.cache_read_input_tokens ?? 0) +
+  695              compactionUsage.output_tokens
+  696            : 0,
+  697
+  698          queryChainId: queryChainIdForAnalytics,
+  699          queryDepth: queryTracking.depth,
+  700        })
+  701
+  702        // task_budget: capture pre-compact final context window before
+  703        // messagesForQuery is replaced with postCompactMessages below.
+  704        // iterations[-1] is the authoritative final window (post server tool
+  705        // loops); see #304930.
+  706        if (params.taskBudget) {
+  707          const preCompactContext =
+  708            finalContextTokensFromLastResponse(messagesForQuery)
+  709          taskBudgetRemaining = Math.max(
+  710            0,
+  711            (taskBudgetRemaining ?? params.taskBudget.total) - preCompactContext,
+  712          )
+  713        }
+  714
+  715        // Reset on every compact so turnCounter/turnId reflect the MOST RECENT
+  716        // compact. recompactionInfo (autoCompact.ts:190) already captured the
+  717        // old values for turnsSincePreviousCompact/previousCompactTurnId before
+  718        // the call, so this reset doesn&#39;t lose those.
+  719        tracking = {
+  720          compacted: true,
+  721          turnId: deps.uuid(),
+  722          turnCounter: 0,
+  723          consecutiveFailures: 0,
+  724        }
+  725
+  726        const postCompactMessages = buildPostCompactMessages(compactionResult)
+  727
+  728        for (const message of postCompactMessages) {
+  729          yield message
+  730        }
+  731
+  732        // Continue on with the current query call using the post compact messages
+  733        messagesForQuery = postCompactMessages
+  734      } else if (consecutiveFailures !== undefined) {
+  735        // Autocompact failed — propagate failure count so the circuit breaker
+  736        // can stop retrying on the next iteration.
+  737        tracking = {</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>460</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  while (true) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>461</td><th><span class="line-kind-state">STATE</span></th><td><code>    // Destructure state at the top of each iteration. toolUseContext alone</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>462</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    // is reassigned within an iteration (queryTracking, messages updates);</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>463</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>    // the rest are read-only between continue sites.</code></td><td>Returns a result, error, or next step</td></tr><tr><td>464</td><th><span class="line-kind-state">STATE</span></th><td><code>    let { toolUseContext } = state</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>465</td><th><span class="line-kind-input">INPUT</span></th><td><code>    const {</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>466</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      messages,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>467</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      autoCompactTracking,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>468</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      maxOutputTokensRecoveryCount,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>469</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      hasAttemptedReactiveCompact,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>470</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      maxOutputTokensOverride,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>471</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      pendingToolUseSummary,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>472</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      stopHookActive,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>473</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      turnCount,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>474</td><th><span class="line-kind-state">STATE</span></th><td><code>    } = state</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>475</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>476</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    // Skill discovery prefetch — per-iteration (uses findWritePivot guard</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>477</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    // that returns early on non-write iterations). Discovery runs while the</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>478</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    // model streams and tools execute; awaited post-tools alongside the</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>479</td><th><span class="line-kind-state">STATE</span></th><td><code>    // memory prefetch consume. Replaces the blocking assistant_turn path</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>480</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    // that ran inside getAttachmentMessages (97% of those calls found</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>481</td><th><span class="line-kind-input">INPUT</span></th><td><code>    // nothing in prod). Turn-0 user-input discovery still blocks in</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>482</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    // userInputAttachments — that&#39;s the one signal where there&#39;s no prior</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>483</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    // work to hide under.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>484</td><th><span class="line-kind-input">INPUT</span></th><td><code>    const pendingSkillPrefetch = skillPrefetch?.startSkillDiscoveryPrefetch(</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>485</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      null,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>486</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      messages,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>487</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      toolUseContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="claude-code-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 工具可以随流式响应提前启动，并补齐协议不完整的 tool result</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</p></section><section><span>PLAIN LANGUAGE</span><p>模型还在吐后续内容时，已经完整的工具参数可以先开工；账本缺一张回执时，系统会补一张失败回执，避免下一轮 API 拒绝整段对话。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>降低工具启动延迟并提高恢复性，但要求工具调用去重、取消和消息顺序非常严谨。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>971–1046</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1047–1124</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:971–1124</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  971                // Discard pending results from the failed streaming attempt and create
+  972                // a fresh executor. This prevents orphan tool_results (with old tool_use_ids)
+  973                // from being yielded after the fallback response arrives.
+  974                if (streamingToolExecutor) {
+  975                  streamingToolExecutor.discard()
+  976                  streamingToolExecutor = new StreamingToolExecutor(
+  977                    toolUseContext.options.tools,
+  978                    canUseTool,
+  979                    toolUseContext,
+  980                  )
+  981                }
+  982              }
+  983              // Backfill tool_use inputs on a cloned message before yield so
+  984              // SDK stream output and transcript serialization see legacy/derived
+  985              // fields. The original `message` is left untouched for
+  986              // assistantMessages.push below — it flows back to the API and
+  987              // mutating it would break prompt caching (byte mismatch).
+  988              let yieldMessage: typeof message = message
+  989              if (message.type === &#39;assistant&#39;) {
+  990                const assistantMsg = message as AssistantMessage
+  991                const contentArr = Array.isArray(assistantMsg.message?.content)
+  992                  ? (assistantMsg.message.content as unknown as Array&lt;{
+  993                      type: string
+  994                      input?: unknown
+  995                      name?: string
+  996                      [key: string]: unknown
+  997                    }&gt;)
+  998                  : []
+  999                let clonedContent: typeof contentArr | undefined
+ 1000                for (let i = 0; i &lt; contentArr.length; i++) {
+ 1001                  const block = contentArr[i]!
+ 1002                  if (
+ 1003                    block.type === &#39;tool_use&#39; &amp;&amp;
+ 1004                    typeof block.input === &#39;object&#39; &amp;&amp;
+ 1005                    block.input !== null
+ 1006                  ) {
+ 1007                    const tool = findToolByName(
+ 1008                      toolUseContext.options.tools,
+ 1009                      block.name as string,
+ 1010                    )
+ 1011                    if (tool?.backfillObservableInput) {
+ 1012                      const originalInput = block.input as Record&lt;string, unknown&gt;
+ 1013                      const inputCopy = { ...originalInput }
+ 1014                      tool.backfillObservableInput(inputCopy)
+ 1015                      // Only yield a clone when backfill ADDED fields; skip if
+ 1016                      // it only OVERWROTE existing ones (e.g. file tools
+ 1017                      // expanding file_path). Overwrites change the serialized
+ 1018                      // transcript and break VCR fixture hashes on resume,
+ 1019                      // while adding nothing the SDK stream needs — hooks get
+ 1020                      // the expanded path via toolExecution.ts separately.
+ 1021                      const addedFields = Object.keys(inputCopy).some(
+ 1022                        k =&gt; !(k in originalInput),
+ 1023                      )
+ 1024                      if (addedFields) {
+ 1025                        clonedContent ??= [...contentArr]
+ 1026                        clonedContent[i] = { ...block, input: inputCopy }
+ 1027                      }
+ 1028                    }
+ 1029                  }
+ 1030                }
+ 1031                if (clonedContent) {
+ 1032                  yieldMessage = {
+ 1033                    ...message,
+ 1034                    message: {
+ 1035                      ...(assistantMsg.message ?? {}),
+ 1036                      content: clonedContent,
+ 1037                    },
+ 1038                  } as typeof message
+ 1039                }
+ 1040              }
+ 1041              // Withhold recoverable errors (prompt-too-long, max-output-tokens)
+ 1042              // until we know whether recovery (collapse drain / reactive
+ 1043              // compact / truncation retry) can succeed. Still pushed to
+ 1044              // assistantMessages so the recovery checks below find them.
+ 1045              // Either subsystem&#39;s withhold is sufficient — they&#39;re
+ 1046              // independent so turning one off doesn&#39;t break the other&#39;s
+ 1047              // recovery path.
+ 1048              //
+ 1049              // feature() only works in if/ternary conditions (bun:bundle
+ 1050              // tree-shaking constraint), so the collapse check is nested
+ 1051              // rather than composed.
+ 1052              let withheld = false
+ 1053              if (feature(&#39;CONTEXT_COLLAPSE&#39;)) {
+ 1054                if (
+ 1055                  contextCollapse?.isWithheldPromptTooLong(
+ 1056                    message as Message,
+ 1057                    isPromptTooLongMessage as (msg: Message) =&gt; boolean,
+ 1058                    querySource,
+ 1059                  )
+ 1060                ) {
+ 1061                  withheld = true
+ 1062                }
+ 1063              }
+ 1064              if (reactiveCompact?.isWithheldPromptTooLong(message as Message)) {
+ 1065                withheld = true
+ 1066              }
+ 1067              if (
+ 1068                mediaRecoveryEnabled &amp;&amp;
+ 1069                reactiveCompact?.isWithheldMediaSizeError(message as Message)
+ 1070              ) {
+ 1071                withheld = true
+ 1072              }
+ 1073              if (isWithheldMaxOutputTokens(message)) {
+ 1074                withheld = true
+ 1075              }
+ 1076              if (!withheld) {
+ 1077                yield yieldMessage
+ 1078              }
+ 1079              if (message.type === &#39;assistant&#39;) {
+ 1080                const assistantMessage = message as AssistantMessage
+ 1081                assistantMessages.push(assistantMessage)
+ 1082
+ 1083                const msgToolUseBlocks = (
+ 1084                  Array.isArray(assistantMessage.message?.content)
+ 1085                    ? assistantMessage.message.content
+ 1086                    : []
+ 1087                ).filter(
+ 1088                  (content: { type: string }) =&gt; content.type === &#39;tool_use&#39;,
+ 1089                ) as ToolUseBlock[]
+ 1090                if (msgToolUseBlocks.length &gt; 0) {
+ 1091                  toolUseBlocks.push(...msgToolUseBlocks)
+ 1092                  needsFollowUp = true
+ 1093                }
+ 1094
+ 1095                if (
+ 1096                  streamingToolExecutor &amp;&amp;
+ 1097                  !toolUseContext.abortController.signal.aborted
+ 1098                ) {
+ 1099                  for (const toolBlock of msgToolUseBlocks) {
+ 1100                    streamingToolExecutor.addTool(toolBlock, assistantMessage)
+ 1101                  }
+ 1102                }
+ 1103              }
+ 1104
+ 1105              if (
+ 1106                streamingToolExecutor &amp;&amp;
+ 1107                !toolUseContext.abortController.signal.aborted
+ 1108              ) {
+ 1109                for (const result of streamingToolExecutor.getCompletedResults()) {
+ 1110                  if (result.message) {
+ 1111                    yield result.message
+ 1112                    toolResults.push(
+ 1113                      ...normalizeMessagesForAPI(
+ 1114                        [result.message],
+ 1115                        toolUseContext.options.tools,
+ 1116                      ).filter(_ =&gt; _.type === &#39;user&#39;),
+ 1117                    )
+ 1118                  }
+ 1119                }
+ 1120              }
+ 1121            }
+ 1122            queryCheckpoint(&#39;query_api_streaming_end&#39;)
+ 1123
+ 1124            // Yield deferred microcompact boundary message using actual API-reported
+ 1125            // token deletion count instead of client-side estimates.
+ 1126            // Entire block gated behind feature() so the excluded string
+ 1127            // is eliminated from external builds.
+ 1128            if (feature(&#39;CACHED_MICROCOMPACT&#39;) &amp;&amp; pendingCacheEdits) {
+ 1129              const lastAssistant = assistantMessages.at(-1)
+ 1130              // The API field is cumulative/sticky across requests, so we
+ 1131              // subtract the baseline captured before this request to get the delta.
+ 1132              const usage = lastAssistant?.message.usage
+ 1133              const cumulativeDeleted = usage
+ 1134                ? ((usage as unknown as Record&lt;string, number&gt;)
+ 1135                    .cache_deleted_input_tokens ?? 0)
+ 1136                : 0
+ 1137              const deletedTokens = Math.max(
+ 1138                0,
+ 1139                cumulativeDeleted - pendingCacheEdits.baselineCacheDeletedTokens,
+ 1140              )
+ 1141              if (deletedTokens &gt; 0) {
+ 1142                yield createMicrocompactBoundaryMessage(
+ 1143                  pendingCacheEdits.trigger,
+ 1144                  0,
+ 1145                  deletedTokens,
+ 1146                  pendingCacheEdits.deletedToolIds,
+ 1147                  [],
+ 1148                )
+ 1149              }
+ 1150            }
+ 1151          } catch (innerError) {
+ 1152            if (innerError instanceof FallbackTriggeredError &amp;&amp; fallbackModel) {
+ 1153              // Fallback was triggered - switch model and retry
+ 1154              currentModel = fallbackModel
+ 1155              attemptWithFallback = true
+ 1156
+ 1157              // Clear assistant messages since we&#39;ll retry the entire request
+ 1158              yield* yieldMissingToolResultBlocks(
+ 1159                assistantMessages,
+ 1160                &#39;Model fallback triggered&#39;,
+ 1161              )
+ 1162              assistantMessages.length = 0
+ 1163              toolResults.length = 0
+ 1164              toolUseBlocks.length = 0
+ 1165              needsFollowUp = false
+ 1166
+ 1167              // Discard pending results from the failed attempt and create a
+ 1168              // fresh executor. This prevents orphan tool_results (with old
+ 1169              // tool_use_ids) from leaking into the retry.
+ 1170              if (streamingToolExecutor) {
+ 1171                streamingToolExecutor.discard()
+ 1172                streamingToolExecutor = new StreamingToolExecutor(
+ 1173                  toolUseContext.options.tools,
+ 1174                  canUseTool,
+ 1175                  toolUseContext,
+ 1176                )
+ 1177              }
+ 1178
+ 1179              // Update tool use context with new model
+ 1180              toolUseContext.options.mainLoopModel = fallbackModel
+ 1181
+ 1182              // Thinking signatures are model-bound: replaying a protected-thinking
+ 1183              // block (e.g. capybara) to an unprotected fallback (e.g. opus) 400s.
+ 1184              // Strip before retry so the fallback model gets clean history.
+ 1185              if (process.env.USER_TYPE === &#39;ant&#39;) {
+ 1186                messagesForQuery = stripSignatureBlocks(messagesForQuery)
+ 1187              }
+ 1188
+ 1189              // Log the fallback event
+ 1190              logEvent(&#39;tengu_model_fallback_triggered&#39;, {
+ 1191                original_model:
+ 1192                  innerError.originalModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+ 1193                fallback_model:
+ 1194                  fallbackModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+ 1195                entrypoint:</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>971</td><th><span class="line-kind-flow">FLOW</span></th><td><code>              // Discard pending results from the failed streaming attempt and create</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>972</td><th><span class="line-kind-flow">FLOW</span></th><td><code>              // a fresh executor. This prevents orphan tool_results (with old tool_use_ids)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>973</td><th><span class="line-kind-flow">FLOW</span></th><td><code>              // from being yielded after the fallback response arrives.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>974</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>              if (streamingToolExecutor) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>975</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                streamingToolExecutor.discard()</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>976</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                streamingToolExecutor = new StreamingToolExecutor(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>977</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                  toolUseContext.options.tools,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>978</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                  canUseTool,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>979</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                  toolUseContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>980</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>981</td><th><span class="line-kind-flow">FLOW</span></th><td><code>              }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>982</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>983</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>            // Backfill tool_use inputs on a cloned message before yield so</code></td><td>Returns a result, error, or next step</td></tr><tr><td>984</td><th><span class="line-kind-flow">FLOW</span></th><td><code>            // SDK stream output and transcript serialization see legacy/derived</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>985</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            // fields. The original `message` is left untouched for</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>986</td><th><span class="line-kind-state">STATE</span></th><td><code>            // assistantMessages.push below — it flows back to the API and</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>987</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>            // mutating it would break prompt caching (byte mismatch).</code></td><td>Returns a result, error, or next step</td></tr><tr><td>988</td><th><span class="line-kind-input">INPUT</span></th><td><code>            let yieldMessage: typeof message = message</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>989</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>            if (message.type === &#39;assistant&#39;) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>990</td><th><span class="line-kind-input">INPUT</span></th><td><code>              const assistantMsg = message as AssistantMessage</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>991</td><th><span class="line-kind-input">INPUT</span></th><td><code>              const contentArr = Array.isArray(assistantMsg.message?.content)</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>992</td><th><span class="line-kind-input">INPUT</span></th><td><code>                ? (assistantMsg.message.content as unknown as Array&lt;{</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>993</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    type: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>994</td><th><span class="line-kind-input">INPUT</span></th><td><code>                    input?: unknown</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>995</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    name?: string</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>996</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                    [key: string]: unknown</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>997</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                  }&gt;)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>998</td><th><span class="line-kind-flow">FLOW</span></th><td><code>                : []</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="claude-code-tools-001" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · 工具池合并内建与 MCP，并为 prompt cache 做确定性排序</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>assembleToolPool 先装配内建工具，再接 MCP 工具，应用 deny 过滤，并按稳定分区排序；工具重名时内建工具优先。</p></section><section><span>PLAIN LANGUAGE</span><p>工具箱每轮不能乱序，否则模型缓存会失效；外接工具也不能偷偷覆盖同名的原厂扳手。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>工具发现和缓存稳定性被当作 Harness 核心问题，而不只是 UI 列表。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>378–398</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>399–420</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/tools.ts#L378-L420" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/tools.ts:378–420</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/tools.ts#L378-L420" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  378  export function assembleToolPool(
+  379    permissionContext: ToolPermissionContext,
+  380    mcpTools: Tools,
+  381  ): Tools {
+  382    const builtInTools = getTools(permissionContext)
+  383
+  384    // Filter out MCP tools that are in the deny list
+  385    const allowedMcpTools = filterToolsByDenyRules(mcpTools, permissionContext)
+  386
+  387    // Sort each partition for prompt-cache stability, keeping built-ins as a
+  388    // contiguous prefix. The server&#39;s claude_code_system_cache_policy places a
+  389    // global cache breakpoint after the last prefix-matched built-in tool; a flat
+  390    // sort would interleave MCP tools into built-ins and invalidate all downstream
+  391    // cache keys whenever an MCP tool sorts between existing built-ins. uniqBy
+  392    // preserves insertion order, so built-ins win on name conflict.
+  393    // Avoid Array.toSorted (Node 20+) — we support Node 18. builtInTools is
+  394    // readonly so copy-then-sort; allowedMcpTools is a fresh .filter() result.
+  395    const byName = (a: Tool, b: Tool) =&gt; a.name.localeCompare(b.name)
+  396    return uniqBy(
+  397      [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),
+  398      &#39;name&#39;,
+  399    )
+  400  }
+  401
+  402  /**
+  403   * Get all tools including both built-in tools and MCP tools.
+  404   *
+  405   * This is the preferred function when you need the complete tools list for:
+  406   * - Tool search threshold calculations (isSearchExtraToolsEnabled)
+  407   * - Token counting that includes MCP tools
+  408   * - Any context where MCP tools should be considered
+  409   *
+  410   * Use getTools() only when you specifically need just built-in tools.
+  411   *
+  412   * @param permissionContext - Permission context for filtering built-in tools
+  413   * @param mcpTools - MCP tools from appState.mcp.tools
+  414   * @returns Combined array of built-in and MCP tools
+  415   */
+  416  export function getMergedTools(
+  417    permissionContext: ToolPermissionContext,
+  418    mcpTools: Tools,
+  419  ): Tools {
+  420    const builtInTools = getTools(permissionContext)
+  421    return [...builtInTools, ...mcpTools]
+  422  }
+  423</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>378</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export function assembleToolPool(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>379</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  permissionContext: ToolPermissionContext,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>380</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  mcpTools: Tools,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>381</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): Tools {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>382</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const builtInTools = getTools(permissionContext)</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>383</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>384</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // Filter out MCP tools that are in the deny list</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>385</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const allowedMcpTools = filterToolsByDenyRules(mcpTools, permissionContext)</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>386</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>387</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  // Sort each partition for prompt-cache stability, keeping built-ins as a</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>388</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // contiguous prefix. The server&#39;s claude_code_system_cache_policy places a</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>389</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // global cache breakpoint after the last prefix-matched built-in tool; a flat</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>390</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // sort would interleave MCP tools into built-ins and invalidate all downstream</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>391</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // cache keys whenever an MCP tool sorts between existing built-ins. uniqBy</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>392</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // preserves insertion order, so built-ins win on name conflict.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>393</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // Avoid Array.toSorted (Node 20+) — we support Node 18. builtInTools is</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>394</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  // readonly so copy-then-sort; allowedMcpTools is a fresh .filter() result.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>395</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const byName = (a: Tool, b: Tool) =&gt; a.name.localeCompare(b.name)</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>396</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>  return uniqBy(</code></td><td>Returns a result, error, or next step</td></tr><tr><td>397</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>398</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    &#39;name&#39;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>399</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>400</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>401</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>402</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>403</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * Get all tools including both built-in tools and MCP tools.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>404</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>405</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * This is the preferred function when you need the complete tools list for:</code></td><td>Chooses continue, stop, retry, or another path</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="claude-code-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>04 · MCP 是完整连接层：stdio、SSE、Streamable HTTP、WebSocket 和 claude.ai proxy</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>client 根据 server type 构造不同 transport，支持 OAuth/static/session ingress header、代理、IDE 通道和进程内 server；连接有超时，断线会清连接及工具/资源缓存以便重连。</p></section><section><span>PLAIN LANGUAGE</span><p>它不是只会启动本地 MCP 子进程，也能连长连接、HTTP、WebSocket 和平台代理；线断了会丢掉旧工具清单重新握手。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>连接器成熟度高，但 transport 分支很多，安全策略和生命周期测试成本显著。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>596–636</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>637–678</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/mcp/client.ts#L596-L678" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/mcp/client.ts:596–678</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/mcp/client.ts#L596-L678" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  596  export const connectToServer = memoize(
+  597    async (
+  598      name: string,
+  599      serverRef: ScopedMcpServerConfig,
+  600      serverStats?: {
+  601        totalServers: number
+  602        stdioCount: number
+  603        sseCount: number
+  604        httpCount: number
+  605        sseIdeCount: number
+  606        wsIdeCount: number
+  607      },
+  608    ): Promise&lt;MCPServerConnection&gt; =&gt; {
+  609      const connectStartTime = Date.now()
+  610      let inProcessServer:
+  611        | { connect(t: Transport): Promise&lt;void&gt;; close(): Promise&lt;void&gt; }
+  612        | undefined
+  613      try {
+  614        let transport
+  615
+  616        // If we have the session ingress JWT, we will connect via the session ingress rather than
+  617        // to remote MCP&#39;s directly.
+  618        const sessionIngressToken = getSessionIngressAuthToken()
+  619
+  620        if (serverRef.type === &#39;sse&#39;) {
+  621          // Create an auth provider for this server
+  622          const authProvider = new ClaudeAuthProvider(name, serverRef)
+  623
+  624          // Get combined headers (static + dynamic)
+  625          const combinedHeaders = await getMcpServerHeaders(name, serverRef)
+  626
+  627          // Use the auth provider with SSEClientTransport
+  628          const transportOptions: SSEClientTransportOptions = {
+  629            authProvider,
+  630            // Use fresh timeout per request to avoid stale AbortSignal bug.
+  631            // Step-up detection wraps innermost so the 403 is seen before the
+  632            // SDK&#39;s handler calls auth() → tokens().
+  633            fetch: wrapFetchWithTimeout(
+  634              wrapFetchWithStepUpDetection(createFetchWithInit(), authProvider),
+  635            ),
+  636            requestInit: {
+  637              headers: {
+  638                &#39;User-Agent&#39;: getMCPUserAgent(),
+  639                ...combinedHeaders,
+  640              },
+  641            },
+  642          }
+  643
+  644          // IMPORTANT: Always set eventSourceInit with a fetch that does NOT use the
+  645          // timeout wrapper. The EventSource connection is long-lived (stays open indefinitely
+  646          // to receive server-sent events), so applying a 60-second timeout would kill it.
+  647          // The timeout is only meant for individual API requests (POST, auth refresh), not
+  648          // the persistent SSE stream.
+  649          transportOptions.eventSourceInit = {
+  650            fetch: async (url: string | URL, init?: RequestInit) =&gt; {
+  651              // Get auth headers from the auth provider
+  652              const authHeaders: Record&lt;string, string&gt; = {}
+  653              const tokens = await authProvider.tokens()
+  654              if (tokens) {
+  655                authHeaders.Authorization = `Bearer ${tokens.access_token}`
+  656              }
+  657
+  658              const proxyOptions = getProxyFetchOptions()
+  659              // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
+  660              return fetch(url, {
+  661                ...init,
+  662                ...proxyOptions,
+  663                headers: {
+  664                  &#39;User-Agent&#39;: getMCPUserAgent(),
+  665                  ...authHeaders,
+  666                  ...init?.headers,
+  667                  ...combinedHeaders,
+  668                  Accept: &#39;text/event-stream&#39;,
+  669                },
+  670              })
+  671            },
+  672          }
+  673
+  674          transport = new SSEClientTransport(
+  675            new URL(serverRef.url),
+  676            transportOptions,
+  677          )
+  678          logMCPDebug(name, `SSE transport initialized, awaiting connection`)
+  679        } else if (serverRef.type === &#39;sse-ide&#39;) {
+  680          logMCPDebug(name, `Setting up SSE-IDE transport to ${serverRef.url}`)
+  681          // IDE servers don&#39;t need authentication
+  682          // TODO: Use the auth token provided in the lockfile
+  683          const proxyOptions = getProxyFetchOptions()
+  684          const transportOptions: SSEClientTransportOptions =
+  685            proxyOptions.dispatcher
+  686              ? {
+  687                  eventSourceInit: {
+  688                    fetch: async (url: string | URL, init?: RequestInit) =&gt; {
+  689                      // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
+  690                      return fetch(url, {
+  691                        ...init,
+  692                        ...proxyOptions,
+  693                        headers: {
+  694                          &#39;User-Agent&#39;: getMCPUserAgent(),
+  695                          ...init?.headers,
+  696                        },
+  697                      })
+  698                    },
+  699                  },
+  700                }
+  701              : {}
+  702
+  703          transport = new SSEClientTransport(
+  704            new URL(serverRef.url),
+  705            Object.keys(transportOptions).length &gt; 0
+  706              ? transportOptions
+  707              : undefined,
+  708          )
+  709        } else if (serverRef.type === &#39;ws-ide&#39;) {
+  710          const tlsOptions = getWebSocketTLSOptions()
+  711          const wsHeaders = {
+  712            &#39;User-Agent&#39;: getMCPUserAgent(),
+  713            ...(serverRef.authToken &amp;&amp; {
+  714              &#39;X-Claude-Code-Ide-Authorization&#39;: serverRef.authToken,
+  715            }),
+  716          }
+  717
+  718          let wsClient: WsClientLike
+  719          if (typeof Bun !== &#39;undefined&#39;) {
+  720            // Bun&#39;s WebSocket supports headers/proxy/tls options but the DOM typings don&#39;t
+  721            // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
+  722            wsClient = new globalThis.WebSocket(serverRef.url, {
+  723              protocols: [&#39;mcp&#39;],
+  724              headers: wsHeaders,
+  725              proxy: getWebSocketProxyUrl(serverRef.url),
+  726              tls: tlsOptions || undefined,
+  727            } as unknown as string[])
+  728          } else {
+  729            wsClient = await createNodeWsClient(serverRef.url, {
+  730              headers: wsHeaders,
+  731              agent: getWebSocketProxyAgent(serverRef.url),
+  732              ...(tlsOptions || {}),
+  733            })
+  734          }
+  735          transport = new WebSocketTransport(wsClient)
+  736        } else if (serverRef.type === &#39;ws&#39;) {
+  737          logMCPDebug(
+  738            name,
+  739            `Initializing WebSocket transport to ${serverRef.url}`,
+  740          )
+  741
+  742          const combinedHeaders = await getMcpServerHeaders(name, serverRef)
+  743
+  744          const tlsOptions = getWebSocketTLSOptions()
+  745          const wsHeaders = {
+  746            &#39;User-Agent&#39;: getMCPUserAgent(),
+  747            ...(sessionIngressToken &amp;&amp; {
+  748              Authorization: `Bearer ${sessionIngressToken}`,
+  749            }),</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>596</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export const connectToServer = memoize(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>597</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  async (</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>598</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    name: string,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>599</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    serverRef: ScopedMcpServerConfig,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>600</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    serverStats?: {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>601</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      totalServers: number</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>602</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      stdioCount: number</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>603</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      sseCount: number</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>604</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      httpCount: number</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>605</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      sseIdeCount: number</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>606</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      wsIdeCount: number</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>607</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    },</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>608</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  ): Promise&lt;MCPServerConnection&gt; =&gt; {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>609</td><th><span class="line-kind-input">INPUT</span></th><td><code>    const connectStartTime = Date.now()</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>610</td><th><span class="line-kind-input">INPUT</span></th><td><code>    let inProcessServer:</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>611</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      | { connect(t: Transport): Promise&lt;void&gt;; close(): Promise&lt;void&gt; }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>612</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      | undefined</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>613</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    try {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>614</td><th><span class="line-kind-input">INPUT</span></th><td><code>      let transport</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>615</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>616</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>      // If we have the session ingress JWT, we will connect via the session ingress rather than</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>617</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      // to remote MCP&#39;s directly.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>618</td><th><span class="line-kind-input">INPUT</span></th><td><code>      const sessionIngressToken = getSessionIngressAuthToken()</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>619</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>620</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>      if (serverRef.type === &#39;sse&#39;) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>621</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>        // Create an auth provider for this server</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>622</td><th><span class="line-kind-input">INPUT</span></th><td><code>        const authProvider = new ClaudeAuthProvider(name, serverRef)</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>623</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="claude-code-mcp-002" data-finding-dimension="connectors"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>05 · MCP 具备描述限长、请求超时与企业 allow/deny 管理</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具描述和 server instructions 有长度上限；普通 POST 请求 60 秒超时，但工具调用默认约 27.8 小时且可由环境变量覆盖；配置层合并 plugin/connectors，并应用企业 allowlist/denylist。</p></section><section><span>PLAIN LANGUAGE</span><p>连接握手不会无限等，过长的工具说明不会把上下文吃光；但真正工具执行默认几乎不设上限，长任务友好、失控任务风险也更大。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>自研 Harness 应把 connect/request/tool 三类 timeout 分开，并给 MCP 执行建立组织级上限与取消链。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>210–218</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>219–229</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/mcp/client.ts#L210-L229" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/mcp/client.ts:210–229</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/mcp/client.ts#L210-L229" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  210   * Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).
+  211   */
+  212  const DEFAULT_MCP_TOOL_TIMEOUT_MS = 100_000_000
+  213
+  214  /**
+  215   * Cap on MCP tool descriptions and server instructions sent to the model.
+  216   * OpenAPI-generated MCP servers have been observed dumping 15-60KB of endpoint
+  217   * docs into tool.description; this caps the p95 tail without losing the intent.
+  218   */
+  219  const MAX_MCP_DESCRIPTION_LENGTH = PKG_MAX_MCP_DESCRIPTION_LENGTH
+  220
+  221  /**
+  222   * Gets the timeout for MCP tool calls in milliseconds.
+  223   * Uses MCP_TOOL_TIMEOUT environment variable if set, otherwise defaults to ~27.8 hours.
+  224   */
+  225  function getMcpToolTimeoutMs(): number {
+  226    return (
+  227      parseInt(process.env.MCP_TOOL_TIMEOUT || &#39;&#39;, 10) ||
+  228      DEFAULT_MCP_TOOL_TIMEOUT_MS
+  229    )
+  230  }
+  231
+  232  import { isClaudeInChromeMCPServer } from &#39;../../utils/claudeInChrome/common.js&#39;
+  233
+  234  // Lazy: toolRendering.tsx pulls React/ink; only needed when Claude-in-Chrome MCP server is connected
+  235  /* eslint-disable @typescript-eslint/no-require-imports */
+  236  const claudeInChromeToolRendering =
+  237    (): typeof import(&#39;../../utils/claudeInChrome/toolRendering.js&#39;) =&gt;
+  238      require(&#39;../../utils/claudeInChrome/toolRendering.js&#39;)
+  239  // Lazy: wrapper.tsx → hostAdapter.ts → executor.ts pulls both native modules
+  240  // (@ant/computer-use-input + @ant/computer-use-swift). Runtime-gated by
+  241  // GrowthBook tengu_malort_pedway (see gates.ts).
+  242  const computerUseWrapper = feature(&#39;CHICAGO_MCP&#39;)
+  243    ? (): typeof import(&#39;../../utils/computerUse/wrapper.js&#39;) =&gt;
+  244        require(&#39;../../utils/computerUse/wrapper.js&#39;)
+  245    : undefined
+  246  const isComputerUseMCPServer = feature(&#39;CHICAGO_MCP&#39;)
+  247    ? (
+  248        require(&#39;../../utils/computerUse/common.js&#39;) as typeof import(&#39;../../utils/computerUse/common.js&#39;)
+  249      ).isComputerUseMCPServer
+  250    : undefined
+  251
+  252  import { mkdir, readFile, unlink, writeFile } from &#39;fs/promises&#39;
+  253  import { dirname, join } from &#39;path&#39;
+  254  import { getClaudeConfigHomeDir } from &#39;../../utils/envUtils.js&#39;
+  255  /* eslint-enable @typescript-eslint/no-require-imports */
+  256  import { jsonParse, jsonStringify } from &#39;../../utils/slowOperations.js&#39;
+  257
+  258  const MCP_AUTH_CACHE_TTL_MS = 15 * 60 * 1000 // 15 min
+  259
+  260  type McpAuthCacheData = Record&lt;string, { timestamp: number }&gt;
+  261
+  262  function getMcpAuthCachePath(): string {
+  263    return join(getClaudeConfigHomeDir(), &#39;mcp-needs-auth-cache.json&#39;)
+  264  }
+  265
+  266  // Memoized so N concurrent isMcpAuthCached() calls during batched connection
+  267  // share a single file read instead of N reads of the same file. Invalidated
+  268  // on write (setMcpAuthCacheEntry) and clear (clearMcpAuthCache). Not using
+  269  // lodash memoize because we need to null out the cache, not delete by key.
+  270  let authCachePromise: Promise&lt;McpAuthCacheData&gt; | null = null
+  271
+  272  function getMcpAuthCache(): Promise&lt;McpAuthCacheData&gt; {
+  273    if (!authCachePromise) {
+  274      authCachePromise = readFile(getMcpAuthCachePath(), &#39;utf-8&#39;)
+  275        .then(data =&gt; jsonParse(data) as McpAuthCacheData)
+  276        .catch(() =&gt; ({}))
+  277    }
+  278    return authCachePromise
+  279  }
+  280
+  281  async function isMcpAuthCached(serverId: string): Promise&lt;boolean&gt; {
+  282    const cache = await getMcpAuthCache()
+  283    const entry = cache[serverId]
+  284    if (!entry) {
+  285      return false
+  286    }
+  287    return Date.now() - entry.timestamp &lt; MCP_AUTH_CACHE_TTL_MS
+  288  }
+  289
+  290  // Serialize cache writes through a promise chain to prevent concurrent
+  291  // read-modify-write races when multiple servers return 401 in the same batch
+  292  let writeChain = Promise.resolve()
+  293
+  294  function setMcpAuthCacheEntry(serverId: string): void {
+  295    writeChain = writeChain
+  296      .then(async () =&gt; {
+  297        const cache = await getMcpAuthCache()
+  298        cache[serverId] = { timestamp: Date.now() }
+  299        const cachePath = getMcpAuthCachePath()
+  300        await mkdir(dirname(cachePath), { recursive: true })</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>210</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>211</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>212</td><th><span class="line-kind-input">INPUT</span></th><td><code>const DEFAULT_MCP_TOOL_TIMEOUT_MS = 100_000_000</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>213</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>214</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>215</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * Cap on MCP tool descriptions and server instructions sent to the model.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>216</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * OpenAPI-generated MCP servers have been observed dumping 15-60KB of endpoint</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>217</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * docs into tool.description; this caps the p95 tail without losing the intent.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>218</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>219</td><th><span class="line-kind-input">INPUT</span></th><td><code>const MAX_MCP_DESCRIPTION_LENGTH = PKG_MAX_MCP_DESCRIPTION_LENGTH</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>220</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>221</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>222</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * Gets the timeout for MCP tool calls in milliseconds.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>223</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * Uses MCP_TOOL_TIMEOUT environment variable if set, otherwise defaults to ~27.8 hours.</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>224</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>225</td><th><span class="line-kind-flow">FLOW</span></th><td><code>function getMcpToolTimeoutMs(): number {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>226</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>  return (</code></td><td>Returns a result, error, or next step</td></tr><tr><td>227</td><th><span class="line-kind-input">INPUT</span></th><td><code>    parseInt(process.env.MCP_TOOL_TIMEOUT || &#39;&#39;, 10) ||</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>228</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    DEFAULT_MCP_TOOL_TIMEOUT_MS</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>229</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  )</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>230</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>231</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>232</td><th><span class="line-kind-flow">FLOW</span></th><td><code>import { isClaudeInChromeMCPServer } from &#39;../../utils/claudeInChrome/common.js&#39;</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>233</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>234</td><th><span class="line-kind-flow">FLOW</span></th><td><code>// Lazy: toolRendering.tsx pulls React/ink; only needed when Claude-in-Chrome MCP server is connected</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>235</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/* eslint-disable @typescript-eslint/no-require-imports */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>236</td><th><span class="line-kind-input">INPUT</span></th><td><code>const claudeInChromeToolRendering =</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>237</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  (): typeof import(&#39;../../utils/claudeInChrome/toolRendering.js&#39;) =&gt;</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="claude-code-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>06 · 项目指令与环境快照分层注入，并在会话内缓存</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>getUserContext 从层级 memory files 组装 CLAUDE.md，可通过 bare/环境变量禁用；getSystemContext 并行采集 git branch/status/log/user 并截断状态，二者 memoize 为会话上下文。</p></section><section><span>PLAIN LANGUAGE</span><p>一份是团队写给 Agent 的长期说明书，另一份是开工那一刻的工地快照；后者明确不会自动更新。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>prompt cache 稳定，但会话中的 git status 会变旧，模型需要在关键操作前主动重新查询。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>36–72</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>73–111</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/context.ts#L36-L111" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/context.ts:36–111</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/context.ts#L36-L111" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   36  export const getGitStatus = memoize(async (): Promise&lt;string | null&gt; =&gt; {
+   37    if (process.env.NODE_ENV === &#39;test&#39;) {
+   38      // Avoid cycles in tests
+   39      return null
+   40    }
+   41
+   42    const startTime = Date.now()
+   43    logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_status_started&#39;)
+   44
+   45    const isGitStart = Date.now()
+   46    const isGit = await getIsGit()
+   47    logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_is_git_check_completed&#39;, {
+   48      duration_ms: Date.now() - isGitStart,
+   49      is_git: isGit,
+   50    })
+   51
+   52    if (!isGit) {
+   53      logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_status_skipped_not_git&#39;, {
+   54        duration_ms: Date.now() - startTime,
+   55      })
+   56      return null
+   57    }
+   58
+   59    try {
+   60      const gitCmdsStart = Date.now()
+   61      const [branch, mainBranch, status, log, userName] = await Promise.all([
+   62        getBranch(),
+   63        getDefaultBranch(),
+   64        execFileNoThrow(gitExe(), [&#39;--no-optional-locks&#39;, &#39;status&#39;, &#39;--short&#39;], {
+   65          preserveOutputOnError: false,
+   66        }).then(({ stdout }) =&gt; stdout.trim()),
+   67        execFileNoThrow(
+   68          gitExe(),
+   69          [&#39;--no-optional-locks&#39;, &#39;log&#39;, &#39;--oneline&#39;, &#39;-n&#39;, &#39;5&#39;],
+   70          {
+   71            preserveOutputOnError: false,
+   72          },
+   73        ).then(({ stdout }) =&gt; stdout.trim()),
+   74        execFileNoThrow(gitExe(), [&#39;config&#39;, &#39;user.name&#39;], {
+   75          preserveOutputOnError: false,
+   76        }).then(({ stdout }) =&gt; stdout.trim()),
+   77      ])
+   78
+   79      logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_commands_completed&#39;, {
+   80        duration_ms: Date.now() - gitCmdsStart,
+   81        status_length: status.length,
+   82      })
+   83
+   84      // Check if status exceeds character limit
+   85      const truncatedStatus =
+   86        status.length &gt; MAX_STATUS_CHARS
+   87          ? status.substring(0, MAX_STATUS_CHARS) +
+   88            &#39;\n... (truncated because it exceeds 2k characters. If you need more information, run &quot;git status&quot; using BashTool)&#39;
+   89          : status
+   90
+   91      logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_status_completed&#39;, {
+   92        duration_ms: Date.now() - startTime,
+   93        truncated: status.length &gt; MAX_STATUS_CHARS,
+   94      })
+   95
+   96      return [
+   97        `This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.`,
+   98        `Current branch: ${branch}`,
+   99        `Main branch (you will usually use this for PRs): ${mainBranch}`,
+  100        ...(userName ? [`Git user: ${userName}`] : []),
+  101        `Status:\n${truncatedStatus || &#39;(clean)&#39;}`,
+  102        `Recent commits:\n${log}`,
+  103      ].join(&#39;\n\n&#39;)
+  104    } catch (error) {
+  105      logForDiagnosticsNoPII(&#39;error&#39;, &#39;git_status_failed&#39;, {
+  106        duration_ms: Date.now() - startTime,
+  107      })
+  108      logError(error)
+  109      return null
+  110    }
+  111  })
+  112
+  113  /**
+  114   * This context is prepended to each conversation, and cached for the duration of the conversation.
+  115   */
+  116  export const getSystemContext = memoize(
+  117    async (): Promise&lt;{
+  118      [k: string]: string
+  119    }&gt; =&gt; {
+  120      const startTime = Date.now()
+  121      logForDiagnosticsNoPII(&#39;info&#39;, &#39;system_context_started&#39;)
+  122
+  123      // Skip git status in CCR (unnecessary overhead on resume) or when git instructions are disabled
+  124      const gitStatus =
+  125        isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) ||
+  126        !shouldIncludeGitInstructions()
+  127          ? null
+  128          : await getGitStatus()
+  129
+  130      // Include system prompt injection if set (for cache breaking, ant-only)
+  131      const injection = feature(&#39;BREAK_CACHE_COMMAND&#39;)
+  132        ? getSystemPromptInjection()
+  133        : null
+  134
+  135      logForDiagnosticsNoPII(&#39;info&#39;, &#39;system_context_completed&#39;, {
+  136        duration_ms: Date.now() - startTime,
+  137        has_git_status: gitStatus !== null,
+  138        has_injection: injection !== null,
+  139      })
+  140
+  141      return {
+  142        ...(gitStatus &amp;&amp; { gitStatus }),
+  143        ...(feature(&#39;BREAK_CACHE_COMMAND&#39;) &amp;&amp; injection
+  144          ? {
+  145              cacheBreaker: `[CACHE_BREAKER: ${injection}]`,
+  146            }
+  147          : {}),
+  148      }
+  149    },
+  150  )
+  151
+  152  /**
+  153   * This context is prepended to each conversation, and cached for the duration of the conversation.
+  154   */
+  155  export const getUserContext = memoize(
+  156    async (): Promise&lt;{
+  157      [k: string]: string
+  158    }&gt; =&gt; {
+  159      const startTime = Date.now()
+  160      logForDiagnosticsNoPII(&#39;info&#39;, &#39;user_context_started&#39;)
+  161
+  162      // CLAUDE_CODE_DISABLE_CLAUDE_MDS: hard off, always.
+  163      // --bare: skip auto-discovery (cwd walk), BUT honor explicit --add-dir.
+  164      // --bare means &quot;skip what I didn&#39;t ask for&quot;, not &quot;ignore what I asked for&quot;.
+  165      const shouldDisableClaudeMd =
+  166        isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS) ||
+  167        (isBareMode() &amp;&amp; getAdditionalDirectoriesForClaudeMd().length === 0)
+  168      // Await the async I/O (readFile/readdir directory walk) so the event
+  169      // loop yields naturally at the first fs.readFile.
+  170      const claudeMd = shouldDisableClaudeMd
+  171        ? null
+  172        : getClaudeMds(filterInjectedMemoryFiles(await getMemoryFiles()))
+  173      // Cache for the auto-mode classifier (yoloClassifier.ts reads this
+  174      // instead of importing claudemd.ts directly, which would create a
+  175      // cycle through permissions/filesystem → permissions → yoloClassifier).
+  176      setCachedClaudeMdContent(claudeMd || null)
+  177
+  178      logForDiagnosticsNoPII(&#39;info&#39;, &#39;user_context_completed&#39;, {
+  179        duration_ms: Date.now() - startTime,
+  180        claudemd_length: claudeMd?.length ?? 0,
+  181        claudemd_disabled: Boolean(shouldDisableClaudeMd),
+  182      })</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>36</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>export const getGitStatus = memoize(async (): Promise&lt;string | null&gt; =&gt; {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>37</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  if (process.env.NODE_ENV === &#39;test&#39;) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>38</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    // Avoid cycles in tests</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>39</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>    return null</code></td><td>Returns a result, error, or next step</td></tr><tr><td>40</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>41</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>42</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const startTime = Date.now()</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>43</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_status_started&#39;)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>44</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>45</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const isGitStart = Date.now()</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>46</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>  const isGit = await getIsGit()</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>47</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_is_git_check_completed&#39;, {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>48</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    duration_ms: Date.now() - isGitStart,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>49</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    is_git: isGit,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>50</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  })</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>51</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>52</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  if (!isGit) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>53</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_status_skipped_not_git&#39;, {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>54</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      duration_ms: Date.now() - startTime,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>55</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    })</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>56</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>    return null</code></td><td>Returns a result, error, or next step</td></tr><tr><td>57</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>58</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>59</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  try {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>60</td><th><span class="line-kind-input">INPUT</span></th><td><code>    const gitCmdsStart = Date.now()</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>61</td><th><span class="line-kind-effect">EFFECT</span></th><td><code>    const [branch, mainBranch, status, log, userName] = await Promise.all([</code></td><td>Calls model, tools, files, network, or processes</td></tr><tr><td>62</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      getBranch(),</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>63</td><th><span class="line-kind-flow">FLOW</span></th><td><code>      getDefaultBranch(),</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="claude-code-plugin-001" data-finding-dimension="instructions"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>07 · 插件是复合扩展包，不只是 prompt 文件</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>plugin loader 支持 marketplace/git/npm 缓存、manifest schema 和路径 containment，并从 commands、agents、skills、output styles、hooks 等目录装载组件；缺 manifest 时还能创建最小 manifest。</p></section><section><span>PLAIN LANGUAGE</span><p>一个插件能同时带命令、技能、子 Agent 和钩子，接近应用包而不是单张提示词。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>扩展能力强，也扩大供应链与任意代码执行面；必须把来源、版本、签名/审批和 hooks 权限纳入治理。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1–14</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>15–29</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/plugins/pluginLoader.ts#L1-L29" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/plugins/pluginLoader.ts:1–29</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/plugins/pluginLoader.ts#L1-L29" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    1  /**
+    2   * Plugin Loader Module
+    3   *
+    4   * This module is responsible for discovering, loading, and validating Claude Code plugins
+    5   * from various sources including marketplaces and git repositories.
+    6   *
+    7   * NPM packages are also supported but must be referenced through marketplaces - the marketplace
+    8   * entry contains the NPM package information.
+    9   *
+   10   * Plugin Discovery Sources (in order of precedence):
+   11   * 1. Marketplace-based plugins (plugin@marketplace format in settings)
+   12   * 2. Session-only plugins (from --plugin-dir CLI flag or SDK plugins option)
+   13   *
+   14   * Plugin Directory Structure:
+   15   * ```
+   16   * my-plugin/
+   17   * ├── plugin.json          # Optional manifest with metadata
+   18   * ├── commands/            # Custom slash commands
+   19   * │   ├── build.md
+   20   * │   └── deploy.md
+   21   * ├── agents/              # Custom AI agents
+   22   * │   └── test-runner.md
+   23   * └── hooks/               # Hook configurations
+   24   *     └── hooks.json       # Hook definitions
+   25   * ```
+   26   *
+   27   * The loader handles:
+   28   * - Plugin manifest validation
+   29   * - Hooks configuration loading and variable resolution
+   30   * - Duplicate name detection
+   31   * - Enable/disable state management
+   32   * - Error collection and reporting
+   33   */
+   34
+   35  import {
+   36    copyFile,
+   37    readdir,
+   38    readFile,
+   39    readlink,
+   40    realpath,
+   41    rename,
+   42    rm,
+   43    rmdir,
+   44    stat,
+   45    symlink,
+   46  } from &#39;fs/promises&#39;
+   47  import memoize from &#39;lodash-es/memoize.js&#39;
+   48  import { basename, dirname, join, relative, resolve, sep } from &#39;path&#39;
+   49  import { getInlinePlugins } from &#39;../../bootstrap/state.js&#39;
+   50  import {
+   51    BUILTIN_MARKETPLACE_NAME,
+   52    getBuiltinPlugins,
+   53  } from &#39;../../plugins/builtinPlugins.js&#39;
+   54  import type {
+   55    LoadedPlugin,
+   56    PluginComponent,
+   57    PluginError,
+   58    PluginLoadResult,
+   59    PluginManifest,
+   60  } from &#39;../../types/plugin.js&#39;
+   61  import { logForDebugging } from &#39;../debug.js&#39;
+   62  import { isEnvTruthy } from &#39;../envUtils.js&#39;
+   63  import {
+   64    errorMessage,
+   65    getErrnoPath,
+   66    isENOENT,
+   67    isFsInaccessible,
+   68    toError,
+   69  } from &#39;../errors.js&#39;
+   70  import { execFileNoThrow, execFileNoThrowWithCwd } from &#39;../execFileNoThrow.js&#39;
+   71  import { pathExists } from &#39;../file.js&#39;
+   72  import { getFsImplementation } from &#39;../fsOperations.js&#39;
+   73  import { gitExe } from &#39;../git.js&#39;
+   74  import { lazySchema } from &#39;../lazySchema.js&#39;
+   75  import { logError } from &#39;../log.js&#39;
+   76  import { getSettings_DEPRECATED } from &#39;../settings/settings.js&#39;
+   77  import {
+   78    clearPluginSettingsBase,
+   79    getPluginSettingsBase,
+   80    resetSettingsCache,
+   81    setPluginSettingsBase,
+   82  } from &#39;../settings/settingsCache.js&#39;
+   83  import type { HooksSettings } from &#39;../settings/types.js&#39;
+   84  import type { HookMatcher } from &#39;../../schemas/hooks.js&#39;
+   85  import { SettingsSchema } from &#39;../settings/types.js&#39;
+   86  import { jsonParse, jsonStringify } from &#39;../slowOperations.js&#39;
+   87  import { getAddDirEnabledPlugins } from &#39;./addDirPluginSettings.js&#39;
+   88  import { verifyAndDemote } from &#39;./dependencyResolver.js&#39;
+   89  import { classifyFetchError, logPluginFetch } from &#39;./fetchTelemetry.js&#39;
+   90  import { checkGitAvailable } from &#39;./gitAvailability.js&#39;
+   91  import { getInMemoryInstalledPlugins } from &#39;./installedPluginsManager.js&#39;
+   92  import { getManagedPluginNames } from &#39;./managedPlugins.js&#39;
+   93  import {
+   94    formatSourceForDisplay,
+   95    getBlockedMarketplaces,
+   96    getStrictKnownMarketplaces,
+   97    isSourceAllowedByPolicy,
+   98    isSourceInBlocklist,
+   99  } from &#39;./marketplaceHelpers.js&#39;
+  100  import {</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>1</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>2</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * Plugin Loader Module</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>3</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>4</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * This module is responsible for discovering, loading, and validating Claude Code plugins</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>5</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * from various sources including marketplaces and git repositories.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>6</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>7</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * NPM packages are also supported but must be referenced through marketplaces - the marketplace</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>8</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * entry contains the NPM package information.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>9</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>10</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * Plugin Discovery Sources (in order of precedence):</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>11</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * 1. Marketplace-based plugins (plugin@marketplace format in settings)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>12</td><th><span class="line-kind-state">STATE</span></th><td><code> * 2. Session-only plugins (from --plugin-dir CLI flag or SDK plugins option)</code></td><td>Creates or mutates session/context/queue state</td></tr><tr><td>13</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>14</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * Plugin Directory Structure:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>15</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * ```</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>16</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * my-plugin/</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>17</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * ├── plugin.json          # Optional manifest with metadata</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>18</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * ├── commands/            # Custom slash commands</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>19</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * │   ├── build.md</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>20</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * │   └── deploy.md</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>21</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * ├── agents/              # Custom AI agents</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>22</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * │   └── test-runner.md</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>23</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * └── hooks/               # Hook configurations</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>24</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *     └── hooks.json       # Hook definitions</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>25</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * ```</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>26</td><th><span class="line-kind-flow">FLOW</span></th><td><code> *</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>27</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * The loader handles:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>28</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * - Plugin manifest validation</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article><article class="finding-card compact" id="claude-code-skill-001" data-finding-dimension="instructions"><header><span class="finding-index">08</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>08 · Skill 采用元数据先行、内容按需装载，并支持路径条件激活</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>skill loader 只用 name/description/whenToUse 估算前置 token；完整内容在调用时读取，运行中还能扫描新目录，按 paths frontmatter 匹配触及文件后激活条件 skill。</p></section><section><span>PLAIN LANGUAGE</span><p>模型先看技能目录卡片，真正要用时才翻整本手册；碰到特定文件类型还能自动把相关手册加入工具箱。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>降低常驻 prompt 成本，但动态注册必须维持工具定义排序和缓存稳定。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>78–92</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>93–108</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/skills/loadSkillsDir.ts#L78-L108" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/skills/loadSkillsDir.ts:78–108</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/skills/loadSkillsDir.ts#L78-L108" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   78  export function getSkillsPath(
+   79    source: SettingSource | &#39;plugin&#39;,
+   80    dir: &#39;skills&#39; | &#39;commands&#39;,
+   81  ): string {
+   82    switch (source) {
+   83      case &#39;policySettings&#39;:
+   84        return join(getManagedFilePath(), &#39;.claude&#39;, dir)
+   85      case &#39;userSettings&#39;:
+   86        return join(getClaudeConfigHomeDir(), dir)
+   87      case &#39;projectSettings&#39;:
+   88        return `.claude/${dir}`
+   89      case &#39;plugin&#39;:
+   90        return &#39;plugin&#39;
+   91      default:
+   92        return &#39;&#39;
+   93    }
+   94  }
+   95
+   96  /**
+   97   * Estimates token count for a skill based on frontmatter only
+   98   * (name, description, whenToUse) since full content is only loaded on invocation.
+   99   */
+  100  export function estimateSkillFrontmatterTokens(skill: Command): number {
+  101    const frontmatterText = [skill.name, skill.description, skill.whenToUse]
+  102      .filter(Boolean)
+  103      .join(&#39; &#39;)
+  104    return roughTokenCountEstimation(frontmatterText)
+  105  }
+  106
+  107  /**
+  108   * Gets a unique identifier for a file by resolving symlinks to a canonical path.
+  109   * This allows detection of duplicate files accessed through different paths
+  110   * (e.g., via symlinks or overlapping parent directories).
+  111   * Returns null if the file doesn&#39;t exist or can&#39;t be resolved.
+  112   *
+  113   * Uses realpath to resolve symlinks, which is filesystem-agnostic and avoids
+  114   * issues with filesystems that report unreliable inode values (e.g., inode 0 on
+  115   * some virtual/container/NFS filesystems, or precision loss on ExFAT).
+  116   * See: https://github.com/anthropics/claude-code/issues/13893
+  117   */
+  118  async function getFileIdentity(filePath: string): Promise&lt;string | null&gt; {
+  119    try {
+  120      return await realpath(filePath)
+  121    } catch {
+  122      return null
+  123    }
+  124  }
+  125
+  126  // Internal type to track skill with its file path for deduplication
+  127  type SkillWithPath = {
+  128    skill: Command
+  129    filePath: string
+  130  }
+  131
+  132  /**
+  133   * Parse and validate hooks from frontmatter.
+  134   * Returns undefined if hooks are not defined or invalid.
+  135   */
+  136  function parseHooksFromFrontmatter(
+  137    frontmatter: FrontmatterData,
+  138    skillName: string,
+  139  ): HooksSettings | undefined {
+  140    if (!frontmatter.hooks) {
+  141      return undefined
+  142    }
+  143
+  144    const result = HooksSchema().safeParse(frontmatter.hooks)
+  145    if (!result.success) {
+  146      logForDebugging(
+  147        `Invalid hooks in skill &#39;${skillName}&#39;: ${result.error.message}`,
+  148      )
+  149      return undefined
+  150    }
+  151
+  152    return result.data
+  153  }
+  154
+  155  /**
+  156   * Parse paths frontmatter from a skill, using the same format as CLAUDE.md rules.
+  157   * Returns undefined if no paths are specified or if all patterns are match-all.
+  158   */
+  159  function parseSkillPaths(frontmatter: FrontmatterData): string[] | undefined {
+  160    if (!frontmatter.paths) {
+  161      return undefined
+  162    }
+  163
+  164    const patterns = splitPathInFrontmatter(frontmatter.paths)
+  165      .map(pattern =&gt; {
+  166        // Remove /** suffix - ignore library treats &#39;path&#39; as matching both
+  167        // the path itself and everything inside it
+  168        return pattern.endsWith(&#39;/**&#39;) ? pattern.slice(0, -3) : pattern
+  169      })
+  170      .filter((p: string) =&gt; p.length &gt; 0)
+  171
+  172    // If all patterns are ** (match-all), treat as no paths (undefined)
+  173    if (patterns.length === 0 || patterns.every((p: string) =&gt; p === &#39;**&#39;)) {
+  174      return undefined
+  175    }
+  176
+  177    return patterns
+  178  }
+  179</code></pre><details class="line-by-line"><summary>Expand 28 line annotations</summary><div class="line-by-line-scroll"><table><thead><tr><th>Line</th><th>Role</th><th>Source</th><th>Plain-language action</th></tr></thead><tbody><tr><td>78</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export function getSkillsPath(</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>79</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  source: SettingSource | &#39;plugin&#39;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>80</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  dir: &#39;skills&#39; | &#39;commands&#39;,</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>81</td><th><span class="line-kind-flow">FLOW</span></th><td><code>): string {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>82</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>  switch (source) {</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>83</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    case &#39;policySettings&#39;:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>84</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return join(getManagedFilePath(), &#39;.claude&#39;, dir)</code></td><td>Returns a result, error, or next step</td></tr><tr><td>85</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    case &#39;userSettings&#39;:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>86</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return join(getClaudeConfigHomeDir(), dir)</code></td><td>Returns a result, error, or next step</td></tr><tr><td>87</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    case &#39;projectSettings&#39;:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>88</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return `.claude/${dir}`</code></td><td>Returns a result, error, or next step</td></tr><tr><td>89</td><th><span class="line-kind-branch">BRANCH</span></th><td><code>    case &#39;plugin&#39;:</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>90</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return &#39;plugin&#39;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>91</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    default:</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>92</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>      return &#39;&#39;</code></td><td>Returns a result, error, or next step</td></tr><tr><td>93</td><th><span class="line-kind-flow">FLOW</span></th><td><code>  }</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>94</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>95</td><th><span class="line-kind-flow">FLOW</span></th><td><code></code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>96</td><th><span class="line-kind-flow">FLOW</span></th><td><code>/**</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>97</td><th><span class="line-kind-branch">BRANCH</span></th><td><code> * Estimates token count for a skill based on frontmatter only</code></td><td>Chooses continue, stop, retry, or another path</td></tr><tr><td>98</td><th><span class="line-kind-flow">FLOW</span></th><td><code> * (name, description, whenToUse) since full content is only loaded on invocation.</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>99</td><th><span class="line-kind-flow">FLOW</span></th><td><code> */</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>100</td><th><span class="line-kind-flow">FLOW</span></th><td><code>export function estimateSkillFrontmatterTokens(skill: Command): number {</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>101</td><th><span class="line-kind-input">INPUT</span></th><td><code>  const frontmatterText = [skill.name, skill.description, skill.whenToUse]</code></td><td>Receives arguments, events, or configuration</td></tr><tr><td>102</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    .filter(Boolean)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>103</td><th><span class="line-kind-flow">FLOW</span></th><td><code>    .join(&#39; &#39;)</code></td><td>Composes, transforms, or hands a value downstream</td></tr><tr><td>104</td><th><span class="line-kind-return">RECEIPT</span></th><td><code>  return roughTokenCountEstimation(frontmatterText)</code></td><td>Returns a result, error, or next step</td></tr><tr><td>105</td><th><span class="line-kind-flow">FLOW</span></th><td><code>}</code></td><td>Composes, transforms, or hands a value downstream</td></tr></tbody></table></div></details></div></div></article></div><section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>12 command clues</b></div><p>Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked.</p><div class="command-grid"><article class="command-card"><header><span>01</span><div><h3><code>--sync</code></h3><small>flag · packages/@ant/computer-use-input/src/backends/linux.ts:126</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/computer-use-input/src/backends/linux.ts#L121-L138" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  121
+  122  export const moveMouse: InputBackend[&#39;moveMouse&#39;] = async (x, y, _animated) =&gt; {
+  123    run([
+  124      &#39;xdotool&#39;,
+  125      &#39;mousemove&#39;,
+  126      &#39;--sync&#39;,
+  127      String(Math.round(x)),
+  128      String(Math.round(y)),
+  129    ])
+  130  }
+  131
+  132  export const mouseLocation: InputBackend[&#39;mouseLocation&#39;] = async () =&gt; {
+  133    const out = run([&#39;xdotool&#39;, &#39;getmouselocation&#39;])
+  134    // Output format: &quot;x:123 y:456 screen:0 window:12345678&quot;
+  135    const xMatch = out.match(/x:(\d+)/)
+  136    const yMatch = out.match(/y:(\d+)/)
+  137    return {
+  138      x: xMatch ? Number(xMatch[1]) : 0,
+  139      y: yMatch ? Number(yMatch[1]) : 0,
+  140    }
+  141  }
+  142
+  143  export const mouseButton: InputBackend[&#39;mouseButton&#39;] = async (
+  144    button,
+  145    action,
+  146    count,
+  147  ) =&gt; {
+  148    const btn = mouseButtonNum(button)
+  149    if (action === &#39;click&#39;) {
+  150      const n = count ?? 1
+  151      run([&#39;xdotool&#39;, &#39;click&#39;, &#39;--repeat&#39;, String(n), btn])
+  152    } else if (action === &#39;press&#39;) {
+  153      run([&#39;xdotool&#39;, &#39;mousedown&#39;, btn])
+  154    } else {
+  155      run([&#39;xdotool&#39;, &#39;mouseup&#39;, btn])
+  156    }
+  157  }
+  158
+  159  export const mouseScroll: InputBackend[&#39;mouseScroll&#39;] = async (
+  160    amount,
+  161    direction,
+  162  ) =&gt; {
+  163    // xdotool click 4=scroll up, 5=scroll down, 6=scroll left, 7=scroll right
+  164    // Positive amount = down/right, negative = up/left
+  165    if (direction === &#39;vertical&#39;) {
+  166      const btn = amount &gt;= 0 ? &#39;5&#39; : &#39;4&#39;
+  167      const repeats = Math.abs(Math.round(amount))
+  168      if (repeats &gt; 0) {
+  169        run([&#39;xdotool&#39;, &#39;click&#39;, &#39;--repeat&#39;, String(repeats), btn])
+  170      }
+  171    } else {
+  172      const btn = amount &gt;= 0 ? &#39;7&#39; : &#39;6&#39;
+  173      const repeats = Math.abs(Math.round(amount))
+  174      if (repeats &gt; 0) {
+  175        run([&#39;xdotool&#39;, &#39;click&#39;, &#39;--repeat&#39;, String(repeats), btn])
+  176      }
+  177    }
+  178  }
+  179</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--sync#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>02</span><div><h3><code>--repeat</code></h3><small>flag · packages/@ant/computer-use-input/src/backends/linux.ts:151</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/computer-use-input/src/backends/linux.ts#L146-L163" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  146    count,
+  147  ) =&gt; {
+  148    const btn = mouseButtonNum(button)
+  149    if (action === &#39;click&#39;) {
+  150      const n = count ?? 1
+  151      run([&#39;xdotool&#39;, &#39;click&#39;, &#39;--repeat&#39;, String(n), btn])
+  152    } else if (action === &#39;press&#39;) {
+  153      run([&#39;xdotool&#39;, &#39;mousedown&#39;, btn])
+  154    } else {
+  155      run([&#39;xdotool&#39;, &#39;mouseup&#39;, btn])
+  156    }
+  157  }
+  158
+  159  export const mouseScroll: InputBackend[&#39;mouseScroll&#39;] = async (
+  160    amount,
+  161    direction,
+  162  ) =&gt; {
+  163    // xdotool click 4=scroll up, 5=scroll down, 6=scroll left, 7=scroll right
+  164    // Positive amount = down/right, negative = up/left
+  165    if (direction === &#39;vertical&#39;) {
+  166      const btn = amount &gt;= 0 ? &#39;5&#39; : &#39;4&#39;
+  167      const repeats = Math.abs(Math.round(amount))
+  168      if (repeats &gt; 0) {
+  169        run([&#39;xdotool&#39;, &#39;click&#39;, &#39;--repeat&#39;, String(repeats), btn])
+  170      }
+  171    } else {
+  172      const btn = amount &gt;= 0 ? &#39;7&#39; : &#39;6&#39;
+  173      const repeats = Math.abs(Math.round(amount))
+  174      if (repeats &gt; 0) {
+  175        run([&#39;xdotool&#39;, &#39;click&#39;, &#39;--repeat&#39;, String(repeats), btn])
+  176      }
+  177    }
+  178  }
+  179
+  180  export const key: InputBackend[&#39;key&#39;] = async (keyName, action) =&gt; {
+  181    const mapped = mapKey(keyName)
+  182    if (action === &#39;press&#39;) {
+  183      run([&#39;xdotool&#39;, &#39;keydown&#39;, mapped])
+  184    } else {
+  185      run([&#39;xdotool&#39;, &#39;keyup&#39;, mapped])
+  186    }
+  187  }
+  188
+  189  export const keys: InputBackend[&#39;keys&#39;] = async parts =&gt; {
+  190    // xdotool key accepts &quot;modifier+modifier+key&quot; format
+  191    const modifiers: string[] = []
+  192    let finalKey: string | null = null
+  193
+  194    for (const part of parts) {
+  195      if (MODIFIER_KEYS.has(part.toLowerCase())) {
+  196        modifiers.push(mapKey(part))
+  197      } else {
+  198        finalKey = part
+  199      }
+  200    }
+  201    if (!finalKey) return
+  202
+  203    const combo = [...modifiers, mapKey(finalKey)].join(&#39;+&#39;)
+  204    run([&#39;xdotool&#39;, &#39;key&#39;, combo])</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--repeat#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>03</span><div><h3><code>--delay</code></h3><small>flag · packages/@ant/computer-use-input/src/backends/linux.ts:208</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/@ant/computer-use-input/src/backends/linux.ts#L203-L220" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  203    const combo = [...modifiers, mapKey(finalKey)].join(&#39;+&#39;)
+  204    run([&#39;xdotool&#39;, &#39;key&#39;, combo])
+  205  }
+  206
+  207  export const typeText: InputBackend[&#39;typeText&#39;] = async text =&gt; {
+  208    run([&#39;xdotool&#39;, &#39;type&#39;, &#39;--delay&#39;, &#39;12&#39;, text])
+  209  }
+  210
+  211  export const getFrontmostAppInfo: InputBackend[&#39;getFrontmostAppInfo&#39;] = () =&gt; {
+  212    try {
+  213      const windowId = run([&#39;xdotool&#39;, &#39;getactivewindow&#39;])
+  214      if (!windowId) return null
+  215
+  216      const pidStr = run([&#39;xdotool&#39;, &#39;getwindowpid&#39;, windowId])
+  217      if (!pidStr) return null
+  218
+  219      const pid = pidStr.trim()
+  220
+  221      // Read the executable path from /proc
+  222      let exePath = &#39;&#39;
+  223      try {
+  224        exePath = run([&#39;readlink&#39;, &#39;-f&#39;, `/proc/${pid}/exe`])
+  225      } catch {
+  226        /* ignore */
+  227      }
+  228
+  229      // Read the process name from /proc/comm
+  230      let appName = &#39;&#39;
+  231      try {
+  232        appName = run([&#39;cat&#39;, `/proc/${pid}/comm`])
+  233      } catch {
+  234        /* ignore */
+  235      }
+  236
+  237      if (!exePath &amp;&amp; !appName) return null
+  238      return {
+  239        bundleId: exePath || `/proc/${pid}/exe`,
+  240        appName: appName || &#39;unknown&#39;,
+  241      }
+  242    } catch {
+  243      return null
+  244    }
+  245  }
+  246</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--delay#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>04</span><div><h3><code>--verbose</code></h3><small>flag · packages/acp-link/src/cli/command.ts:11</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/acp-link/src/cli/command.ts#L6-L23" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>    6      brief: &#39;Start the ACP proxy server&#39;,
+    7      fullDescription:
+    8        &#39;Starts a WebSocket proxy server that bridges clients to ACP agents. &#39; +
+    9        &#39;The agent command is spawned as a subprocess and communicates via stdin/stdout.\n\n&#39; +
+   10        &#39;Use -- to pass arguments to the agent:\n&#39; +
+   11        &#39;  acp-link /path/to/agent -- --verbose --model gpt-4\n\n&#39; +
+   12        &#39;Use --manager to start the Manager Web UI instead:\n&#39; +
+   13        &#39;  acp-link --manager\n\n&#39; +
+   14        &#39;For remote access, set ACP_AUTH_TOKEN environment variable or let it auto-generate.&#39;,
+   15    },
+   16    parameters: {
+   17      flags: {
+   18        port: {
+   19          kind: &#39;parsed&#39;,
+   20          parse: numberParser,
+   21          brief: &#39;Port to listen on&#39;,
+   22          default: &#39;9315&#39;,
+   23        },
+   24        host: {
+   25          kind: &#39;parsed&#39;,
+   26          parse: String,
+   27          brief: &#39;Host to bind to (use 0.0.0.0 for remote access)&#39;,
+   28          default: &#39;localhost&#39;,
+   29        },
+   30        debug: {
+   31          kind: &#39;boolean&#39;,
+   32          brief: &#39;Enable debug logging to file&#39;,
+   33          default: false,
+   34        },
+   35        &#39;no-auth&#39;: {
+   36          kind: &#39;boolean&#39;,
+   37          brief: &#39;DANGEROUS: Disable authentication (not recommended)&#39;,
+   38          default: false,
+   39        },
+   40        https: {
+   41          kind: &#39;boolean&#39;,
+   42          brief: &#39;Enable HTTPS with auto-generated self-signed certificate&#39;,
+   43          default: false,
+   44        },
+   45        manager: {
+   46          kind: &#39;boolean&#39;,
+   47          brief: &#39;Start Manager Web UI (no proxy)&#39;,
+   48          default: false,
+   49        },
+   50        group: {
+   51          kind: &#39;parsed&#39;,
+   52          parse: (value: string) =&gt; {
+   53            if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+   54              throw new Error(
+   55                `Invalid group &quot;${value}&quot;: only letters, digits, hyphens, and underscores are allowed`,
+   56              )
+   57            }
+   58            return value
+   59          },
+   60          brief: &#39;Channel group ID for RCS registration (env: ACP_RCS_GROUP)&#39;,
+   61          optional: true,
+   62        },
+   63      },
+   64      positional: {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--verbose#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>05</span><div><h3><code>--model</code></h3><small>flag · packages/acp-link/src/cli/command.ts:11</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/acp-link/src/cli/command.ts#L6-L23" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>    6      brief: &#39;Start the ACP proxy server&#39;,
+    7      fullDescription:
+    8        &#39;Starts a WebSocket proxy server that bridges clients to ACP agents. &#39; +
+    9        &#39;The agent command is spawned as a subprocess and communicates via stdin/stdout.\n\n&#39; +
+   10        &#39;Use -- to pass arguments to the agent:\n&#39; +
+   11        &#39;  acp-link /path/to/agent -- --verbose --model gpt-4\n\n&#39; +
+   12        &#39;Use --manager to start the Manager Web UI instead:\n&#39; +
+   13        &#39;  acp-link --manager\n\n&#39; +
+   14        &#39;For remote access, set ACP_AUTH_TOKEN environment variable or let it auto-generate.&#39;,
+   15    },
+   16    parameters: {
+   17      flags: {
+   18        port: {
+   19          kind: &#39;parsed&#39;,
+   20          parse: numberParser,
+   21          brief: &#39;Port to listen on&#39;,
+   22          default: &#39;9315&#39;,
+   23        },
+   24        host: {
+   25          kind: &#39;parsed&#39;,
+   26          parse: String,
+   27          brief: &#39;Host to bind to (use 0.0.0.0 for remote access)&#39;,
+   28          default: &#39;localhost&#39;,
+   29        },
+   30        debug: {
+   31          kind: &#39;boolean&#39;,
+   32          brief: &#39;Enable debug logging to file&#39;,
+   33          default: false,
+   34        },
+   35        &#39;no-auth&#39;: {
+   36          kind: &#39;boolean&#39;,
+   37          brief: &#39;DANGEROUS: Disable authentication (not recommended)&#39;,
+   38          default: false,
+   39        },
+   40        https: {
+   41          kind: &#39;boolean&#39;,
+   42          brief: &#39;Enable HTTPS with auto-generated self-signed certificate&#39;,
+   43          default: false,
+   44        },
+   45        manager: {
+   46          kind: &#39;boolean&#39;,
+   47          brief: &#39;Start Manager Web UI (no proxy)&#39;,
+   48          default: false,
+   49        },
+   50        group: {
+   51          kind: &#39;parsed&#39;,
+   52          parse: (value: string) =&gt; {
+   53            if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+   54              throw new Error(
+   55                `Invalid group &quot;${value}&quot;: only letters, digits, hyphens, and underscores are allowed`,
+   56              )
+   57            }
+   58            return value
+   59          },
+   60          brief: &#39;Channel group ID for RCS registration (env: ACP_RCS_GROUP)&#39;,
+   61          optional: true,
+   62        },
+   63      },
+   64      positional: {</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--model#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>06</span><div><h3><code>--manager</code></h3><small>flag · packages/acp-link/src/cli/command.ts:12</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/acp-link/src/cli/command.ts#L7-L24" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>    7      fullDescription:
+    8        &#39;Starts a WebSocket proxy server that bridges clients to ACP agents. &#39; +
+    9        &#39;The agent command is spawned as a subprocess and communicates via stdin/stdout.\n\n&#39; +
+   10        &#39;Use -- to pass arguments to the agent:\n&#39; +
+   11        &#39;  acp-link /path/to/agent -- --verbose --model gpt-4\n\n&#39; +
+   12        &#39;Use --manager to start the Manager Web UI instead:\n&#39; +
+   13        &#39;  acp-link --manager\n\n&#39; +
+   14        &#39;For remote access, set ACP_AUTH_TOKEN environment variable or let it auto-generate.&#39;,
+   15    },
+   16    parameters: {
+   17      flags: {
+   18        port: {
+   19          kind: &#39;parsed&#39;,
+   20          parse: numberParser,
+   21          brief: &#39;Port to listen on&#39;,
+   22          default: &#39;9315&#39;,
+   23        },
+   24        host: {
+   25          kind: &#39;parsed&#39;,
+   26          parse: String,
+   27          brief: &#39;Host to bind to (use 0.0.0.0 for remote access)&#39;,
+   28          default: &#39;localhost&#39;,
+   29        },
+   30        debug: {
+   31          kind: &#39;boolean&#39;,
+   32          brief: &#39;Enable debug logging to file&#39;,
+   33          default: false,
+   34        },
+   35        &#39;no-auth&#39;: {
+   36          kind: &#39;boolean&#39;,
+   37          brief: &#39;DANGEROUS: Disable authentication (not recommended)&#39;,
+   38          default: false,
+   39        },
+   40        https: {
+   41          kind: &#39;boolean&#39;,
+   42          brief: &#39;Enable HTTPS with auto-generated self-signed certificate&#39;,
+   43          default: false,
+   44        },
+   45        manager: {
+   46          kind: &#39;boolean&#39;,
+   47          brief: &#39;Start Manager Web UI (no proxy)&#39;,
+   48          default: false,
+   49        },
+   50        group: {
+   51          kind: &#39;parsed&#39;,
+   52          parse: (value: string) =&gt; {
+   53            if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+   54              throw new Error(
+   55                `Invalid group &quot;${value}&quot;: only letters, digits, hyphens, and underscores are allowed`,
+   56              )
+   57            }
+   58            return value
+   59          },
+   60          brief: &#39;Channel group ID for RCS registration (env: ACP_RCS_GROUP)&#39;,
+   61          optional: true,
+   62        },
+   63      },
+   64      positional: {
+   65        kind: &#39;array&#39;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--manager#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>07</span><div><h3><code>--no-auth</code></h3><small>flag · packages/acp-link/src/cli/command.ts:111</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/acp-link/src/cli/command.ts#L106-L123" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>  106      }
+  107      const [command, ...agentArgs] = args
+  108      const cwd = process.cwd()
+  109
+  110      // Determine auth token
+  111      // Priority: ACP_AUTH_TOKEN env var &gt; auto-generate (unless --no-auth)
+  112      let token: string | undefined
+  113      if (noAuth) {
+  114        console.warn(
+  115          &#39;⚠️  WARNING: Authentication disabled. This is dangerous for remote access!&#39;,
+  116        )
+  117        token = undefined
+  118      } else {
+  119        token = process.env.ACP_AUTH_TOKEN
+  120        if (!token) {
+  121          // Auto-generate random token
+  122          const { randomBytes } = await import(&#39;node:crypto&#39;)
+  123          token = randomBytes(32).toString(&#39;hex&#39;)
+  124        }
+  125      }
+  126
+  127      // Initialize logger
+  128      const { initLogger } = await import(&#39;../logger.js&#39;)
+  129      initLogger({ debug })
+  130
+  131      // Import and run the server
+  132      const { startServer } = await import(&#39;../server.js&#39;)
+  133      await startServer({
+  134        port,
+  135        host,
+  136        command: command!,
+  137        args: [...agentArgs],
+  138        cwd,
+  139        debug,
+  140        token,
+  141        https,
+  142        group,
+  143      })
+  144    },
+  145  })
+  146</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--no-auth#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>08</span><div><h3><code>--hard</code></h3><small>flag · packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts:15</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts#L10-L27" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   10  }
+   11
+   12  const DESTRUCTIVE_PATTERNS: DestructivePattern[] = [
+   13    // Git — data loss / hard to reverse
+   14    {
+   15      pattern: /\bgit\s+reset\s+--hard\b/,
+   16      warning: &#39;Note: may discard uncommitted changes&#39;,
+   17    },
+   18    {
+   19      pattern: /\bgit\s+push\b[^;&amp;|\n]*[ \t](--force|--force-with-lease|-f)\b/,
+   20      warning: &#39;Note: may overwrite remote history&#39;,
+   21    },
+   22    {
+   23      pattern:
+   24        /\bgit\s+clean\b(?![^;&amp;|\n]*(?:-[a-zA-Z]*n|--dry-run))[^;&amp;|\n]*-[a-zA-Z]*f/,
+   25      warning: &#39;Note: may permanently delete untracked files&#39;,
+   26    },
+   27    {
+   28      pattern: /\bgit\s+checkout\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   29      warning: &#39;Note: may discard all working tree changes&#39;,
+   30    },
+   31    {
+   32      pattern: /\bgit\s+restore\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   33      warning: &#39;Note: may discard all working tree changes&#39;,
+   34    },
+   35    {
+   36      pattern: /\bgit\s+stash[ \t]+(drop|clear)\b/,
+   37      warning: &#39;Note: may permanently remove stashed changes&#39;,
+   38    },
+   39    {
+   40      pattern:
+   41        /\bgit\s+branch\s+(-D[ \t]|--delete\s+--force|--force\s+--delete)\b/,
+   42      warning: &#39;Note: may force-delete a branch&#39;,
+   43    },
+   44
+   45    // Git — safety bypass
+   46    {
+   47      pattern: /\bgit\s+(commit|push|merge)\b[^;&amp;|\n]*--no-verify\b/,
+   48      warning: &#39;Note: may skip safety hooks&#39;,
+   49    },
+   50    {
+   51      pattern: /\bgit\s+commit\b[^;&amp;|\n]*--amend\b/,
+   52      warning: &#39;Note: may rewrite the last commit&#39;,
+   53    },
+   54
+   55    // File deletion (dangerous paths already handled by checkDangerousRemovalPaths)
+   56    {
+   57      pattern:
+   58        /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]/,
+   59      warning: &#39;Note: may recursively force-remove files&#39;,
+   60    },
+   61    {
+   62      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR]/,
+   63      warning: &#39;Note: may recursively remove files&#39;,
+   64    },
+   65    {
+   66      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f/,
+   67      warning: &#39;Note: may force-remove files&#39;,
+   68    },</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--hard#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>09</span><div><h3><code>--force</code></h3><small>flag · packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts:19</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts#L14-L31" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   14    {
+   15      pattern: /\bgit\s+reset\s+--hard\b/,
+   16      warning: &#39;Note: may discard uncommitted changes&#39;,
+   17    },
+   18    {
+   19      pattern: /\bgit\s+push\b[^;&amp;|\n]*[ \t](--force|--force-with-lease|-f)\b/,
+   20      warning: &#39;Note: may overwrite remote history&#39;,
+   21    },
+   22    {
+   23      pattern:
+   24        /\bgit\s+clean\b(?![^;&amp;|\n]*(?:-[a-zA-Z]*n|--dry-run))[^;&amp;|\n]*-[a-zA-Z]*f/,
+   25      warning: &#39;Note: may permanently delete untracked files&#39;,
+   26    },
+   27    {
+   28      pattern: /\bgit\s+checkout\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   29      warning: &#39;Note: may discard all working tree changes&#39;,
+   30    },
+   31    {
+   32      pattern: /\bgit\s+restore\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   33      warning: &#39;Note: may discard all working tree changes&#39;,
+   34    },
+   35    {
+   36      pattern: /\bgit\s+stash[ \t]+(drop|clear)\b/,
+   37      warning: &#39;Note: may permanently remove stashed changes&#39;,
+   38    },
+   39    {
+   40      pattern:
+   41        /\bgit\s+branch\s+(-D[ \t]|--delete\s+--force|--force\s+--delete)\b/,
+   42      warning: &#39;Note: may force-delete a branch&#39;,
+   43    },
+   44
+   45    // Git — safety bypass
+   46    {
+   47      pattern: /\bgit\s+(commit|push|merge)\b[^;&amp;|\n]*--no-verify\b/,
+   48      warning: &#39;Note: may skip safety hooks&#39;,
+   49    },
+   50    {
+   51      pattern: /\bgit\s+commit\b[^;&amp;|\n]*--amend\b/,
+   52      warning: &#39;Note: may rewrite the last commit&#39;,
+   53    },
+   54
+   55    // File deletion (dangerous paths already handled by checkDangerousRemovalPaths)
+   56    {
+   57      pattern:
+   58        /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]/,
+   59      warning: &#39;Note: may recursively force-remove files&#39;,
+   60    },
+   61    {
+   62      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR]/,
+   63      warning: &#39;Note: may recursively remove files&#39;,
+   64    },
+   65    {
+   66      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f/,
+   67      warning: &#39;Note: may force-remove files&#39;,
+   68    },
+   69
+   70    // Database
+   71    {
+   72      pattern: /\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA)\b/i,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--force#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>10</span><div><h3><code>--force-with-lease</code></h3><small>flag · packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts:19</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts#L14-L31" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   14    {
+   15      pattern: /\bgit\s+reset\s+--hard\b/,
+   16      warning: &#39;Note: may discard uncommitted changes&#39;,
+   17    },
+   18    {
+   19      pattern: /\bgit\s+push\b[^;&amp;|\n]*[ \t](--force|--force-with-lease|-f)\b/,
+   20      warning: &#39;Note: may overwrite remote history&#39;,
+   21    },
+   22    {
+   23      pattern:
+   24        /\bgit\s+clean\b(?![^;&amp;|\n]*(?:-[a-zA-Z]*n|--dry-run))[^;&amp;|\n]*-[a-zA-Z]*f/,
+   25      warning: &#39;Note: may permanently delete untracked files&#39;,
+   26    },
+   27    {
+   28      pattern: /\bgit\s+checkout\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   29      warning: &#39;Note: may discard all working tree changes&#39;,
+   30    },
+   31    {
+   32      pattern: /\bgit\s+restore\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   33      warning: &#39;Note: may discard all working tree changes&#39;,
+   34    },
+   35    {
+   36      pattern: /\bgit\s+stash[ \t]+(drop|clear)\b/,
+   37      warning: &#39;Note: may permanently remove stashed changes&#39;,
+   38    },
+   39    {
+   40      pattern:
+   41        /\bgit\s+branch\s+(-D[ \t]|--delete\s+--force|--force\s+--delete)\b/,
+   42      warning: &#39;Note: may force-delete a branch&#39;,
+   43    },
+   44
+   45    // Git — safety bypass
+   46    {
+   47      pattern: /\bgit\s+(commit|push|merge)\b[^;&amp;|\n]*--no-verify\b/,
+   48      warning: &#39;Note: may skip safety hooks&#39;,
+   49    },
+   50    {
+   51      pattern: /\bgit\s+commit\b[^;&amp;|\n]*--amend\b/,
+   52      warning: &#39;Note: may rewrite the last commit&#39;,
+   53    },
+   54
+   55    // File deletion (dangerous paths already handled by checkDangerousRemovalPaths)
+   56    {
+   57      pattern:
+   58        /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]/,
+   59      warning: &#39;Note: may recursively force-remove files&#39;,
+   60    },
+   61    {
+   62      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR]/,
+   63      warning: &#39;Note: may recursively remove files&#39;,
+   64    },
+   65    {
+   66      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f/,
+   67      warning: &#39;Note: may force-remove files&#39;,
+   68    },
+   69
+   70    // Database
+   71    {
+   72      pattern: /\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA)\b/i,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--force-with-lease#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>11</span><div><h3><code>--dry-run</code></h3><small>flag · packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts:24</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts#L19-L36" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   19      pattern: /\bgit\s+push\b[^;&amp;|\n]*[ \t](--force|--force-with-lease|-f)\b/,
+   20      warning: &#39;Note: may overwrite remote history&#39;,
+   21    },
+   22    {
+   23      pattern:
+   24        /\bgit\s+clean\b(?![^;&amp;|\n]*(?:-[a-zA-Z]*n|--dry-run))[^;&amp;|\n]*-[a-zA-Z]*f/,
+   25      warning: &#39;Note: may permanently delete untracked files&#39;,
+   26    },
+   27    {
+   28      pattern: /\bgit\s+checkout\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   29      warning: &#39;Note: may discard all working tree changes&#39;,
+   30    },
+   31    {
+   32      pattern: /\bgit\s+restore\s+(--\s+)?\.[ \t]*($|[;&amp;|\n])/,
+   33      warning: &#39;Note: may discard all working tree changes&#39;,
+   34    },
+   35    {
+   36      pattern: /\bgit\s+stash[ \t]+(drop|clear)\b/,
+   37      warning: &#39;Note: may permanently remove stashed changes&#39;,
+   38    },
+   39    {
+   40      pattern:
+   41        /\bgit\s+branch\s+(-D[ \t]|--delete\s+--force|--force\s+--delete)\b/,
+   42      warning: &#39;Note: may force-delete a branch&#39;,
+   43    },
+   44
+   45    // Git — safety bypass
+   46    {
+   47      pattern: /\bgit\s+(commit|push|merge)\b[^;&amp;|\n]*--no-verify\b/,
+   48      warning: &#39;Note: may skip safety hooks&#39;,
+   49    },
+   50    {
+   51      pattern: /\bgit\s+commit\b[^;&amp;|\n]*--amend\b/,
+   52      warning: &#39;Note: may rewrite the last commit&#39;,
+   53    },
+   54
+   55    // File deletion (dangerous paths already handled by checkDangerousRemovalPaths)
+   56    {
+   57      pattern:
+   58        /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]/,
+   59      warning: &#39;Note: may recursively force-remove files&#39;,
+   60    },
+   61    {
+   62      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR]/,
+   63      warning: &#39;Note: may recursively remove files&#39;,
+   64    },
+   65    {
+   66      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f/,
+   67      warning: &#39;Note: may force-remove files&#39;,
+   68    },
+   69
+   70    // Database
+   71    {
+   72      pattern: /\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA)\b/i,
+   73      warning: &#39;Note: may drop or truncate database objects&#39;,
+   74    },
+   75    {
+   76      pattern: /\bDELETE\s+FROM\s+\w+[ \t]*(;|&quot;|&#39;|\n|$)/i,
+   77      warning: &#39;Note: may delete all rows from a database table&#39;,</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--dry-run#command-flow">Open this command's execution map →</a></article><article class="command-card"><header><span>12</span><div><h3><code>--delete</code></h3><small>flag · packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts:41</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/builtin-tools/src/tools/BashTool/destructiveCommandWarning.ts#L36-L53" target="_blank" rel="noreferrer">Source ↗</a></header><p>A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.</p><pre><code>   36      pattern: /\bgit\s+stash[ \t]+(drop|clear)\b/,
+   37      warning: &#39;Note: may permanently remove stashed changes&#39;,
+   38    },
+   39    {
+   40      pattern:
+   41        /\bgit\s+branch\s+(-D[ \t]|--delete\s+--force|--force\s+--delete)\b/,
+   42      warning: &#39;Note: may force-delete a branch&#39;,
+   43    },
+   44
+   45    // Git — safety bypass
+   46    {
+   47      pattern: /\bgit\s+(commit|push|merge)\b[^;&amp;|\n]*--no-verify\b/,
+   48      warning: &#39;Note: may skip safety hooks&#39;,
+   49    },
+   50    {
+   51      pattern: /\bgit\s+commit\b[^;&amp;|\n]*--amend\b/,
+   52      warning: &#39;Note: may rewrite the last commit&#39;,
+   53    },
+   54
+   55    // File deletion (dangerous paths already handled by checkDangerousRemovalPaths)
+   56    {
+   57      pattern:
+   58        /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]/,
+   59      warning: &#39;Note: may recursively force-remove files&#39;,
+   60    },
+   61    {
+   62      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*[rR]/,
+   63      warning: &#39;Note: may recursively remove files&#39;,
+   64    },
+   65    {
+   66      pattern: /(^|[;&amp;|\n]\s*)rm\s+-[a-zA-Z]*f/,
+   67      warning: &#39;Note: may force-remove files&#39;,
+   68    },
+   69
+   70    // Database
+   71    {
+   72      pattern: /\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA)\b/i,
+   73      warning: &#39;Note: may drop or truncate database objects&#39;,
+   74    },
+   75    {
+   76      pattern: /\bDELETE\s+FROM\s+\w+[ \t]*(;|&quot;|&#39;|\n|$)/i,
+   77      warning: &#39;Note: may delete all rows from a database table&#39;,
+   78    },
+   79
+   80    // Infrastructure
+   81    {
+   82      pattern: /\bkubectl\s+delete\b/,
+   83      warning: &#39;Note: may delete Kubernetes resources&#39;,
+   84    },
+   85    {
+   86      pattern: /\bterraform\s+destroy\b/,
+   87      warning: &#39;Note: may destroy Terraform infrastructure&#39;,
+   88    },
+   89  ]
+   90
+   91  /**
+   92   * Checks if a bash command matches known destructive patterns.
+   93   * Returns a human-readable warning string, or null if no destructive pattern is detected.
+   94   */</code></pre><a class="command-map-link" href="../diagrams/commands.html?command=--delete#command-flow">Open this command's execution map →</a></article></div></section><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">COMMANDS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">src/query.ts:460–666 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>assembleToolPool 先装配内建工具，再接 MCP 工具，应用 deny 过滤，并按稳定分区排序；工具重名时内建工具优先。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/tools.ts#L378-L420" target="_blank" rel="noreferrer">src/tools.ts:378–420 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>client 根据 server type 构造不同 transport，支持 OAuth/static/session ingress header、代理、IDE 通道和进程内 server；连接有超时，断线会清连接及工具/资源缓存以便重连。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/mcp/client.ts#L596-L678" target="_blank" rel="noreferrer">src/services/mcp/client.ts:596–678 ↗</a></article></div></section><h2>Source map: do not stop at one file</h2><section class="source-reading-map"><div class="source-reading-head"><span>SOURCE MAP → MATCHED PASSAGES</span><b>6 real files</b></div><p>This is not a README inventory: the generator ranks real local-repository files by chapter terms, then extracts numbered passages from the pinned commit. Follow each path into callers, types, and tests.</p><div class="source-reading-grid"><article class="source-reading-card"><header><span>01</span><div><b>src/utils/__tests__/slashCommandParsing.test.ts</b><small>1487 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/__tests__/slashCommandParsing.test.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>1. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import { parseSlashCommand } from &#39;../slashCommandParsing&#39;
+    3
+    4  describe(&#39;parseSlashCommand&#39;, () =&gt; {
+    5    test(&#39;parses simple command&#39;, () =&gt; {
+    6      const result = parseSlashCommand(&#39;/search foo bar&#39;)
+    7      expect(result).toEqual({
+    8        commandName: &#39;search&#39;,
+    9        args: &#39;foo bar&#39;,
+   10        isMcp: false,
+   11      })
+   12    })
+   13
+   14    test(&#39;parses command without args&#39;, () =&gt; {
+   15      const result = parseSlashCommand(&#39;/help&#39;)
+   16      expect(result).toEqual({
+   17        commandName: &#39;help&#39;,
+   18        args: &#39;&#39;,
+   19        isMcp: false,
+   20      })
+   21    })
+   22
+   23    test(&#39;parses MCP command&#39;, () =&gt; {
+   24      const result = parseSlashCommand(&#39;/tool (MCP) arg1 arg2&#39;)
+   25      expect(result).toEqual({
+   26        commandName: &#39;tool (MCP)&#39;,
+   27        args: &#39;arg1 arg2&#39;,
+   28        isMcp: true,
+   29      })
+   30    })
+   31
+   32    test(&#39;parses MCP command without args&#39;, () =&gt; {
+   33      const result = parseSlashCommand(&#39;/tool (MCP)&#39;)
+   34      expect(result).toEqual({</code></pre></article><article class="source-reading-card"><header><span>02</span><div><b>src/utils/processUserInput/__tests__/processSlashCommand.test.ts</b><small>10185 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/processUserInput/__tests__/processSlashCommand.test.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>2. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2  import type { QueuedCommand } from &#39;../../../types/textInputTypes&#39;
+    3  import {
+    4    resetStateForTests,
+    5    setCwdState,
+    6    setOriginalCwd,
+    7    setProjectRoot,
+    8  } from &#39;../../../bootstrap/state&#39;
+    9  import {
+   10    createAutonomyQueuedPrompt,
+   11    getAutonomyRunById,
+   12    listAutonomyRuns,
+   13    markAutonomyRunRunning,
+   14  } from &#39;../../autonomyRuns&#39;
+   15  import { resetAutonomyAuthorityForTests } from &#39;../../autonomyAuthority&#39;
+   16  import { createScheduledTaskQueuedCommand } from &#39;../../../hooks/useScheduledTasks&#39;
+   17  import {
+   18    cleanupTempDir,
+   19    createTempDir,
+   20  } from &#39;../../../../tests/mocks/file-system&#39;
+   21
+   22  let runAgentBlocker: Promise&lt;void&gt; | null = null
+   23  let releaseRunAgentBlocker: (() =&gt; void) | null = null
+   24  let runAgentStartCount = 0
+   25  let originalNodeEnv: string | undefined
+   26  let originalAnthropicApiKey: string | undefined
+   27  const commandQueue: QueuedCommand[] = []
+   28
+   29  function enqueue(command: QueuedCommand): void {
+   30    commandQueue.push({ ...command, priority: command.priority ?? &#39;next&#39; })
+   31  }
+   32
+   33  function enqueuePendingNotification(command: QueuedCommand): void {
+   34    commandQueue.push({ ...command, priority: command.priority ?? &#39;later&#39; })</code></pre></article><article class="source-reading-card"><header><span>03</span><div><b>packages/builtin-tools/src/tools/BashTool/bashCommandHelpers.ts</b><small>8570 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/packages/builtin-tools/src/tools/BashTool/bashCommandHelpers.ts#L3-L18" target="_blank" rel="noreferrer">L3–18 ↗</a></header><p>3. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    3    isUnsafeCompoundCommand_DEPRECATED,
+    4    splitCommand_DEPRECATED,
+    5  } from &#39;src/utils/bash/commands.js&#39;
+    6  import {
+    7    buildParsedCommandFromRoot,
+    8    type IParsedCommand,
+    9    ParsedCommand,
+   10  } from &#39;src/utils/bash/ParsedCommand.js&#39;
+   11  import { type Node, PARSE_ABORTED } from &#39;src/utils/bash/parser.js&#39;
+   12  import type { PermissionResult } from &#39;src/utils/permissions/PermissionResult.js&#39;
+   13  import type { PermissionUpdate } from &#39;src/utils/permissions/PermissionUpdateSchema.js&#39;
+   14  import { createPermissionRequestMessage } from &#39;src/utils/permissions/permissions.js&#39;
+   15  import { BashTool } from &#39;./BashTool.js&#39;
+   16  import { bashCommandIsSafeAsync_DEPRECATED } from &#39;./bashSecurity.js&#39;
+   17
+   18  type CommandIdentityCheckers = {
+   19    isNormalizedCdCommand: (command: string) =&gt; boolean
+   20    isNormalizedGitCommand: (command: string) =&gt; boolean
+   21  }
+   22
+   23  async function segmentedCommandPermissionResult(
+   24    input: z.infer&lt;typeof BashTool.inputSchema&gt;,
+   25    segments: string[],
+   26    bashToolHasPermissionFn: (
+   27      input: z.infer&lt;typeof BashTool.inputSchema&gt;,
+   28    ) =&gt; Promise&lt;PermissionResult&gt;,
+   29    checkers: CommandIdentityCheckers,
+   30  ): Promise&lt;PermissionResult&gt; {
+   31    // Check for multiple cd commands across all segments
+   32    const cdCommands = segments.filter(segment =&gt; {
+   33      const trimmed = segment.trim()
+   34      return checkers.isNormalizedCdCommand(trimmed)
+   35    })</code></pre></article><article class="source-reading-card"><header><span>04</span><div><b>src/utils/processUserInput/processSlashCommand.tsx</b><small>46990 bytes · .tsx</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/processUserInput/processSlashCommand.tsx#L6-L21" target="_blank" rel="noreferrer">L6–21 ↗</a></header><p>4. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    6    builtInCommandNames,
+    7    type Command,
+    8    type CommandBase,
+    9    findCommand,
+   10    getCommand,
+   11    getCommandName,
+   12    hasCommand,
+   13    type PromptCommand,
+   14  } from &#39;src/commands.js&#39;;
+   15  import { NO_CONTENT_MESSAGE } from &#39;src/constants/messages.js&#39;;
+   16  import type { SetToolJSXFn, ToolUseContext } from &#39;src/Tool.js&#39;;
+   17  import type {
+   18    AssistantMessage,
+   19    AttachmentMessage,
+   20    Message,
+   21    NormalizedUserMessage,
+   22    ProgressMessage,
+   23    UserMessage,
+   24  } from &#39;src/types/message.js&#39;;
+   25  import type { QueuedCommand } from &#39;src/types/textInputTypes.js&#39;;
+   26  import { addInvokedSkill, getSessionId } from &#39;../../bootstrap/state.js&#39;;
+   27  import { COMMAND_MESSAGE_TAG, COMMAND_NAME_TAG } from &#39;../../constants/xml.js&#39;;
+   28  import type { CanUseToolFn } from &#39;../../hooks/useCanUseTool.js&#39;;
+   29  import {
+   30    type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+   31    type AnalyticsMetadata_I_VERIFIED_THIS_IS_PII_TAGGED,
+   32    logEvent,
+   33  } from &#39;../../services/analytics/index.js&#39;;
+   34  import { getDumpPromptsPath } from &#39;../../services/api/dumpPrompts.js&#39;;
+   35  import { buildPostCompactMessages } from &#39;../../services/compact/compact.js&#39;;
+   36  import { resetMicrocompactState } from &#39;../../services/compact/microCompact.js&#39;;
+   37  import type { Progress as AgentProgress } from &#39;@claude-code-best/builtin-tools/tools/AgentTool/AgentTool.js&#39;;
+   38  import { runAgent } from &#39;@claude-code-best/builtin-tools/tools/AgentTool/runAgent.js&#39;;</code></pre></article><article class="source-reading-card"><header><span>05</span><div><b>src/utils/slashCommandParsing.ts</b><small>1437 bytes · .ts</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/slashCommandParsing.ts#L2-L17" target="_blank" rel="noreferrer">L2–17 ↗</a></header><p>5. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>    2   * Centralized utilities for parsing slash commands
+    3   */
+    4
+    5  export type ParsedSlashCommand = {
+    6    commandName: string
+    7    args: string
+    8    isMcp: boolean
+    9  }
+   10
+   11  /**
+   12   * Parses a slash command input string into its component parts
+   13   *
+   14   * @param input - The raw input string (should start with &#39;/&#39;)
+   15   * @returns Parsed command name, args, and MCP flag, or null if invalid
+   16   *
+   17   * @example
+   18   * parseSlashCommand(&#39;/search foo bar&#39;)
+   19   * // =&gt; { commandName: &#39;search&#39;, args: &#39;foo bar&#39;, isMcp: false }
+   20   *
+   21   * @example
+   22   * parseSlashCommand(&#39;/mcp:tool (MCP) arg1 arg2&#39;)
+   23   * // =&gt; { commandName: &#39;mcp:tool (MCP)&#39;, args: &#39;arg1 arg2&#39;, isMcp: true }
+   24   */
+   25  export function parseSlashCommand(input: string): ParsedSlashCommand | null {
+   26    const trimmedInput = input.trim()
+   27
+   28    // Check if input starts with &#39;/&#39;
+   29    if (!trimmedInput.startsWith(&#39;/&#39;)) {
+   30      return null
+   31    }
+   32
+   33    // Remove the leading &#39;/&#39; and split by spaces
+   34    const withoutSlash = trimmedInput.slice(1)</code></pre></article><article class="source-reading-card"><header><span>06</span><div><b>docs/testing/SLASH-COMMANDS-TEST-CHECKLIST.md</b><small>13002 bytes · .md</small></div><a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/docs/testing/SLASH-COMMANDS-TEST-CHECKLIST.md#L88-L103" target="_blank" rel="noreferrer">L88–103 ↗</a></header><p>6. A source entry related to “Command execution: from /goal to receipt”; start with its inputs, state, and return value.</p><pre><code>   88  - `gh: command not found` → 装 https://cli.github.com/
+   89  - `gh auth status` 未登录 → `gh auth login`
+   90  - issues disabled → 看是否降级到 discussion
+   91
+   92  ---
+   93
+   94  ## C 组 — Subscription OAuth（已 `/login` claude.ai）
+   95
+   96  **前置**：`/login` 完成 claude.ai OAuth；`/login` 显示 `☑ Subscription`
+   97
+   98  | # | 命令 | 输入 | 期望输出 | 通过 |
+   99  |---|---|---|---|---|
+  100  | C1 | `/login` | 无参 | **3 plane summary**：☑ Subscription、☐/☑ Workspace API key、4 third-party providers（PR-4 新增） | ☐ |
+  101  | C2 | `/teleport` | 无参 | 列最近 sessions（list-style picker） | ☐ |
+  102  | C3 | `/teleport &lt;session-uuid&gt;` | 参数 | resume from claude.ai | ☐ |
+  103  | C4 | `/tp &lt;session-uuid&gt;` | alias | 同 C3 | ☐ |
+  104  | C5 | `/teleport &lt;session-uuid&gt; --print` | flag | print mode 直接输出 session URL | ☐ |
+  105  | C6 | `/autofix-pr 386` | PR# | CCR 派发，输出 sessionUrl | ☐ |
+  106  | C7 | `/autofix-pr stop` | 子命令 | 停止 active monitor | ☐ |
+  107  | C8 | `/autofix-pr anthropics/claude-code#999` | cwd 不匹配 | 拒绝 `repo_mismatch`（不真创建会话） | ☐ |
+  108  | C9 | `/schedule list` | 子命令 | `/v1/code/triggers` GET，返回 `data:[]` 或 trigger 列表 | ☐ |
+  109  | C10 | `/schedule create &lt;cron&gt; &lt;prompt&gt;` | 子命令 | POST，cron expr UTC 验证 | ☐ |
+  110  | C11 | `/schedule run &lt;id&gt;` | 子命令 | POST /run 立即触发 | ☐ |
+  111  | C12 | `/schedule update &lt;id&gt; &lt;field&gt; &lt;value&gt;` | 子命令 | **POST**（不是 PATCH） | ☐ |
+  112  | C13 | `/cron list` `/triggers list` | aliases | 同 C9 | ☐ |
+  113  | C14 | `/init-verifiers` | 无参 | 创建项目 verifier skills | ☐ |
+  114  | C15 | `/bridge-kick` | 无参 | bridge 故障注入测试 | ☐ |
+  115  | C16 | `/subscribe-pr` | 无参 | 列本地 `~/.claude/pr-subscriptions.json` | ☐ |
+  116  | C17 | `/ultrareview &lt;PR#&gt;` | 参数 | preflight gate（v1 已有） | ☐ |
+  117
+  118  **C 组失败诊断**：
+  119  - 401 → 重 `/login`
+  120  - `/v1/agents` 类 401 → 这些是 workspace endpoint，**预期会失败**，移到 F 组</code></pre></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/commands.html" title="Claude Code（复原） commands" loading="lazy"></iframe></section><footer class="chapter-footer"><a href="ch10-evidence.html">← Evidence and trade-offs: bringing lessons home</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
