@@ -1,1 +1,537 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>Gemini CLI · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Gemini CLI · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Gemini CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>1ac337739586</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Gemini CLI · 1ac337739586</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Gemini CLI · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/gemini-cli/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/gemini-cli/ch07-security.srt" data-video-status="published">SRT</a><em>1ac337739586</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="gemini-policy-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · PolicyEngine 按优先级匹配工具、参数、MCP 身份、annotations、模式、交互状态和 subagent</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ruleMatches 对稳定序列化参数、MCP 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。</p></section><section><span>白话解释</span><p>政策可以精确到“哪个子 Agent 在非交互模式调用哪个 MCP 的哪个参数”，不只是允许/禁止 Bash。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>企业控制力强，但规则冲突需要良好解释器和测试。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/policy/policy-engine.ts:49–195</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>完整规则匹配维度。</code></pre></div></div></article><article class="finding-card compact" id="gemini-policy-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 非交互默认拒绝，交互默认询问；危险命令强制 ASK，YOLO 例外</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>PolicyEngine 未配置 defaultDecision 时，nonInteractive 为 DENY、交互为 ASK_USER；shell heuristic 将危险命令改为 ASK_USER，YOLO 保留原决定，已知安全命令可把 ASK 降为 ALLOW。</p></section><section><span>白话解释</span><p>没人看屏幕时不赌；有人在时先问。只有明确 YOLO 才允许危险命令绕过这层强制提问。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>无头执行失败关闭，YOLO 是明确的高风险模式。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L253-L260" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">packages/core/src/policy/policy-engine.ts:49–195 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/policy/policy-engine.ts:253–260</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L253-L260" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>交互/非交互默认决策。</code></pre></div></div></article><article class="finding-card compact" id="gemini-sandbox-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · Sandbox 默认不开启，但即使关闭仍净化环境变量</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>factory 只有 sandbox.enabled 才按平台选择 Linux/Mac/Windows manager，否则用 NoopSandboxManager；Noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。</p></section><section><span>白话解释</span><p>防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>必须评价为“可选强隔离”，不能写成“默认在沙箱中执行”。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManagerFactory.ts#L19-L43" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">packages/core/src/policy/policy-engine.ts:49–195 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/services/sandboxManagerFactory.ts:19–43</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManagerFactory.ts#L19-L43" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>enabled gate 与平台选择。</code></pre></div></div></article><article class="finding-card compact" id="gemini-sandbox-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>04 · 三平台使用真实 OS 隔离，并保护治理文件与 .env 类秘密</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Linux 使用 bubblewrap 并生成 seccomp BPF 禁 ptrace；macOS 用 sandbox-exec/Seatbelt profile；Windows 用 restricted token、Job Object、Low Integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。</p></section><section><span>白话解释</span><p>开罩后不是靠模型自觉：Linux、macOS、Windows 各用系统级限制器，仓库规则和秘密文件另加保护。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>跨平台安全面完整，但每个后端差异大，需各自做 denial 与路径逃逸回归。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L194-L223" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">packages/core/src/policy/policy-engine.ts:49–195 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/services/sandboxManager.ts:194–223</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L194-L223" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>治理文件与秘密文件清单。</code></pre></div></div></article><article class="finding-card compact" id="gemini-sandbox-003" data-finding-dimension="security"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>security</span></div><h3>05 · 默认 sandbox mode 的 default 是可写 workspace，plan 才只读</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SandboxPolicyManager 内建 fallback 中 plan 为 readonly/network off，default 和 accepting_edits 为 writable/network off；YOLO 明确打开网络、写权限和 yolo 标志。</p></section><section><span>白话解释</span><p>即使开启沙箱，普通默认模式也允许改工作区；“开沙箱”不等于“只读”。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>产品 UI 必须同时展示 sandbox enabled 与当前 mode，避免用户产生错误安全感。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/sandboxPolicyManager.ts#L49-L94" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">packages/core/src/policy/policy-engine.ts:49–195 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/policy/sandboxPolicyManager.ts:49–94</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/sandboxPolicyManager.ts#L49-L94" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>plan/default/accepting_edits 默认能力。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Gemini CLI architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>Gemini CLI · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Gemini CLI · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Gemini CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>1ac337739586</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Gemini CLI · 1ac337739586</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Gemini CLI · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/gemini-cli/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/gemini-cli/ch07-security.srt" data-video-status="published">SRT</a><em>1ac337739586</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="gemini-policy-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · PolicyEngine 按优先级匹配工具、参数、MCP 身份、annotations、模式、交互状态和 subagent</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ruleMatches 对稳定序列化参数、MCP 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。</p></section><section><span>白话解释</span><p>政策可以精确到“哪个子 Agent 在非交互模式调用哪个 MCP 的哪个参数”，不只是允许/禁止 Bash。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>企业控制力强，但规则冲突需要良好解释器和测试。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>49–121</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>122–195</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/policy/policy-engine.ts:49–195</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   49  function isWildcardPattern(name: string): boolean {
+   50    return name === &#39;*&#39; || name.includes(&#39;*&#39;);
+   51  }
+   52
+   53  /**
+   54   * Checks if a tool call matches a wildcard pattern.
+   55   * Supports global (*) and the explicit MCP (*mcp_serverName_**) format.
+   56   */
+   57  function matchesWildcard(
+   58    pattern: string,
+   59    toolName: string,
+   60    serverName: string | undefined,
+   61  ): boolean {
+   62    if (pattern === &#39;*&#39;) {
+   63      return true;
+   64    }
+   65
+   66    if (pattern === `${MCP_TOOL_PREFIX}*`) {
+   67      return serverName !== undefined;
+   68    }
+   69
+   70    if (pattern.startsWith(MCP_TOOL_PREFIX) &amp;&amp; pattern.endsWith(&#39;_*&#39;)) {
+   71      const expectedServerName = pattern.slice(MCP_TOOL_PREFIX.length, -2);
+   72      // 1. Must be an MCP tool call (has serverName)
+   73      // 2. Server name must match
+   74      // 3. Tool name must be properly qualified by that server
+   75      if (serverName === undefined || serverName !== expectedServerName) {
+   76        return false;
+   77      }
+   78      return toolName.startsWith(`${MCP_TOOL_PREFIX}${expectedServerName}_`);
+   79    }
+   80
+   81    // Not a recognized wildcard pattern, fallback to exact match just in case
+   82    return toolName === pattern;
+   83  }
+   84
+   85  function ruleMatches(
+   86    rule: PolicyRule | SafetyCheckerRule,
+   87    toolCall: FunctionCall,
+   88    stringifiedArgs: string | undefined,
+   89    serverName: string | undefined,
+   90    currentApprovalMode: ApprovalMode,
+   91    nonInteractive: boolean,
+   92    toolAnnotations?: Record&lt;string, unknown&gt;,
+   93    subagent?: string,
+   94  ): boolean {
+   95    // Check if rule applies to current approval mode
+   96    if (rule.modes &amp;&amp; rule.modes.length &gt; 0) {
+   97      if (!rule.modes.includes(currentApprovalMode)) {
+   98        return false;
+   99      }
+  100    }
+  101
+  102    // Check subagent if specified (only for PolicyRule, SafetyCheckerRule doesn&#39;t have it)
+  103    if (&#39;subagent&#39; in rule &amp;&amp; rule.subagent !== undefined) {
+  104      if (rule.subagent !== subagent) {
+  105        return false;
+  106      }
+  107    }
+  108
+  109    // Strictly enforce mcpName identity if the rule dictates it
+  110    if (rule.mcpName !== undefined) {
+  111      if (rule.mcpName === &#39;*&#39;) {
+  112        // Rule requires it to be ANY MCP tool
+  113        if (serverName === undefined) return false;
+  114      } else {
+  115        // Rule requires it to be a specific MCP server
+  116        if (serverName !== rule.mcpName) return false;
+  117      }
+  118    }
+  119
+  120    // Check tool name if specified
+  121    if (rule.toolName !== undefined) {
+  122      // Support wildcard patterns: &quot;mcp_serverName_*&quot; matches &quot;mcp_serverName_anyTool&quot;
+  123      if (rule.toolName === &#39;*&#39;) {
+  124        // Match all tools
+  125      } else if (isWildcardPattern(rule.toolName)) {
+  126        if (
+  127          !toolCall.name ||
+  128          !matchesWildcard(rule.toolName, toolCall.name, serverName)
+  129        ) {
+  130          return false;
+  131        }
+  132      } else if (toolCall.name !== rule.toolName) {
+  133        // If names don&#39;t match exactly, check for MCP short/full name mismatches
+  134        let mcpMatch = false;
+  135        if (serverName &amp;&amp; toolCall.name) {
+  136          // Case 1: Rule uses short name + mcpName -&gt; match FQN tool call
+  137          if (rule.mcpName &amp;&amp; !isMcpToolName(rule.toolName)) {
+  138            if (
+  139              toolCall.name === formatMcpToolName(rule.mcpName, rule.toolName)
+  140            ) {
+  141              mcpMatch = true;
+  142            }
+  143          }
+  144          // Case 2: Rule uses FQN -&gt; match short tool call (qualified by serverName)
+  145          if (!mcpMatch &amp;&amp; isMcpToolName(rule.toolName)) {
+  146            if (rule.toolName === formatMcpToolName(serverName, toolCall.name)) {
+  147              mcpMatch = true;
+  148            }
+  149          }
+  150        }
+  151
+  152        if (!mcpMatch) {
+  153          return false;
+  154        }
+  155      }
+  156    }
+  157
+  158    // Check annotations if specified
+  159    if (rule.toolAnnotations) {
+  160      if (!toolAnnotations) {
+  161        return false;
+  162      }
+  163      for (const [key, value] of Object.entries(rule.toolAnnotations)) {
+  164        if (toolAnnotations[key] !== value) {
+  165          return false;
+  166        }
+  167      }
+  168    }
+  169
+  170    // Check args pattern if specified
+  171    if (rule.argsPattern) {
+  172      // If rule has an args pattern but tool has no args, no match
+  173      if (!toolCall.args) {
+  174        return false;
+  175      }
+  176      // Use stable JSON stringification with sorted keys to ensure consistent matching
+  177      if (
+  178        stringifiedArgs === undefined ||
+  179        !rule.argsPattern.test(stringifiedArgs)
+  180      ) {
+  181        return false;
+  182      }
+  183    }
+  184
+  185    // Check interactive if specified
+  186    if (&#39;interactive&#39; in rule &amp;&amp; rule.interactive !== undefined) {
+  187      if (rule.interactive &amp;&amp; nonInteractive) {
+  188        return false;
+  189      }
+  190      if (!rule.interactive &amp;&amp; !nonInteractive) {
+  191        return false;
+  192      }
+  193    }
+  194
+  195    return true;
+  196  }
+  197
+  198  export class PolicyEngine {
+  199    private rules: PolicyRule[];
+  200    private checkers: SafetyCheckerRule[];
+  201    private hookCheckers: HookCheckerRule[];
+  202    private readonly defaultDecision: PolicyDecision;
+  203    private readonly nonInteractive: boolean;
+  204    private readonly disableAlwaysAllow: boolean;
+  205    private readonly checkerRunner?: CheckerRunner;
+  206    private approvalMode: ApprovalMode;
+  207    private readonly sandboxManager: SandboxManager;
+  208
+  209    constructor(config: PolicyEngineConfig = {}, checkerRunner?: CheckerRunner) {
+  210      this.rules = (config.rules ?? []).sort(
+  211        (a, b) =&gt; (b.priority ?? 0) - (a.priority ?? 0),
+  212      );
+  213      this.checkers = (config.checkers ?? []).sort(
+  214        (a, b) =&gt; (b.priority ?? 0) - (a.priority ?? 0),
+  215      );
+  216      this.hookCheckers = (config.hookCheckers ?? []).sort(
+  217        (a, b) =&gt; (b.priority ?? 0) - (a.priority ?? 0),
+  218      );
+  219
+  220      // Validate rules
+  221      for (const rule of this.rules) {
+  222        if (rule.toolName === undefined || rule.toolName === &#39;&#39;) {
+  223          throw new Error(
+  224            `Invalid policy rule: toolName is required. Use &#39;*&#39; for all tools. Rule source: ${rule.source || &#39;unknown&#39;}`,
+  225          );
+  226        }
+  227        if (rule.mcpName === &#39;&#39;) {
+  228          throw new Error(
+  229            `Invalid policy rule: mcpName is required if specified (cannot be empty). Rule source: ${rule.source || &#39;unknown&#39;}`,
+  230          );
+  231        }
+  232        if (rule.subagent === &#39;&#39;) {
+  233          throw new Error(
+  234            `Invalid policy rule: subagent is required if specified (cannot be empty). Rule source: ${rule.source || &#39;unknown&#39;}`,
+  235          );
+  236        }
+  237      }
+  238
+  239      // Validate checkers
+  240      for (const checker of this.checkers) {
+  241        if (checker.toolName === undefined || checker.toolName === &#39;&#39;) {
+  242          throw new Error(
+  243            `Invalid safety checker rule: toolName is required. Use &#39;*&#39; for all tools. Checker source: ${checker.source || &#39;unknown&#39;}`,
+  244          );
+  245        }
+  246        if (checker.mcpName === &#39;&#39;) {
+  247          throw new Error(
+  248            `Invalid safety checker rule: mcpName is required if specified (cannot be empty). Checker source: ${checker.source || &#39;unknown&#39;}`,
+  249          );
+  250        }
+  251      }
+  252
+  253      this.nonInteractive = config.nonInteractive ?? false;
+  254      this.defaultDecision =
+  255        config.defaultDecision ??
+  256        (this.nonInteractive ? PolicyDecision.DENY : PolicyDecision.ASK_USER);
+  257      this.disableAlwaysAllow = config.disableAlwaysAllow ?? false;
+  258      this.checkerRunner = checkerRunner;
+  259      this.approvalMode = config.approvalMode ?? ApprovalMode.DEFAULT;
+  260      this.sandboxManager = config.sandboxManager ?? new NoopSandboxManager();
+  261    }
+  262
+  263    /**
+  264     * Update the current approval mode.
+  265     */
+  266    setApprovalMode(mode: ApprovalMode): void {</code></pre></div></div></article><article class="finding-card compact" id="gemini-policy-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 非交互默认拒绝，交互默认询问；危险命令强制 ASK，YOLO 例外</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>PolicyEngine 未配置 defaultDecision 时，nonInteractive 为 DENY、交互为 ASK_USER；shell heuristic 将危险命令改为 ASK_USER，YOLO 保留原决定，已知安全命令可把 ASK 降为 ALLOW。</p></section><section><span>白话解释</span><p>没人看屏幕时不赌；有人在时先问。只有明确 YOLO 才允许危险命令绕过这层强制提问。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>无头执行失败关闭，YOLO 是明确的高风险模式。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>253–255</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>256–260</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L253-L260" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/policy/policy-engine.ts:253–260</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L253-L260" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  253      this.nonInteractive = config.nonInteractive ?? false;
+  254      this.defaultDecision =
+  255        config.defaultDecision ??
+  256        (this.nonInteractive ? PolicyDecision.DENY : PolicyDecision.ASK_USER);
+  257      this.disableAlwaysAllow = config.disableAlwaysAllow ?? false;
+  258      this.checkerRunner = checkerRunner;
+  259      this.approvalMode = config.approvalMode ?? ApprovalMode.DEFAULT;
+  260      this.sandboxManager = config.sandboxManager ?? new NoopSandboxManager();
+  261    }
+  262
+  263    /**
+  264     * Update the current approval mode.
+  265     */
+  266    setApprovalMode(mode: ApprovalMode): void {
+  267      this.approvalMode = mode;
+  268    }
+  269
+  270    /**
+  271     * Get the current approval mode.
+  272     */
+  273    getApprovalMode(): ApprovalMode {
+  274      return this.approvalMode;
+  275    }
+  276
+  277    private isAlwaysAllowRule(rule: PolicyRule): boolean {
+  278      return (
+  279        rule.priority !== undefined &amp;&amp;
+  280        Math.round((rule.priority % 1) * 1000) === ALWAYS_ALLOW_PRIORITY_FRACTION
+  281      );
+  282    }
+  283
+  284    private shouldDowngradeForRedirection(
+  285      command: string,
+  286      allowRedirection?: boolean,
+  287    ): boolean {
+  288      if (allowRedirection) return false;
+  289      if (!hasRedirection(command)) return false;
+  290
+  291      // Do not downgrade (do not ask user) if in AUTO_EDIT or YOLO mode.
+  292      // These modes trust the agent&#39;s actions (YOLO) or specific task (AUTO_EDIT).
+  293      if (
+  294        this.approvalMode === ApprovalMode.AUTO_EDIT ||
+  295        this.approvalMode === ApprovalMode.YOLO
+  296      ) {
+  297        return false;
+  298      }
+  299
+  300      return true;
+  301    }
+  302
+  303    /**
+  304     * Check if a shell command is allowed.
+  305     */
+  306    private async applyShellHeuristics(
+  307      command: string,
+  308      decision: PolicyDecision,
+  309    ): Promise&lt;PolicyDecision&gt; {
+  310      await initializeShellParsers();
+  311      try {
+  312        const parsedObjArgs = shellParse(command);
+  313        const parsedArgs = parsedObjArgs.map(extractStringFromParseEntry);
+  314
+  315        if (this.sandboxManager.isDangerousCommand(parsedArgs)) {
+  316          if (this.approvalMode === ApprovalMode.YOLO) {
+  317            debugLogger.debug(
+  318              `[PolicyEngine.check] Command evaluated as dangerous, but YOLO mode is active. Preserving decision: ${command}`,
+  319            );
+  320            return decision;
+  321          }
+  322
+  323          debugLogger.debug(
+  324            `[PolicyEngine.check] Command evaluated as dangerous, forcing ASK_USER: ${command}`,
+  325          );
+  326          return PolicyDecision.ASK_USER;
+  327        }
+  328
+  329        if (
+  330          this.sandboxManager.isKnownSafeCommand(parsedArgs) &amp;&amp;
+  331          decision === PolicyDecision.ASK_USER</code></pre></div></div></article><article class="finding-card compact" id="gemini-sandbox-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · Sandbox 默认不开启，但即使关闭仍净化环境变量</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>factory 只有 sandbox.enabled 才按平台选择 Linux/Mac/Windows manager，否则用 NoopSandboxManager；Noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。</p></section><section><span>白话解释</span><p>防护罩不是默认扣上的；没扣罩子时至少会先从进程环境里清理不该传给子进程的东西。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>必须评价为“可选强隔离”，不能写成“默认在沙箱中执行”。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>19–30</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>31–43</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManagerFactory.ts#L19-L43" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/services/sandboxManagerFactory.ts:19–43</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManagerFactory.ts#L19-L43" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   19  /**
+   20   * Creates a sandbox manager based on the provided settings.
+   21   */
+   22  export function createSandboxManager(
+   23    sandbox: SandboxConfig | undefined,
+   24    options: GlobalSandboxOptions,
+   25    approvalMode?: string,
+   26  ): SandboxManager {
+   27    if (!options.modeConfig &amp;&amp; options.policyManager &amp;&amp; approvalMode) {
+   28      options.modeConfig = options.policyManager.getModeConfig(approvalMode);
+   29    }
+   30
+   31    if (sandbox?.enabled) {
+   32      if (os.platform() === &#39;win32&#39;) {
+   33        return new WindowsSandboxManager(options);
+   34      } else if (os.platform() === &#39;linux&#39;) {
+   35        return new LinuxSandboxManager(options);
+   36      } else if (os.platform() === &#39;darwin&#39;) {
+   37        return new MacOsSandboxManager(options);
+   38      }
+   39      return new LocalSandboxManager(options);
+   40    }
+   41
+   42    return new NoopSandboxManager(options);
+   43  }
+   44</code></pre></div></div></article><article class="finding-card compact" id="gemini-sandbox-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>04 · 三平台使用真实 OS 隔离，并保护治理文件与 .env 类秘密</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Linux 使用 bubblewrap 并生成 seccomp BPF 禁 ptrace；macOS 用 sandbox-exec/Seatbelt profile；Windows 用 restricted token、Job Object、Low Integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。</p></section><section><span>白话解释</span><p>开罩后不是靠模型自觉：Linux、macOS、Windows 各用系统级限制器，仓库规则和秘密文件另加保护。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>跨平台安全面完整，但每个后端差异大，需各自做 denial 与路径逃逸回归。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>194–207</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>208–223</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L194-L223" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/services/sandboxManager.ts:194–223</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L194-L223" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  194  /**
+  195   * Files that represent the governance or &quot;constitution&quot; of the repository
+  196   * and should be write-protected in any sandbox.
+  197   */
+  198  export const GOVERNANCE_FILES = [
+  199    { path: &#39;.gitignore&#39;, isDirectory: false },
+  200    { path: &#39;.geminiignore&#39;, isDirectory: false },
+  201    { path: &#39;.git&#39;, isDirectory: true },
+  202  ] as const;
+  203
+  204  /**
+  205   * Files that contain sensitive secrets or credentials and should be
+  206   * completely hidden (deny read/write) in any sandbox.
+  207   */
+  208  export const SECRET_FILES = [
+  209    { pattern: &#39;.env&#39; },
+  210    { pattern: &#39;.env.*&#39; },
+  211  ] as const;
+  212
+  213  /**
+  214   * Checks if a given file name matches any of the secret file patterns.
+  215   */
+  216  export function isSecretFile(fileName: string): boolean {
+  217    return SECRET_FILES.some((s) =&gt; {
+  218      if (s.pattern.endsWith(&#39;*&#39;)) {
+  219        const prefix = s.pattern.slice(0, -1);
+  220        return fileName.startsWith(prefix);
+  221      }
+  222      return fileName === s.pattern;
+  223    });
+  224  }
+  225
+  226  /**
+  227   * Returns arguments for the Linux &#39;find&#39; command to locate secret files.
+  228   */
+  229  export function getSecretFileFindArgs(): string[] {
+  230    const args: string[] = [&#39;(&#39;];
+  231    SECRET_FILES.forEach((s, i) =&gt; {
+  232      if (i &gt; 0) args.push(&#39;-o&#39;);
+  233      args.push(&#39;-name&#39;, s.pattern);
+  234    });
+  235    args.push(&#39;)&#39;);
+  236    return args;
+  237  }
+  238
+  239  /**
+  240   * Finds all secret files in a directory up to a certain depth.
+  241   * Default is shallow scan (depth 1) for performance.
+  242   */
+  243  export async function findSecretFiles(
+  244    baseDir: string,
+  245    maxDepth = 1,
+  246  ): Promise&lt;string[]&gt; {
+  247    const secrets: string[] = [];
+  248    const skipDirs = new Set([
+  249      &#39;node_modules&#39;,
+  250      &#39;.git&#39;,
+  251      &#39;.venv&#39;,
+  252      &#39;__pycache__&#39;,
+  253      &#39;dist&#39;,
+  254      &#39;build&#39;,
+  255      &#39;.next&#39;,
+  256      &#39;.idea&#39;,
+  257      &#39;.vscode&#39;,
+  258    ]);
+  259
+  260    async function walk(dir: string, depth: number) {
+  261      if (depth &gt; maxDepth) return;
+  262      try {
+  263        const entries = await fs.readdir(dir, { withFileTypes: true });
+  264        for (const entry of entries) {
+  265          const fullPath = path.join(dir, entry.name);
+  266          if (entry.isDirectory()) {
+  267            if (!skipDirs.has(entry.name)) {
+  268              await walk(fullPath, depth + 1);
+  269            }
+  270          } else if (entry.isFile()) {
+  271            if (isSecretFile(entry.name)) {
+  272              secrets.push(fullPath);
+  273            }
+  274          }
+  275        }
+  276      } catch {
+  277        // Ignore read errors
+  278      }
+  279    }
+  280
+  281    await walk(baseDir, 1);
+  282    return secrets;
+  283  }
+  284
+  285  /**
+  286   * A no-op implementation of SandboxManager that silently passes commands
+  287   * through while applying environment sanitization.
+  288   */
+  289  export class NoopSandboxManager implements SandboxManager {
+  290    constructor(private options?: GlobalSandboxOptions) {}
+  291
+  292    /**
+  293     * Prepares a command by sanitizing the environment and passing through
+  294     * the original program and arguments.</code></pre></div></div></article><article class="finding-card compact" id="gemini-sandbox-003" data-finding-dimension="security"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>security</span></div><h3>05 · 默认 sandbox mode 的 default 是可写 workspace，plan 才只读</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SandboxPolicyManager 内建 fallback 中 plan 为 readonly/network off，default 和 accepting_edits 为 writable/network off；YOLO 明确打开网络、写权限和 yolo 标志。</p></section><section><span>白话解释</span><p>即使开启沙箱，普通默认模式也允许改工作区；“开沙箱”不等于“只读”。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>产品 UI 必须同时展示 sandbox enabled 与当前 mode，避免用户产生错误安全感。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>49–70</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>71–94</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/sandboxPolicyManager.ts#L49-L94" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/policy/sandboxPolicyManager.ts:49–94</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/sandboxPolicyManager.ts#L49-L94" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   49    private static get DEFAULT_CONFIG(): SandboxTomlSchemaType {
+   50      if (!SandboxPolicyManager._DEFAULT_CONFIG) {
+   51        const __filename = fileURLToPath(import.meta.url);
+   52        const __dirname = path.dirname(__filename);
+   53        const defaultPath = path.join(
+   54          __dirname,
+   55          &#39;policies&#39;,
+   56          &#39;sandbox-default.toml&#39;,
+   57        );
+   58        try {
+   59          const content = fs.readFileSync(defaultPath, &#39;utf8&#39;);
+   60          if (typeof content !== &#39;string&#39;) {
+   61            SandboxPolicyManager._DEFAULT_CONFIG = {
+   62              modes: {
+   63                plan: {
+   64                  network: false,
+   65                  readonly: true,
+   66                  approvedTools: [],
+   67                  allowOverrides: true,
+   68                },
+   69                default: {
+   70                  network: false,
+   71                  readonly: false,
+   72                  approvedTools: [],
+   73                  allowOverrides: true,
+   74                },
+   75                accepting_edits: {
+   76                  network: false,
+   77                  readonly: false,
+   78                  approvedTools: [&#39;sed&#39;, &#39;grep&#39;, &#39;awk&#39;, &#39;perl&#39;, &#39;cat&#39;, &#39;echo&#39;],
+   79                  allowOverrides: true,
+   80                },
+   81              },
+   82              commands: {},
+   83            };
+   84            return SandboxPolicyManager._DEFAULT_CONFIG;
+   85          }
+   86          SandboxPolicyManager._DEFAULT_CONFIG = SandboxTomlSchema.parse(
+   87            toml.parse(content),
+   88          );
+   89        } catch (e) {
+   90          debugLogger.error(`Failed to parse default sandbox policy: ${e}`);
+   91          throw new Error(`Failed to parse default sandbox policy: ${e}`);
+   92        }
+   93      }
+   94      return SandboxPolicyManager._DEFAULT_CONFIG;
+   95    }
+   96
+   97    private config: SandboxTomlSchemaType;
+   98    private readonly configPath: string;
+   99    private sessionApprovals: Record&lt;string, SandboxPermissions&gt; = {};
+  100
+  101    constructor(customConfigPath?: string) {
+  102      this.configPath =
+  103        customConfigPath ??
+  104        path.join(os.homedir(), &#39;.gemini&#39;, &#39;policies&#39;, &#39;sandbox.toml&#39;);
+  105      this.config = this.loadConfig();
+  106    }
+  107
+  108    private isProtectedKey(key: string): boolean {
+  109      return key === &#39;__proto__&#39; || key === &#39;constructor&#39; || key === &#39;prototype&#39;;
+  110    }
+  111
+  112    private loadConfig(): SandboxTomlSchemaType {
+  113      if (!fs.existsSync(this.configPath)) {
+  114        return SandboxPolicyManager.DEFAULT_CONFIG;
+  115      }
+  116
+  117      try {
+  118        const content = fs.readFileSync(this.configPath, &#39;utf8&#39;);
+  119        return SandboxTomlSchema.parse(toml.parse(content));
+  120      } catch (e) {
+  121        debugLogger.error(`Failed to parse sandbox.toml: ${e}`);
+  122        return SandboxPolicyManager.DEFAULT_CONFIG;
+  123      }
+  124    }
+  125
+  126    private saveConfig(): void {
+  127      try {
+  128        const dir = path.dirname(this.configPath);
+  129        if (!fs.existsSync(dir)) {
+  130          fs.mkdirSync(dir, { recursive: true });
+  131        }
+  132        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  133        const content = toml.stringify(this.config as unknown as toml.JsonMap);
+  134        fs.writeFileSync(this.configPath, content);
+  135      } catch (e) {
+  136        debugLogger.error(`Failed to save sandbox.toml: ${e}`);
+  137      }
+  138    }
+  139
+  140    getModeConfig(
+  141      mode: &#39;plan&#39; | &#39;accepting_edits&#39; | &#39;default&#39; | &#39;yolo&#39; | string,
+  142    ): SandboxModeConfig {
+  143      if (mode === &#39;yolo&#39;) {
+  144        return {
+  145          network: true,
+  146          readonly: false,
+  147          approvedTools: [],
+  148          allowOverrides: true,
+  149          yolo: true,
+  150        };
+  151      }
+  152      if (mode === &#39;plan&#39;) return this.config.modes.plan;
+  153      if (mode === &#39;accepting_edits&#39; || mode === &#39;autoEdit&#39;)
+  154        return this.config.modes.accepting_edits;
+  155      if (mode === &#39;default&#39;) return this.config.modes.default;
+  156
+  157      // Default fallback
+  158      return this.config.modes.default ?? this.config.modes.plan;
+  159    }
+  160
+  161    getCommandPermissions(commandName: string): SandboxPermissions {
+  162      const normalized = normalizeCommand(commandName);
+  163      if (this.isProtectedKey(normalized)) {
+  164        return {
+  165          fileSystem: { read: [], write: [] },</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>ruleMatches 对稳定序列化参数、MCP 全限定名、tool annotations、approval mode、interactive/non-interactive 与 subagent 做组合匹配；规则/checker/hook checker 都按 priority 降序。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L49-L195" target="_blank" rel="noreferrer">packages/core/src/policy/policy-engine.ts:49–195 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>PolicyEngine 未配置 defaultDecision 时，nonInteractive 为 DENY、交互为 ASK_USER；shell heuristic 将危险命令改为 ASK_USER，YOLO 保留原决定，已知安全命令可把 ASK 降为 ALLOW。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/policy/policy-engine.ts#L253-L260" target="_blank" rel="noreferrer">packages/core/src/policy/policy-engine.ts:253–260 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>factory 只有 sandbox.enabled 才按平台选择 Linux/Mac/Windows manager，否则用 NoopSandboxManager；Noop 不隔离进程，但会按安全配置 sanitize environment 后原样运行。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManagerFactory.ts#L19-L43" target="_blank" rel="noreferrer">packages/core/src/services/sandboxManagerFactory.ts:19–43 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>Linux 使用 bubblewrap 并生成 seccomp BPF 禁 ptrace；macOS 用 sandbox-exec/Seatbelt profile；Windows 用 restricted token、Job Object、Low Integrity helper。共同模型保护 .git/.gitignore/.geminiignore，隐藏 .env/.env.*。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/services/sandboxManager.ts#L194-L223" target="_blank" rel="noreferrer">packages/core/src/services/sandboxManager.ts:194–223 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Gemini CLI architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

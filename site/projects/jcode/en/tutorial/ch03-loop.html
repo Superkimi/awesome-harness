@@ -1,1 +1,649 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How does one request become multiple executable steps?"><title>JCode · M03 · The loop: why work keeps moving</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">JCode · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch03-loop.html">中</a><a href="ch03-loop.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>JCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="active" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">master<br>71fa60c4dc87</div></aside><main><section class="chapter-hero"><p class="eyebrow">M03 · JCode · 71fa60c4dc87</p><h1>The loop: why work keeps moving</h1><p class="lede">How does one request become multiple executable steps?</p><div class="chapter-meta"><span>Chapter 3 / 10</span><span>3 source findings</span><span>master</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M03</span><b>JCode · M03 · 主循环：任务为什么会继续推进</b></div><div class="video-links"><a href="../../../../videos/jcode/ch03-loop.mp4" data-video-status="published">MP4</a><a href="../../../../videos/jcode/ch03-loop.srt" data-video-status="published">SRT</a><em>71fa60c4dc87</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Like a courier reading receipts: accept work, write an action, execute, return the receipt, then decide whether to continue.</p></div><h2>Answer the chapter question first</h2><p>How does one request become multiple executable steps? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 3 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="jcode-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每个用户 turn 先写盘，再进入可恢复的流式循环</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>run_once/run_once_capture 先把用户消息加入 Session 并 save，再调用 run_turn；远程流入口还先注入跨 Agent 通知、图片和本轮 system reminder，并在 turn 前后触发 observer hooks。</p></section><section><span>PLAIN LANGUAGE</span><p>模型还没开口，用户输入已经落账；即使后面 API 或工具出错，恢复时也不会连问题本身都丢掉。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>耐崩溃性强，但每轮和工具结果频繁保存会增加本地 I/O，需要 journal 快路径配合。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L4-L35" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">crates/jcode-app-core/src/agent/turn_loops.rs:17–68 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_execution.rs:4–35</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L4-L35" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>run_once/capture 先 append+save。</code></pre></div></div></article><article class="finding-card compact" id="jcode-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 循环在每次请求前修复工具配对并重建稳定快照</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>run_turn 注册 streaming/cancel guard；每圈先补齐缺失 tool outputs，再取得可能已压缩的 provider messages，锁定 tool definitions，取上一轮准备好的 memory，并构造静态/动态分离的 prompt。</p></section><section><span>PLAIN LANGUAGE</span><p>每次再问模型前先查账：工具有没有开单不回执、旧历史是否已折叠、这一轮工具箱和提示词是否稳定。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>把异常历史修复、缓存稳定和请求生命周期放在一个明确关口。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_loops.rs:17–68</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>guard、repair、compaction、tools、memory、split prompt。</code></pre></div></div></article><article class="finding-card compact" id="jcode-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 中途断流先撤销半截状态再完整重播</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Provider 发出 RetryRollback 后，Agent 清空该次尝试的文本、tool calls、SDK results、reasoning 与 native compaction；Copilot runtime 仅在已向消费者发过可见输出且错误可重试时发送该事件。</p></section><section><span>PLAIN LANGUAGE</span><p>网络半路断了，不把前半句和前半个工具调用留在账上；先橡皮擦掉，再从头重放。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>显著降低重试导致的重复文本和重复副作用；普通 stdout 无法擦除，只会显示断点标记。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L455-L484" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">crates/jcode-app-core/src/agent/turn_loops.rs:17–68 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_loops.rs:455–484</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L455-L484" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>消费者回滚所有 partial state。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="JCode capability" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch02-architecture.html">← Architecture: layers and ownership</a><a href="ch04-model.html">Models and messages: turning streams into state →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How does one request become multiple executable steps?"><title>JCode · M03 · The loop: why work keeps moving</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">JCode · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch03-loop.html">中</a><a href="ch03-loop.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>JCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="active" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">master<br>71fa60c4dc87</div></aside><main><section class="chapter-hero"><p class="eyebrow">M03 · JCode · 71fa60c4dc87</p><h1>The loop: why work keeps moving</h1><p class="lede">How does one request become multiple executable steps?</p><div class="chapter-meta"><span>Chapter 3 / 10</span><span>3 source findings</span><span>master</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M03</span><b>JCode · M03 · 主循环：任务为什么会继续推进</b></div><div class="video-links"><a href="../../../../videos/jcode/ch03-loop.mp4" data-video-status="published">MP4</a><a href="../../../../videos/jcode/ch03-loop.srt" data-video-status="published">SRT</a><em>71fa60c4dc87</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Like a courier reading receipts: accept work, write an action, execute, return the receipt, then decide whether to continue.</p></div><h2>Answer the chapter question first</h2><p>How does one request become multiple executable steps? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 3 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="jcode-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每个用户 turn 先写盘，再进入可恢复的流式循环</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>run_once/run_once_capture 先把用户消息加入 Session 并 save，再调用 run_turn；远程流入口还先注入跨 Agent 通知、图片和本轮 system reminder，并在 turn 前后触发 observer hooks。</p></section><section><span>PLAIN LANGUAGE</span><p>模型还没开口，用户输入已经落账；即使后面 API 或工具出错，恢复时也不会连问题本身都丢掉。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>耐崩溃性强，但每轮和工具结果频繁保存会增加本地 I/O，需要 journal 快路径配合。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>4–18</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>19–35</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L4-L35" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_execution.rs:4–35</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L4-L35" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    4  impl Agent {
+    5      /// Run a single turn with the given user message
+    6      pub async fn run_once(&amp;mut self, user_message: &amp;str) -&gt; Result&lt;()&gt; {
+    7          self.add_message(
+    8              Role::User,
+    9              vec![ContentBlock::Text {
+   10                  text: user_message.to_string(),
+   11                  cache_control: None,
+   12              }],
+   13          );
+   14          self.session.save()?;
+   15          if trace_enabled() {
+   16              eprintln!(&quot;[trace] session_id {}&quot;, self.session.id);
+   17          }
+   18          let _ = self.run_turn(true).await?;
+   19          Ok(())
+   20      }
+   21
+   22      pub async fn run_once_capture(&amp;mut self, user_message: &amp;str) -&gt; Result&lt;String&gt; {
+   23          self.add_message(
+   24              Role::User,
+   25              vec![ContentBlock::Text {
+   26                  text: user_message.to_string(),
+   27                  cache_control: None,
+   28              }],
+   29          );
+   30          self.session.save()?;
+   31          if trace_enabled() {
+   32              eprintln!(&quot;[trace] session_id {}&quot;, self.session.id);
+   33          }
+   34          self.run_turn(false).await
+   35      }
+   36
+   37      /// Run one conversation turn with streaming events via mpsc channel (per-client)
+   38      pub async fn run_once_streaming_mpsc(
+   39          &amp;mut self,
+   40          user_message: &amp;str,
+   41          images: Vec&lt;(String, String)&gt;,
+   42          system_reminder: Option&lt;String&gt;,
+   43          event_tx: mpsc::UnboundedSender&lt;ServerEvent&gt;,
+   44      ) -&gt; Result&lt;()&gt; {
+   45          // Inject any pending notifications before the user message
+   46          let alerts = self.take_alerts();
+   47          if !alerts.is_empty() {
+   48              let alert_text = format!(
+   49                  &quot;[NOTIFICATION]\nYou received {} notification(s) from other agents working in this codebase:\n\n{}\n\nUse the communicate tool to coordinate with other agents (prefer dm; broadcast reaches only your spawned subtree).&quot;,
+   50                  alerts.len(),
+   51                  alerts.join(&quot;\n\n---\n\n&quot;)
+   52              );
+   53              self.add_message(
+   54                  Role::User,
+   55                  vec![ContentBlock::Text {
+   56                      text: alert_text,
+   57                      cache_control: None,
+   58                  }],
+   59              );
+   60          }
+   61
+   62          self.current_turn_system_reminder =
+   63              system_reminder.filter(|value| !value.trim().is_empty());
+   64
+   65          let mut blocks: Vec&lt;ContentBlock&gt; = images
+   66              .into_iter()
+   67              .map(|(media_type, data)| ContentBlock::Image { media_type, data })
+   68              .collect();
+   69          blocks.push(ContentBlock::Text {
+   70              text: user_message.to_string(),
+   71              cache_control: None,
+   72          });
+   73
+   74          if blocks.len() &gt; 1 {
+   75              crate::logging::info(&amp;format!(
+   76                  &quot;Agent received message with {} image(s)&quot;,
+   77                  blocks.len() - 1
+   78              ));
+   79          }
+   80
+   81          self.add_message(Role::User, blocks);
+   82          crate::telemetry::record_turn();
+   83          self.session.save()?;
+   84          let turn_started_at = Instant::now();
+   85          let start_message_index = self.message_count();
+   86          self.fire_turn_start_hook(&quot;chat&quot;);
+   87          let result = self.run_turn_streaming_mpsc(event_tx).await;
+   88          self.current_turn_system_reminder = None;
+   89          self.fire_turn_end_hook(&amp;result, turn_started_at, start_message_index);
+   90          result
+   91      }
+   92
+   93      /// Fire the `turn_start` observer hook when a turn begins, before the model
+   94      /// starts generating (and before the first `pre_tool`). This lets external
+   95      /// integrations (terminal multiplexers, status bars) detect that the agent
+   96      /// is actively working during the otherwise-invisible window between prompt
+   97      /// submission and the first tool call. No-op (without building the payload)
+   98      /// when the hook is not configured.
+   99      fn fire_turn_start_hook(&amp;self, source: &amp;str) {
+  100          if !crate::hooks::hook_configured(&quot;turn_start&quot;) {
+  101              return;
+  102          }
+  103          let mut event = crate::hooks::HookEvent::new(&quot;turn_start&quot;)
+  104              .session_id(self.session.id.clone())
+  105              .field(&quot;MODEL&quot;, self.provider_model())
+  106              .field(&quot;SOURCE&quot;, source.to_string());</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_execution.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/agent/turn_execution.rs#L4-L35" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>    4  impl Agent {
+    5      /// Run a single turn with the given user message
+    6      pub async fn run_once(&amp;mut self, user_message: &amp;str) -&gt; Result&lt;()&gt; {
+    7          self.add_message(
+    8              Role::User,
+    9              vec![ContentBlock::Text {
+   10                  text: user_message.to_string(),
+   11                  cache_control: None,
+   12              }],
+   13          );
+   14          self.session.save()?;
+   15          if trace_enabled() {
+   16              eprintln!(&quot;[trace] session_id {}&quot;, self.session.id);
+   17          }
+   18          let _ = self.run_turn(true).await?;
+   19          Ok(())
+   20      }
+   21
+   22      pub async fn run_once_capture(&amp;mut self, user_message: &amp;str) -&gt; Result&lt;String&gt; {
+   23          self.run_once_capture_with_display_role(user_message, None)
+   24              .await
+   25      }
+   26
+   27      pub(crate) async fn run_once_capture_with_display_role(
+   28          &amp;mut self,
+   29          user_message: &amp;str,
+   30          display_role: Option&lt;crate::session::StoredDisplayRole&gt;,
+   31      ) -&gt; Result&lt;String&gt; {
+   32          self.add_message_with_display_role(
+   33              Role::User,
+   34              vec![ContentBlock::Text {
+   35                  text: user_message.to_string(),
+   36                  cache_control: None,
+   37              }],
+   38              display_role,
+   39          );
+   40          self.session.save()?;
+   41          if trace_enabled() {
+   42              eprintln!(&quot;[trace] session_id {}&quot;, self.session.id);
+   43          }
+   44          self.run_turn(false).await
+   45      }
+   46
+   47      /// Run one conversation turn with streaming events via mpsc channel (per-client)
+   48      pub async fn run_once_streaming_mpsc(
+   49          &amp;mut self,
+   50          user_message: &amp;str,
+   51          images: Vec&lt;(String, String)&gt;,
+   52          system_reminder: Option&lt;String&gt;,
+   53          event_tx: mpsc::UnboundedSender&lt;ServerEvent&gt;,
+   54      ) -&gt; Result&lt;()&gt; {
+   55          self.run_once_streaming_mpsc_with_display_role(
+   56              user_message,
+   57              images,
+   58              system_reminder,
+   59              event_tx,
+   60              None,
+   61          )
+   62          .await
+   63      }
+   64
+   65      pub(crate) async fn run_once_streaming_mpsc_with_display_role(
+   66          &amp;mut self,
+   67          user_message: &amp;str,
+   68          images: Vec&lt;(String, String)&gt;,
+   69          system_reminder: Option&lt;String&gt;,
+   70          event_tx: mpsc::UnboundedSender&lt;ServerEvent&gt;,
+   71          display_role: Option&lt;crate::session::StoredDisplayRole&gt;,
+   72      ) -&gt; Result&lt;()&gt; {
+   73          // Inject any pending notifications before the user message
+   74          let alerts = self.take_alerts();
+   75          if !alerts.is_empty() {
+   76              let alert_text = format!(
+   77                  &quot;[NOTIFICATION]\nYou received {} notification(s) from other agents working in this codebase:\n\n{}\n\nUse the communicate tool to coordinate with other agents (prefer dm; broadcast reaches only your spawned subtree).&quot;,
+   78                  alerts.len(),
+   79                  alerts.join(&quot;\n\n---\n\n&quot;)
+   80              );
+   81              self.add_message(
+   82                  Role::User,
+   83                  vec![ContentBlock::Text {
+   84                      text: alert_text,
+   85                      cache_control: None,
+   86                  }],
+   87              );
+   88          }
+   89
+   90          self.current_turn_system_reminder =
+   91              system_reminder.filter(|value| !value.trim().is_empty());
+   92
+   93          self.append_user_context_message_with_display_role(user_message, images, display_role)?;
+   94          crate::telemetry::record_turn();
+   95          let turn_started_at = Instant::now();
+   96          let start_message_index = self.message_count();
+   97          self.fire_turn_start_hook(&quot;chat&quot;);
+   98          let result = self.run_turn_streaming_mpsc(event_tx).await;
+   99          self.current_turn_system_reminder = None;
+  100          self.fire_turn_end_hook(&amp;result, turn_started_at, start_message_index);
+  101          result
+  102      }
+  103
+  104      /// Append and persist a user message without starting a model turn.
+  105      pub(crate) fn append_user_context_message(
+  106          &amp;mut self,</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 循环在每次请求前修复工具配对并重建稳定快照</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>run_turn 注册 streaming/cancel guard；每圈先补齐缺失 tool outputs，再取得可能已压缩的 provider messages，锁定 tool definitions，取上一轮准备好的 memory，并构造静态/动态分离的 prompt。</p></section><section><span>PLAIN LANGUAGE</span><p>每次再问模型前先查账：工具有没有开单不回执、旧历史是否已折叠、这一轮工具箱和提示词是否稳定。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>把异常历史修复、缓存稳定和请求生命周期放在一个明确关口。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>17–41</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>42–68</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_loops.rs:17–68</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   17      pub(super) async fn run_turn(&amp;mut self, print_output: bool) -&gt; Result&lt;String&gt; {
+   18          self.set_log_context();
+   19          crate::session_metrics::record_turn(&amp;self.session.id);
+   20          // Mark this session as actively streaming for presence UIs (e.g. the
+   21          // macOS menu bar indicator). Cleared automatically on every exit path.
+   22          let _streaming_guard = crate::session::StreamingGuard::new(self.session.id.clone());
+   23          // Register this turn&#39;s cancel signal so session-level cancels reach
+   24          // this in-flight turn even through stale control handles (issue #428).
+   25          let _turn_cancel_guard = crate::turn_cancel_registry::register_active_turn(
+   26              &amp;self.session.id,
+   27              self.graceful_shutdown.clone(),
+   28          );
+   29          let mut final_text = String::new();
+   30          let trace = trace_enabled();
+   31          let mut context_limit_retries = 0u32;
+   32          let mut incomplete_continuations = 0u32;
+   33          let mut empty_post_tool_continuations = 0u32;
+   34
+   35          loop {
+   36              let repaired = self.repair_missing_tool_outputs();
+   37              if repaired &gt; 0 {
+   38                  logging::warn(&amp;format!(
+   39                      &quot;Recovered {} missing tool output(s) before API call&quot;,
+   40                      repaired
+   41                  ));
+   42              }
+   43              let (messages, compaction_event) = self.messages_for_provider();
+   44              if let Some(event) = compaction_event {
+   45                  // Reset cache tracker and tool lock on compaction since the message history changes
+   46                  self.cache_tracker.reset();
+   47                  self.locked_tools = None;
+   48                  if print_output {
+   49                      let tokens_str = event
+   50                          .pre_tokens
+   51                          .map(|t| format!(&quot; ({} tokens)&quot;, t))
+   52                          .unwrap_or_default();
+   53                      crate::terminal_println!(
+   54                          &quot;📦 Context compacted ({}){}&quot;,
+   55                          event.trigger,
+   56                          tokens_str
+   57                      );
+   58                  }
+   59              }
+   60
+   61              let tools = self.tool_definitions().await;
+   62              let messages: std::sync::Arc&lt;[Message]&gt; = messages.into();
+   63              // Non-blocking memory: uses pending result from last turn, spawns check for next turn
+   64              let memory_pending =
+   65                  self.build_memory_prompt_nonblocking_shared(std::sync::Arc::clone(&amp;messages), None);
+   66              // Use split prompt for better caching - static content cached, dynamic not
+   67              let split_prompt = self.build_system_prompt_split(None);
+   68              self.log_prompt_prefix_accounting(&amp;split_prompt, &amp;tools);
+   69
+   70              // Check for client-side cache violations before memory injection.
+   71              // Memory is an ephemeral suffix that changes each turn; tracking it would cause
+   72              // false-positive violations every turn (prior turn&#39;s memory ≠ current history prefix).
+   73              self.record_client_cache_request(&amp;messages);
+   74
+   75              // The request snapshot now owns everything the provider needs. Drop
+   76              // the session&#39;s derived transcript copy before the network wait.
+   77              self.session.release_provider_messages_cache();
+   78
+   79              // Inject memory as a user message at the end (preserves cache prefix)
+   80              let mut messages_with_memory: Vec&lt;Message&gt; = messages.iter().cloned().collect();
+   81              if let Some(memory) = memory_pending.as_ref() {
+   82                  let memory_count = memory.count.max(1);
+   83                  let age_ms = memory.computed_at.elapsed().as_millis() as u64;
+   84                  crate::memory::record_injected_prompt(&amp;memory.prompt, memory_count, age_ms);
+   85                  self.record_memory_injection_in_session(memory);
+   86                  logging::info(&amp;format!(
+   87                      &quot;Memory injected as message ({} chars)&quot;,
+   88                      memory.prompt.len()
+   89                  ));
+   90                  let (memory_msg, _persisted) = self.prepare_memory_injection_message(memory);
+   91                  messages_with_memory.push(memory_msg);
+   92              }
+   93
+   94              logging::info(&amp;format!(
+   95                  &quot;API call starting: {} messages, {} tools&quot;,
+   96                  messages_with_memory.len(),
+   97                  tools.len()
+   98              ));
+   99              let api_start = Instant::now();
+  100
+  101              // Publish status for TUI to show during Task execution
+  102              Bus::global().publish(BusEvent::SubagentStatus(SubagentStatus {
+  103                  session_id: self.session.id.clone(),
+  104                  status: &quot;calling API&quot;.to_string(),
+  105                  model: Some(self.provider.model()),
+  106              }));
+  107
+  108              let stamped = crate::config::config()
+  109                  .features
+  110                  .message_timestamps
+  111                  .then(|| Message::with_timestamps(&amp;messages_with_memory));
+  112              let send_messages = stamped.as_deref().unwrap_or(&amp;messages_with_memory);
+  113              let prompt_has_recent_tool_result = Self::messages_end_with_tool_result(send_messages);
+  114              self.last_status_detail = None;
+  115              let mut stream = match self
+  116                  .provider
+  117                  .complete_split(
+  118                      send_messages,
+  119                      &amp;tools,
+  120                      &amp;split_prompt.static_part,
+  121                      &amp;split_prompt.dynamic_part,
+  122                      self.provider_session_id.as_deref(),
+  123                  )
+  124                  .await
+  125              {
+  126                  Ok(stream) =&gt; stream,
+  127                  Err(e) =&gt; {
+  128                      if self.try_auto_compact_after_context_limit(&amp;e.to_string()) {
+  129                          context_limit_retries += 1;
+  130                          if context_limit_retries &gt; Self::MAX_CONTEXT_LIMIT_RETRIES {
+  131                              logging::warn(
+  132                                  &quot;Context-limit compaction retry limit reached; giving up&quot;,
+  133                              );
+  134                              return Err(anyhow::anyhow!(
+  135                                  &quot;Context limit exceeded after {} compaction retries&quot;,
+  136                                  Self::MAX_CONTEXT_LIMIT_RETRIES
+  137                              ));
+  138                          }
+  139                          continue;</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_loops.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   17      const BATCH_NUDGE: &amp;str = &quot;&lt;system-reminder&gt;Several tool calls have been made one at a time. If the next independent operations can run concurrently, use the batch tool instead of making more sequential calls. Keep sequential calls when one result is required to decide the next operation.&lt;/system-reminder&gt;&quot;;
+   18
+   19      fn update_sequential_tool_rounds(current: u32, tool_count: usize, used_batch: bool) -&gt; u32 {
+   20          if tool_count == 1 &amp;&amp; !used_batch {
+   21              current.saturating_add(1)
+   22          } else {
+   23              0
+   24          }
+   25      }
+   26
+   27      fn should_inject_batch_nudge(pending: bool, batch_available: bool) -&gt; bool {
+   28          pending &amp;&amp; batch_available
+   29      }
+   30
+   31      pub(super) async fn run_turn(&amp;mut self, print_output: bool) -&gt; Result&lt;String&gt; {
+   32          self.set_log_context();
+   33          crate::session_metrics::record_turn(&amp;self.session.id);
+   34          // Mark this session as actively streaming for presence UIs (e.g. the
+   35          // macOS menu bar indicator). Cleared automatically on every exit path.
+   36          let _streaming_guard = crate::session::StreamingGuard::new(self.session.id.clone());
+   37          // Register this turn&#39;s cancel signal so session-level cancels reach
+   38          // this in-flight turn even through stale control handles (issue #428).
+   39          let _turn_cancel_guard = crate::turn_cancel_registry::register_active_turn(
+   40              &amp;self.session.id,
+   41              self.graceful_shutdown.clone(),
+   42          );
+   43          let mut final_text = String::new();
+   44          let trace = trace_enabled();
+   45          let mut context_limit_retries = 0u32;
+   46          let mut incomplete_continuations = 0u32;
+   47          let mut empty_post_tool_continuations = 0u32;
+   48          let mut fable_guardrail_reconsiderations = 0u32;
+   49          let mut sequential_single_tool_rounds = 0u32;
+   50          let mut batch_nudge_pending = false;
+   51
+   52          loop {
+   53              // Do not start another provider request once a cancel has been
+   54              // observed; the loop is re-entered by several recovery paths
+   55              // (issue #732, regression of #428).
+   56              if self.is_graceful_shutdown() {
+   57                  logging::info(&quot;Cancel observed at turn-loop head - not starting another request&quot;);
+   58                  break;
+   59              }
+   60              let repaired = self.repair_missing_tool_outputs();
+   61              if repaired &gt; 0 {
+   62                  logging::warn(&amp;format!(
+   63                      &quot;Recovered {} missing tool output(s) before API call&quot;,
+   64                      repaired
+   65                  ));
+   66              }
+   67              let (messages, compaction_event) = self.messages_for_provider();
+   68              if let Some(event) = compaction_event {
+   69                  // Reset cache tracker and tool lock on compaction since the message history changes
+   70                  self.cache_tracker.reset();
+   71                  self.locked_tools = None;
+   72                  if print_output {
+   73                      let tokens_str = event
+   74                          .pre_tokens
+   75                          .map(|t| format!(&quot; ({} tokens)&quot;, t))
+   76                          .unwrap_or_default();
+   77                      crate::terminal_println!(
+   78                          &quot;📦 Context compacted ({}){}&quot;,
+   79                          event.trigger,
+   80                          tokens_str
+   81                      );
+   82                  }
+   83              }
+   84
+   85              let tools = self.tool_definitions().await;
+   86              let messages: std::sync::Arc&lt;[Message]&gt; = messages.into();
+   87              // Non-blocking memory: uses pending result from last turn, spawns check for next turn
+   88              let memory_pending =
+   89                  self.build_memory_prompt_nonblocking_shared(std::sync::Arc::clone(&amp;messages), None);
+   90              // Use split prompt for better caching - static content cached, dynamic not
+   91              let split_prompt = self.build_system_prompt_split(None);
+   92              self.log_prompt_prefix_accounting(&amp;split_prompt, &amp;tools);
+   93
+   94              // Check for client-side cache violations before memory injection.
+   95              // Memory is an ephemeral suffix that changes each turn; tracking it would cause
+   96              // false-positive violations every turn (prior turn&#39;s memory ≠ current history prefix).
+   97              self.record_client_cache_request(&amp;messages);
+   98
+   99              // The request snapshot now owns everything the provider needs. Drop
+  100              // the session&#39;s derived transcript copy before the network wait.
+  101              self.session.release_provider_messages_cache();
+  102
+  103              // Inject memory as a user message at the end (preserves cache prefix)
+  104              let mut messages_with_memory: Vec&lt;Message&gt; = messages.iter().cloned().collect();
+  105              if let Some(memory) = memory_pending.as_ref() {
+  106                  let memory_count = memory.count.max(1);
+  107                  let age_ms = memory.computed_at.elapsed().as_millis() as u64;
+  108                  crate::memory::record_injected_prompt(&amp;memory.prompt, memory_count, age_ms);
+  109                  self.record_memory_injection_in_session(memory);
+  110                  logging::info(&amp;format!(
+  111                      &quot;Memory injected as message ({} chars)&quot;,
+  112                      memory.prompt.len()
+  113                  ));
+  114                  let (memory_msg, _persisted) = self.prepare_memory_injection_message(memory);
+  115                  messages_with_memory.push(memory_msg);
+  116              }
+  117              if Self::should_inject_batch_nudge(
+  118                  batch_nudge_pending,
+  119                  tools.iter().any(|tool| tool.name == &quot;batch&quot;),
+  120              ) {
+  121                  messages_with_memory.push(Message::user(Self::BATCH_NUDGE));
+  122                  batch_nudge_pending = false;
+  123                  sequential_single_tool_rounds = 0;
+  124              }
+  125
+  126              logging::info(&amp;format!(
+  127                  &quot;API call starting: {} messages, {} tools&quot;,
+  128                  messages_with_memory.len(),
+  129                  tools.len()
+  130              ));
+  131              let api_start = Instant::now();
+  132
+  133              // Publish status for TUI to show during Task execution
+  134              Bus::global().publish(BusEvent::SubagentStatus(SubagentStatus {
+  135                  session_id: self.session.id.clone(),
+  136                  status: &quot;calling API&quot;.to_string(),
+  137                  model: Some(self.provider.model()),
+  138              }));
+  139</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 中途断流先撤销半截状态再完整重播</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Provider 发出 RetryRollback 后，Agent 清空该次尝试的文本、tool calls、SDK results、reasoning 与 native compaction；Copilot runtime 仅在已向消费者发过可见输出且错误可重试时发送该事件。</p></section><section><span>PLAIN LANGUAGE</span><p>网络半路断了，不把前半句和前半个工具调用留在账上；先橡皮擦掉，再从头重放。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>显著降低重试导致的重复文本和重复副作用；普通 stdout 无法擦除，只会显示断点标记。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>455–468</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>469–484</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L455-L484" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_loops.rs:455–484</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L455-L484" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  455                      StreamEvent::RetryRollback { attempt, max } =&gt; {
+  456                          // Transient transport fault mid-stream; the provider is
+  457                          // replaying the request. Discard this attempt&#39;s partial
+  458                          // output so the replay doesn&#39;t duplicate it in history.
+  459                          logging::warn(&amp;format!(
+  460                              &quot;Mid-stream retry rollback (attempt {}/{}): discarding partial output ({} text chars, {} tool calls)&quot;,
+  461                              attempt,
+  462                              max,
+  463                              text_content.len(),
+  464                              tool_calls.len(),
+  465                          ));
+  466                          if print_output &amp;&amp; !text_content.is_empty() {
+  467                              // Already-printed text can&#39;t be unprinted on a plain
+  468                              // stdout stream; mark the discontinuity instead.
+  469                              println!(&quot;\n[connection interrupted, retrying response from the top]&quot;);
+  470                              io::stdout().flush()?;
+  471                          }
+  472                          text_content.clear();
+  473                          tool_calls.clear();
+  474                          current_tool = None;
+  475                          current_tool_input.clear();
+  476                          sdk_tool_results.clear();
+  477                          generated_image_contexts.clear();
+  478                          reasoning_content.clear();
+  479                          reasoning_signature.clear();
+  480                          openai_reasoning_items.clear();
+  481                          openai_native_compaction = None;
+  482                          saw_message_end = false;
+  483                          stop_reason = None;
+  484                      }
+  485                      StreamEvent::MessageEnd {
+  486                          stop_reason: reason,
+  487                      } =&gt; {
+  488                          saw_message_end = true;
+  489                          if reason.is_some() {
+  490                              stop_reason = reason;
+  491                          }
+  492                          // Don&#39;t break yet - wait for SessionId which comes after MessageEnd
+  493                          // (but stream close will also end the loop for providers without SessionId)
+  494                      }
+  495                      StreamEvent::SessionId(sid) =&gt; {
+  496                          if trace {
+  497                              eprintln!(&quot;[trace] session_id {}&quot;, sid);
+  498                          }
+  499                          self.provider_session_id = Some(sid.clone());
+  500                          self.session.provider_session_id = Some(sid);
+  501                          // We&#39;ve received session_id, can exit the loop now
+  502                          if saw_message_end {
+  503                              break;
+  504                          }
+  505                      }
+  506                      StreamEvent::UpstreamProvider { provider } =&gt; {
+  507                          // Log upstream provider for local trace output
+  508                          if trace {
+  509                              eprintln!(&quot;[trace] upstream_provider={}&quot;, provider);
+  510                          }
+  511                          self.last_upstream_provider = Some(provider);
+  512                      }
+  513                      StreamEvent::OpenAIReasoning {
+  514                          id,
+  515                          summary,
+  516                          encrypted_content,
+  517                          status,
+  518                      } =&gt; {
+  519                          if store_reasoning_content {
+  520                              openai_reasoning_items.push(ContentBlock::OpenAIReasoning {
+  521                                  id,
+  522                                  summary,
+  523                                  encrypted_content,
+  524                                  status,
+  525                              });
+  526                          }
+  527                      }
+  528                      StreamEvent::Compaction {
+  529                          trigger,
+  530                          pre_tokens,
+  531                          openai_encrypted_content,
+  532                      } =&gt; {
+  533                          if let Some(encrypted_content) = openai_encrypted_content {
+  534                              openai_native_compaction
+  535                                  .get_or_insert((encrypted_content, self.session.messages.len()));
+  536                          }
+  537                          if print_output {
+  538                              let tokens_str = pre_tokens
+  539                                  .map(|t| format!(&quot; ({} tokens)&quot;, t))
+  540                                  .unwrap_or_default();
+  541                              crate::terminal_println!(
+  542                                  &quot;📦 Context compacted ({}){}&quot;,
+  543                                  trigger,
+  544                                  tokens_str
+  545                              );
+  546                          }
+  547                      }
+  548                      StreamEvent::NativeToolCall {
+  549                          request_id,
+  550                          tool_name,
+  551                          input,
+  552                      } =&gt; {
+  553                          // Execute native tool and send result back to SDK bridge
+  554                          if trace {
+  555                              eprintln!(</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_loops.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/agent/turn_loops.rs#L455-L484" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  455                                  usage_cache_read,
+  456                                  usage_cache_creation,
+  457                              );
+  458                          }
+  459                          if trace {
+  460                              eprintln!(
+  461                                  &quot;[trace] token_usage input={} output={} cache_read={} cache_write={}&quot;,
+  462                                  usage_input.unwrap_or(0),
+  463                                  usage_output.unwrap_or(0),
+  464                                  usage_cache_read.unwrap_or(0),
+  465                                  usage_cache_creation.unwrap_or(0)
+  466                              );
+  467                          }
+  468                      }
+  469                      StreamEvent::ConnectionType { connection } =&gt; {
+  470                          if trace {
+  471                              eprintln!(&quot;[trace] connection_type={}&quot;, connection);
+  472                          }
+  473                          crate::telemetry::record_connection_type(&amp;connection);
+  474                          self.last_connection_type = Some(connection);
+  475                      }
+  476                      StreamEvent::ConnectionPhase { phase } =&gt; {
+  477                          if trace {
+  478                              eprintln!(&quot;[trace] connection_phase={}&quot;, phase);
+  479                          }
+  480                      }
+  481                      StreamEvent::StatusDetail { detail } =&gt; {
+  482                          if trace {
+  483                              eprintln!(&quot;[trace] status_detail={}&quot;, detail);
+  484                          }
+  485                          self.last_status_detail = Some(detail);
+  486                      }
+  487                      StreamEvent::RetryRollback { attempt, max } =&gt; {
+  488                          // Transient transport fault mid-stream; the provider is
+  489                          // replaying the request. Discard this attempt&#39;s partial
+  490                          // output so the replay doesn&#39;t duplicate it in history.
+  491                          logging::warn(&amp;format!(
+  492                              &quot;Mid-stream retry rollback (attempt {}/{}): discarding partial output ({} text chars, {} tool calls)&quot;,
+  493                              attempt,
+  494                              max,
+  495                              text_content.len(),
+  496                              tool_calls.len(),
+  497                          ));
+  498                          if print_output &amp;&amp; !text_content.is_empty() {
+  499                              // Already-printed text can&#39;t be unprinted on a plain
+  500                              // stdout stream; mark the discontinuity instead.
+  501                              println!(&quot;\n[connection interrupted, retrying response from the top]&quot;);
+  502                              io::stdout().flush()?;
+  503                          }
+  504                          text_content.clear();
+  505                          tool_calls.clear();
+  506                          current_tool = None;
+  507                          current_tool_input.clear();
+  508                          sdk_tool_results.clear();
+  509                          generated_image_contexts.clear();
+  510                          reasoning_content.clear();
+  511                          reasoning_signature.clear();
+  512                          openai_reasoning_items.clear();
+  513                          openai_native_compaction = None;
+  514                          saw_message_end = false;
+  515                          stop_reason = None;
+  516                      }
+  517                      StreamEvent::MessageEnd {
+  518                          stop_reason: reason,
+  519                      } =&gt; {
+  520                          saw_message_end = true;
+  521                          if reason.is_some() {
+  522                              stop_reason = reason;
+  523                          }
+  524                          // Don&#39;t break yet - wait for SessionId which comes after MessageEnd
+  525                          // (but stream close will also end the loop for providers without SessionId)
+  526                      }
+  527                      StreamEvent::SessionId(sid) =&gt; {
+  528                          if trace {
+  529                              eprintln!(&quot;[trace] session_id {}&quot;, sid);
+  530                          }
+  531                          self.provider_session_id = Some(sid.clone());
+  532                          self.session.provider_session_id = Some(sid);
+  533                          // We&#39;ve received session_id, can exit the loop now
+  534                          if saw_message_end {
+  535                              break;
+  536                          }
+  537                      }
+  538                      StreamEvent::UpstreamProvider { provider } =&gt; {
+  539                          // Log upstream provider for local trace output
+  540                          if trace {
+  541                              eprintln!(&quot;[trace] upstream_provider={}&quot;, provider);
+  542                          }
+  543                          self.last_upstream_provider = Some(provider);
+  544                      }
+  545                      StreamEvent::OpenAIReasoning {
+  546                          id,
+  547                          summary,
+  548                          encrypted_content,
+  549                          status,
+  550                      } =&gt; {
+  551                          if store_reasoning_content {
+  552                              openai_reasoning_items.push(ContentBlock::OpenAIReasoning {
+  553                                  id,
+  554                                  summary,
+  555                                  encrypted_content,</code></pre></details></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">LOOP · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>run_once/run_once_capture 先把用户消息加入 Session 并 save，再调用 run_turn；远程流入口还先注入跨 Agent 通知、图片和本轮 system reminder，并在 turn 前后触发 observer hooks。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L4-L35" target="_blank" rel="noreferrer">crates/jcode-app-core/src/agent/turn_execution.rs:4–35 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>run_turn 注册 streaming/cancel guard；每圈先补齐缺失 tool outputs，再取得可能已压缩的 provider messages，锁定 tool definitions，取上一轮准备好的 memory，并构造静态/动态分离的 prompt。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">crates/jcode-app-core/src/agent/turn_loops.rs:17–68 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>Provider 发出 RetryRollback 后，Agent 清空该次尝试的文本、tool calls、SDK results、reasoning 与 native compaction；Copilot runtime 仅在已向消费者发过可见输出且错误可重试时发送该事件。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L455-L484" target="_blank" rel="noreferrer">crates/jcode-app-core/src/agent/turn_loops.rs:455–484 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>Provider 发出 RetryRollback 后，Agent 清空该次尝试的文本、tool calls、SDK results、reasoning 与 native compaction；Copilot runtime 仅在已向消费者发过可见输出且错误可重试时发送该事件。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_loops.rs#L455-L484" target="_blank" rel="noreferrer">crates/jcode-app-core/src/agent/turn_loops.rs:455–484 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="JCode capability" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch02-architecture.html">← Architecture: layers and ownership</a><a href="ch04-model.html">Models and messages: turning streams into state →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

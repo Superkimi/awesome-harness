@@ -1,1 +1,913 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>OpenAI Codex · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · OpenAI Codex · 902bd9e06b3e</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>3 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>OpenAI Codex · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/codex/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch05-tools.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 3 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="codex-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具有统一 typed runtime 契约，hooks、观测和流式参数 diff 都是一级能力</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>CoreToolRuntime 扩展 ToolExecutor，统一声明 payload 匹配、取消清理、telemetry tags、pre/post hook payload、hook 输入改写和参数 diff consumer。</p></section><section><span>PLAIN LANGUAGE</span><p>每个新工具不只是写一个 execute 函数，还要说明如何取消、怎么记日志、钩子看什么、参数流到一半时如何展示。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>扩展成本高于轻量 Agent，但跨工具的安全和观测语义更一致。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/registry.rs:48–149</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>CoreToolRuntime 完整契约。</code></pre></div></div></article><article class="finding-card compact" id="codex-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 并发工具用读写锁实现“并行组 + 全局排他工具”</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ToolCallRuntime 对支持并发的 handler 取读锁，不支持并发的取写锁；取消时按 handler 语义等待清理或 abort，并输出结构化 aborted result 与分段时延。</p></section><section><span>PLAIN LANGUAGE</span><p>能并行的工具像多人同时读资料；危险或有状态的工具拿独占钥匙，等所有并行动作结束后自己运行。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>不是简单 Promise.all，避免非并行工具与其他调用交叉污染环境。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L74-L145" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">codex-rs/core/src/tools/registry.rs:48–149 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/parallel.rs:74–145</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L74-L145" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>读写锁并发策略。</code></pre></div></div></article><article class="finding-card compact" id="codex-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>tools</span></div><h3>03 · 工具暴露与分发分离，兼容旧 shell 又不污染模型可见清单</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具规划测试确认 unified exec 可把 exec_command/write_stdin 暴露给模型，同时保留隐藏的 legacy shell_command 仅供分发；apply_patch、web search 和动态工具也按环境、模型及 Provider capability gate。</p></section><section><span>PLAIN LANGUAGE</span><p>后台可以保留旧插座做兼容，但模型眼前只摆当前应该用的工具，避免同功能多把扳手。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>迁移期兼容性强，且 prompt tool schema 保持紧凑稳定。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">codex-rs/core/src/tools/registry.rs:48–149 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/spec_plan_tests.rs:637–708</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>unified exec 与隐藏 legacy shell。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>OpenAI Codex · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · OpenAI Codex · 902bd9e06b3e</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>3 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>OpenAI Codex · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/codex/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch05-tools.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 3 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="codex-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具有统一 typed runtime 契约，hooks、观测和流式参数 diff 都是一级能力</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>CoreToolRuntime 扩展 ToolExecutor，统一声明 payload 匹配、取消清理、telemetry tags、pre/post hook payload、hook 输入改写和参数 diff consumer。</p></section><section><span>PLAIN LANGUAGE</span><p>每个新工具不只是写一个 execute 函数，还要说明如何取消、怎么记日志、钩子看什么、参数流到一半时如何展示。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>扩展成本高于轻量 Agent，但跨工具的安全和观测语义更一致。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>48–97</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>98–149</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/registry.rs:48–149</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   48  /// Typed runtime contract for locally executed tools.
+   49  ///
+   50  /// Implementers provide the shared `ToolExecutor` behavior plus optional
+   51  /// core-owned metadata for hooks, telemetry, tool search, and argument diffs.
+   52  pub(crate) trait CoreToolRuntime: ToolExecutor&lt;ToolInvocation&gt; {
+   53      fn matches_kind(&amp;self, payload: &amp;ToolPayload) -&gt; bool {
+   54          matches!(
+   55              payload,
+   56              ToolPayload::Function { .. } | ToolPayload::ToolSearch { .. }
+   57          )
+   58      }
+   59
+   60      /// Whether cancellation should let the handler finish teardown before the
+   61      /// host returns an aborted tool response.
+   62      fn waits_for_runtime_cancellation(&amp;self) -&gt; bool {
+   63          false
+   64      }
+   65
+   66      fn telemetry_tags&lt;&#39;a&gt;(
+   67          &amp;&#39;a self,
+   68          _invocation: &amp;&#39;a ToolInvocation,
+   69      ) -&gt; BoxFuture&lt;&#39;a, ToolTelemetryTags&gt; {
+   70          Box::pin(async { Vec::new() })
+   71      }
+   72
+   73      fn post_tool_use_payload(
+   74          &amp;self,
+   75          invocation: &amp;ToolInvocation,
+   76          result: &amp;dyn ToolOutput,
+   77      ) -&gt; Option&lt;PostToolUsePayload&gt; {
+   78          let ToolPayload::Function { arguments } = &amp;invocation.payload else {
+   79              return None;
+   80          };
+   81
+   82          Some(PostToolUsePayload {
+   83              tool_name: function_hook_tool_name(invocation),
+   84              tool_use_id: result.post_tool_use_id(&amp;invocation.call_id),
+   85              tool_input: result
+   86                  .post_tool_use_input(&amp;invocation.payload)
+   87                  .unwrap_or_else(|| function_hook_tool_input(arguments)),
+   88              tool_response: result
+   89                  .post_tool_use_response(&amp;invocation.call_id, &amp;invocation.payload)
+   90                  .or_else(|| {
+   91                      // Most function tools can expose their model-facing output
+   92                      // as the hook response. Outputs with a more stable hook
+   93                      // contract should override post_tool_use_response above.
+   94                      let ResponseInputItem::FunctionCallOutput {
+   95                          output: FunctionCallOutputPayload { body, .. },
+   96                          ..
+   97                      } = result.to_response_item(&amp;invocation.call_id, &amp;invocation.payload)
+   98                      else {
+   99                          return None;
+  100                      };
+  101
+  102                      serde_json::to_value(body).ok()
+  103                  })?,
+  104          })
+  105      }
+  106
+  107      fn pre_tool_use_payload(&amp;self, invocation: &amp;ToolInvocation) -&gt; Option&lt;PreToolUsePayload&gt; {
+  108          let ToolPayload::Function { arguments } = &amp;invocation.payload else {
+  109              return None;
+  110          };
+  111
+  112          Some(PreToolUsePayload {
+  113              tool_name: function_hook_tool_name(invocation),
+  114              tool_input: function_hook_tool_input(arguments),
+  115          })
+  116      }
+  117
+  118      /// Rebuilds a tool invocation from hook-facing `tool_input`.
+  119      ///
+  120      /// Tools that opt into input-rewriting hooks should invert the same stable
+  121      /// hook contract they expose from `pre_tool_use_payload`.
+  122      fn with_updated_hook_input(
+  123          &amp;self,
+  124          invocation: ToolInvocation,
+  125          updated_input: Value,
+  126      ) -&gt; Result&lt;ToolInvocation, FunctionCallError&gt; {
+  127          let ToolPayload::Function { .. } = &amp;invocation.payload else {
+  128              return Err(FunctionCallError::RespondToModel(
+  129                  &quot;hook input rewrite received unsupported function tool payload&quot;.to_string(),
+  130              ));
+  131          };
+  132
+  133          let arguments = serde_json::to_string(&amp;updated_input).map_err(|err| {
+  134              FunctionCallError::RespondToModel(format!(
+  135                  &quot;failed to serialize rewritten {} arguments: {err}&quot;,
+  136                  flat_tool_name(&amp;invocation.tool_name)
+  137              ))
+  138          })?;
+  139          Ok(ToolInvocation {
+  140              payload: ToolPayload::Function { arguments },
+  141              ..invocation
+  142          })
+  143      }
+  144
+  145      /// Creates an optional consumer for streamed tool argument diffs.
+  146      fn create_diff_consumer(&amp;self) -&gt; Option&lt;Box&lt;dyn ToolArgumentDiffConsumer&gt;&gt; {
+  147          None
+  148      }
+  149  }
+  150
+  151  /// Consumes streamed argument diffs for a tool call and emits protocol events
+  152  /// derived from partial tool input.
+  153  pub(crate) trait ToolArgumentDiffConsumer: Send {
+  154      /// Consume the next argument diff for a tool call.
+  155      fn consume_diff(&amp;mut self, turn: &amp;TurnContext, call_id: String, diff: &amp;str)
+  156      -&gt; Option&lt;EventMsg&gt;;
+  157
+  158      /// Finish consuming argument diffs before the tool call completes.
+  159      fn finish(&amp;mut self) -&gt; Result&lt;Option&lt;EventMsg&gt;, FunctionCallError&gt; {
+  160          Ok(None)
+  161      }
+  162  }
+  163
+  164  pub(crate) struct AnyToolResult {
+  165      pub(crate) call_id: String,
+  166      pub(crate) payload: ToolPayload,
+  167      pub(crate) result: Box&lt;dyn ToolOutput&gt;,
+  168      pub(crate) post_tool_use_payload: Option&lt;PostToolUsePayload&gt;,
+  169  }
+  170
+  171  impl AnyToolResult {
+  172      pub(crate) fn into_response(self) -&gt; ResponseInputItem {
+  173          let Self {
+  174              call_id,
+  175              payload,
+  176              result,
+  177              ..
+  178          } = self;
+  179          result.to_response_item(&amp;call_id, &amp;payload)
+  180      }
+  181
+  182      pub(crate) fn code_mode_result(self) -&gt; serde_json::Value {
+  183          let Self {
+  184              payload, result, ..
+  185          } = self;
+  186          result.code_mode_result(&amp;payload)
+  187      }
+  188  }
+  189
+  190  struct PostToolUseFeedbackOutput {
+  191      original: Box&lt;dyn ToolOutput&gt;,
+  192      model_visible: FunctionToolOutput,
+  193  }
+  194
+  195  impl ToolOutput for PostToolUseFeedbackOutput {
+  196      fn log_preview(&amp;self) -&gt; String {
+  197          self.original.log_preview()
+  198      }
+  199
+  200      fn success_for_logging(&amp;self) -&gt; bool {
+  201          self.original.success_for_logging()
+  202      }
+  203
+  204      fn to_response_item(&amp;self, call_id: &amp;str, payload: &amp;ToolPayload) -&gt; ResponseInputItem {
+  205          self.model_visible.to_response_item(call_id, payload)
+  206      }
+  207
+  208      fn code_mode_result(&amp;self, payload: &amp;ToolPayload) -&gt; Value {
+  209          self.original.code_mode_result(payload)
+  210      }
+  211  }
+  212
+  213  #[derive(Debug, Clone, PartialEq, Eq)]
+  214  pub(crate) struct PreToolUsePayload {
+  215      /// Hook-facing tool name model.
+  216      ///
+  217      /// The canonical name is serialized to hook stdin, while aliases are used
+  218      /// only for matcher compatibility.
+  219      pub(crate) tool_name: HookToolName,
+  220      /// Tool-specific input exposed at `tool_input`.</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>codex-rs/core/src/tools/registry.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   48
+   49  /// Typed runtime contract for locally executed tools.
+   50  ///
+   51  /// Implementers provide the shared `ToolExecutor` behavior plus optional
+   52  /// core-owned metadata for hooks, telemetry, tool search, and argument diffs.
+   53  pub(crate) trait CoreToolRuntime: ToolExecutor&lt;ToolInvocation&gt; {
+   54      /// Returns a shared spec when both the spec and search metadata are immutable.
+   55      fn immutable_spec(&amp;self) -&gt; Option&lt;&amp;Arc&lt;ToolSpec&gt;&gt; {
+   56          None
+   57      }
+   58
+   59      /// Returns lazily cached Code Mode definitions owned by this runtime.
+   60      fn cached_code_mode_definitions(&amp;self) -&gt; Option&lt;&amp;[codex_code_mode::ToolDefinition]&gt; {
+   61          None
+   62      }
+   63
+   64      /// Returns a readiness wait for this exact tool before taking the execution gate.
+   65      fn wait_until_ready&lt;&#39;a&gt;(&amp;&#39;a self, _session: &amp;&#39;a Arc&lt;Session&gt;) -&gt; Option&lt;BoxFuture&lt;&#39;a, ()&gt;&gt; {
+   66          None
+   67      }
+   68
+   69      /// Returns the owning server only for MCP-backed tool runtimes.
+   70      fn mcp_server_name(&amp;self) -&gt; Option&lt;&amp;str&gt; {
+   71          None
+   72      }
+   73
+   74      fn matches_kind(&amp;self, payload: &amp;ToolPayload) -&gt; bool {
+   75          matches!(
+   76              payload,
+   77              ToolPayload::Function { .. } | ToolPayload::ToolSearch { .. }
+   78          )
+   79      }
+   80
+   81      /// Whether cancellation should let the handler finish teardown before the
+   82      /// host returns an aborted tool response.
+   83      fn waits_for_runtime_cancellation(&amp;self) -&gt; bool {
+   84          false
+   85      }
+   86
+   87      fn telemetry_tags(&amp;self, _invocation: &amp;ToolInvocation) -&gt; ToolTelemetryTags {
+   88          Vec::new()
+   89      }
+   90
+   91      fn post_tool_use_payload(
+   92          &amp;self,
+   93          invocation: &amp;ToolInvocation,
+   94          result: &amp;dyn ToolOutput,
+   95      ) -&gt; Option&lt;PostToolUsePayload&gt; {
+   96          let ToolPayload::Function { arguments } = &amp;invocation.payload else {
+   97              return None;
+   98          };
+   99
+  100          Some(PostToolUsePayload {
+  101              tool_name: function_hook_tool_name(invocation),
+  102              tool_use_id: result.post_tool_use_id(&amp;invocation.call_id),
+  103              tool_input: result
+  104                  .post_tool_use_input(&amp;invocation.payload)
+  105                  .unwrap_or_else(|| function_hook_tool_input(arguments)),
+  106              tool_response: result
+  107                  .post_tool_use_response(&amp;invocation.call_id, &amp;invocation.payload)
+  108                  .or_else(|| {
+  109                      // Most function tools can expose their model-facing output
+  110                      // as the hook response. Outputs with a more stable hook
+  111                      // contract should override post_tool_use_response above.
+  112                      let ResponseInputItem::FunctionCallOutput {
+  113                          output: FunctionCallOutputPayload { body, .. },
+  114                          ..
+  115                      } = result.to_response_item(&amp;invocation.call_id, &amp;invocation.payload)
+  116                      else {
+  117                          return None;
+  118                      };
+  119
+  120                      serde_json::to_value(body).ok()
+  121                  })?,
+  122          })
+  123      }
+  124
+  125      fn pre_tool_use_payload(&amp;self, invocation: &amp;ToolInvocation) -&gt; Option&lt;PreToolUsePayload&gt; {
+  126          let ToolPayload::Function { arguments } = &amp;invocation.payload else {
+  127              return None;
+  128          };
+  129
+  130          Some(PreToolUsePayload {
+  131              tool_name: function_hook_tool_name(invocation),
+  132              tool_input: function_hook_tool_input(arguments),
+  133          })
+  134      }
+  135
+  136      /// Rebuilds a tool invocation from hook-facing `tool_input`.
+  137      ///
+  138      /// Tools that opt into input-rewriting hooks should invert the same stable
+  139      /// hook contract they expose from `pre_tool_use_payload`.
+  140      fn with_updated_hook_input(
+  141          &amp;self,
+  142          invocation: ToolInvocation,
+  143          updated_input: Value,
+  144      ) -&gt; Result&lt;ToolInvocation, FunctionCallError&gt; {
+  145          let ToolPayload::Function { .. } = &amp;invocation.payload else {
+  146              return Err(FunctionCallError::RespondToModel(
+  147                  &quot;hook input rewrite received unsupported function tool payload&quot;.to_string(),
+  148              ));
+  149          };
+  150
+  151          let arguments = serde_json::to_string(&amp;updated_input).map_err(|err| {
+  152              FunctionCallError::RespondToModel(format!(
+  153                  &quot;failed to serialize rewritten {} arguments: {err}&quot;,
+  154                  flat_tool_name(&amp;invocation.tool_name)
+  155              ))
+  156          })?;
+  157          Ok(ToolInvocation {
+  158              payload: ToolPayload::Function { arguments },
+  159              ..invocation
+  160          })
+  161      }
+  162
+  163      /// Creates an optional consumer for streamed tool argument diffs.
+  164      fn create_diff_consumer(&amp;self) -&gt; Option&lt;Box&lt;dyn ToolArgumentDiffConsumer&gt;&gt; {
+  165          None
+  166      }
+  167  }
+  168
+  169  /// Consumes streamed argument diffs for a tool call and emits protocol events
+  170  /// derived from partial tool input.
+  171  pub(crate) trait ToolArgumentDiffConsumer: Send {
+  172      /// Consume the next argument diff for a tool call.
+  173      fn consume_diff(&amp;mut self, turn: &amp;TurnContext, call_id: String, diff: &amp;str)
+  174      -&gt; Option&lt;EventMsg&gt;;
+  175
+  176      /// Finish consuming argument diffs before the tool call completes.
+  177      fn finish(&amp;mut self) -&gt; Result&lt;Option&lt;EventMsg&gt;, FunctionCallError&gt; {
+  178          Ok(None)
+  179      }
+  180  }
+  181
+  182  pub(crate) struct AnyToolResult {
+  183      pub(crate) call_id: String,
+  184      pub(crate) payload: ToolPayload,
+  185      pub(crate) result: Box&lt;dyn ToolOutput&gt;,
+  186      pub(crate) post_tool_use_payload: Option&lt;PostToolUsePayload&gt;,
+  187  }
+  188
+  189  impl AnyToolResult {
+  190      pub(crate) fn into_response(self) -&gt; ResponseInputItem {
+  191          let Self {
+  192              call_id,
+  193              payload,
+  194              result,
+  195              ..
+  196          } = self;
+  197          result.to_response_item(&amp;call_id, &amp;payload)
+  198      }
+  199
+  200      pub(crate) fn code_mode_result(self) -&gt; serde_json::Value {
+  201          let Self {
+  202              payload, result, ..
+  203          } = self;
+  204          result.code_mode_result(&amp;payload)
+  205      }
+  206  }
+  207
+  208  struct PostToolUseFeedbackOutput {
+  209      original: Box&lt;dyn ToolOutput&gt;,
+  210      model_visible: FunctionToolOutput,
+  211  }
+  212
+  213  impl ToolOutput for PostToolUseFeedbackOutput {
+  214      fn log_preview(&amp;self) -&gt; String {
+  215          self.original.log_preview()
+  216      }
+  217
+  218      fn success_for_logging(&amp;self) -&gt; bool {
+  219          self.original.success_for_logging()
+  220      }</code></pre></details></div></div></article><article class="finding-card compact" id="codex-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 并发工具用读写锁实现“并行组 + 全局排他工具”</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ToolCallRuntime 对支持并发的 handler 取读锁，不支持并发的取写锁；取消时按 handler 语义等待清理或 abort，并输出结构化 aborted result 与分段时延。</p></section><section><span>PLAIN LANGUAGE</span><p>能并行的工具像多人同时读资料；危险或有状态的工具拿独占钥匙，等所有并行动作结束后自己运行。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>不是简单 Promise.all，避免非并行工具与其他调用交叉污染环境。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>74–108</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>109–145</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L74-L145" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/parallel.rs:74–145</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L74-L145" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   74      #[instrument(level = &quot;trace&quot;, skip_all)]
+   75      pub(crate) fn handle_tool_call(
+   76          self,
+   77          call: ToolCall,
+   78          cancellation_token: CancellationToken,
+   79      ) -&gt; impl std::future::Future&lt;Output = Result&lt;ResponseInputItem, CodexErr&gt;&gt; {
+   80          let error_call = call.clone();
+   81          let future =
+   82              self.handle_tool_call_with_source(call, ToolCallSource::Direct, cancellation_token);
+   83          async move {
+   84              match future.await {
+   85                  Ok(response) =&gt; Ok(response.into_response()),
+   86                  Err(FunctionCallError::Fatal(message)) =&gt; Err(CodexErr::Fatal(message)),
+   87                  Err(other) =&gt; Ok(Self::failure_response(error_call, other)),
+   88              }
+   89          }
+   90          .in_current_span()
+   91      }
+   92
+   93      #[instrument(level = &quot;trace&quot;, skip_all)]
+   94      pub(crate) fn handle_tool_call_with_source(
+   95          self,
+   96          call: ToolCall,
+   97          source: ToolCallSource,
+   98          cancellation_token: CancellationToken,
+   99      ) -&gt; impl std::future::Future&lt;Output = Result&lt;AnyToolResult, FunctionCallError&gt;&gt; {
+  100          let supports_parallel = self.router.tool_supports_parallel(&amp;call);
+  101          let router = Arc::clone(&amp;self.router);
+  102          let session = Arc::clone(&amp;self.session);
+  103          let step_context = Arc::clone(&amp;self.step_context);
+  104          let turn = Arc::clone(&amp;step_context.turn);
+  105          let tracker = Arc::clone(&amp;self.tracker);
+  106          let lock = Arc::clone(&amp;self.parallel_execution);
+  107          let invocation_cancellation_token = cancellation_token.clone();
+  108          let wait_for_runtime_cancellation = self.router.tool_waits_for_runtime_cancellation(&amp;call);
+  109          let started = Instant::now();
+  110          let tool_call_timing_guard =
+  111              ToolCallTimingGuard::capture(started, &amp;session.thread_id, &amp;turn.sub_id, &amp;call, &amp;source);
+  112          let execution_started_at = tool_call_timing_guard
+  113              .as_ref()
+  114              .map(|timing| Arc::clone(&amp;timing.execution_started_at));
+  115          let abort_session = Arc::clone(&amp;session);
+  116          let abort_source = source.clone();
+  117          let abort_turn = Arc::clone(&amp;turn);
+  118          let terminal_outcome_reached = Arc::new(AtomicBool::new(false));
+  119          let dispatch_terminal_outcome_reached = Arc::clone(&amp;terminal_outcome_reached);
+  120          let dispatch_call = call.clone();
+  121
+  122          let dispatch_span = trace_span!(
+  123              &quot;dispatch_tool_call_with_code_mode_result&quot;,
+  124              otel.name = %call.tool_name,
+  125              tool_name = %call.tool_name,
+  126              call_id = call.call_id.as_str(),
+  127              aborted = false,
+  128          );
+  129          let abort_dispatch_span = dispatch_span.clone();
+  130
+  131          let mut dispatch_handle: AbortOnDropHandle&lt;Result&lt;AnyToolResult, FunctionCallError&gt;&gt; =
+  132              AbortOnDropHandle::new(tokio::spawn(async move {
+  133                  let _guard = if supports_parallel {
+  134                      Either::Left(lock.read().await)
+  135                  } else {
+  136                      Either::Right(lock.write().await)
+  137                  };
+  138                  // Admission through the parallel-execution gate marks the end
+  139                  // of dispatch waiting and the start of handler execution.
+  140                  if let Some(execution_started_at) = execution_started_at {
+  141                      let _ = execution_started_at.set(Instant::now());
+  142                  }
+  143
+  144                  router
+  145                      .dispatch_tool_call_with_terminal_outcome(
+  146                          session,
+  147                          step_context,
+  148                          invocation_cancellation_token,
+  149                          tracker,
+  150                          dispatch_call,
+  151                          source,
+  152                          dispatch_terminal_outcome_reached,
+  153                      )
+  154                      .instrument(dispatch_span.clone())
+  155                      .await
+  156              }));
+  157
+  158          async move {
+  159              let _tool_call_timing_guard = tool_call_timing_guard;
+  160              tokio::select! {
+  161                  res = &amp;mut dispatch_handle =&gt; res.map_err(Self::tool_task_join_error)?,
+  162                  _ = cancellation_token.cancelled() =&gt; {
+  163                      if terminal_outcome_reached.load(Ordering::Acquire) || dispatch_handle.is_finished() {
+  164                          dispatch_handle.await.map_err(Self::tool_task_join_error)?
+  165                      } else {
+  166                          let secs = started.elapsed().as_secs_f32().max(0.1);
+  167                          abort_dispatch_span.record(&quot;aborted&quot;, true);
+  168                          if wait_for_runtime_cancellation {
+  169                              if terminal_outcome_reached.swap(true, Ordering::AcqRel) {
+  170                                  return dispatch_handle.await.map_err(Self::tool_task_join_error)?;
+  171                              }
+  172                              // The abort owns the terminal outcome; await only so
+  173                              // the runtime can finish process teardown.
+  174                              match dispatch_handle.await {
+  175                                  Ok(_) =&gt; {}
+  176                                  Err(err) if err.is_cancelled() =&gt; {}
+  177                                  Err(err) =&gt; return Err(Self::tool_task_join_error(err)),
+  178                              }
+  179                          } else {
+  180                              dispatch_handle.abort();
+  181                              match dispatch_handle.await {
+  182                                  Ok(result) =&gt; return result,
+  183                                  Err(err) if err.is_cancelled() =&gt; {}
+  184                                  Err(err) =&gt; return Err(Self::tool_task_join_error(err)),
+  185                              }
+  186                          }
+  187                          let response = Self::aborted_response(&amp;call, secs);
+  188                          notify_tool_aborted(
+  189                              abort_session.as_ref(),
+  190                              abort_turn.as_ref(),
+  191                              call.call_id.as_str(),
+  192                              &amp;call.tool_name,
+  193                              abort_source,
+  194                          )
+  195                          .await;
+  196                          Ok(response)
+  197                      }
+  198                  },
+  199              }
+  200          }
+  201          .in_current_span()
+  202      }
+  203  }
+  204
+  205  impl ToolCallRuntime {
+  206      fn tool_task_join_error(err: JoinError) -&gt; FunctionCallError {
+  207          FunctionCallError::Fatal(format!(&quot;tool task failed to receive: {err:?}&quot;))
+  208      }
+  209
+  210      fn failure_response(call: ToolCall, err: FunctionCallError) -&gt; ResponseInputItem {
+  211          let message = err.to_string();
+  212          match call.payload {
+  213              ToolPayload::ToolSearch { .. } =&gt; ResponseInputItem::ToolSearchOutput {
+  214                  call_id: call.call_id,
+  215                  status: &quot;completed&quot;.to_string(),
+  216                  execution: &quot;client&quot;.to_string(),</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>codex-rs/core/src/tools/parallel.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/tools/parallel.rs#L74-L145" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   74          self,
+   75          call: ToolCall,
+   76          cancellation_token: CancellationToken,
+   77      ) -&gt; impl std::future::Future&lt;Output = Result&lt;ResponseInputItem, CodexErr&gt;&gt; {
+   78          let error_call = call.clone();
+   79          let source = call.direct_source();
+   80          let future = self.handle_tool_call_with_source(call, source, cancellation_token);
+   81          async move {
+   82              match future.await {
+   83                  Ok(response) =&gt; Ok(response.into_response()),
+   84                  Err(FunctionCallError::Fatal(message)) =&gt; Err(CodexErr::Fatal(message)),
+   85                  Err(other) =&gt; Ok(Self::failure_response(error_call, other)),
+   86              }
+   87          }
+   88          .in_current_span()
+   89      }
+   90
+   91      #[instrument(level = &quot;trace&quot;, skip_all)]
+   92      pub(crate) fn handle_tool_call_with_source(
+   93          self,
+   94          call: ToolCall,
+   95          source: ToolCallSource,
+   96          cancellation_token: CancellationToken,
+   97      ) -&gt; impl std::future::Future&lt;Output = Result&lt;AnyToolResult, FunctionCallError&gt;&gt; {
+   98          if self
+   99              .step_context
+  100              .turn
+  101              .config
+  102              .features
+  103              .enabled(codex_features::Feature::ExecutedToolCallMetadata)
+  104              &amp;&amp; let Some(executed_tool_calls) = self.session.services.executed_tool_calls.as_ref()
+  105          {
+  106              executed_tool_calls.record_tool_call(
+  107                  &amp;call,
+  108                  &amp;source,
+  109                  super::effective_tool_mode(&amp;self.step_context.turn),
+  110              );
+  111          }
+  112          let router = &amp;self.step_context.tool_router;
+  113          let supports_parallel = router.tool_supports_parallel(&amp;call);
+  114          let tool_runtime = router.tool_runtime(&amp;call);
+  115          let wait_for_runtime_cancellation = router.tool_waits_for_runtime_cancellation(&amp;call);
+  116          let router = Arc::clone(router);
+  117          let session = Arc::clone(&amp;self.session);
+  118          let step_context = Arc::clone(&amp;self.step_context);
+  119          let turn = Arc::clone(&amp;step_context.turn);
+  120          let tracker = Arc::clone(&amp;self.tracker);
+  121          let lock = Arc::clone(&amp;self.parallel_execution);
+  122          let invocation_cancellation_token = cancellation_token.clone();
+  123          let started = Instant::now();
+  124          let tool_call_timing_guard =
+  125              ToolCallTimingGuard::capture(started, &amp;session.thread_id, &amp;turn.sub_id, &amp;call, &amp;source);
+  126          let execution_started_at = tool_call_timing_guard
+  127              .as_ref()
+  128              .map(|timing| Arc::clone(&amp;timing.execution_started_at));
+  129          let abort_session = Arc::clone(&amp;session);
+  130          let abort_source = source.clone();
+  131          let abort_turn = Arc::clone(&amp;turn);
+  132          let terminal_outcome_reached = Arc::new(AtomicBool::new(false));
+  133          let dispatch_terminal_outcome_reached = Arc::clone(&amp;terminal_outcome_reached);
+  134          let dispatch_call = call.clone();
+  135
+  136          let dispatch_span = trace_span!(
+  137              &quot;dispatch_tool_call_with_code_mode_result&quot;,
+  138              otel.name = %call.tool_name,
+  139              tool_name = %call.tool_name,
+  140              call_id = call.call_id.as_str(),
+  141              aborted = false,
+  142          );
+  143          let abort_dispatch_span = dispatch_span.clone();
+  144
+  145          let mut dispatch_handle: AbortOnDropHandle&lt;Result&lt;AnyToolResult, FunctionCallError&gt;&gt; =
+  146              AbortOnDropHandle::new(tokio::spawn(async move {
+  147                  if let Some(tool_runtime) = tool_runtime
+  148                      &amp;&amp; let Some(readiness) = tool_runtime.wait_until_ready(&amp;session)
+  149                  {
+  150                      readiness.await;
+  151                  }
+  152
+  153                  let _guard = if supports_parallel {
+  154                      Either::Left(lock.read().await)
+  155                  } else {
+  156                      Either::Right(lock.write().await)
+  157                  };
+  158                  // Admission through the parallel-execution gate marks the end
+  159                  // of dispatch waiting and the start of handler execution.
+  160                  if let Some(execution_started_at) = execution_started_at {
+  161                      let _ = execution_started_at.set(Instant::now());
+  162                  }
+  163
+  164                  router
+  165                      .dispatch_tool_call_with_terminal_outcome(
+  166                          session,
+  167                          step_context,
+  168                          invocation_cancellation_token,
+  169                          tracker,
+  170                          dispatch_call,
+  171                          source,
+  172                          dispatch_terminal_outcome_reached,
+  173                      )
+  174                      .instrument(dispatch_span.clone())
+  175                      .await
+  176              }));
+  177
+  178          async move {
+  179              let _tool_call_timing_guard = tool_call_timing_guard;
+  180              tokio::select! {
+  181                  res = &amp;mut dispatch_handle =&gt; res.map_err(Self::tool_task_join_error)?,
+  182                  _ = cancellation_token.cancelled() =&gt; {
+  183                      if terminal_outcome_reached.load(Ordering::Acquire) || dispatch_handle.is_finished() {
+  184                          dispatch_handle.await.map_err(Self::tool_task_join_error)?
+  185                      } else {
+  186                          let secs = started.elapsed().as_secs_f32().max(0.1);
+  187                          abort_dispatch_span.record(&quot;aborted&quot;, true);
+  188                          if wait_for_runtime_cancellation {
+  189                              if terminal_outcome_reached.swap(true, Ordering::AcqRel) {
+  190                                  return dispatch_handle.await.map_err(Self::tool_task_join_error)?;
+  191                              }
+  192                              // The abort owns the terminal outcome; await only so
+  193                              // the runtime can finish process teardown.
+  194                              match dispatch_handle.await {
+  195                                  Ok(_) =&gt; {}
+  196                                  Err(err) if err.is_cancelled() =&gt; {}
+  197                                  Err(err) =&gt; return Err(Self::tool_task_join_error(err)),
+  198                              }
+  199                          } else {
+  200                              dispatch_handle.abort();
+  201                              match dispatch_handle.await {
+  202                                  Ok(result) =&gt; return result,
+  203                                  Err(err) if err.is_cancelled() =&gt; {}
+  204                                  Err(err) =&gt; return Err(Self::tool_task_join_error(err)),
+  205                              }
+  206                          }
+  207                          let response = Self::aborted_response(&amp;call, secs);
+  208                          notify_tool_aborted(
+  209                              abort_session.as_ref(),
+  210                              abort_turn.as_ref(),
+  211                              call.call_id.as_str(),
+  212                              &amp;call.tool_name,
+  213                              abort_source,
+  214                          )
+  215                          .await;
+  216                          Ok(response)</code></pre></details></div></div></article><article class="finding-card compact" id="codex-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>tools</span></div><h3>03 · 工具暴露与分发分离，兼容旧 shell 又不污染模型可见清单</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具规划测试确认 unified exec 可把 exec_command/write_stdin 暴露给模型，同时保留隐藏的 legacy shell_command 仅供分发；apply_patch、web search 和动态工具也按环境、模型及 Provider capability gate。</p></section><section><span>PLAIN LANGUAGE</span><p>后台可以保留旧插座做兼容，但模型眼前只摆当前应该用的工具，避免同功能多把扳手。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>迁移期兼容性强，且 prompt tool schema 保持紧凑稳定。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>637–671</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>672–708</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/spec_plan_tests.rs:637–708</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  637  async fn shell_family_registers_visible_unified_exec_and_hidden_legacy_shell() {
+  638      let plan = probe(|turn| {
+  639          set_features(turn, &amp;[Feature::ShellTool, Feature::UnifiedExec]);
+  640          set_feature(turn, Feature::ShellZshFork, /*enabled*/ false);
+  641          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  642      })
+  643      .await;
+  644
+  645      plan.assert_visible_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  646      plan.assert_visible_lacks(&amp;[&quot;shell_command&quot;]);
+  647      plan.assert_registered_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;, &quot;shell_command&quot;]);
+  648      assert_eq!(plan.exposure(&quot;shell_command&quot;), ToolExposure::Hidden);
+  649      assert!(has_parameter(plan.visible_spec(&quot;exec_command&quot;), &quot;shell&quot;));
+  650  }
+  651
+  652  #[tokio::test]
+  653  async fn shell_zsh_fork_stays_standalone_until_unified_exec_composition_is_enabled() {
+  654      let standalone = probe(|turn| {
+  655          set_features(turn, &amp;[Feature::ShellTool, Feature::UnifiedExec]);
+  656          set_feature(turn, Feature::ShellZshFork, /*enabled*/ true);
+  657          set_feature(turn, Feature::UnifiedExecZshFork, /*enabled*/ false);
+  658          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  659      })
+  660      .await;
+  661
+  662      standalone.assert_visible_contains(&amp;[&quot;shell_command&quot;]);
+  663      standalone.assert_visible_lacks(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  664      standalone.assert_registered_contains(&amp;[&quot;shell_command&quot;]);
+  665      standalone.assert_registered_lacks(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  666
+  667      let composed = probe(|turn| {
+  668          set_features(
+  669              turn,
+  670              &amp;[
+  671                  Feature::ShellTool,
+  672                  Feature::UnifiedExec,
+  673                  Feature::ShellZshFork,
+  674                  Feature::UnifiedExecZshFork,
+  675              ],
+  676          );
+  677          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  678      })
+  679      .await;
+  680
+  681      if codex_utils_pty::conpty_supported() {
+  682          composed.assert_visible_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  683          composed.assert_visible_lacks(&amp;[&quot;shell_command&quot;]);
+  684          composed.assert_registered_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;, &quot;shell_command&quot;]);
+  685          assert_eq!(composed.exposure(&quot;shell_command&quot;), ToolExposure::Hidden);
+  686      } else {
+  687          composed.assert_visible_contains(&amp;[&quot;shell_command&quot;]);
+  688          composed.assert_visible_lacks(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  689      }
+  690  }
+  691
+  692  #[tokio::test]
+  693  async fn zsh_fork_unified_exec_hides_shell_parameter() {
+  694      if !codex_utils_pty::conpty_supported() {
+  695          return;
+  696      }
+  697
+  698      let plan = probe(|turn| {
+  699          set_features(
+  700              turn,
+  701              &amp;[
+  702                  Feature::ShellTool,
+  703                  Feature::UnifiedExec,
+  704                  Feature::ShellZshFork,
+  705                  Feature::UnifiedExecZshFork,
+  706              ],
+  707          );
+  708          turn.unified_exec_shell_mode =
+  709              codex_tools::UnifiedExecShellMode::ZshFork(zsh_fork_config_for_spec_plan_tests());
+  710      })
+  711      .await;
+  712
+  713      plan.assert_visible_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  714      assert!(!has_parameter(plan.visible_spec(&quot;exec_command&quot;), &quot;shell&quot;));
+  715  }
+  716
+  717  #[tokio::test]
+  718  async fn zsh_fork_unified_exec_keeps_shell_parameter_when_remote_environment_available() {
+  719      if !codex_utils_pty::conpty_supported() {
+  720          return;
+  721      }
+  722
+  723      let plan = probe(|turn| {
+  724          set_features(
+  725              turn,
+  726              &amp;[
+  727                  Feature::ShellTool,
+  728                  Feature::UnifiedExec,
+  729                  Feature::ShellZshFork,
+  730                  Feature::UnifiedExecZshFork,
+  731              ],
+  732          );
+  733          turn.unified_exec_shell_mode =
+  734              codex_tools::UnifiedExecShellMode::ZshFork(zsh_fork_config_for_spec_plan_tests());
+  735          let remote_cwd = turn
+  736              .environments
+  737              .primary()
+  738              .expect(&quot;primary environment&quot;)
+  739              .cwd()
+  740              .clone();
+  741          turn.environments
+  742              .environments
+  743              .push(TurnEnvironmentState::Ready(
+  744                  crate::session::turn_context::TurnEnvironment::new(
+  745                      &quot;remote&quot;.to_string(),
+  746                      Arc::new(
+  747                          codex_exec_server::Environment::create_for_tests(Some(
+  748                              &quot;ws://127.0.0.1:1/remote-exec-server&quot;.to_string(),
+  749                          ))
+  750                          .expect(&quot;remote test environment&quot;),
+  751                      ),
+  752                      remote_cwd,
+  753                      Vec::new(),
+  754                      /*shell*/ None,
+  755                  ),
+  756              ));
+  757      })
+  758      .await;
+  759
+  760      plan.assert_visible_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  761      assert!(has_parameter(plan.visible_spec(&quot;exec_command&quot;), &quot;shell&quot;));
+  762      assert!(has_parameter(
+  763          plan.visible_spec(&quot;exec_command&quot;),
+  764          &quot;environment_id&quot;
+  765      ));
+  766  }
+  767
+  768  #[tokio::test]
+  769  async fn environment_count_controls_environment_backed_tools() {
+  770      let no_environment = probe(|turn| {
+  771          turn.environments.environments.clear();
+  772          set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+  773          set_feature(turn, Feature::RequestPermissionsTool, /*enabled*/ true);
+  774          turn.model_info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
+  775      })
+  776      .await;
+  777      no_environment.assert_visible_lacks(&amp;[
+  778          &quot;shell_command&quot;,
+  779          &quot;exec_command&quot;,</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>codex-rs/core/src/tools/spec_plan_tests.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  637  async fn request_user_input_stays_direct_in_code_mode_only() {
+  638      let plan = probe(|turn| {
+  639          set_features(turn, &amp;[Feature::CodeMode, Feature::CodeModeOnly]);
+  640      })
+  641      .await;
+  642
+  643      plan.assert_visible_contains(&amp;[
+  644          &quot;request_user_input&quot;,
+  645          codex_code_mode::PUBLIC_TOOL_NAME,
+  646          codex_code_mode::WAIT_TOOL_NAME,
+  647      ]);
+  648      plan.assert_registered_contains(&amp;[&quot;request_user_input&quot;]);
+  649      assert_eq!(
+  650          plan.exposure(&quot;request_user_input&quot;),
+  651          ToolExposure::DirectModelOnly
+  652      );
+  653
+  654      let ToolSpec::Freeform(exec) = plan.visible_spec(codex_code_mode::PUBLIC_TOOL_NAME) else {
+  655          panic!(&quot;expected code mode exec tool&quot;);
+  656      };
+  657      assert!(!exec.description.contains(&quot;request_user_input&quot;));
+  658  }
+  659
+  660  #[tokio::test]
+  661  async fn shell_family_registers_visible_unified_exec_and_hidden_legacy_shell() {
+  662      let plan = probe(|turn| {
+  663          set_features(turn, &amp;[Feature::ShellTool, Feature::UnifiedExec]);
+  664          set_feature(turn, Feature::ShellZshFork, /*enabled*/ false);
+  665          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  666      })
+  667      .await;
+  668
+  669      plan.assert_visible_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  670      plan.assert_visible_lacks(&amp;[&quot;shell_command&quot;]);
+  671      plan.assert_registered_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;, &quot;shell_command&quot;]);
+  672      assert_eq!(plan.exposure(&quot;shell_command&quot;), ToolExposure::Hidden);
+  673      assert!(has_parameter(plan.visible_spec(&quot;exec_command&quot;), &quot;shell&quot;));
+  674  }
+  675
+  676  #[tokio::test]
+  677  async fn login_shell_parameter_follows_selected_environment() {
+  678      for (tool_name, guardian) in [
+  679          (&quot;shell_command&quot;, false),
+  680          (&quot;exec_command&quot;, false),
+  681          (&quot;exec_command&quot;, true),
+  682      ] {
+  683          for allow_login_shell in [false, true] {
+  684              let plan = probe(|turn| {
+  685                  set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+  686                  set_feature(turn, Feature::UnifiedExec, tool_name == &quot;exec_command&quot;);
+  687                  set_feature(turn, Feature::ShellZshFork, /*enabled*/ false);
+  688                  turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  689                  update_config(turn, |config| {
+  690                      config.permissions.allow_login_shell = !allow_login_shell;
+  691                  });
+  692                  let TurnEnvironmentState::Ready(environment) = turn
+  693                      .environments
+  694                      .environments
+  695                      .first_mut()
+  696                      .expect(&quot;primary environment&quot;)
+  697                  else {
+  698                      panic!(&quot;primary environment should be ready&quot;);
+  699                  };
+  700                  environment.config.allow_login_shell = allow_login_shell;
+  701                  if guardian {
+  702                      turn.session_source = codex_protocol::protocol::SessionSource::SubAgent(
+  703                          codex_protocol::protocol::SubAgentSource::Other(
+  704                              crate::guardian::GUARDIAN_REVIEWER_NAME.to_string(),
+  705                          ),
+  706                      );
+  707                  }
+  708              })
+  709              .await;
+  710
+  711              assert_eq!(
+  712                  has_parameter(plan.visible_spec(tool_name), &quot;login&quot;),
+  713                  allow_login_shell
+  714              );
+  715          }
+  716      }
+  717  }
+  718
+  719  #[tokio::test]
+  720  async fn login_shell_parameter_is_available_when_any_environment_allows_it() {
+  721      let plan = probe(|turn| {
+  722          set_features(turn, &amp;[Feature::ShellTool, Feature::UnifiedExec]);
+  723          set_feature(turn, Feature::ShellZshFork, /*enabled*/ false);
+  724          update_config(turn, |config| {
+  725              config.permissions.allow_login_shell = false;
+  726          });
+  727          duplicate_primary_environment(turn);
+  728          for (index, environment) in turn.environments.environments.iter_mut().enumerate() {
+  729              let TurnEnvironmentState::Ready(environment) = environment else {
+  730                  panic!(&quot;environment should be ready&quot;);
+  731              };
+  732              environment.config.allow_login_shell = index == 1;
+  733          }
+  734      })
+  735      .await;
+  736
+  737      assert!(has_parameter(plan.visible_spec(&quot;exec_command&quot;), &quot;login&quot;));
+  738  }
+  739
+  740  #[tokio::test]
+  741  async fn shell_command_is_not_registered_without_a_single_local_environment() {
+  742      let remote_environment = probe(|turn| {
+  743          set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+  744          set_feature(turn, Feature::UnifiedExec, /*enabled*/ false);
+  745          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  746
+  747          let TurnEnvironmentState::Ready(environment) = turn
+  748              .environments
+  749              .environments
+  750              .first_mut()
+  751              .expect(&quot;primary environment&quot;)
+  752          else {
+  753              panic!(&quot;primary environment should be ready&quot;);
+  754          };
+  755          environment.environment_id = &quot;remote&quot;.to_string();
+  756          environment.environment = Arc::new(
+  757              codex_exec_server::Environment::create_for_tests(Some(
+  758                  &quot;ws://127.0.0.1:1/remote-exec-server&quot;.to_string(),
+  759              ))
+  760              .expect(&quot;remote test environment&quot;),
+  761          );
+  762      })
+  763      .await;
+  764      remote_environment.assert_visible_lacks(&amp;[&quot;shell_command&quot;, &quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  765      remote_environment.assert_registered_lacks(&amp;[&quot;shell_command&quot;, &quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  766
+  767      let multiple_local_environments = probe(|turn| {
+  768          set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+  769          set_feature(turn, Feature::UnifiedExec, /*enabled*/ false);
+  770          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  771          duplicate_primary_environment(turn);
+  772      })
+  773      .await;
+  774      multiple_local_environments.assert_visible_lacks(&amp;[&quot;shell_command&quot;]);
+  775      multiple_local_environments.assert_registered_lacks(&amp;[&quot;shell_command&quot;]);
+  776  }
+  777
+  778  #[tokio::test]
+  779  async fn dynamic_tools_cannot_reclaim_the_reserved_shell_command_name() {</code></pre></details></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">TOOLS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>CoreToolRuntime 扩展 ToolExecutor，统一声明 payload 匹配、取消清理、telemetry tags、pre/post hook payload、hook 输入改写和参数 diff consumer。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L48-L149" target="_blank" rel="noreferrer">codex-rs/core/src/tools/registry.rs:48–149 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>ToolCallRuntime 对支持并发的 handler 取读锁，不支持并发的取写锁；取消时按 handler 语义等待清理或 abort，并输出结构化 aborted result 与分段时延。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L74-L145" target="_blank" rel="noreferrer">codex-rs/core/src/tools/parallel.rs:74–145 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>工具规划测试确认 unified exec 可把 exec_command/write_stdin 暴露给模型，同时保留隐藏的 legacy shell_command 仅供分发；apply_patch、web search 和动态工具也按环境、模型及 Provider capability gate。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708" target="_blank" rel="noreferrer">codex-rs/core/src/tools/spec_plan_tests.rs:637–708 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>工具规划测试确认 unified exec 可把 exec_command/write_stdin 暴露给模型，同时保留隐藏的 legacy shell_command 仅供分发；apply_patch、web search 和动态工具也按环境、模型及 Provider capability gate。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708" target="_blank" rel="noreferrer">codex-rs/core/src/tools/spec_plan_tests.rs:637–708 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

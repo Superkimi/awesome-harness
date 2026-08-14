@@ -1,1 +1,554 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How are new capabilities discovered, loaded, called, and removed?"><title>Kimi CLI · M08 · Extensions: MCP, Skills, and plugins</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Kimi CLI · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch08-ecosystem.html">中</a><a href="ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Kimi CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>cbc15c076d17</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · Kimi CLI · cbc15c076d17</p><h1>Extensions: MCP, Skills, and plugins</h1><p class="lede">How are new capabilities discovered, loaded, called, and removed?</p><div class="chapter-meta"><span>Chapter 8 / 10</span><span>3 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>Kimi CLI · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/kimi-cli/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/kimi-cli/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>cbc15c076d17</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Plugins and MCP are external devices: docs, device, power, and network must be registered separately.</p></div><h2>Answer the chapter question first</h2><p>How are new capabilities discovered, loaded, called, and removed? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 3 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="kimi-hooks-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · Hook 同时支持本地命令与客户端 wire subscription</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>HookEngine 按 regex 匹配并去重 server command，同时加入 wire subscriptions，并发执行；任意 result=block 即整体 block。UserPromptSubmit、Pre/PostToolUse、Stop/Failure、Compact、Notification、Subagent 等事件均接入。</p></section><section><span>PLAIN LANGUAGE</span><p>组织可以在模型动作前后插入自己的门卫/审计脚本，也可以让 IDE 客户端参与判断。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>扩展面完整；engine、命令错误与超时通常 fail-open，只有成功返回 block/exit 2 才阻止。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/hooks/engine.py#L65-L91" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/hooks/engine.py:65–91</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/hooks/engine.py#L65-L91" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>server/wire hook sources。</code></pre></div></div></article><article class="finding-card compact" id="kimi-plugin-001" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>connectors</span></div><h3>02 · 插件工具是经审批的本地子进程，可获得新鲜 Host 凭证</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>PluginTool 每次调用先请求 action=plugin:name 审批，把 JSON params 写 stdin，在插件目录执行声明 command，120 秒超时；inject mapping 可把当前 API key/base URL 注入干净环境。插件安装校验名称防 path traversal，并用同文件系统 staging swap。</p></section><section><span>PLAIN LANGUAGE</span><p>插件本质是本机程序，不是受限脚本；它能按配置拿到主机凭证，所以安装来源和权限同样重要。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>能力强但供应链风险高；approval 只确认“运行插件”，不审计插件内部每个文件/网络动作。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/plugin/tool.py#L37-L130" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/hooks/engine.py#L65-L91" target="_blank" rel="noreferrer">src/kimi_cli/hooks/engine.py:65–91 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/plugin/tool.py:37–130</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/plugin/tool.py#L37-L130" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>approval、credential env、subprocess/timeout。</code></pre></div></div></article><article class="finding-card compact" id="kimi-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>03 · MCP 延迟启动、逐服务器状态化，并对富媒体共享 100K 字符预算</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>agent 可 defer MCP，首个 agent loop 后台启动并等待，向 UI 发 loading/status；server 状态区分 connected/unauthorized/failed。MCP 结果的文本、image/audio/video data URL 共用 100000 字符预算，超额媒体丢弃并加 truncation notice。</p></section><section><span>PLAIN LANGUAGE</span><p>远程工具不必拖慢 CLI 启动，但真正开始工作前会等它们连好；一个巨型网页 DOM 或截图不能把上下文塞爆。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>体验和上下文安全较好；首轮仍会被 MCP 连接完成阻塞，OAuth token 持久落在 share dir。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L467-L485" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/hooks/engine.py#L65-L91" target="_blank" rel="noreferrer">src/kimi_cli/hooks/engine.py:65–91 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/agent.py:467–485</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L467-L485" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>MCP validation/background/defer。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Kimi CLI sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← Security: approvals, permissions, boundaries</a><a href="ch09-collaboration.html">Collaboration: sub-agents and workflows →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How are new capabilities discovered, loaded, called, and removed?"><title>Kimi CLI · M08 · Extensions: MCP, Skills, and plugins</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Kimi CLI · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch08-ecosystem.html">中</a><a href="ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Kimi CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>cbc15c076d17</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · Kimi CLI · cbc15c076d17</p><h1>Extensions: MCP, Skills, and plugins</h1><p class="lede">How are new capabilities discovered, loaded, called, and removed?</p><div class="chapter-meta"><span>Chapter 8 / 10</span><span>6 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>Kimi CLI · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/kimi-cli/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/kimi-cli/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>cbc15c076d17</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Plugins and MCP are external devices: docs, device, power, and network must be registered separately.</p></div><h2>Answer the chapter question first</h2><p>How are new capabilities discovered, loaded, called, and removed? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 6 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="kimi-hooks-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · Hook 同时支持本地命令与客户端 wire subscription</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>HookEngine 按 regex 匹配并去重 server command，同时加入 wire subscriptions，并发执行；任意 result=block 即整体 block。UserPromptSubmit、Pre/PostToolUse、Stop/Failure、Compact、Notification、Subagent 等事件均接入。</p></section><section><span>PLAIN LANGUAGE</span><p>组织可以在模型动作前后插入自己的门卫/审计脚本，也可以让 IDE 客户端参与判断。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>扩展面完整；engine、命令错误与超时通常 fail-open，只有成功返回 block/exit 2 才阻止。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>65–77</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>78–91</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/hooks/engine.py#L65-L91" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/hooks/engine.py:65–91</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/hooks/engine.py#L65-L91" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   65  class HookEngine:
+   66      &quot;&quot;&quot;Loads hook definitions and executes matching hooks in parallel.
+   67
+   68      Supports two hook sources:
+   69      - Server-side (config.toml): shell commands executed locally
+   70      - Client-side (wire subscriptions): forwarded to client via HookRequest
+   71      &quot;&quot;&quot;
+   72
+   73      def __init__(
+   74          self,
+   75          hooks: list[HookDef] | None = None,
+   76          cwd: str | None = None,
+   77          *,
+   78          on_triggered: OnTriggered | None = None,
+   79          on_resolved: OnResolved | None = None,
+   80          on_wire_hook: OnWireHookRequest | None = None,
+   81      ):
+   82          self._hooks: list[HookDef] = list(hooks) if hooks else []
+   83          self._wire_subs: list[WireHookSubscription] = []
+   84          self._cwd = cwd
+   85          self._on_triggered = on_triggered
+   86          self._on_resolved = on_resolved
+   87          self._on_wire_hook = on_wire_hook
+   88          self._by_event: dict[str, list[HookDef]] = {}
+   89          self._wire_by_event: dict[str, list[WireHookSubscription]] = {}
+   90          self._pending_fire_and_forget: set[asyncio.Task[Any]] = set()
+   91          self._rebuild_index()
+   92
+   93      def fire_and_forget_trigger(
+   94          self,
+   95          event: HookEventType,
+   96          *,
+   97          matcher_value: str = &quot;&quot;,
+   98          input_data: dict[str, Any],
+   99      ) -&gt; asyncio.Task[list[HookResult]]:
+  100          &quot;&quot;&quot;Trigger a hook in the background and keep a strong reference to the
+  101          task. asyncio holds tasks in a WeakSet, so naively writing
+  102          ``asyncio.create_task(engine.trigger(...))`` and discarding the local
+  103          variable lets Python&#39;s GC collect the still-pending task — which fires
+  104          ``loop.call_exception_handler`` with no exception field and surfaces as
+  105          ``Unhandled exception in event loop / Exception None`` in the
+  106          prompt_toolkit terminal. Use this helper any time the caller wants to
+  107          fire a hook without awaiting its completion.
+  108          &quot;&quot;&quot;
+  109          task: asyncio.Task[list[HookResult]] = asyncio.create_task(
+  110              self.trigger(event, matcher_value=matcher_value, input_data=input_data)
+  111          )
+  112          self._pending_fire_and_forget.add(task)
+  113          task.add_done_callback(self._pending_fire_and_forget.discard)
+  114          task.add_done_callback(self._log_fire_and_forget_failure)
+  115          return task
+  116
+  117      @staticmethod
+  118      def _log_fire_and_forget_failure(task: asyncio.Task[Any]) -&gt; None:
+  119          if task.cancelled():
+  120              return
+  121          exc = task.exception()
+  122          if exc is not None:
+  123              logger.opt(exception=exc).warning(&quot;Fire-and-forget hook task failed&quot;)
+  124
+  125      def _rebuild_index(self) -&gt; None:
+  126          self._by_event.clear()
+  127          for h in self._hooks:
+  128              self._by_event.setdefault(h.event, []).append(h)
+  129          self._wire_by_event.clear()
+  130          for s in self._wire_subs:
+  131              self._wire_by_event.setdefault(s.event, []).append(s)
+  132
+  133      def add_hooks(self, hooks: list[HookDef]) -&gt; None:
+  134          &quot;&quot;&quot;Add server-side hooks at runtime. Rebuilds index.&quot;&quot;&quot;
+  135          self._hooks.extend(hooks)
+  136          self._rebuild_index()
+  137
+  138      def add_wire_subscriptions(self, subs: list[WireHookSubscription]) -&gt; None:
+  139          &quot;&quot;&quot;Register client-side hook subscriptions from wire initialize.&quot;&quot;&quot;
+  140          self._wire_subs.extend(subs)
+  141          self._rebuild_index()
+  142
+  143      def set_callbacks(
+  144          self,
+  145          on_triggered: OnTriggered | None = None,
+  146          on_resolved: OnResolved | None = None,
+  147          on_wire_hook: OnWireHookRequest | None = None,
+  148      ) -&gt; None:
+  149          &quot;&quot;&quot;Set wire event callbacks.&quot;&quot;&quot;
+  150          self._on_triggered = on_triggered
+  151          self._on_resolved = on_resolved
+  152          self._on_wire_hook = on_wire_hook
+  153
+  154      @property
+  155      def has_hooks(self) -&gt; bool:
+  156          return bool(self._hooks) or bool(self._wire_subs)
+  157
+  158      def has_hooks_for(self, event: HookEventType) -&gt; bool:
+  159          return bool(self._by_event.get(event)) or bool(self._wire_by_event.get(event))
+  160
+  161      @property
+  162      def summary(self) -&gt; dict[str, int]:</code></pre></div></div></article><article class="finding-card compact" id="kimi-plugin-001" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>connectors</span></div><h3>02 · 插件工具是经审批的本地子进程，可获得新鲜 Host 凭证</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>PluginTool 每次调用先请求 action=plugin:name 审批，把 JSON params 写 stdin，在插件目录执行声明 command，120 秒超时；inject mapping 可把当前 API key/base URL 注入干净环境。插件安装校验名称防 path traversal，并用同文件系统 staging swap。</p></section><section><span>PLAIN LANGUAGE</span><p>插件本质是本机程序，不是受限脚本；它能按配置拿到主机凭证，所以安装来源和权限同样重要。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>能力强但供应链风险高；approval 只确认“运行插件”，不审计插件内部每个文件/网络动作。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>37–82</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>83–130</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/plugin/tool.py#L37-L130" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/plugin/tool.py:37–130</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/plugin/tool.py#L37-L130" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   37  class PluginTool(CallableTool):
+   38      &quot;&quot;&quot;A tool that executes a plugin command in a subprocess.
+   39
+   40      Parameters are passed via stdin as JSON.
+   41      stdout is captured as the tool result.
+   42      Host credentials are injected as environment variables at runtime
+   43      (not baked into config files) to handle OAuth token refresh.
+   44      &quot;&quot;&quot;
+   45
+   46      def __init__(
+   47          self,
+   48          tool_spec: PluginToolSpec,
+   49          plugin_dir: Path,
+   50          *,
+   51          inject: dict[str, str],
+   52          config: Config,
+   53          approval: Approval | None = None,
+   54          **kwargs: Any,
+   55      ):
+   56          super().__init__(
+   57              name=tool_spec.name,
+   58              description=tool_spec.description,
+   59              parameters=tool_spec.parameters or {&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {}},
+   60              **kwargs,
+   61          )
+   62          self._command = tool_spec.command
+   63          self._plugin_dir = plugin_dir
+   64          self._inject = inject  # e.g. {&quot;kimiCodeAPIKey&quot;: &quot;api_key&quot;}
+   65          self._config = config
+   66          self._approval = approval
+   67
+   68      def _build_env(self) -&gt; dict[str, str]:
+   69          &quot;&quot;&quot;Build env vars with fresh host credentials for the subprocess.&quot;&quot;&quot;
+   70          env = get_clean_env()
+   71          if self._inject:
+   72              host_values = _get_host_values(self._config)
+   73              for target_key, source_key in self._inject.items():
+   74                  if source_key in host_values:
+   75                      # Inject as env var using the plugin&#39;s config key name
+   76                      # e.g. kimiCodeAPIKey=&lt;fresh api_key&gt;
+   77                      env[target_key] = host_values[source_key]
+   78          return env
+   79
+   80      async def __call__(self, *args: Any, **kwargs: Any) -&gt; ToolReturnValue:
+   81          if self._approval is not None:
+   82              description = f&quot;Run plugin tool `{self.name}`.&quot;
+   83              if not await self._approval.request(self.name, f&quot;plugin:{self.name}&quot;, description):
+   84                  return ToolRejectedError()
+   85
+   86          params_json = json.dumps(kwargs, ensure_ascii=False)
+   87
+   88          try:
+   89              proc = await asyncio.create_subprocess_exec(
+   90                  *self._command,
+   91                  stdin=asyncio.subprocess.PIPE,
+   92                  stdout=asyncio.subprocess.PIPE,
+   93                  stderr=asyncio.subprocess.PIPE,
+   94                  cwd=str(self._plugin_dir),
+   95                  env=self._build_env(),
+   96              )
+   97          except Exception as exc:
+   98              return ToolRuntimeError(str(exc))
+   99
+  100          try:
+  101              stdout, stderr = await asyncio.wait_for(
+  102                  proc.communicate(input=params_json.encode(&quot;utf-8&quot;)),
+  103                  timeout=120,
+  104              )
+  105          except asyncio.CancelledError:
+  106              proc.kill()
+  107              await proc.wait()
+  108              raise
+  109          except TimeoutError:
+  110              proc.kill()
+  111              await proc.wait()
+  112              return ToolError(
+  113                  message=f&quot;Plugin tool &#39;{self.name}&#39; timed out after 120s.&quot;,
+  114                  brief=&quot;Timeout&quot;,
+  115              )
+  116
+  117          output = stdout.decode(&quot;utf-8&quot;, errors=&quot;replace&quot;).strip()
+  118          err_output = stderr.decode(&quot;utf-8&quot;, errors=&quot;replace&quot;).strip()
+  119
+  120          if proc.returncode != 0:
+  121              error_msg = err_output or output or f&quot;Exit code {proc.returncode}&quot;
+  122              return ToolError(
+  123                  message=f&quot;Plugin tool &#39;{self.name}&#39; failed: {error_msg}&quot;,
+  124                  brief=f&quot;Exit {proc.returncode}&quot;,
+  125              )
+  126
+  127          if err_output:
+  128              logger.debug(&quot;Plugin tool {name} stderr: {err}&quot;, name=self.name, err=err_output)
+  129
+  130          return ToolOk(output=output)
+  131
+  132
+  133  def load_plugin_tools(
+  134      plugins_dir: Path, config: Config, *, approval: Approval | None = None
+  135  ) -&gt; list[PluginTool]:
+  136      &quot;&quot;&quot;Scan installed plugins and create PluginTool instances for declared tools.&quot;&quot;&quot;
+  137      from kimi_cli.plugin import PLUGIN_JSON, PluginError, parse_plugin_json
+  138
+  139      if not plugins_dir.is_dir():
+  140          return []
+  141
+  142      tools: list[PluginTool] = []
+  143      for child in sorted(plugins_dir.iterdir()):
+  144          plugin_json = child / PLUGIN_JSON
+  145          if not child.is_dir() or not plugin_json.is_file():
+  146              continue
+  147          try:
+  148              spec = parse_plugin_json(plugin_json)
+  149          except PluginError:
+  150              continue
+  151          for tool_spec in spec.tools:
+  152              try:
+  153                  tool = PluginTool(
+  154                      tool_spec,
+  155                      plugin_dir=child,
+  156                      inject=spec.inject,
+  157                      config=config,
+  158                      approval=approval,
+  159                  )
+  160              except Exception:
+  161                  logger.warning(
+  162                      &quot;Skipping invalid plugin tool: {name} (from {plugin})&quot;,
+  163                      name=tool_spec.name,
+  164                      plugin=spec.name,
+  165                  )
+  166                  continue
+  167              tools.append(tool)
+  168              logger.info(
+  169                  &quot;Loaded plugin tool: {name} (from {plugin})&quot;,
+  170                  name=tool_spec.name,
+  171                  plugin=spec.name,
+  172              )
+  173      return tools
+  174</code></pre></div></div></article><article class="finding-card compact" id="kimi-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>03 · MCP 延迟启动、逐服务器状态化，并对富媒体共享 100K 字符预算</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>agent 可 defer MCP，首个 agent loop 后台启动并等待，向 UI 发 loading/status；server 状态区分 connected/unauthorized/failed。MCP 结果的文本、image/audio/video data URL 共用 100000 字符预算，超额媒体丢弃并加 truncation notice。</p></section><section><span>PLAIN LANGUAGE</span><p>远程工具不必拖慢 CLI 启动，但真正开始工作前会等它们连好；一个巨型网页 DOM 或截图不能把上下文塞爆。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>体验和上下文安全较好；首轮仍会被 MCP 连接完成阻塞，OAuth token 持久落在 share dir。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>467–475</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>476–485</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L467-L485" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/agent.py:467–485</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L467-L485" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  467      if mcp_configs:
+  468          validated_mcp_configs: list[MCPConfig] = []
+  469          if mcp_configs:
+  470              from fastmcp.mcp_config import MCPConfig
+  471
+  472              for mcp_config in mcp_configs:
+  473                  try:
+  474                      validated_mcp_configs.append(
+  475                          mcp_config
+  476                          if isinstance(mcp_config, MCPConfig)
+  477                          else MCPConfig.model_validate(mcp_config)
+  478                      )
+  479                  except pydantic.ValidationError as e:
+  480                      raise MCPConfigError(f&quot;Invalid MCP config: {e}&quot;) from e
+  481          if start_mcp_loading:
+  482              await toolset.load_mcp_tools(validated_mcp_configs, runtime, in_background=True)
+  483          else:
+  484              toolset.defer_mcp_tool_loading(validated_mcp_configs, runtime)
+  485
+  486      return Agent(
+  487          name=agent_spec.name,
+  488          system_prompt=system_prompt,
+  489          toolset=toolset,
+  490          runtime=runtime,
+  491      )
+  492
+  493
+  494  def _load_system_prompt(
+  495      path: Path, args: dict[str, str], builtin_args: BuiltinSystemPromptArgs
+  496  ) -&gt; str:
+  497      logger.info(&quot;Loading system prompt: {path}&quot;, path=path)
+  498      system_prompt = path.read_text(encoding=&quot;utf-8&quot;).strip()
+  499      logger.debug(
+  500          &quot;Substituting system prompt with builtin args: {builtin_args}, spec args: {spec_args}&quot;,
+  501          builtin_args=builtin_args,
+  502          spec_args=args,
+  503      )
+  504      env = JinjaEnvironment(
+  505          loader=FileSystemLoader(path.parent),
+  506          keep_trailing_newline=True,
+  507          lstrip_blocks=True,
+  508          trim_blocks=True,
+  509          variable_start_string=&quot;${&quot;,
+  510          variable_end_string=&quot;}&quot;,
+  511          undefined=StrictUndefined,
+  512      )
+  513      try:
+  514          template = env.from_string(system_prompt)
+  515          return template.render(asdict(builtin_args), **args)
+  516      except UndefinedError as exc:
+  517          raise SystemPromptTemplateError(f&quot;Missing system prompt arg in {path}: {exc}&quot;) from exc
+  518      except TemplateError as exc:
+  519          raise SystemPromptTemplateError(f&quot;Invalid system prompt template: {path}: {exc}&quot;) from exc
+  520</code></pre></div></div></article><article class="finding-card compact" id="kimi-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · 系统指令是 Jinja 模板，运行环境与项目说明在启动时冻结</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>load_agent 用 StrictUndefined Jinja 渲染 system.md 和 builtin/spec args；Context 首次写入 _system_prompt，子 Agent resume 时优先复用持久 prompt 而非当前模板。</p></section><section><span>PLAIN LANGUAGE</span><p>系统提示词像带变量的表单，启动时填入 OS、shell、目录、文件树、AGENTS 和技能；恢复旧子 Agent 时继续沿用当时版本。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>保证 resume 行为稳定；模板升级不会自动改变旧子 Agent 的规则。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>494–504</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>505–517</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L494-L517" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/agent.py:494–517</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L494-L517" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  494  def _load_system_prompt(
+  495      path: Path, args: dict[str, str], builtin_args: BuiltinSystemPromptArgs
+  496  ) -&gt; str:
+  497      logger.info(&quot;Loading system prompt: {path}&quot;, path=path)
+  498      system_prompt = path.read_text(encoding=&quot;utf-8&quot;).strip()
+  499      logger.debug(
+  500          &quot;Substituting system prompt with builtin args: {builtin_args}, spec args: {spec_args}&quot;,
+  501          builtin_args=builtin_args,
+  502          spec_args=args,
+  503      )
+  504      env = JinjaEnvironment(
+  505          loader=FileSystemLoader(path.parent),
+  506          keep_trailing_newline=True,
+  507          lstrip_blocks=True,
+  508          trim_blocks=True,
+  509          variable_start_string=&quot;${&quot;,
+  510          variable_end_string=&quot;}&quot;,
+  511          undefined=StrictUndefined,
+  512      )
+  513      try:
+  514          template = env.from_string(system_prompt)
+  515          return template.render(asdict(builtin_args), **args)
+  516      except UndefinedError as exc:
+  517          raise SystemPromptTemplateError(f&quot;Missing system prompt arg in {path}: {exc}&quot;) from exc
+  518      except TemplateError as exc:
+  519          raise SystemPromptTemplateError(f&quot;Invalid system prompt template: {path}: {exc}&quot;) from exc
+  520</code></pre></div></div></article><article class="finding-card compact" id="kimi-instructions-002" data-finding-dimension="instructions"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>05 · AGENTS.md 按 root→cwd 合并，叶子优先分享 32KiB 总预算</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>load_agents_md 从 project root 走到 work dir，每层检查 .kimi/AGENTS.md、AGENTS.md、agents.md；普通大小写候选按优先级择一而 .kimi 可并存，内容预算从叶子向根分配，最后按根到叶顺序拼接并标源。</p></section><section><span>PLAIN LANGUAGE</span><p>越靠近正在工作的目录越有机会完整进入上下文，但展示顺序仍是先总规则、后局部规则。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>符合层级覆盖直觉；超过 32KiB 的上层说明可能被截短。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>87–126</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>127–168</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L87-L168" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/agent.py:87–168</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L87-L168" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   87  async def load_agents_md(work_dir: KaosPath) -&gt; str | None:
+   88      &quot;&quot;&quot;Discover and merge ``AGENTS.md`` files from the project root down to *work_dir*.
+   89
+   90      For each directory on the path, the following candidates are checked in order:
+   91
+   92      1. ``.kimi/AGENTS.md``  — project-local kimi config (highest priority)
+   93      2. ``AGENTS.md``        — standard location
+   94      3. ``agents.md``        — lowercase variant (mutually exclusive with 2)
+   95
+   96      Within a single directory, ``.kimi/AGENTS.md`` and ``AGENTS.md``/``agents.md``
+   97      are **both** loaded (with ``.kimi/`` first), but ``AGENTS.md`` and ``agents.md``
+   98      are mutually exclusive (uppercase wins).
+   99
+  100      All discovered files are concatenated root→leaf, separated by ``\\n\\n``, with
+  101      source annotations.  Total size is capped at :data:`_AGENTS_MD_MAX_BYTES`.
+  102      Budget is allocated leaf-first so deeper (more specific) files are never
+  103      truncated in favour of shallower ones.
+  104      &quot;&quot;&quot;
+  105      project_root = await find_project_root(work_dir)
+  106      dirs = await _dirs_root_to_leaf(work_dir, project_root)
+  107
+  108      # Phase 1: collect all candidate files (root → leaf order)
+  109      discovered: list[tuple[KaosPath, str]] = []  # (path, content)
+  110      for d in dirs:
+  111          # .kimi/AGENTS.md is always checked independently (can coexist with root-level file)
+  112          kimi_path = d / &quot;.kimi&quot; / &quot;AGENTS.md&quot;
+  113          # AGENTS.md and agents.md are mutually exclusive (uppercase wins)
+  114          root_candidates = [d / &quot;AGENTS.md&quot;, d / &quot;agents.md&quot;]
+  115
+  116          candidates: list[KaosPath] = []
+  117          if await kimi_path.is_file():
+  118              candidates.append(kimi_path)
+  119          for rc in root_candidates:
+  120              if await rc.is_file():
+  121                  candidates.append(rc)
+  122                  break
+  123
+  124          for path in candidates:
+  125              content = (await path.read_text()).strip()
+  126              if content:
+  127                  discovered.append((path, content))
+  128                  logger.info(&quot;Loaded agents.md: {path}&quot;, path=path)
+  129
+  130      if not discovered:
+  131          logger.info(
+  132              &quot;No AGENTS.md found from {root} to {cwd}&quot;,
+  133              root=project_root,
+  134              cwd=work_dir,
+  135          )
+  136          return None
+  137
+  138      # Phase 2: allocate budget leaf-first so deeper (more specific) files
+  139      # are never truncated in favour of shallower ones.
+  140      # The annotation overhead (&lt;!-- From: ... --&gt;\n and \n\n separators)
+  141      # is included in the budget so the final output never exceeds the limit.
+  142      remaining = _AGENTS_MD_MAX_BYTES
+  143      budgeted: list[tuple[KaosPath, str]] = [None] * len(discovered)  # type: ignore[list-item]
+  144      for i in reversed(range(len(discovered))):
+  145          path, content = discovered[i]
+  146          annotation = f&quot;&lt;!-- From: {path} --&gt;\n&quot;
+  147          # Reserve space for the annotation and the \n\n separator between parts
+  148          separator_cost = len(b&quot;\n\n&quot;) if i &lt; len(discovered) - 1 else 0
+  149          overhead = len(annotation.encode()) + separator_cost
+  150          remaining -= overhead
+  151          if remaining &lt;= 0:
+  152              budgeted[i] = (path, &quot;&quot;)
+  153              remaining = 0
+  154              continue
+  155          encoded = content.encode()
+  156          if len(encoded) &gt; remaining:
+  157              content = encoded[:remaining].decode(errors=&quot;ignore&quot;).strip()
+  158              logger.warning(&quot;AGENTS.md truncated due to size limit: {path}&quot;, path=path)
+  159          remaining -= len(content.encode())
+  160          budgeted[i] = (path, content)
+  161
+  162      # Phase 3: assemble in root → leaf order, skipping entries emptied by truncation
+  163      parts: list[str] = []
+  164      for path, content in budgeted:
+  165          if content:
+  166              parts.append(f&quot;&lt;!-- From: {path} --&gt;\n{content}&quot;)
+  167
+  168      return &quot;\n\n&quot;.join(parts) if parts else None
+  169
+  170
+  171  @dataclass(slots=True, kw_only=True)
+  172  class Runtime:
+  173      &quot;&quot;&quot;Agent runtime.&quot;&quot;&quot;
+  174
+  175      config: Config
+  176      oauth: OAuthManager
+  177      llm: LLM | None  # we do not freeze the `Runtime` dataclass because LLM can be changed
+  178      session: Session
+  179      builtin_args: BuiltinSystemPromptArgs
+  180      denwa_renji: DenwaRenji
+  181      approval: Approval
+  182      labor_market: LaborMarket
+  183      environment: Environment
+  184      notifications: NotificationManager
+  185      background_tasks: BackgroundTaskManager
+  186      skills: dict[str, Skill]
+  187      additional_dirs: list[KaosPath]
+  188      skills_dirs: list[KaosPath]
+  189      subagent_store: SubagentStore | None = None
+  190      approval_runtime: ApprovalRuntime | None = None
+  191      root_wire_hub: RootWireHub | None = None
+  192      subagent_id: str | None = None
+  193      subagent_type: str | None = None
+  194      role: Literal[&quot;root&quot;, &quot;subagent&quot;] = &quot;root&quot;
+  195      ui_mode: str = &quot;shell&quot;
+  196      resumed: bool = False
+  197      hook_engine: Any = None
+  198      &quot;&quot;&quot;HookEngine instance, set by KimiCLI after soul creation.&quot;&quot;&quot;
+  199
+  200      def __post_init__(self) -&gt; None:
+  201          if self.subagent_store is None:
+  202              self.subagent_store = SubagentStore(self.session)
+  203          if self.root_wire_hub is None:
+  204              self.root_wire_hub = RootWireHub()
+  205          if self.approval_runtime is None:
+  206              self.approval_runtime = ApprovalRuntime()
+  207          self.approval_runtime.bind_root_wire_hub(self.root_wire_hub)
+  208          self.approval.set_runtime(self.approval_runtime)
+  209          self.background_tasks.bind_runtime(self)
+  210
+  211      @staticmethod
+  212      async def create(
+  213          config: Config,
+  214          oauth: OAuthManager,
+  215          llm: LLM | None,
+  216          session: Session,
+  217          yolo: bool,
+  218          afk: bool = False,
+  219          runtime_afk: bool = False,
+  220          skills_dirs: list[KaosPath] | None = None,
+  221      ) -&gt; Runtime:
+  222          ls_output, agents_md, environment = await asyncio.gather(
+  223              list_directory(session.work_dir),
+  224              load_agents_md(session.work_dir),
+  225              Environment.detect(),
+  226          )
+  227
+  228          # Discover and format skills (grouped by scope for the system prompt).
+  229          scoped_roots = await resolve_skills_roots(
+  230              session.work_dir,
+  231              skills_dirs=skills_dirs,
+  232              merge_brands=config.merge_all_available_skills,
+  233              extra_skill_dirs=config.extra_skill_dirs or None,
+  234          )
+  235          # Canonicalize so symlinked skill directories match resolved paths
+  236          skills_roots_canonical = [s.root.canonical() for s in scoped_roots]
+  237          skills = await discover_skills_from_roots(scoped_roots)
+  238          skills_by_name = index_skills(skills)
+  239          logger.info(&quot;Discovered {count} skill(s)&quot;, count=len(skills))</code></pre></div></div></article><article class="finding-card compact" id="kimi-skills-001" data-finding-dimension="instructions"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>06 · Skills 跨 kimi/claude/codex 目录合并，并映射为 slash/flow 命令</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Config 默认 merge_all_available_skills=true，支持 extra skill dirs；system prompt 只列摘要并要求按需读取 SKILL.md。KimiSoul 把 standard/flow skill 注册为 slash command，flow 还构造成 FlowRunner。</p></section><section><span>PLAIN LANGUAGE</span><p>技能不是把全文常驻提示词，而是先给目录卡片，需要时再读；同一套 CLI 还能复用其他 Agent 生态的技能目录。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>节省上下文并增强兼容；skill 发现冲突需依赖 scope precedence。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>242–249</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>250–259</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/config.py#L242-L259" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/config.py:242–259</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/config.py#L242-L259" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  242      merge_all_available_skills: bool = Field(
+  243          default=True,
+  244          description=(
+  245              &quot;Merge skills from all existing brand directories (kimi/claude/codex) &quot;
+  246              &quot;instead of using only the first one found. Defaults to true so users &quot;
+  247              &quot;who keep skills in multiple brand directories see everything out of &quot;
+  248              &quot;the box; set to false to restore the first-match-only behaviour.&quot;
+  249          ),
+  250      )
+  251      extra_skill_dirs: list[str] = Field(
+  252          default_factory=list,
+  253          description=(
+  254              &quot;Extra directories to discover skills from, added on top of the &quot;
+  255              &quot;built-in / user / project locations. Each entry may be an absolute &quot;
+  256              &quot;path, ``~``-prefixed (expanded against $HOME), or relative to the &quot;
+  257              &quot;project root (the nearest ``.git`` directory above the work dir). &quot;
+  258              &quot;Missing paths are silently skipped.&quot;
+  259          ),
+  260      )
+  261      telemetry: bool = Field(
+  262          default=True,
+  263          description=&quot;Enable anonymous telemetry to help improve kimi-cli. Set to false to disable.&quot;,
+  264      )
+  265
+  266      @model_validator(mode=&quot;after&quot;)
+  267      def validate_model(self) -&gt; Self:
+  268          if self.default_model and self.default_model not in self.models:
+  269              raise ValueError(f&quot;Default model {self.default_model} not found in models&quot;)
+  270          for model in self.models.values():
+  271              if model.provider not in self.providers:
+  272                  raise ValueError(f&quot;Provider {model.provider} not found in providers&quot;)
+  273          return self
+  274
+  275
+  276  def get_config_file() -&gt; Path:
+  277      &quot;&quot;&quot;Get the configuration file path.&quot;&quot;&quot;
+  278      return get_share_dir() / &quot;config.toml&quot;
+  279
+  280
+  281  def get_default_config() -&gt; Config:
+  282      &quot;&quot;&quot;Get the default configuration.&quot;&quot;&quot;
+  283      return Config(
+  284          default_model=&quot;&quot;,
+  285          models={},
+  286          providers={},
+  287          services=Services(),
+  288      )
+  289
+  290
+  291  def load_config(config_file: Path | None = None) -&gt; Config:
+  292      &quot;&quot;&quot;
+  293      Load configuration from config file.
+  294      If the config file does not exist, create it with default configuration.
+  295
+  296      Args:
+  297          config_file (Path | None): Path to the configuration file. If None, use default path.
+  298
+  299      Returns:
+  300          Validated Config object.
+  301
+  302      Raises:
+  303          ConfigError: If the configuration file is invalid.
+  304      &quot;&quot;&quot;
+  305      default_config_file = get_config_file().expanduser().resolve(strict=False)
+  306      if config_file is None:
+  307          config_file = default_config_file
+  308      config_file = config_file.expanduser().resolve(strict=False)
+  309      is_default_config_file = config_file == default_config_file
+  310      logger.debug(&quot;Loading config from file: {file}&quot;, file=config_file)
+  311
+  312      # If the user hasn&#39;t provided an explicit config path, migrate legacy JSON config once.
+  313      if is_default_config_file and not config_file.exists():
+  314          _migrate_json_config_to_toml()
+  315
+  316      if not config_file.exists():
+  317          config = get_default_config()
+  318          logger.debug(&quot;No config file found, creating default config: {config}&quot;, config=config)
+  319          save_config(config, config_file)
+  320          config.is_from_default_location = is_default_config_file
+  321          config.source_file = config_file
+  322          return config
+  323
+  324      try:
+  325          config_text = config_file.read_text(encoding=&quot;utf-8&quot;)
+  326          if config_file.suffix.lower() == &quot;.json&quot;:
+  327              data = json.loads(config_text)
+  328          else:
+  329              data = tomlkit.loads(config_text)
+  330          config = Config.model_validate(data)</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">ECOSYSTEM · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>HookEngine 按 regex 匹配并去重 server command，同时加入 wire subscriptions，并发执行；任意 result=block 即整体 block。UserPromptSubmit、Pre/PostToolUse、Stop/Failure、Compact、Notification、Subagent 等事件均接入。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/hooks/engine.py#L65-L91" target="_blank" rel="noreferrer">src/kimi_cli/hooks/engine.py:65–91 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>PluginTool 每次调用先请求 action=plugin:name 审批，把 JSON params 写 stdin，在插件目录执行声明 command，120 秒超时；inject mapping 可把当前 API key/base URL 注入干净环境。插件安装校验名称防 path traversal，并用同文件系统 staging swap。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/plugin/tool.py#L37-L130" target="_blank" rel="noreferrer">src/kimi_cli/plugin/tool.py:37–130 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>agent 可 defer MCP，首个 agent loop 后台启动并等待，向 UI 发 loading/status；server 状态区分 connected/unauthorized/failed。MCP 结果的文本、image/audio/video data URL 共用 100000 字符预算，超额媒体丢弃并加 truncation notice。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L467-L485" target="_blank" rel="noreferrer">src/kimi_cli/soul/agent.py:467–485 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>load_agent 用 StrictUndefined Jinja 渲染 system.md 和 builtin/spec args；Context 首次写入 _system_prompt，子 Agent resume 时优先复用持久 prompt 而非当前模板。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L494-L517" target="_blank" rel="noreferrer">src/kimi_cli/soul/agent.py:494–517 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Kimi CLI sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← Security: approvals, permissions, boundaries</a><a href="ch09-collaboration.html">Collaboration: sub-agents and workflows →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

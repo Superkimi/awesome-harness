@@ -1,1 +1,1047 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="新能力如何被发现、加载、调用和卸载？"><title>JCode · M08 · 扩展：MCP、Skill、插件如何接入</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">JCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch08-ecosystem.html">中</a><a href="../../en/tutorial/ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>JCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">master<br>71fa60c4dc87</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · JCode · 71fa60c4dc87</p><h1>扩展：MCP、Skill、插件如何接入</h1><p class="lede">新能力如何被发现、加载、调用和卸载？</p><div class="chapter-meta"><span>第 8 / 10 章</span><span>2 条源码 finding</span><span>master</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>JCode · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/jcode/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/jcode/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>71fa60c4dc87</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。</p></div><h2>先回答本章问题</h2><p>新能力如何被发现、加载、调用和卸载？ 模型还没开口，用户输入已经落账；即使后面 API 或工具出错，恢复时也不会连问题本身都丢掉。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="jcode-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · MCP 区分共享池与 session-owned client</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>daemon 中 shared:true 默认服务器复用 SharedMcpPool，shared:false 状态型服务器每 session 单独启动；并行 connect_all 不阻塞 agent spawn，第一次真实调用尚未连接的 server 时最多等待 30 秒。</p></section><section><span>白话解释</span><p>无状态工具服务像公共电梯，多会话共用；带浏览器状态的服务像独立房间，每个会话一套。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>降低重复进程与连接成本，同时避免 stateful connector 串会话。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/mcp/manager.rs#L1-L59" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/mcp/manager.rs:1–59</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/mcp/manager.rs#L1-L59" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>shared/owned 架构与 30s bound。</code></pre></div></div></article><article class="finding-card compact" id="jcode-mcp-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · MCP schema 晚到只允许一次 cache miss，JSON-RPC 请求按 ID 隔离</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>首轮不等待慢 MCP；tool list 锁定后若发现新 mcp__ tools，仅重建一次 snapshot。McpHandle 用 atomic request id、pending oneshot map 与 30s request timeout，使共享 server 的并发响应互不串线。</p></section><section><span>白话解释</span><p>先让用户马上说话，不为插件启动卡住；插件工具后来到时只付一次缓存失效成本。多会话共用服务时每张工单都有号码。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>启动延迟与 prompt cache 之间做了明确折中。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L335-L393" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/mcp/manager.rs#L1-L59" target="_blank" rel="noreferrer">crates/jcode-base/src/mcp/manager.rs:1–59 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_execution.rs:335–393</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L335-L393" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>locked snapshot 与 MCP late-register one-shot。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="JCode sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← 安全：审批、权限和边界</a><a href="ch09-collaboration.html">协作：子 Agent 与工作流 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="新能力如何被发现、加载、调用和卸载？"><title>JCode · M08 · 扩展：MCP、Skill、插件如何接入</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">JCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch08-ecosystem.html">中</a><a href="../../en/tutorial/ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>JCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">master<br>71fa60c4dc87</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · JCode · 71fa60c4dc87</p><h1>扩展：MCP、Skill、插件如何接入</h1><p class="lede">新能力如何被发现、加载、调用和卸载？</p><div class="chapter-meta"><span>第 8 / 10 章</span><span>4 条源码 finding</span><span>master</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>JCode · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/jcode/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/jcode/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>71fa60c4dc87</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。</p></div><h2>先回答本章问题</h2><p>新能力如何被发现、加载、调用和卸载？ 模型还没开口，用户输入已经落账；即使后面 API 或工具出错，恢复时也不会连问题本身都丢掉。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="jcode-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · MCP 区分共享池与 session-owned client</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>daemon 中 shared:true 默认服务器复用 SharedMcpPool，shared:false 状态型服务器每 session 单独启动；并行 connect_all 不阻塞 agent spawn，第一次真实调用尚未连接的 server 时最多等待 30 秒。</p></section><section><span>白话解释</span><p>无状态工具服务像公共电梯，多会话共用；带浏览器状态的服务像独立房间，每个会话一套。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>降低重复进程与连接成本，同时避免 stateful connector 串会话。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–29</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>30–59</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/mcp/manager.rs#L1-L59" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/mcp/manager.rs:1–59</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/mcp/manager.rs#L1-L59" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  //! MCP Manager - manages MCP server connections for a single session.
+    2  //!
+    3  //! In daemon mode with a shared pool, servers marked `shared: true` (the default)
+    4  //! are managed by the pool and reused across sessions. Servers marked `shared: false`
+    5  //! (e.g., Playwright with browser state) are spawned per-session.
+    6
+    7  use super::client::{McpClient, McpHandle};
+    8  use super::pool::SharedMcpPool;
+    9  use super::protocol::{McpConfig, McpServerConfig, McpToolDef, ToolCallResult};
+   10  use anyhow::{Context, Result};
+   11  use serde::Serialize;
+   12  use std::collections::HashMap;
+   13  use std::sync::Arc;
+   14  use tokio::sync::RwLock;
+   15
+   16  /// Bound on how long a tool call will wait for a not-yet-connected MCP server
+   17  /// to come up before failing with a clean tool error. Keeps a slow/hanging
+   18  /// server from blocking a single tool call forever (and never blocks spawn).
+   19  const CONNECT_ON_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+   20
+   21  /// Meter a completed tool call for partner-discovery provenance. No-op for
+   22  /// servers without discovery provenance (the overwhelmingly common case) and
+   23  /// whenever `sponsors.enabled` is false. Counts only; never content.
+   24  fn meter_provenance_call(server: &amp;str, result: &amp;Result&lt;ToolCallResult&gt;) {
+   25      let is_error = match result {
+   26          Ok(res) =&gt; res.is_error,
+   27          Err(_) =&gt; true,
+   28      };
+   29      crate::sponsors::provenance::on_tool_call(server, is_error);
+   30  }
+   31
+   32  #[derive(Debug, Clone, Default, Serialize)]
+   33  pub struct McpManagerMemoryProfile {
+   34      pub shared_pool_enabled: bool,
+   35      pub configured_servers: usize,
+   36      pub connected_servers: usize,
+   37      pub pooled_handles: usize,
+   38      pub owned_clients: usize,
+   39      pub available_tools: usize,
+   40      pub configured_json_bytes: usize,
+   41      pub tool_schema_estimate_bytes: usize,
+   42  }
+   43
+   44  /// Manages MCP server connections for a session.
+   45  ///
+   46  /// In daemon mode, shared servers delegate to the SharedMcpPool while
+   47  /// non-shared (stateful) servers are owned per-session.
+   48  pub struct McpManager {
+   49      pool: Option&lt;Arc&lt;SharedMcpPool&gt;&gt;,
+   50      /// Handles from the shared pool (shared servers)
+   51      pool_handles: RwLock&lt;HashMap&lt;String, McpHandle&gt;&gt;,
+   52      /// Per-session owned clients (non-shared / stateful servers)
+   53      owned_clients: RwLock&lt;HashMap&lt;String, McpClient&gt;&gt;,
+   54      config: McpConfig,
+   55      session_id: String,
+   56      /// Project directory used to resolve project-local MCP config. `None`
+   57      /// loads only global config and never consults the process working directory.
+   58      project_dir: Option&lt;std::path::PathBuf&gt;,
+   59  }
+   60
+   61  impl McpManager {
+   62      /// Create a new manager in owned in-process mode (used by tests and local harnesses).
+   63      pub fn new() -&gt; Self {
+   64          Self {
+   65              pool: None,
+   66              pool_handles: RwLock::new(HashMap::new()),
+   67              owned_clients: RwLock::new(HashMap::new()),
+   68              config: McpConfig::load(),
+   69              session_id: &quot;owned&quot;.to_string(),
+   70              project_dir: None,
+   71          }
+   72      }
+   73
+   74      /// Create a manager backed by a shared pool (daemon mode)
+   75      pub fn with_shared_pool(pool: Arc&lt;SharedMcpPool&gt;, session_id: String) -&gt; Self {
+   76          Self::with_shared_pool_for_dir(pool, session_id, None)
+   77      }
+   78
+   79      /// Create a manager backed by a shared pool, resolving project-local MCP
+   80      /// config against `project_dir` instead of the server process cwd
+   81      /// (issue #420: remote/client sessions must use the session working dir).
+   82      pub fn with_shared_pool_for_dir(
+   83          pool: Arc&lt;SharedMcpPool&gt;,
+   84          session_id: String,
+   85          project_dir: Option&lt;std::path::PathBuf&gt;,
+   86      ) -&gt; Self {
+   87          Self {
+   88              pool: Some(pool),
+   89              pool_handles: RwLock::new(HashMap::new()),
+   90              owned_clients: RwLock::new(HashMap::new()),
+   91              config: McpConfig::load_for_dir(project_dir.as_deref()),
+   92              session_id,
+   93              project_dir,
+   94          }
+   95      }
+   96
+   97      /// Create manager with specific config (no sharing)
+   98      pub fn with_config(config: McpConfig) -&gt; Self {
+   99          Self {
+  100              pool: None,
+  101              pool_handles: RwLock::new(HashMap::new()),
+  102              owned_clients: RwLock::new(HashMap::new()),
+  103              config,
+  104              session_id: &quot;owned&quot;.to_string(),
+  105              project_dir: None,
+  106          }
+  107      }
+  108
+  109      /// Whether this manager has a shared pool available
+  110      pub fn is_shared(&amp;self) -&gt; bool {
+  111          self.pool.is_some()
+  112      }
+  113
+  114      /// Connect to all configured servers.
+  115      /// Shared servers go to the pool, non-shared are spawned per-session.
+  116      #[expect(
+  117          clippy::collapsible_if,
+  118          reason = &quot;MCP connect flow keeps shared-pool and owned-server paths explicit&quot;
+  119      )]
+  120      pub async fn connect_all(&amp;self) -&gt; Result&lt;(usize, Vec&lt;(String, String)&gt;)&gt; {
+  121          let mut total_successes = 0;
+  122          let mut total_failures = Vec::new();
+  123
+  124          // Disabled servers stay in config (so they can be connected on demand
+  125          // by name) but are never auto-spawned (issue #436).
+  126          // Split the rest into shared vs owned.
+  127          let (shared_servers, owned_servers): (Vec&lt;_&gt;, Vec&lt;_&gt;) = self
+  128              .config
+  129              .servers
+  130              .iter()</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/jcode-base/src/mcp/manager.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/mcp/manager.rs#L1-L59" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    1  //! MCP Manager - manages MCP server connections for a single session.
+    2  //!
+    3  //! In daemon mode with a shared pool, servers marked `shared: true` (the default)
+    4  //! are managed by the pool and reused across sessions. Servers marked `shared: false`
+    5  //! (e.g., Playwright with browser state) are spawned per-session.
+    6
+    7  use super::client::{McpClient, McpHandle};
+    8  use super::pool::SharedMcpPool;
+    9  use super::protocol::{McpConfig, McpServerConfig, McpToolDef, ToolCallResult};
+   10  use anyhow::{Context, Result};
+   11  use serde::Serialize;
+   12  use std::collections::HashMap;
+   13  use std::sync::Arc;
+   14  use tokio::sync::RwLock;
+   15
+   16  /// Bound on how long a tool call will wait for a not-yet-connected MCP server
+   17  /// to come up before failing with a clean tool error. Keeps a slow/hanging
+   18  /// server from blocking a single tool call forever (and never blocks spawn).
+   19  const CONNECT_ON_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+   20
+   21  /// Meter a completed tool call for partner-discovery provenance. No-op for
+   22  /// servers without discovery provenance (the overwhelmingly common case) and
+   23  /// whenever `sponsors.enabled` is false. Counts only; never content.
+   24  fn meter_provenance_call(server: &amp;str, result: &amp;Result&lt;ToolCallResult&gt;) {
+   25      let is_error = match result {
+   26          Ok(res) =&gt; res.is_error,
+   27          Err(_) =&gt; true,
+   28      };
+   29      crate::sponsors::provenance::on_tool_call(server, is_error);
+   30  }
+   31
+   32  #[derive(Debug, Clone, Default, Serialize)]
+   33  pub struct McpManagerMemoryProfile {
+   34      pub shared_pool_enabled: bool,
+   35      pub configured_servers: usize,
+   36      pub connected_servers: usize,
+   37      pub pooled_handles: usize,
+   38      pub owned_clients: usize,
+   39      pub available_tools: usize,
+   40      pub configured_json_bytes: usize,
+   41      pub tool_schema_estimate_bytes: usize,
+   42  }
+   43
+   44  /// Manages MCP server connections for a session.
+   45  ///
+   46  /// In daemon mode, shared servers delegate to the SharedMcpPool while
+   47  /// non-shared (stateful) servers are owned per-session.
+   48  pub struct McpManager {
+   49      pool: Option&lt;Arc&lt;SharedMcpPool&gt;&gt;,
+   50      /// Handles from the shared pool (shared servers)
+   51      pool_handles: RwLock&lt;HashMap&lt;String, McpHandle&gt;&gt;,
+   52      /// Per-session owned clients (non-shared / stateful servers)
+   53      owned_clients: RwLock&lt;HashMap&lt;String, McpClient&gt;&gt;,
+   54      config: McpConfig,
+   55      session_id: String,
+   56      /// Project directory used to resolve project-local MCP config. `None`
+   57      /// loads only global config and never consults the process working directory.
+   58      project_dir: Option&lt;std::path::PathBuf&gt;,
+   59  }
+   60
+   61  impl McpManager {
+   62      /// Create a new manager in owned in-process mode (used by tests and local harnesses).
+   63      pub fn new() -&gt; Self {
+   64          let project_dir = std::env::current_dir().ok();
+   65          Self {
+   66              pool: None,
+   67              pool_handles: RwLock::new(HashMap::new()),
+   68              owned_clients: RwLock::new(HashMap::new()),
+   69              config: McpConfig::load_for_dir(project_dir.as_deref()),
+   70              session_id: &quot;owned&quot;.to_string(),
+   71              project_dir,
+   72          }
+   73      }
+   74
+   75      /// Create a manager backed by a shared pool (daemon mode)
+   76      pub fn with_shared_pool(pool: Arc&lt;SharedMcpPool&gt;, session_id: String) -&gt; Self {
+   77          Self::with_shared_pool_for_dir(pool, session_id, None)
+   78      }
+   79
+   80      /// Create a manager backed by a shared pool, resolving project-local MCP
+   81      /// config against `project_dir` instead of the server process cwd
+   82      /// (issue #420: remote/client sessions must use the session working dir).
+   83      pub fn with_shared_pool_for_dir(
+   84          pool: Arc&lt;SharedMcpPool&gt;,
+   85          session_id: String,
+   86          project_dir: Option&lt;std::path::PathBuf&gt;,
+   87      ) -&gt; Self {
+   88          Self {
+   89              pool: Some(pool),
+   90              pool_handles: RwLock::new(HashMap::new()),
+   91              owned_clients: RwLock::new(HashMap::new()),
+   92              config: McpConfig::load_for_dir(project_dir.as_deref()),
+   93              session_id,
+   94              project_dir,
+   95          }
+   96      }
+   97
+   98      /// Create manager with specific config (no sharing)
+   99      pub fn with_config(config: McpConfig) -&gt; Self {
+  100          Self {
+  101              pool: None,
+  102              pool_handles: RwLock::new(HashMap::new()),
+  103              owned_clients: RwLock::new(HashMap::new()),
+  104              config,
+  105              session_id: &quot;owned&quot;.to_string(),
+  106              project_dir: None,
+  107          }
+  108      }
+  109
+  110      /// Whether this manager has a shared pool available
+  111      pub fn is_shared(&amp;self) -&gt; bool {
+  112          self.pool.is_some()
+  113      }
+  114
+  115      /// Connect to all configured servers.
+  116      /// Shared servers go to the pool, non-shared are spawned per-session.
+  117      #[expect(
+  118          clippy::collapsible_if,
+  119          reason = &quot;MCP connect flow keeps shared-pool and owned-server paths explicit&quot;
+  120      )]
+  121      pub async fn connect_all(&amp;self) -&gt; Result&lt;(usize, Vec&lt;(String, String)&gt;)&gt; {
+  122          let mut total_successes = 0;
+  123          let mut total_failures = Vec::new();
+  124
+  125          // Disabled servers stay in config (so they can be connected on demand
+  126          // by name) but are never auto-spawned (issue #436).
+  127          // Split the rest into shared vs owned.
+  128          let (shared_servers, owned_servers): (Vec&lt;_&gt;, Vec&lt;_&gt;) = self
+  129              .config
+  130              .servers</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-mcp-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · MCP schema 晚到只允许一次 cache miss，JSON-RPC 请求按 ID 隔离</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>首轮不等待慢 MCP；tool list 锁定后若发现新 mcp__ tools，仅重建一次 snapshot。McpHandle 用 atomic request id、pending oneshot map 与 30s request timeout，使共享 server 的并发响应互不串线。</p></section><section><span>白话解释</span><p>先让用户马上说话，不为插件启动卡住；插件工具后来到时只付一次缓存失效成本。多会话共用服务时每张工单都有号码。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>启动延迟与 prompt cache 之间做了明确折中。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>335–363</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>364–393</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L335-L393" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_execution.rs:335–393</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L335-L393" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  335      pub(super) async fn tool_definitions(&amp;mut self) -&gt; Vec&lt;ToolDefinition&gt; {
+  336          if self.session.is_canary {
+  337              self.registry.register_selfdev_tools().await;
+  338          }
+  339
+  340          // Return locked tools if available (prevents cache invalidation from
+  341          // tools arriving asynchronously after the first API request).
+  342          //
+  343          // Exception: MCP servers connect on a background task and register
+  344          // `mcp__*` tools seconds after the session starts — typically *after*
+  345          // the first turn has already locked the snapshot. We deliberately do
+  346          // NOT block the first turn on MCP connection: servers can be slow or
+  347          // hang, and we want the user to be able to talk to the agent the moment
+  348          // the session spawns. The price is that the first locked snapshot is
+  349          // missing MCP tools, and the only other unlock path fires when the model
+  350          // calls the `mcp` management tool — which it cannot do without first
+  351          // seeing MCP tools (#206).
+  352          //
+  353          // So, exactly once per locked snapshot, if MCP tools have since appeared
+  354          // in the registry, we rebuild. This is a single intentional provider
+  355          // prompt-cache miss (the turn MCP tools first appear). The
+  356          // `mcp_late_register_resolved` flag makes this a one-shot check so we do
+  357          // not rescan the registry on every subsequent turn.
+  358          if let Some(ref locked) = self.locked_tools {
+  359              if self.mcp_late_register_resolved {
+  360                  return locked.clone();
+  361              }
+  362              if self.registry_has_new_mcp_tools(locked).await {
+  363                  logging::info(
+  364                      &quot;MCP tools registered after first turn locked the tool snapshot — \
+  365                       rebuilding once to expose them. This is one intentional prompt-cache \
+  366                       miss; we accept it so the agent is reachable immediately at spawn \
+  367                       instead of blocking on MCP connection (#206).&quot;,
+  368                  );
+  369                  // Latch the one-shot guard and drop the stale snapshot directly.
+  370                  // We intentionally do NOT call `unlock_tools()` here, because that
+  371                  // re-arms the guard (it is the explicit-reload path) and would let
+  372                  // the recheck fire again on every later turn.
+  373                  self.mcp_late_register_resolved = true;
+  374                  self.locked_tools = None;
+  375                  self.cache_tracker.reset();
+  376              } else {
+  377                  // No MCP tools have appeared. They may still be connecting, so
+  378                  // leave the guard unset and re-check on the next turn. Once they
+  379                  // appear (or never do, after the registry settles) we stop.
+  380                  return locked.clone();
+  381              }
+  382          }
+  383
+  384          let tools = self.build_filtered_tool_definitions().await;
+  385
+  386          // Lock the tool list to prevent cache invalidation when more tools
+  387          // arrive asynchronously mid-session.
+  388          logging::info(&amp;format!(
+  389              &quot;Locking tool list at {} tools for cache stability&quot;,
+  390              tools.len()
+  391          ));
+  392          self.locked_tools = Some(tools.clone());
+  393          tools
+  394      }
+  395
+  396      /// Build the agent&#39;s tool definitions from the registry, applying the
+  397      /// session&#39;s `allowed_tools`, `disabled_tools`, and self-dev filters.
+  398      async fn build_filtered_tool_definitions(&amp;self) -&gt; Vec&lt;ToolDefinition&gt; {
+  399          let mut tools = self.registry.definitions(self.allowed_tools.as_ref()).await;
+  400          if !self.disabled_tools.is_empty() {
+  401              tools.retain(|tool| !self.disabled_tools.contains(&amp;tool.name));
+  402          }
+  403          Self::apply_selfdev_tool_surface(&amp;mut tools, self.session.is_canary);
+  404          tools
+  405      }
+  406
+  407      /// Tailor the `selfdev` tool definition to the session mode.
+  408      ///
+  409      /// The registry stores a single shared `selfdev` tool with a default
+  410      /// (non-self-dev) schema. Self-dev sessions get the full build/test/reload
+  411      /// surface; every other session keeps the lightweight on-ramp surface
+  412      /// (`enter`, `setup`, `reload`, `status`, `find-config`). The tool stays
+  413      /// available in all sessions so the agent can always enter self-dev mode.
+  414      fn apply_selfdev_tool_surface(tools: &amp;mut [ToolDefinition], is_canary: bool) {
+  415          for tool in tools.iter_mut() {
+  416              if tool.name == &quot;selfdev&quot; {
+  417                  tool.description =
+  418                      crate::tool::selfdev::SelfDevTool::description_for(is_canary).to_string();
+  419                  tool.input_schema = crate::tool::selfdev::SelfDevTool::schema_for(is_canary);
+  420              }
+  421          }
+  422      }
+  423
+  424      /// Returns true if the registry contains `mcp__*` tools (subject to the
+  425      /// session&#39;s `allowed_tools` filter) that are not present in the currently
+  426      /// locked snapshot. Used to detect the async MCP-registration race (#206).
+  427      async fn registry_has_new_mcp_tools(&amp;self, locked: &amp;[ToolDefinition]) -&gt; bool {
+  428          let registry_names = self.registry.tool_names().await;
+  429          let allowed = self.allowed_tools.as_ref();
+  430          registry_names.iter().any(|name| {
+  431              name.starts_with(&quot;mcp__&quot;)
+  432                  &amp;&amp; allowed.map(|set| set.contains(name)).unwrap_or(true)
+  433                  &amp;&amp; !self.disabled_tools.contains(name)
+  434                  &amp;&amp; !locked.iter().any(|t| &amp;t.name == name)
+  435          })
+  436      }
+  437
+  438      pub async fn tool_names(&amp;self) -&gt; Vec&lt;String&gt; {
+  439          self.tool_definitions_for_debug()
+  440              .await
+  441              .into_iter()
+  442              .map(|tool| tool.name)
+  443              .collect()
+  444      }
+  445
+  446      /// Get full tool definitions for debug introspection (bypasses lock)
+  447      pub async fn tool_definitions_for_debug(&amp;self) -&gt; Vec&lt;crate::message::ToolDefinition&gt; {
+  448          if self.session.is_canary {
+  449              self.registry.register_selfdev_tools().await;
+  450          }
+  451          let mut tools = self.registry.definitions(self.allowed_tools.as_ref()).await;
+  452          if !self.disabled_tools.is_empty() {
+  453              tools.retain(|tool| !self.disabled_tools.contains(&amp;tool.name));
+  454          }
+  455          Self::apply_selfdev_tool_surface(&amp;mut tools, self.session.is_canary);
+  456          tools
+  457      }
+  458
+  459      pub async fn execute_tool(
+  460          &amp;self,
+  461          name: &amp;str,
+  462          input: serde_json::Value,
+  463      ) -&gt; Result&lt;crate::tool::ToolOutput&gt; {
+  464          self.validate_tool_allowed(name)?;</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/jcode-app-core/src/agent/turn_execution.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/agent/turn_execution.rs#L335-L393" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  335      pub fn set_memory_enabled(&amp;mut self, enabled: bool) {
+  336          self.memory_enabled = enabled;
+  337          if !enabled {
+  338              crate::memory::clear_pending_memory(&amp;self.session.id);
+  339          }
+  340      }
+  341
+  342      /// Mark this session as an inline swarm worker. When enabled, the streaming
+  343      /// loop publishes a throttled output tail to the global bus so a
+  344      /// coordinator can render a live inline gallery viewport for it.
+  345      pub fn set_inline_output_tap(&amp;mut self, enabled: bool) {
+  346          self.inline_output_tap = enabled;
+  347      }
+  348
+  349      /// Whether this session streams an inline output tail to the bus.
+  350      pub(crate) fn inline_output_tap(&amp;self) -&gt; bool {
+  351          self.inline_output_tap
+  352      }
+  353
+  354      /// Publish the current rolling activity tail to the bus for the
+  355      /// coordinator&#39;s inline gallery. No-op unless the inline tap is enabled.
+  356      pub(crate) fn publish_inline_tail(&amp;self) {
+  357          if !self.inline_output_tap {
+  358              return;
+  359          }
+  360          crate::bus::Bus::global().publish(crate::bus::BusEvent::SwarmOutputTail(
+  361              crate::bus::SwarmOutputTail {
+  362                  session_id: self.session.id.clone(),
+  363                  tail: self.inline_tail.render(),
+  364              },
+  365          ));
+  366      }
+  367
+  368      /// Check whether memory features are enabled for this session.
+  369      pub fn memory_enabled(&amp;self) -&gt; bool {
+  370          self.memory_enabled
+  371      }
+  372
+  373      /// Set the stdin request channel for interactive stdin forwarding
+  374      pub fn set_stdin_request_tx(
+  375          &amp;mut self,
+  376          tx: tokio::sync::mpsc::UnboundedSender&lt;crate::tool::StdinInputRequest&gt;,
+  377      ) {
+  378          self.stdin_request_tx = Some(tx);
+  379      }
+  380
+  381      pub(super) async fn tool_definitions(&amp;mut self) -&gt; Vec&lt;ToolDefinition&gt; {
+  382          if self.session.is_canary {
+  383              self.registry.register_selfdev_tools().await;
+  384          }
+  385
+  386          // Return locked tools if available (prevents cache invalidation from
+  387          // tools arriving asynchronously after the first API request).
+  388          //
+  389          // Exception: MCP servers connect on a background task and register
+  390          // `mcp__*` tools seconds after the session starts — typically *after*
+  391          // the first turn has already locked the snapshot. We deliberately do
+  392          // NOT block the first turn on MCP connection: servers can be slow or
+  393          // hang, and we want the user to be able to talk to the agent the moment
+  394          // the session spawns. The price is that the first locked snapshot is
+  395          // missing MCP tools, and the only other unlock path fires when the model
+  396          // calls the `mcp` management tool — which it cannot do without first
+  397          // seeing MCP tools (#206).
+  398          //
+  399          // So, exactly once per locked snapshot, if MCP tools have since appeared
+  400          // in the registry, we rebuild. This is a single intentional provider
+  401          // prompt-cache miss (the turn MCP tools first appear). The
+  402          // `mcp_late_register_resolved` flag makes this a one-shot check so we do
+  403          // not rescan the registry on every subsequent turn.
+  404          if let Some(ref locked) = self.locked_tools {
+  405              if self.mcp_late_register_resolved {
+  406                  return locked.clone();
+  407              }
+  408              if self.registry_has_new_mcp_tools(locked).await {
+  409                  logging::info(
+  410                      &quot;MCP tools registered after first turn locked the tool snapshot — \
+  411                       rebuilding once to expose them. This is one intentional prompt-cache \
+  412                       miss; we accept it so the agent is reachable immediately at spawn \
+  413                       instead of blocking on MCP connection (#206).&quot;,
+  414                  );
+  415                  // Latch the one-shot guard and drop the stale snapshot directly.
+  416                  // We intentionally do NOT call `unlock_tools()` here, because that
+  417                  // re-arms the guard (it is the explicit-reload path) and would let
+  418                  // the recheck fire again on every later turn.
+  419                  self.mcp_late_register_resolved = true;
+  420                  self.locked_tools = None;
+  421                  self.cache_tracker.reset();
+  422              } else {
+  423                  // No MCP tools have appeared. They may still be connecting, so
+  424                  // leave the guard unset and re-check on the next turn. Once they
+  425                  // appear (or never do, after the registry settles) we stop.
+  426                  return locked.clone();
+  427              }
+  428          }
+  429
+  430          let tools = self.build_filtered_tool_definitions().await;
+  431
+  432          // Lock the tool list to prevent cache invalidation when more tools
+  433          // arrive asynchronously mid-session.
+  434          logging::info(&amp;format!(
+  435              &quot;Locking tool list at {} tools for cache stability&quot;,
+  436              tools.len()
+  437          ));
+  438          self.locked_tools = Some(tools.clone());
+  439          tools
+  440      }
+  441
+  442      /// Build the agent&#39;s tool definitions from the registry, applying the
+  443      /// session&#39;s `allowed_tools`, `disabled_tools`, and self-dev filters.
+  444      async fn build_filtered_tool_definitions(&amp;self) -&gt; Vec&lt;ToolDefinition&gt; {
+  445          let mut tools = self.registry.definitions(self.allowed_tools.as_ref()).await;
+  446          if !self.disabled_tools.is_empty() {
+  447              tools.retain(|tool| {
+  448                  !crate::tool::tool_name_is_disabled(&amp;self.disabled_tools, &amp;tool.name)
+  449              });
+  450          }
+  451          Self::apply_selfdev_tool_surface(&amp;mut tools, self.session.is_canary);
+  452          tools
+  453      }
+  454
+  455      /// Expose the `selfdev` tool only while running in self-development mode.
+  456      ///
+  457      /// The registry keeps the implementation available for self-dev sessions,
+  458      /// but regular agents should not spend tool-list context on an internal
+  459      /// development surface.
+  460      fn apply_selfdev_tool_surface(tools: &amp;mut Vec&lt;ToolDefinition&gt;, is_canary: bool) {
+  461          if !is_canary {
+  462              tools.retain(|tool| tool.name != &quot;selfdev&quot;);
+  463              return;
+  464          }</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>03 · 指令层有稳定优先级：base、AGENTS、overlay、preferred tools、skills、动态 memory</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>prompt builder 编译内建 base prompt，加载 global/project AGENTS.md，再读 ~/.jcode 与项目 .jcode overlay/preferred-tools，列出可用 skills；memory 和 active skill 进入动态部分。Session context 还冻结日期、OS、架构、版本、cwd 与 git 摘要。</p></section><section><span>白话解释</span><p>通用规则、用户规则、项目规则、工具偏好、技能和临时记忆各有自己的插槽，不是拼成一团不知谁覆盖谁。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可解释性好；用户应能在 UI 查看最终合成与各部分 token 占用。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>374–410</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>411–448</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/prompt.rs#L374-L448" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/prompt.rs:374–448</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/prompt.rs#L374-L448" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  374  pub fn build_system_prompt_full_with_capabilities(
+  375      skill_prompt: Option&lt;&amp;str&gt;,
+  376      available_skills: &amp;[SkillInfo],
+  377      is_selfdev: bool,
+  378      memory_prompt: Option&lt;&amp;str&gt;,
+  379      working_dir: Option&lt;&amp;Path&gt;,
+  380      capabilities: PromptCapabilities,
+  381  ) -&gt; (String, ContextInfo) {
+  382      let mut parts = base_system_prompt_parts(capabilities);
+  383      let mut info = ContextInfo {
+  384          system_prompt_chars: parts.join(&quot;\n\n&quot;).len(),
+  385          ..Default::default()
+  386      };
+  387
+  388      // Add self-dev guidance only in active self-dev sessions. Normal sessions
+  389      // learn about the on-ramp from the mode-aware `selfdev` tool schema.
+  390      if is_selfdev {
+  391          let selfdev_prompt = build_selfdev_prompt_for_working_dir(working_dir);
+  392          info.selfdev_chars = selfdev_prompt.len();
+  393          parts.push(selfdev_prompt);
+  394      }
+  395
+  396      // Add AGENTS.md instructions with tracking (from working_dir or cwd)
+  397      let (md_content, md_info) = load_agents_md_files_from_dir(working_dir);
+  398      if let Some(content) = md_content {
+  399          parts.push(content);
+  400      }
+  401      // Merge file info
+  402      info.has_project_agents_md = md_info.has_project_agents_md;
+  403      info.project_agents_md_chars = md_info.project_agents_md_chars;
+  404      info.has_global_agents_md = md_info.has_global_agents_md;
+  405      info.global_agents_md_chars = md_info.global_agents_md_chars;
+  406
+  407      // Add optional prompt overlays from ~/.jcode/ and ./.jcode/
+  408      let (overlay_content, overlay_chars) = load_prompt_overlay_files_from_dir(working_dir);
+  409      if let Some(content) = overlay_content {
+  410          info.prompt_overlay_chars = overlay_chars;
+  411          parts.push(content);
+  412      }
+  413
+  414      // Add optional preferred-tool guidance from ~/.jcode/ and ./.jcode/
+  415      let (preferred_tools_content, preferred_tools_chars) =
+  416          load_preferred_tools_files_from_dir(working_dir);
+  417      if let Some(content) = preferred_tools_content {
+  418          info.preferred_tools_chars = preferred_tools_chars;
+  419          parts.push(content);
+  420      }
+  421
+  422      if let Some(memory) = memory_prompt {
+  423          info.memory_chars = memory.len();
+  424          parts.push(memory.to_string());
+  425      }
+  426
+  427      // Add available skills list
+  428      if !available_skills.is_empty() {
+  429          let mut skills_section = &quot;# Available Skills\n\nYou have access to the following skills that the user can invoke with `/skillname`:\n&quot;.to_string();
+  430          for skill in available_skills {
+  431              skills_section.push_str(&amp;format!(&quot;\n- `/{} ` - {}&quot;, skill.name, skill.description));
+  432          }
+  433          skills_section.push_str(
+  434              &quot;\n\nWhen a user asks about available skills or capabilities, mention these skills.&quot;,
+  435          );
+  436          info.skills_chars = skills_section.len();
+  437          parts.push(skills_section);
+  438      }
+  439
+  440      // Add active skill prompt
+  441      if let Some(skill) = skill_prompt {
+  442          parts.push(format!(&quot;# Active Skill\n\n{}&quot;, skill));
+  443      }
+  444
+  445      let prompt = parts.join(&quot;\n\n&quot;);
+  446      info.total_chars = prompt.len();
+  447
+  448      (prompt, info)
+  449  }
+  450
+  451  /// Build system prompt split into static (cacheable) and dynamic parts
+  452  /// This improves cache hit rate by keeping frequently-changing content separate
+  453  pub fn build_system_prompt_split(
+  454      skill_prompt: Option&lt;&amp;str&gt;,
+  455      available_skills: &amp;[SkillInfo],
+  456      is_selfdev: bool,
+  457      memory_prompt: Option&lt;&amp;str&gt;,
+  458      working_dir: Option&lt;&amp;Path&gt;,
+  459  ) -&gt; (SplitSystemPrompt, ContextInfo) {
+  460      build_system_prompt_split_with_capabilities(
+  461          skill_prompt,
+  462          available_skills,
+  463          is_selfdev,
+  464          memory_prompt,
+  465          working_dir,
+  466          PromptCapabilities::current(),
+  467      )
+  468  }
+  469
+  470  pub fn build_system_prompt_split_with_capabilities(
+  471      skill_prompt: Option&lt;&amp;str&gt;,
+  472      available_skills: &amp;[SkillInfo],
+  473      is_selfdev: bool,
+  474      memory_prompt: Option&lt;&amp;str&gt;,
+  475      working_dir: Option&lt;&amp;Path&gt;,
+  476      capabilities: PromptCapabilities,
+  477  ) -&gt; (SplitSystemPrompt, ContextInfo) {
+  478      let mut static_parts = base_system_prompt_parts(capabilities);
+  479      let mut dynamic_parts = Vec::new();
+  480      let mut info = ContextInfo {
+  481          system_prompt_chars: static_parts.join(&quot;\n\n&quot;).len(),
+  482          ..Default::default()
+  483      };
+  484
+  485      // === STATIC CONTENT (cacheable) ===
+  486
+  487      // Add self-dev guidance only in active self-dev sessions. Normal sessions
+  488      // learn about the on-ramp from the mode-aware `selfdev` tool schema.
+  489      if is_selfdev {
+  490          let selfdev_prompt = build_selfdev_prompt_static_for_working_dir(working_dir);
+  491          info.selfdev_chars = selfdev_prompt.len();
+  492          static_parts.push(selfdev_prompt);
+  493      }
+  494
+  495      // Add AGENTS.md instructions (static per project)
+  496      let (md_content, md_info) = load_agents_md_files_from_dir(working_dir);
+  497      if let Some(content) = md_content {
+  498          static_parts.push(content);
+  499      }
+  500      info.has_project_agents_md = md_info.has_project_agents_md;
+  501      info.project_agents_md_chars = md_info.project_agents_md_chars;
+  502      info.has_global_agents_md = md_info.has_global_agents_md;
+  503      info.global_agents_md_chars = md_info.global_agents_md_chars;
+  504
+  505      // Add optional prompt overlays from ~/.jcode/ and ./.jcode/
+  506      let (overlay_content, overlay_chars) = load_prompt_overlay_files_from_dir(working_dir);
+  507      if let Some(content) = overlay_content {
+  508          info.prompt_overlay_chars = overlay_chars;
+  509          static_parts.push(content);
+  510      }
+  511
+  512      // Add optional preferred-tool guidance (static per project/user)
+  513      let (preferred_tools_content, preferred_tools_chars) =
+  514          load_preferred_tools_files_from_dir(working_dir);
+  515      if let Some(content) = preferred_tools_content {
+  516          info.preferred_tools_chars = preferred_tools_chars;
+  517          static_parts.push(content);
+  518      }
+  519</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/jcode-base/src/prompt.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/prompt.rs#L374-L448" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  374  ) -&gt; (String, ContextInfo) {
+  375      build_system_prompt_full(
+  376          skill_prompt,
+  377          available_skills,
+  378          is_selfdev,
+  379          memory_prompt,
+  380          None,
+  381      )
+  382  }
+  383
+  384  /// Build the full system prompt with working directory support for loading context files
+  385  pub fn build_system_prompt_full(
+  386      skill_prompt: Option&lt;&amp;str&gt;,
+  387      available_skills: &amp;[SkillInfo],
+  388      is_selfdev: bool,
+  389      memory_prompt: Option&lt;&amp;str&gt;,
+  390      working_dir: Option&lt;&amp;Path&gt;,
+  391  ) -&gt; (String, ContextInfo) {
+  392      build_system_prompt_full_with_capabilities(
+  393          skill_prompt,
+  394          available_skills,
+  395          is_selfdev,
+  396          memory_prompt,
+  397          working_dir,
+  398          PromptCapabilities::current(),
+  399      )
+  400  }
+  401
+  402  pub fn build_system_prompt_full_with_capabilities(
+  403      skill_prompt: Option&lt;&amp;str&gt;,
+  404      available_skills: &amp;[SkillInfo],
+  405      is_selfdev: bool,
+  406      memory_prompt: Option&lt;&amp;str&gt;,
+  407      working_dir: Option&lt;&amp;Path&gt;,
+  408      capabilities: PromptCapabilities,
+  409  ) -&gt; (String, ContextInfo) {
+  410      let mut parts = base_system_prompt_parts(capabilities, working_dir);
+  411      let mut info = ContextInfo {
+  412          system_prompt_chars: parts.join(&quot;\n\n&quot;).len(),
+  413          ..Default::default()
+  414      };
+  415
+  416      // Add self-dev guidance only in active self-dev sessions. Normal sessions
+  417      // learn about the on-ramp from the mode-aware `selfdev` tool schema.
+  418      if is_selfdev {
+  419          let selfdev_prompt = build_selfdev_prompt_for_working_dir(working_dir);
+  420          info.selfdev_chars = selfdev_prompt.len();
+  421          parts.push(selfdev_prompt);
+  422      }
+  423
+  424      // Add AGENTS.md instructions with tracking (from working_dir or cwd)
+  425      let (md_content, md_info) = load_agents_md_files_from_dir(working_dir);
+  426      if let Some(content) = md_content {
+  427          parts.push(content);
+  428      }
+  429      // Merge file info
+  430      info.has_project_agents_md = md_info.has_project_agents_md;
+  431      info.project_agents_md_chars = md_info.project_agents_md_chars;
+  432      info.has_global_agents_md = md_info.has_global_agents_md;
+  433      info.global_agents_md_chars = md_info.global_agents_md_chars;
+  434
+  435      // Add optional prompt overlays from ~/.jcode/ and ./.jcode/
+  436      let (overlay_content, overlay_chars) = load_prompt_overlay_files_from_dir(working_dir);
+  437      if let Some(content) = overlay_content {
+  438          info.prompt_overlay_chars = overlay_chars;
+  439          parts.push(content);
+  440      }
+  441
+  442      // Add optional preferred-tool guidance from ~/.jcode/ and ./.jcode/
+  443      let (preferred_tools_content, preferred_tools_chars) =
+  444          load_preferred_tools_files_from_dir(working_dir);
+  445      if let Some(content) = preferred_tools_content {
+  446          info.preferred_tools_chars = preferred_tools_chars;
+  447          parts.push(content);
+  448      }
+  449
+  450      if let Some(memory) = memory_prompt {
+  451          info.memory_chars = memory.len();
+  452          parts.push(memory.to_string());
+  453      }
+  454
+  455      // Add available skills list
+  456      if !available_skills.is_empty() {
+  457          let mut skills_section = &quot;# Available Skills\n\nYou have access to the following skills that the user can invoke with `/skillname`:\n&quot;.to_string();
+  458          for skill in available_skills {
+  459              skills_section.push_str(&amp;format!(&quot;\n- `/{} ` - {}&quot;, skill.name, skill.description));
+  460          }
+  461          skills_section.push_str(
+  462              &quot;\n\nWhen a user asks about available skills or capabilities, mention these skills.&quot;,
+  463          );
+  464          info.skills_chars = skills_section.len();
+  465          parts.push(skills_section);
+  466      }
+  467
+  468      // Add active skill prompt
+  469      if let Some(skill) = skill_prompt {
+  470          parts.push(format!(&quot;# Active Skill\n\n{}&quot;, skill));
+  471      }
+  472
+  473      let prompt = parts.join(&quot;\n\n&quot;);
+  474      info.total_chars = prompt.len();
+  475
+  476      (prompt, info)
+  477  }
+  478
+  479  /// Build system prompt split into static (cacheable) and dynamic parts
+  480  /// This improves cache hit rate by keeping frequently-changing content separate
+  481  pub fn build_system_prompt_split(
+  482      skill_prompt: Option&lt;&amp;str&gt;,
+  483      available_skills: &amp;[SkillInfo],
+  484      is_selfdev: bool,
+  485      memory_prompt: Option&lt;&amp;str&gt;,
+  486      working_dir: Option&lt;&amp;Path&gt;,
+  487  ) -&gt; (SplitSystemPrompt, ContextInfo) {
+  488      build_system_prompt_split_with_capabilities(
+  489          skill_prompt,
+  490          available_skills,
+  491          is_selfdev,
+  492          memory_prompt,
+  493          working_dir,
+  494          PromptCapabilities::current(),
+  495      )
+  496  }
+  497
+  498  pub fn build_system_prompt_split_with_capabilities(
+  499      skill_prompt: Option&lt;&amp;str&gt;,
+  500      available_skills: &amp;[SkillInfo],
+  501      is_selfdev: bool,
+  502      memory_prompt: Option&lt;&amp;str&gt;,
+  503      working_dir: Option&lt;&amp;Path&gt;,
+  504      capabilities: PromptCapabilities,
+  505  ) -&gt; (SplitSystemPrompt, ContextInfo) {
+  506      let mut static_parts = base_system_prompt_parts(capabilities, working_dir);
+  507      let mut dynamic_parts = Vec::new();
+  508      let mut info = ContextInfo {
+  509          system_prompt_chars: static_parts.join(&quot;\n\n&quot;).len(),
+  510          ..Default::default()
+  511      };
+  512
+  513      // === STATIC CONTENT (cacheable) ===
+  514
+  515      // Add self-dev guidance only in active self-dev sessions. Normal sessions
+  516      // learn about the on-ramp from the mode-aware `selfdev` tool schema.
+  517      if is_selfdev {
+  518          let selfdev_prompt = build_selfdev_prompt_static_for_working_dir(working_dir);
+  519          info.selfdev_chars = selfdev_prompt.len();</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-instructions-002" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · Skills 跨 Jcode/Agents/Claude/Codex 生态并做 per-workspace overlay</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SkillRegistry 解析 SKILL.md frontmatter 的 name/description/allowed-tools；global 来源含 Claude plugins、~/.jcode/skills、~/.agents/skills，首跑可导入 Claude/Codex；project overlay 每次从 .jcode/.agents/.claude skills 读取且 project 同名覆盖 global，不进入共享 registry。</p></section><section><span>白话解释</span><p>它会借用其他 Agent 生态的技能包，但项目私有技能只在当前工作区叠加，不会污染另一个项目。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>兼容性与热更新强；递归扫描 plugin root 有深度上限 5，复杂布局可能漏检。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>11–34</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>35–60</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/skill.rs#L11-L60" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/skill.rs:11–60</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/skill.rs#L11-L60" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   11  /// A skill definition from SKILL.md
+   12  #[derive(Debug, Clone)]
+   13  pub struct Skill {
+   14      pub name: String,
+   15      pub description: String,
+   16      pub allowed_tools: Option&lt;Vec&lt;String&gt;&gt;,
+   17      pub content: String,
+   18      pub path: PathBuf,
+   19      search_text: String,
+   20  }
+   21
+   22  #[derive(Debug, Deserialize)]
+   23  struct SkillFrontmatter {
+   24      name: String,
+   25      description: String,
+   26      #[serde(rename = &quot;allowed-tools&quot;)]
+   27      allowed_tools: Option&lt;String&gt;,
+   28  }
+   29
+   30  /// Registry of available skills
+   31  #[derive(Debug, Default, Clone)]
+   32  pub struct SkillRegistry {
+   33      skills: HashMap&lt;String, Skill&gt;,
+   34  }
+   35
+   36  /// A slash-command skill invocation, optionally followed by a prompt that
+   37  /// should be submitted immediately after activating the skill.
+   38  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   39  pub struct SkillInvocation&lt;&#39;a&gt; {
+   40      pub name: &amp;&#39;a str,
+   41      pub prompt: Option&lt;&amp;&#39;a str&gt;,
+   42  }
+   43
+   44  /// Maximum directory depth scanned under a Claude Code plugin root when
+   45  /// looking for `skills/&lt;name&gt;/SKILL.md` entries. Plugin layouts vary across
+   46  /// Claude Code versions (`cache/&lt;marketplace&gt;/&lt;plugin&gt;/&lt;version&gt;/skills/...`,
+   47  /// `repos/&lt;owner&gt;/&lt;repo&gt;/skills/...`, nested `.claude/skills/...`), so we scan
+   48  /// defensively but with a bound to avoid walking arbitrarily deep trees.
+   49  const PLUGIN_SCAN_MAX_DEPTH: usize = 5;
+   50
+   51  impl SkillRegistry {
+   52      /// Process-wide shared mutable registry used by both `skill_manage` and
+   53      /// direct slash invocation paths. Keeping a single registry prevents slash
+   54      /// commands from seeing a stale startup-only skill snapshot after reloads.
+   55      ///
+   56      /// Holds GLOBAL skills only (plugins, `~/.jcode/skills/`,
+   57      /// `~/.agents/skills/`). Project-local skills are a per-session overlay
+   58      /// composed at read time from the session&#39;s workspace root (issue #457);
+   59      /// they must never enter this shared registry, and the daemon&#39;s startup
+   60      /// cwd must never influence its contents.
+   61      pub fn shared_registry() -&gt; Arc&lt;RwLock&lt;Self&gt;&gt; {
+   62          #[cfg(test)]
+   63          {
+   64              Arc::new(RwLock::new(Self::load_global().unwrap_or_default()))
+   65          }
+   66
+   67          #[cfg(not(test))]
+   68          {
+   69              static SHARED: OnceLock&lt;Arc&lt;RwLock&lt;SkillRegistry&gt;&gt;&gt; = OnceLock::new();
+   70              SHARED
+   71                  .get_or_init(|| {
+   72                      Arc::new(RwLock::new(
+   73                          SkillRegistry::load_global().unwrap_or_default(),
+   74                      ))
+   75                  })
+   76                  .clone()
+   77          }
+   78      }
+   79
+   80      /// Load a process-wide shared immutable snapshot of global skills for
+   81      /// startup paths that only need read access.
+   82      pub fn shared_snapshot() -&gt; Arc&lt;Self&gt; {
+   83          #[cfg(test)]
+   84          {
+   85              Arc::new(Self::load_global().unwrap_or_default())
+   86          }
+   87
+   88          #[cfg(not(test))]
+   89          {
+   90              if let Ok(skills) = Self::shared_registry().try_read() {
+   91                  Arc::new(skills.clone())
+   92              } else {
+   93                  Arc::new(SkillRegistry::load_global().unwrap_or_default())
+   94              }
+   95          }
+   96      }
+   97
+   98      /// Import skills from Claude Code and Codex CLI on first run.
+   99      /// Only runs if ~/.jcode/skills/ doesn&#39;t exist yet.
+  100      fn import_from_external() {
+  101          let jcode_skills = match crate::storage::jcode_dir() {
+  102              Ok(dir) =&gt; dir.join(&quot;skills&quot;),
+  103              Err(_) =&gt; return,
+  104          };
+  105
+  106          if jcode_skills.exists() {
+  107              return; // Not first run
+  108          }
+  109
+  110          let mut sources = Vec::new();
+  111          let mut copied = Vec::new();
+  112
+  113          // Import from Claude Code (~/.claude/skills/)
+  114          if let Ok(claude_skills) = crate::storage::user_home_path(&quot;.claude/skills&quot;)
+  115              &amp;&amp; claude_skills.is_dir()
+  116          {
+  117              let count = Self::copy_skills_dir(&amp;claude_skills, &amp;jcode_skills);
+  118              if count &gt; 0 {
+  119                  sources.push(format!(&quot;{} from Claude Code&quot;, count));
+  120                  copied.extend(Self::list_skill_names(&amp;jcode_skills));
+  121              }
+  122          }
+  123
+  124          // Import from Codex CLI (~/.codex/skills/)
+  125          if let Ok(codex_skills) = crate::storage::user_home_path(&quot;.codex/skills&quot;)
+  126              &amp;&amp; codex_skills.is_dir()
+  127          {
+  128              let count = Self::copy_skills_dir(&amp;codex_skills, &amp;jcode_skills);
+  129              if count &gt; 0 {
+  130                  sources.push(format!(&quot;{} from Codex CLI&quot;, count));
+  131                  copied.extend(Self::list_skill_names(&amp;jcode_skills));</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/jcode-base/src/skill.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/skill.rs#L11-L60" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   11  mod invocation;
+   12  pub use invocation::SkillInvocation;
+   13
+   14  /// A skill definition from SKILL.md
+   15  #[derive(Debug, Clone)]
+   16  pub struct Skill {
+   17      pub name: String,
+   18      pub description: String,
+   19      pub allowed_tools: Option&lt;Vec&lt;String&gt;&gt;,
+   20      pub content: String,
+   21      pub path: PathBuf,
+   22      search_text: String,
+   23  }
+   24
+   25  #[derive(Debug, Deserialize)]
+   26  struct SkillFrontmatter {
+   27      name: String,
+   28      description: String,
+   29      #[serde(rename = &quot;allowed-tools&quot;)]
+   30      allowed_tools: Option&lt;String&gt;,
+   31  }
+   32
+   33  /// Registry of available skills
+   34  #[derive(Debug, Default, Clone)]
+   35  pub struct SkillRegistry {
+   36      skills: HashMap&lt;String, Skill&gt;,
+   37  }
+   38
+   39  /// Maximum directory depth scanned under a Claude Code plugin root when
+   40  /// looking for `skills/&lt;name&gt;/SKILL.md` entries. Plugin layouts vary across
+   41  /// Claude Code versions (`cache/&lt;marketplace&gt;/&lt;plugin&gt;/&lt;version&gt;/skills/...`,
+   42  /// `repos/&lt;owner&gt;/&lt;repo&gt;/skills/...`, nested `.claude/skills/...`), so we scan
+   43  /// defensively but with a bound to avoid walking arbitrarily deep trees.
+   44  const PLUGIN_SCAN_MAX_DEPTH: usize = 5;
+   45
+   46  impl SkillRegistry {
+   47      /// Process-wide shared mutable registry used by both `skill_manage` and
+   48      /// direct slash invocation paths. Keeping a single registry prevents slash
+   49      /// commands from seeing a stale startup-only skill snapshot after reloads.
+   50      ///
+   51      /// Holds GLOBAL skills only (plugins, `~/.jcode/skills/`,
+   52      /// `~/.agents/skills/`). Project-local skills are a per-session overlay
+   53      /// composed at read time from the session&#39;s workspace root (issue #457);
+   54      /// they must never enter this shared registry, and the daemon&#39;s startup
+   55      /// cwd must never influence its contents.
+   56      pub fn shared_registry() -&gt; Arc&lt;RwLock&lt;Self&gt;&gt; {
+   57          #[cfg(test)]
+   58          {
+   59              Arc::new(RwLock::new(Self::load_global().unwrap_or_default()))
+   60          }
+   61
+   62          #[cfg(not(test))]
+   63          {
+   64              static SHARED: OnceLock&lt;Arc&lt;RwLock&lt;SkillRegistry&gt;&gt;&gt; = OnceLock::new();
+   65              SHARED
+   66                  .get_or_init(|| {
+   67                      Arc::new(RwLock::new(
+   68                          SkillRegistry::load_global().unwrap_or_default(),
+   69                      ))
+   70                  })
+   71                  .clone()
+   72          }
+   73      }
+   74
+   75      /// Load a process-wide shared immutable snapshot of global skills for
+   76      /// startup paths that only need read access.
+   77      pub fn shared_snapshot() -&gt; Arc&lt;Self&gt; {
+   78          #[cfg(test)]
+   79          {
+   80              Arc::new(Self::load_global().unwrap_or_default())
+   81          }
+   82
+   83          #[cfg(not(test))]
+   84          {
+   85              if let Ok(skills) = Self::shared_registry().try_read() {
+   86                  Arc::new(skills.clone())
+   87              } else {
+   88                  Arc::new(SkillRegistry::load_global().unwrap_or_default())
+   89              }
+   90          }
+   91      }
+   92
+   93      /// Import skills from Claude Code and Codex CLI on first run.
+   94      /// Only runs if ~/.jcode/skills/ doesn&#39;t exist yet.
+   95      fn import_from_external() {
+   96          let jcode_skills = match crate::storage::jcode_dir() {
+   97              Ok(dir) =&gt; dir.join(&quot;skills&quot;),
+   98              Err(_) =&gt; return,
+   99          };
+  100
+  101          if jcode_skills.exists() {
+  102              return; // Not first run
+  103          }
+  104
+  105          let mut sources = Vec::new();
+  106          let mut copied = Vec::new();
+  107
+  108          // Import from Claude Code (~/.claude/skills/)
+  109          if let Ok(claude_skills) = crate::storage::user_home_path(&quot;.claude/skills&quot;)
+  110              &amp;&amp; claude_skills.is_dir()
+  111          {
+  112              let count = Self::copy_skills_dir(&amp;claude_skills, &amp;jcode_skills);
+  113              if count &gt; 0 {
+  114                  sources.push(format!(&quot;{} from Claude Code&quot;, count));
+  115                  copied.extend(Self::list_skill_names(&amp;jcode_skills));
+  116              }
+  117          }
+  118
+  119          // Import from Codex CLI (~/.codex/skills/)
+  120          if let Ok(codex_skills) = crate::storage::user_home_path(&quot;.codex/skills&quot;)
+  121              &amp;&amp; codex_skills.is_dir()
+  122          {
+  123              let count = Self::copy_skills_dir(&amp;codex_skills, &amp;jcode_skills);
+  124              if count &gt; 0 {
+  125                  sources.push(format!(&quot;{} from Codex CLI&quot;, count));
+  126                  copied.extend(Self::list_skill_names(&amp;jcode_skills));
+  127              }
+  128          }
+  129
+  130          if !sources.is_empty() {
+  131              // Deduplicate names</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ECOSYSTEM · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>daemon 中 shared:true 默认服务器复用 SharedMcpPool，shared:false 状态型服务器每 session 单独启动；并行 connect_all 不阻塞 agent spawn，第一次真实调用尚未连接的 server 时最多等待 30 秒。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/mcp/manager.rs#L1-L59" target="_blank" rel="noreferrer">crates/jcode-base/src/mcp/manager.rs:1–59 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>首轮不等待慢 MCP；tool list 锁定后若发现新 mcp__ tools，仅重建一次 snapshot。McpHandle 用 atomic request id、pending oneshot map 与 30s request timeout，使共享 server 的并发响应互不串线。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/agent/turn_execution.rs#L335-L393" target="_blank" rel="noreferrer">crates/jcode-app-core/src/agent/turn_execution.rs:335–393 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>prompt builder 编译内建 base prompt，加载 global/project AGENTS.md，再读 ~/.jcode 与项目 .jcode overlay/preferred-tools，列出可用 skills；memory 和 active skill 进入动态部分。Session context 还冻结日期、OS、架构、版本、cwd 与 git 摘要。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/prompt.rs#L374-L448" target="_blank" rel="noreferrer">crates/jcode-base/src/prompt.rs:374–448 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>SkillRegistry 解析 SKILL.md frontmatter 的 name/description/allowed-tools；global 来源含 Claude plugins、~/.jcode/skills、~/.agents/skills，首跑可导入 Claude/Codex；project overlay 每次从 .jcode/.agents/.claude skills 读取且 project 同名覆盖 global，不进入共享 registry。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/skill.rs#L11-L60" target="_blank" rel="noreferrer">crates/jcode-base/src/skill.rs:11–60 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="JCode sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← 安全：审批、权限和边界</a><a href="ch09-collaboration.html">协作：子 Agent 与工作流 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

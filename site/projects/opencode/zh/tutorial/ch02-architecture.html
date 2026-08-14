@@ -1,1 +1,552 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>OpenCode · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">dev<br>cc4b45612974</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · OpenCode · cc4b45612974</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>dev</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>OpenCode · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/opencode/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/opencode/ch02-architecture.srt" data-video-status="published">SRT</a><em>cc4b45612974</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 它每一轮都重新看账本决定“接下来做什么”，所以进程中断、工具异步完成和压缩都能落在统一状态机里。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="opencode-loop-001" data-finding-dimension="loop"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>01 · 主循环由持久化消息状态驱动，而不是一次性的 while(tool_call)</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>runLoop 每步从数据库重建过滤后的消息视图，找最后 user/assistant/finished 与待处理 subtask/compaction；只有已完成、无工具调用且顺序闭合才退出，否则继续调度。</p></section><section><span>白话解释</span><p>它每一轮都重新看账本决定“接下来做什么”，所以进程中断、工具异步完成和压缩都能落在统一状态机里。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>消息/part 是事实源，loop 是其投影；这比仅在内存追加数组更利于恢复和多客户端。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 284e97068c98 · <a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1081-L1130" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/anomalyco/opencode/blob/cc4b45612974f735ddec46009ede07729511fba4/packages/opencode/src/session/processor.ts#L539-L597" target="_blank" rel="noreferrer">packages/opencode/src/session/processor.ts:539–597 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/opencode/src/session/prompt.ts:1081–1130</span><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1081-L1130" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>loop、状态恢复与退出判定。</code></pre></div></div></article><article class="finding-card compact" id="opencode-loop-002" data-finding-dimension="loop"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>02 · 每一步动态重建 Agent、工具、系统上下文和模型请求</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>loop 解析 agent/model，应用 reminders，创建 assistant record，按当前 permission/provider 解析工具，再并行装配 skills、environment、instructions、MCP instructions 和 compacted model messages。</p></section><section><span>白话解释</span><p>不是开会前一次性发完所有资料；每走一步都按当前身份、模型和权限重新整理桌面。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>支持运行中配置和权限变化，但每步装配链更复杂、需要缓存与测试。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 284e97068c98 · <a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1170-L1241" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/anomalyco/opencode/blob/cc4b45612974f735ddec46009ede07729511fba4/packages/opencode/src/session/processor.ts#L539-L597" target="_blank" rel="noreferrer">packages/opencode/src/session/processor.ts:539–597 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/opencode/src/session/prompt.ts:1170–1241</span><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1170-L1241" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>Agent、assistant message、processor 与工具装配。</code></pre></div></div></article><article class="finding-card compact" id="opencode-stream-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · stream processor 把 reasoning、text、tool、usage、patch 全部事件化持久</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>processor 为 reasoning/text/tool call 建 part，tool result 归一化附件；step-finish 记录 finish、cost、tokens、snapshot 和 patch，并异步更新 session summary。</p></section><section><span>白话解释</span><p>模型的思考、文字、每次工具起止和文件变化都不是终端里一闪而过，而是独立可回放的事件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>TUI、Web、Desktop、ACP 可以消费同一事件模型。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 284e97068c98 · <a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/processor.ts#L315-L413" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/opencode/src/session/processor.ts:315–413</span><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/processor.ts#L315-L413" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>tool call/result 状态机。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenCode sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>OpenCode · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">dev<br>cc4b45612974</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · OpenCode · cc4b45612974</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>dev</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>OpenCode · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/opencode/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/opencode/ch02-architecture.srt" data-video-status="published">SRT</a><em>cc4b45612974</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 它每一轮都重新看账本决定“接下来做什么”，所以进程中断、工具异步完成和压缩都能落在统一状态机里。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="opencode-loop-001" data-finding-dimension="loop"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>01 · 主循环由持久化消息状态驱动，而不是一次性的 while(tool_call)</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>runLoop 每步从数据库重建过滤后的消息视图，找最后 user/assistant/finished 与待处理 subtask/compaction；只有已完成、无工具调用且顺序闭合才退出，否则继续调度。</p></section><section><span>白话解释</span><p>它每一轮都重新看账本决定“接下来做什么”，所以进程中断、工具异步完成和压缩都能落在统一状态机里。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>消息/part 是事实源，loop 是其投影；这比仅在内存追加数组更利于恢复和多客户端。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1081–1104</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1105–1130</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 284e97068c98 · <a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1081-L1130" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/opencode/src/session/prompt.ts:1081–1130</span><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1081-L1130" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1081      const runLoop: (sessionID: SessionID) =&gt; Effect.Effect&lt;SessionV1.WithParts&gt; = Effect.fn(&quot;SessionPrompt.run&quot;)(
+ 1082        function* (sessionID: SessionID) {
+ 1083          const ctx = yield* InstanceState.context
+ 1084          let structured: unknown
+ 1085          let step = 0
+ 1086          const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
+ 1087
+ 1088          while (true) {
+ 1089            yield* status.set(sessionID, { type: &quot;busy&quot; })
+ 1090            yield* Effect.logInfo(&quot;loop&quot;, { &quot;session.id&quot;: sessionID, step })
+ 1091
+ 1092            let msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+ 1093              Effect.provideService(Database.Service, database),
+ 1094            )
+ 1095
+ 1096            const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
+ 1097
+ 1098            if (!lastUser) throw new Error(&quot;No user message found in stream. This should never happen.&quot;)
+ 1099
+ 1100            const lastAssistantMsg = msgs.findLast(
+ 1101              (msg) =&gt; msg.info.role === &quot;assistant&quot; &amp;&amp; msg.info.id === lastAssistant?.id,
+ 1102            )
+ 1103            // Some providers return &quot;stop&quot; even when the assistant message contains
+ 1104            // tool calls. Keep the loop running so tool results can be sent back to
+ 1105            // the model, but ignore cleanup-marked interrupted orphans.
+ 1106            const hasToolCalls =
+ 1107              lastAssistantMsg?.parts.some(
+ 1108                (part) =&gt; part.type === &quot;tool&quot; &amp;&amp; !part.metadata?.providerExecuted &amp;&amp; !isOrphanedInterruptedTool(part),
+ 1109              ) ?? false
+ 1110
+ 1111            if (
+ 1112              lastAssistant?.finish &amp;&amp;
+ 1113              ![&quot;tool-calls&quot;].includes(lastAssistant.finish) &amp;&amp;
+ 1114              !hasToolCalls &amp;&amp;
+ 1115              lastUser.id &lt; lastAssistant.id
+ 1116            ) {
+ 1117              const orphan = lastAssistantMsg?.parts.find(
+ 1118                (part): part is SessionV1.ToolPart =&gt; part.type === &quot;tool&quot; &amp;&amp; isOrphanedInterruptedTool(part),
+ 1119              )
+ 1120              if (orphan) {
+ 1121                yield* Effect.logWarning(&quot;loop exit with orphaned interrupted tool&quot;, {
+ 1122                  &quot;session.id&quot;: sessionID,
+ 1123                  messageID: lastAssistant.id,
+ 1124                  tool: orphan.tool,
+ 1125                  callID: orphan.callID,
+ 1126                })
+ 1127              }
+ 1128              yield* Effect.logInfo(&quot;exiting loop&quot;, { &quot;session.id&quot;: sessionID })
+ 1129              break
+ 1130            }
+ 1131
+ 1132            step++
+ 1133            if (step === 1)
+ 1134              yield* title({
+ 1135                session,
+ 1136                modelID: lastUser.model.modelID,
+ 1137                providerID: lastUser.model.providerID,
+ 1138                history: msgs,
+ 1139              }).pipe(Effect.ignore, Effect.forkIn(scope))
+ 1140
+ 1141            const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+ 1142            const task = tasks.pop()
+ 1143
+ 1144            if (task?.type === &quot;subtask&quot;) {
+ 1145              yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+ 1146              continue
+ 1147            }
+ 1148
+ 1149            if (task?.type === &quot;compaction&quot;) {
+ 1150              const result = yield* compaction.process({
+ 1151                messages: msgs,
+ 1152                parentID: lastUser.id,
+ 1153                sessionID,
+ 1154                auto: task.auto,
+ 1155                overflow: task.overflow,
+ 1156              })
+ 1157              if (result === &quot;stop&quot;) break
+ 1158              continue
+ 1159            }
+ 1160
+ 1161            if (
+ 1162              lastFinished &amp;&amp;
+ 1163              lastFinished.summary !== true &amp;&amp;
+ 1164              (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
+ 1165            ) {
+ 1166              yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
+ 1167              continue
+ 1168            }
+ 1169
+ 1170            const agent = yield* agents.get(lastUser.agent)
+ 1171            if (!agent) {
+ 1172              const available = (yield* agents.list()).filter((a) =&gt; !a.hidden).map((a) =&gt; a.name)
+ 1173              const hint = available.length ? ` Available agents: ${available.join(&quot;, &quot;)}` : &quot;&quot;
+ 1174              const error = new NamedError.Unknown({ message: `Agent not found: &quot;${lastUser.agent}&quot;.${hint}` })
+ 1175              yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+ 1176              throw error
+ 1177            }
+ 1178            const maxSteps = agent.steps ?? Infinity
+ 1179            const isLastStep = step &gt;= maxSteps
+ 1180            msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
+ 1181              Effect.provideService(RuntimeFlags.Service, flags),
+ 1182              Effect.provideService(FSUtil.Service, fsys),
+ 1183              Effect.provideService(Session.Service, sessions),
+ 1184            )
+ 1185
+ 1186            const msg: SessionV1.Assistant = {
+ 1187              id: MessageID.ascending(),
+ 1188              parentID: lastUser.id,
+ 1189              role: &quot;assistant&quot;,
+ 1190              mode: agent.name,
+ 1191              agent: agent.name,
+ 1192              variant: lastUser.model.variant,
+ 1193              path: { cwd: ctx.directory, root: ctx.worktree },
+ 1194              cost: 0,
+ 1195              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+ 1196              modelID: model.id,
+ 1197              providerID: model.providerID,
+ 1198              time: { created: Date.now() },
+ 1199              sessionID,
+ 1200            }
+ 1201            yield* sessions.updateMessage(msg)</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>packages/opencode/src/session/prompt.ts · cc4b45612974</span><a href="https://github.com/anomalyco/opencode/blob/cc4b45612974f735ddec46009ede07729511fba4/packages/opencode/src/session/prompt.ts#L1081-L1130" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code> 1081      const runLoop: (sessionID: SessionID) =&gt; Effect.Effect&lt;SessionV1.WithParts&gt; = Effect.fn(&quot;SessionPrompt.run&quot;)(
+ 1082        function* (sessionID: SessionID) {
+ 1083          const ctx = yield* InstanceState.context
+ 1084          let structured: unknown
+ 1085          let step = 0
+ 1086          const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
+ 1087
+ 1088          while (true) {
+ 1089            yield* status.set(sessionID, { type: &quot;busy&quot; })
+ 1090            yield* Effect.logInfo(&quot;loop&quot;, { &quot;session.id&quot;: sessionID, step })
+ 1091
+ 1092            let msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+ 1093              Effect.provideService(Database.Service, database),
+ 1094            )
+ 1095
+ 1096            const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
+ 1097
+ 1098            if (!lastUser) throw new Error(&quot;No user message found in stream. This should never happen.&quot;)
+ 1099
+ 1100            const lastAssistantMsg = msgs.findLast(
+ 1101              (msg) =&gt; msg.info.role === &quot;assistant&quot; &amp;&amp; msg.info.id === lastAssistant?.id,
+ 1102            )
+ 1103            // Some providers return &quot;stop&quot; even when the assistant message contains
+ 1104            // tool calls. Keep the loop running so tool results can be sent back to
+ 1105            // the model, but ignore cleanup-marked interrupted orphans.
+ 1106            const hasToolCalls =
+ 1107              lastAssistantMsg?.parts.some(
+ 1108                (part) =&gt; part.type === &quot;tool&quot; &amp;&amp; !part.metadata?.providerExecuted &amp;&amp; !isOrphanedInterruptedTool(part),
+ 1109              ) ?? false
+ 1110
+ 1111            if (
+ 1112              lastAssistant?.finish &amp;&amp;
+ 1113              ![&quot;tool-calls&quot;].includes(lastAssistant.finish) &amp;&amp;
+ 1114              !hasToolCalls &amp;&amp;
+ 1115              lastAssistant.parentID === lastUser.id
+ 1116            ) {
+ 1117              const orphan = lastAssistantMsg?.parts.find(
+ 1118                (part): part is SessionV1.ToolPart =&gt; part.type === &quot;tool&quot; &amp;&amp; isOrphanedInterruptedTool(part),
+ 1119              )
+ 1120              if (orphan) {
+ 1121                yield* Effect.logWarning(&quot;loop exit with orphaned interrupted tool&quot;, {
+ 1122                  &quot;session.id&quot;: sessionID,
+ 1123                  messageID: lastAssistant.id,
+ 1124                  tool: orphan.tool,
+ 1125                  callID: orphan.callID,
+ 1126                })
+ 1127              }
+ 1128              yield* Effect.logInfo(&quot;exiting loop&quot;, { &quot;session.id&quot;: sessionID })
+ 1129              break
+ 1130            }
+ 1131
+ 1132            step++
+ 1133            if (step === 1)
+ 1134              yield* title({
+ 1135                session,
+ 1136                modelID: lastUser.model.modelID,
+ 1137                providerID: lastUser.model.providerID,
+ 1138                history: msgs,
+ 1139              }).pipe(Effect.ignore, Effect.forkIn(scope))
+ 1140
+ 1141            const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+ 1142            const task = tasks.pop()
+ 1143
+ 1144            if (task?.type === &quot;subtask&quot;) {
+ 1145              yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+ 1146              continue
+ 1147            }
+ 1148
+ 1149            if (task?.type === &quot;compaction&quot;) {
+ 1150              const result = yield* compaction.process({
+ 1151                messages: msgs,
+ 1152                parentID: lastUser.id,
+ 1153                sessionID,
+ 1154                auto: task.auto,
+ 1155                overflow: task.overflow,
+ 1156              })
+ 1157              if (result === &quot;stop&quot;) break
+ 1158              continue
+ 1159            }
+ 1160
+ 1161            if (
+ 1162              lastFinished &amp;&amp;
+ 1163              lastFinished.summary !== true &amp;&amp;
+ 1164              (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
+ 1165            ) {
+ 1166              yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
+ 1167              continue
+ 1168            }
+ 1169
+ 1170            const agent = yield* agents.get(lastUser.agent)
+ 1171            if (!agent) {
+ 1172              const available = (yield* agents.list()).filter((a) =&gt; !a.hidden).map((a) =&gt; a.name)
+ 1173              const hint = available.length ? ` Available agents: ${available.join(&quot;, &quot;)}` : &quot;&quot;
+ 1174              const error = new NamedError.Unknown({ message: `Agent not found: &quot;${lastUser.agent}&quot;.${hint}` })
+ 1175              yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+ 1176              throw error
+ 1177            }
+ 1178            const maxSteps = agent.steps ?? Infinity
+ 1179            const isLastStep = step &gt;= maxSteps
+ 1180            msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
+ 1181              Effect.provideService(RuntimeFlags.Service, flags),
+ 1182              Effect.provideService(FSUtil.Service, fsys),
+ 1183              Effect.provideService(Session.Service, sessions),
+ 1184            )
+ 1185
+ 1186            const msg: SessionV1.Assistant = {
+ 1187              id: MessageID.ascending(),
+ 1188              parentID: lastUser.id,
+ 1189              role: &quot;assistant&quot;,
+ 1190              mode: agent.name,
+ 1191              agent: agent.name,
+ 1192              variant: lastUser.model.variant,
+ 1193              path: { cwd: ctx.directory, root: ctx.worktree },
+ 1194              cost: 0,
+ 1195              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+ 1196              modelID: model.id,
+ 1197              providerID: model.providerID,
+ 1198              time: { created: Date.now() },
+ 1199              sessionID,
+ 1200            }
+ 1201            yield* sessions.updateMessage(msg)</code></pre></details></div></div></article><article class="finding-card compact" id="opencode-loop-002" data-finding-dimension="loop"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>02 · 每一步动态重建 Agent、工具、系统上下文和模型请求</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>loop 解析 agent/model，应用 reminders，创建 assistant record，按当前 permission/provider 解析工具，再并行装配 skills、environment、instructions、MCP instructions 和 compacted model messages。</p></section><section><span>白话解释</span><p>不是开会前一次性发完所有资料；每走一步都按当前身份、模型和权限重新整理桌面。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>支持运行中配置和权限变化，但每步装配链更复杂、需要缓存与测试。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1170–1204</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1205–1241</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 284e97068c98 · <a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1170-L1241" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/opencode/src/session/prompt.ts:1170–1241</span><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1170-L1241" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1170            const agent = yield* agents.get(lastUser.agent)
+ 1171            if (!agent) {
+ 1172              const available = (yield* agents.list()).filter((a) =&gt; !a.hidden).map((a) =&gt; a.name)
+ 1173              const hint = available.length ? ` Available agents: ${available.join(&quot;, &quot;)}` : &quot;&quot;
+ 1174              const error = new NamedError.Unknown({ message: `Agent not found: &quot;${lastUser.agent}&quot;.${hint}` })
+ 1175              yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+ 1176              throw error
+ 1177            }
+ 1178            const maxSteps = agent.steps ?? Infinity
+ 1179            const isLastStep = step &gt;= maxSteps
+ 1180            msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
+ 1181              Effect.provideService(RuntimeFlags.Service, flags),
+ 1182              Effect.provideService(FSUtil.Service, fsys),
+ 1183              Effect.provideService(Session.Service, sessions),
+ 1184            )
+ 1185
+ 1186            const msg: SessionV1.Assistant = {
+ 1187              id: MessageID.ascending(),
+ 1188              parentID: lastUser.id,
+ 1189              role: &quot;assistant&quot;,
+ 1190              mode: agent.name,
+ 1191              agent: agent.name,
+ 1192              variant: lastUser.model.variant,
+ 1193              path: { cwd: ctx.directory, root: ctx.worktree },
+ 1194              cost: 0,
+ 1195              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+ 1196              modelID: model.id,
+ 1197              providerID: model.providerID,
+ 1198              time: { created: Date.now() },
+ 1199              sessionID,
+ 1200            }
+ 1201            yield* sessions.updateMessage(msg)
+ 1202
+ 1203            const finalizeInterruptedAssistant = Effect.gen(function* () {
+ 1204              if (msg.time.completed) return
+ 1205              msg.error ??= MessageV2.fromError(new DOMException(&quot;Aborted&quot;, &quot;AbortError&quot;), {
+ 1206                providerID: msg.providerID,
+ 1207                aborted: true,
+ 1208              })
+ 1209              msg.time.completed = Date.now()
+ 1210              yield* sessions.updateMessage(msg)
+ 1211            })
+ 1212
+ 1213            const handle = yield* processor
+ 1214              .create({
+ 1215                assistantMessage: msg,
+ 1216                sessionID,
+ 1217                model,
+ 1218              })
+ 1219              .pipe(Effect.onInterrupt(() =&gt; finalizeInterruptedAssistant))
+ 1220
+ 1221            const outcome: &quot;break&quot; | &quot;continue&quot; = yield* Effect.gen(function* () {
+ 1222              const lastUserMsg = msgs.findLast((m) =&gt; m.info.role === &quot;user&quot;)
+ 1223              const bypassAgentCheck = lastUserMsg?.parts.some((p) =&gt; p.type === &quot;agent&quot;) ?? false
+ 1224              const promptOps = yield* ops()
+ 1225
+ 1226              const tools = yield* SessionTools.resolve({
+ 1227                agent,
+ 1228                session,
+ 1229                model,
+ 1230                processor: handle,
+ 1231                bypassAgentCheck,
+ 1232                messages: msgs,
+ 1233                promptOps,
+ 1234              }).pipe(
+ 1235                Effect.provideService(Plugin.Service, plugin),
+ 1236                Effect.provideService(Permission.Service, permission),
+ 1237                Effect.provideService(ToolRegistry.Service, registry),
+ 1238                Effect.provideService(MCP.Service, mcp),
+ 1239                Effect.provideService(Truncate.Service, truncate),
+ 1240                Effect.provideService(RuntimeFlags.Service, flags),
+ 1241              )
+ 1242
+ 1243              if (lastUser.format?.type === &quot;json_schema&quot;) {
+ 1244                tools[&quot;StructuredOutput&quot;] = createStructuredOutputTool({
+ 1245                  schema: lastUser.format.schema,
+ 1246                  onSuccess(output) {
+ 1247                    structured = output
+ 1248                  },
+ 1249                })
+ 1250              }
+ 1251
+ 1252              if (step === 1)
+ 1253                yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
+ 1254
+ 1255              yield* plugin.trigger(&quot;experimental.chat.messages.transform&quot;, {}, { messages: msgs })
+ 1256
+ 1257              const [skills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
+ 1258                sys.skills(agent),
+ 1259                sys.environment(model),
+ 1260                instruction.system().pipe(Effect.orDie),
+ 1261                sys.mcp(agent, session.permission),
+ 1262                MessageV2.toModelMessagesEffect(msgs, model),
+ 1263              ])
+ 1264              const system = [
+ 1265                ...env,
+ 1266                ...instructions,
+ 1267                ...(mcpInstructions ? [mcpInstructions] : []),
+ 1268                ...(skills ? [skills] : []),
+ 1269              ]
+ 1270              const format = lastUser.format ?? { type: &quot;text&quot; as const }
+ 1271              if (format.type === &quot;json_schema&quot;) system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+ 1272              const result = yield* handle.process({
+ 1273                user: lastUser,
+ 1274                agent,
+ 1275                permission: session.permission,
+ 1276                sessionID,
+ 1277                parentSessionID: session.parentID,
+ 1278                system,
+ 1279                messages: [
+ 1280                  ...modelMsgs,
+ 1281                  ...(isLastStep ? [{ role: &quot;assistant&quot; as const, content: MAX_STEPS_PROMPT }] : []),
+ 1282                ],
+ 1283                tools,
+ 1284                model,
+ 1285                toolChoice: format.type === &quot;json_schema&quot; ? &quot;required&quot; : undefined,
+ 1286              })
+ 1287
+ 1288              if (structured !== undefined) {
+ 1289                handle.message.structured = structured
+ 1290                handle.message.finish = handle.message.finish ?? &quot;stop&quot;
+ 1291                yield* sessions.updateMessage(handle.message)
+ 1292                return &quot;break&quot; as const
+ 1293              }
+ 1294
+ 1295              const finished = handle.message.finish &amp;&amp; ![&quot;tool-calls&quot;, &quot;unknown&quot;].includes(handle.message.finish)
+ 1296              if (finished &amp;&amp; !handle.message.error) {
+ 1297                // Surface any content-filter finish (e.g. Anthropic stop_reason:
+ 1298                // refusal) as an error. These turns may have produced no visible
+ 1299                // output at all — previously the session went idle silently — or
+ 1300                // partial text that was cut off by the provider&#39;s filter.
+ 1301                if (handle.message.finish === &quot;content-filter&quot;) {
+ 1302                  handle.message.error = new SessionV1.ContentFilterError({
+ 1303                    message: &quot;The response was blocked by the provider&#39;s content filter&quot;,
+ 1304                  }).toObject()
+ 1305                  yield* sessions.updateMessage(handle.message)
+ 1306                  yield* events.publish(Session.Event.Error, { sessionID, error: handle.message.error })
+ 1307                  return &quot;break&quot; as const
+ 1308                }
+ 1309                if (format.type === &quot;json_schema&quot;) {
+ 1310                  handle.message.error = new SessionV1.StructuredOutputError({
+ 1311                    message: &quot;Model did not produce structured output&quot;,
+ 1312                    retries: 0,</code></pre></div></div></article><article class="finding-card compact" id="opencode-stream-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · stream processor 把 reasoning、text、tool、usage、patch 全部事件化持久</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>processor 为 reasoning/text/tool call 建 part，tool result 归一化附件；step-finish 记录 finish、cost、tokens、snapshot 和 patch，并异步更新 session summary。</p></section><section><span>白话解释</span><p>模型的思考、文字、每次工具起止和文件变化都不是终端里一闪而过，而是独立可回放的事件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>TUI、Web、Desktop、ACP 可以消费同一事件模型。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>315–363</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>364–413</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 284e97068c98 · <a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/processor.ts#L315-L413" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/opencode/src/session/processor.ts:315–413</span><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/processor.ts#L315-L413" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  315            case &quot;tool-input-start&quot;:
+  316              if (ctx.assistantMessage.summary) {
+  317                throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
+  318              }
+  319              yield* ensureToolCall(value)
+  320              return
+  321
+  322            case &quot;tool-input-delta&quot;:
+  323              yield* ensureToolCall(value)
+  324              return
+  325
+  326            case &quot;tool-input-end&quot;: {
+  327              yield* ensureToolCall(value)
+  328              return
+  329            }
+  330
+  331            case &quot;tool-call&quot;: {
+  332              if (ctx.assistantMessage.summary) {
+  333                throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
+  334              }
+  335              yield* ensureToolCall(value)
+  336              const input = isRecord(value.input) ? value.input : { value: value.input }
+  337              yield* updateToolCall(value.id, (match) =&gt; ({
+  338                ...match,
+  339                tool: value.name,
+  340                state:
+  341                  match.state.status === &quot;running&quot;
+  342                    ? { ...match.state, input }
+  343                    : {
+  344                        status: &quot;running&quot;,
+  345                        input,
+  346                        time: { start: Date.now() },
+  347                      },
+  348                metadata: match.metadata?.providerExecuted
+  349                  ? { ...value.providerMetadata, providerExecuted: true }
+  350                  : value.providerMetadata,
+  351              }))
+  352
+  353              const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
+  354                Effect.provideService(Database.Service, database),
+  355              )
+  356              const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
+  357
+  358              if (
+  359                recentParts.length !== DOOM_LOOP_THRESHOLD ||
+  360                !recentParts.every(
+  361                  (part) =&gt;
+  362                    part.type === &quot;tool&quot; &amp;&amp;
+  363                    part.tool === value.name &amp;&amp;
+  364                    part.state.status !== &quot;pending&quot; &amp;&amp;
+  365                    JSON.stringify(part.state.input) === JSON.stringify(input),
+  366                )
+  367              ) {
+  368                return
+  369              }
+  370
+  371              const agent = yield* agents.get(ctx.assistantMessage.agent)
+  372              yield* permission.ask({
+  373                permission: &quot;doom_loop&quot;,
+  374                patterns: [value.name],
+  375                sessionID: ctx.assistantMessage.sessionID,
+  376                metadata: { tool: value.name, input },
+  377                always: [value.name],
+  378                ruleset: agent.permission,
+  379              })
+  380              return
+  381            }
+  382
+  383            case &quot;tool-result&quot;: {
+  384              const toolCall = yield* readToolCall(value.id)
+  385              if (!toolCall &amp;&amp; value.result.type === &quot;error&quot;) return
+  386              if (value.result.type === &quot;error&quot;) {
+  387                yield* failToolCall(value.id, value.result.value)
+  388                return
+  389              }
+  390              const rawOutput = toolResultOutput(value)
+  391              const normalized = yield* Effect.forEach(rawOutput.attachments ?? [], (attachment) =&gt;
+  392                attachment.mime.startsWith(&quot;image/&quot;)
+  393                  ? image.normalize(attachment).pipe(
+  394                      Effect.catchIf(
+  395                        (error) =&gt; error instanceof Image.ResizerUnavailableError,
+  396                        () =&gt; Effect.succeed(attachment),
+  397                      ),
+  398                      Effect.exit,
+  399                    )
+  400                  : Effect.succeed(Exit.succeed&lt;SessionV1.FilePart&gt;(attachment)),
+  401              )
+  402              const omitted = normalized.filter(Exit.isFailure).length
+  403              const attachments = normalized.filter(Exit.isSuccess).map((item) =&gt; item.value)
+  404              const output = {
+  405                ...rawOutput,
+  406                output:
+  407                  omitted === 0
+  408                    ? rawOutput.output
+  409                    : `${rawOutput.output}\n\n[${omitted} image${omitted === 1 ? &quot;&quot; : &quot;s&quot;} omitted: could not be resized below the image size limit.]`,
+  410                attachments: attachments.length ? attachments : undefined,
+  411              }
+  412              yield* completeToolCall(value.id, output)
+  413              return
+  414            }
+  415
+  416            case &quot;tool-error&quot;: {
+  417              yield* failToolCall(value.id, value.error ?? new Error(value.message))
+  418              return
+  419            }
+  420
+  421            case &quot;provider-error&quot;:
+  422              throw new Error(value.message)
+  423
+  424            case &quot;step-start&quot;:
+  425              if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
+  426              yield* session.updatePart({
+  427                id: PartID.ascending(),
+  428                messageID: ctx.assistantMessage.id,
+  429                sessionID: ctx.sessionID,
+  430                snapshot: ctx.snapshot,
+  431                type: &quot;step-start&quot;,
+  432              })
+  433              return
+  434
+  435            case &quot;step-finish&quot;: {
+  436              const completedSnapshot = yield* snapshot.track()
+  437              yield* Effect.forEach(Object.keys(ctx.reasoningMap), finishReasoning)
+  438              const usage = Session.getUsage({
+  439                model: ctx.model,
+  440                usage: value.usage ?? new Usage({}),
+  441                metadata: value.providerMetadata,
+  442              })
+  443              ctx.assistantMessage.finish = value.reason
+  444              ctx.assistantMessage.cost += usage.cost
+  445              ctx.assistantMessage.tokens = usage.tokens
+  446              yield* session.updatePart({
+  447                id: PartID.ascending(),
+  448                reason: value.reason,
+  449                snapshot: completedSnapshot,
+  450                messageID: ctx.assistantMessage.id,
+  451                sessionID: ctx.assistantMessage.sessionID,
+  452                type: &quot;step-finish&quot;,
+  453                tokens: usage.tokens,
+  454                cost: usage.cost,
+  455              })
+  456              yield* session.updateMessage(ctx.assistantMessage)
+  457              if (ctx.snapshot) {
+  458                const patch = yield* snapshot.patch(ctx.snapshot)
+  459                if (patch.files.length) {
+  460                  yield* session.updatePart({
+  461                    id: PartID.ascending(),
+  462                    messageID: ctx.assistantMessage.id,
+  463                    sessionID: ctx.sessionID,
+  464                    type: &quot;patch&quot;,
+  465                    hash: patch.hash,
+  466                    files: patch.files,
+  467                  })
+  468                }
+  469                ctx.snapshot = undefined
+  470              }
+  471              yield* summary
+  472                .summarize({
+  473                  sessionID: ctx.sessionID,
+  474                  messageID: ctx.assistantMessage.parentID,
+  475                })
+  476                .pipe(Effect.ignore, Effect.forkIn(scope))
+  477              if (
+  478                !ctx.assistantMessage.summary &amp;&amp;
+  479                isOverflow({ cfg: yield* config.get(), tokens: usage.tokens, model: ctx.model })
+  480              ) {
+  481                ctx.needsCompaction = true
+  482              }
+  483              return
+  484            }</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>runLoop 每步从数据库重建过滤后的消息视图，找最后 user/assistant/finished 与待处理 subtask/compaction；只有已完成、无工具调用且顺序闭合才退出，否则继续调度。</blockquote><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1081-L1130" target="_blank" rel="noreferrer">packages/opencode/src/session/prompt.ts:1081–1130 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>loop 解析 agent/model，应用 reminders，创建 assistant record，按当前 permission/provider 解析工具，再并行装配 skills、environment、instructions、MCP instructions 和 compacted model messages。</blockquote><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/prompt.ts#L1170-L1241" target="_blank" rel="noreferrer">packages/opencode/src/session/prompt.ts:1170–1241 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>processor 为 reasoning/text/tool call 建 part，tool result 归一化附件；step-finish 记录 finish、cost、tokens、snapshot 和 patch，并异步更新 session summary。</blockquote><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/processor.ts#L315-L413" target="_blank" rel="noreferrer">packages/opencode/src/session/processor.ts:315–413 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>processor 为 reasoning/text/tool call 建 part，tool result 归一化附件；step-finish 记录 finish、cost、tokens、snapshot 和 patch，并异步更新 session summary。</blockquote><a href="https://github.com/anomalyco/opencode/blob/284e97068c987a7a2e863430e07e2f1ad7d4be46/packages/opencode/src/session/processor.ts#L315-L413" target="_blank" rel="noreferrer">packages/opencode/src/session/processor.ts:315–413 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenCode sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

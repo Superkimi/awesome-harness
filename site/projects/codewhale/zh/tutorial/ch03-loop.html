@@ -1,1 +1,558 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="一次用户请求如何变成多步执行？"><title>CodeWhale · M03 · 主循环：任务为什么会继续推进</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch03-loop.html">中</a><a href="../../en/tutorial/ch03-loop.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="active" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M03 · CodeWhale · cfc2f2b13c07</p><h1>主循环：任务为什么会继续推进</h1><p class="lede">一次用户请求如何变成多步执行？</p><div class="chapter-meta"><span>第 3 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M03</span><b>CodeWhale · M03 · 主循环：任务为什么会继续推进</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch03-loop.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch03-loop.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像快递员看回执：拿到任务、写一张行动单、执行、把回执放回桌面，再决定是否继续。</p></div><h2>先回答本章问题</h2><p>一次用户请求如何变成多步执行？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-arch-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · Core 把 UI 与 AI 交互拆成事件驱动的控制面</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>core/mod.rs 明确把 engine、events、ops、session、tool_parser、turn 分成独立模块，并在 TUI alt-screen 中禁止直接 print_stdout/print_stderr，要求通过 tracing 和事件通道输出。</p></section><section><span>白话解释</span><p>终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研时应先定义 operation/event 契约，再让 TUI、HTTP 和自动化入口共享同一运行时；禁止 UI 层私自执行工具或改会话。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/mod.rs#L1-L15" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">crates/tui/src/core/engine.rs:221–298 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/mod.rs:1–15</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/mod.rs#L1-L15" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>event-driven architecture 与 stdio 输出禁令。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-arch-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · EngineConfig 是把能力、预算和权限拧在一起的运行时总闸</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>EngineConfig 同时保存 workspace、allow_shell、trust_mode、MCP/Skills/instructions、max_steps、subagent concurrency/depth/token budget、compaction、snapshots、memory、allowed/disallowed tools、max_tool_calls、hooks、strict tool mode、network policy 与 sandbox 偏好。</p></section><section><span>白话解释</span><p>CodeWhale 不是把安全、长任务和扩展散落在命令行参数里，而是先形成一份“本次会话的有效配置”，后面的 turn、工具和子 Agent 都从这份配置派生。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研要区分静态配置、turn authority 和工具调用 authority；不要让每个工具重新解释一遍全局配置。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine.rs:221–298</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>EngineConfig 的模型、工作区、工具、子 Agent、压缩和网络字段。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-arch-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · Turn 运行前冻结事实，运行后再做持久化与继续决策</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Engine::run 在每个 operation 前应用待处理 runtime authority；SendMessage 路径先解析路由、输入策略、tool surface 和快照，再进入 turn loop；异常会被 catch_unwind 转成失败 TurnComplete，成功完成才触发 goal continuation，post-turn snapshot 在完成事件后异步执行。</p></section><section><span>白话解释</span><p>它先把“这次请求到底用哪个模型、哪些工具、什么权限”钉住，再让模型开跑；失败不会把会话炸掉，也不会误判成完成。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>长任务系统需要 pre-dispatch receipt、失败终态和 post-turn checkpoint 三个明确边界，不能只靠一个 finally。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L1920-L1942" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">crates/tui/src/core/engine.rs:221–298 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine.rs:1920–1942</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L1920-L1942" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>event loop 与 authority 更新顺序。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="CodeWhale capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch02-architecture.html">← 架构：有哪些层，谁负责什么</a><a href="ch04-model.html">模型与消息：流式结果如何进入状态 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="一次用户请求如何变成多步执行？"><title>CodeWhale · M03 · 主循环：任务为什么会继续推进</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch03-loop.html">中</a><a href="../../en/tutorial/ch03-loop.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="active" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M03 · CodeWhale · cfc2f2b13c07</p><h1>主循环：任务为什么会继续推进</h1><p class="lede">一次用户请求如何变成多步执行？</p><div class="chapter-meta"><span>第 3 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M03</span><b>CodeWhale · M03 · 主循环：任务为什么会继续推进</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch03-loop.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch03-loop.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像快递员看回执：拿到任务、写一张行动单、执行、把回执放回桌面，再决定是否继续。</p></div><h2>先回答本章问题</h2><p>一次用户请求如何变成多步执行？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-arch-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · Core 把 UI 与 AI 交互拆成事件驱动的控制面</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>core/mod.rs 明确把 engine、events、ops、session、tool_parser、turn 分成独立模块，并在 TUI alt-screen 中禁止直接 print_stdout/print_stderr，要求通过 tracing 和事件通道输出。</p></section><section><span>白话解释</span><p>终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研时应先定义 operation/event 契约，再让 TUI、HTTP 和自动化入口共享同一运行时；禁止 UI 层私自执行工具或改会话。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–7</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>8–15</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/mod.rs#L1-L15" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/mod.rs:1–15</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/mod.rs#L1-L15" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  //! Core engine module for `DeepSeek` CLI.
+    2  //!
+    3  //! This module provides the event-driven architecture that separates
+    4  //! the UI from the AI interaction logic:
+    5  //!
+    6  //! - `engine`: The main engine that processes operations
+    7  //! - `events`: Events emitted by the engine to the UI
+    8  //! - `ops`: Operations submitted by the UI to the engine
+    9  //! - `session`: Session state management
+   10  //! - `turn`: Turn context and tracking
+   11
+   12  // Engine code runs inside the TUI alt-screen — see `runtime_log` for why
+   13  // raw stdio prints must not appear here. Use `tracing::*` instead.
+   14  #![deny(clippy::print_stdout)]
+   15  #![deny(clippy::print_stderr)]
+   16
+   17  pub mod authority;
+   18  pub mod engine;
+   19  pub mod events;
+   20  // The first production consumer of the staged runtime contract is the
+   21  // provider-neutral model boundary. Keep the remaining contract files staged
+   22  // until their own consumers land instead of compiling dead scaffolding.
+   23  #[path = &quot;runtime_contract/model.rs&quot;]
+   24  pub mod model_client;
+   25  pub mod ops;
+   26  #[path = &quot;runtime_contract/termination.rs&quot;]
+   27  pub mod termination;
+   28  // The rest of `runtime_contract/` stays on disk as staged Core-runtime
+   29  // scaffolding and remains deliberately uncompiled until it has production
+   30  // consumers (TUI-DOG-017).
+   31  pub mod session;
+   32  pub mod tool_parser;
+   33  pub mod turn;
+   34
+   35  // Re-exports
+   36</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/core/mod.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/core/mod.rs#L1-L15" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    1  //! Core engine module for `DeepSeek` CLI.
+    2  //!
+    3  //! This module provides the event-driven architecture that separates
+    4  //! the UI from the AI interaction logic:
+    5  //!
+    6  //! - `engine`: The main engine that processes operations
+    7  //! - `events`: Events emitted by the engine to the UI
+    8  //! - `ops`: Operations submitted by the UI to the engine
+    9  //! - `session`: Session state management
+   10  //! - `turn`: Turn context and tracking
+   11
+   12  // Engine code runs inside the TUI alt-screen — see `runtime_log` for why
+   13  // raw stdio prints must not appear here. Use `tracing::*` instead.
+   14  #![deny(clippy::print_stdout)]
+   15  #![deny(clippy::print_stderr)]
+   16
+   17  pub mod authority;
+   18  // `crates/core` now owns the engine (issue #5261). The TUI&#39;s `engine`
+   19  // consumes the core boundary directly so headless and TUI share one
+   20  // `Op`-in / `EventMsg`-out API, one `ThreadId`/`SessionId` type, and one
+   21  // `Journal` shape. New code should import from `codewhale_core`.
+   22  pub mod engine;
+   23  pub(crate) use engine::tool_catalog::allowlist_is_native_file_and_shell_only;
+   24  pub mod events;
+   25  // The first production consumer of the staged runtime contract is the
+   26  // provider-neutral model boundary. Keep the remaining contract files staged
+   27  // until their own consumers land instead of compiling dead scaffolding.
+   28  #[path = &quot;runtime_contract/model.rs&quot;]
+   29  pub mod model_client;
+   30  pub mod ops;
+   31  #[path = &quot;runtime_contract/termination.rs&quot;]
+   32  pub mod termination;
+   33  // The rest of `runtime_contract/` stays on disk as staged Core-runtime
+   34  // scaffolding and remains deliberately uncompiled until it has production
+   35  // consumers (TUI-DOG-017).
+   36  pub mod session;
+   37  pub mod tool_parser;
+   38  pub mod turn;
+   39
+   40  // Re-exports
+   41</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-arch-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · EngineConfig 是把能力、预算和权限拧在一起的运行时总闸</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>EngineConfig 同时保存 workspace、allow_shell、trust_mode、MCP/Skills/instructions、max_steps、subagent concurrency/depth/token budget、compaction、snapshots、memory、allowed/disallowed tools、max_tool_calls、hooks、strict tool mode、network policy 与 sandbox 偏好。</p></section><section><span>白话解释</span><p>CodeWhale 不是把安全、长任务和扩展散落在命令行参数里，而是先形成一份“本次会话的有效配置”，后面的 turn、工具和子 Agent 都从这份配置派生。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研要区分静态配置、turn authority 和工具调用 authority；不要让每个工具重新解释一遍全局配置。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>221–258</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>259–298</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine.rs:221–298</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  221  /// Configuration for the engine
+  222  #[derive(Debug, Clone)]
+  223  pub struct EngineConfig {
+  224      /// Model identifier to use for responses.
+  225      pub model: String,
+  226      /// Route/offering limits for the active provider+model, when the runtime
+  227      /// route resolver had concrete catalog facts.
+  228      pub active_route_limits: Option&lt;codewhale_config::route::RouteLimits&gt;,
+  229      /// Workspace root for tool execution and file operations.
+  230      pub workspace: PathBuf,
+  231      /// Allow shell tool execution when true.
+  232      pub allow_shell: bool,
+  233      /// Enable trust mode (skip approvals) when true.
+  234      pub trust_mode: bool,
+  235      /// Path to the notes file used by the notes tool.
+  236      pub notes_path: PathBuf,
+  237      /// Path to the MCP configuration file.
+  238      pub mcp_config_path: PathBuf,
+  239      /// Directory containing discoverable skills.
+  240      pub skills_dir: PathBuf,
+  241      /// Restrict skill discovery to CodeWhale-owned roots plus explicit
+  242      /// `skills_dir` configuration.
+  243      pub skills_scan_codewhale_only: bool,
+  244      /// Immutable plugin authority snapshot scoped to `workspace`. Normal App
+  245      /// hosts provide this explicitly; headless/embed callers that leave it
+  246      /// unset receive a fresh workspace-specific snapshot in [`Engine::new`].
+  247      pub plugin_registry: Option&lt;Arc&lt;crate::plugins::PluginRegistry&gt;&gt;,
+  248      /// Sources injected as `&lt;instructions source=&quot;…&quot;&gt;` blocks in the system
+  249      /// prompt (#454). Each entry is either a disk path (read at render time)
+  250      /// or an inline string. Loaded in declared order from the user&#39;s
+  251      /// `instructions = [...]` config or constructed by embedders.
+  252      ///
+  253      /// Generalized from `Vec&lt;PathBuf&gt;` so embedders can inject inline content
+  254      /// without staging a disk file. `From&lt;PathBuf&gt;` impl keeps existing callers
+  255      /// working with `.into()` at the call site.
+  256      pub instructions: Vec&lt;crate::prompts::InstructionSource&gt;,
+  257      pub project_context_pack_enabled: bool,
+  258      /// When true, the model is instructed to respond in the current locale
+  259      /// and a post-hoc translation layer replaces remaining English output.
+  260      pub translation_enabled: bool,
+  261      pub verbosity: Option&lt;String&gt;,
+  262      /// Maximum number of assistant steps before stopping.
+  263      pub max_steps: u32,
+  264      /// Maximum number of concurrently active subagents.
+  265      pub max_subagents: usize,
+  266      /// Maximum queued + running sub-agents admitted for this engine session.
+  267      pub max_admitted_subagents: usize,
+  268      /// Number of direct (depth-1) sub-agents that may execute concurrently
+  269      /// before further launches queue for a launch slot (#3095).
+  270      /// Resolved from `[subagents] launch_concurrency`.
+  271      pub launch_concurrency: usize,
+  272      /// Whether the model-facing `agent` tool is available after applying
+  273      /// feature flags and `[subagents]` opt-out controls.
+  274      pub subagents_enabled: bool,
+  275      /// Feature flags controlling tool availability.
+  276      pub features: Features,
+  277      /// Deterministic auto-review policy for tool calls.
+  278      pub auto_review_policy: crate::tui::auto_review::AutoReviewPolicy,
+  279      /// Auto-compaction settings for long conversations.
+  280      pub compaction: CompactionConfig,
+  281      /// Shared Todo list state.
+  282      pub todos: SharedTodoList,
+  283      /// Shared Plan state.
+  284      pub plan_state: SharedPlanState,
+  285      /// Shared runtime goal state for model-visible goal tools.
+  286      pub goal_state: SharedGoalState,
+  287      /// Maximum sub-agent recursion depth (default 3). See
+  288      /// `SubAgentRuntime::max_spawn_depth`. Override via
+  289      /// `[subagents] max_depth = N` in `~/.codewhale/config.toml`.
+  290      pub max_spawn_depth: u32,
+  291      /// Optional aggregate token budget for each root sub-agent run.
+  292      /// Descendant agents inherit the root pool unless a child starts a new
+  293      /// budget scope with an explicit per-call override.
+  294      pub subagent_token_budget: Option&lt;u64&gt;,
+  295      /// Per-domain network policy decider (#135). Shared across the session so
+  296      /// session-scoped approvals (`/network allow &lt;host&gt;`) persist for the
+  297      /// remainder of the run.
+  298      pub network_policy: Option&lt;crate::network_policy::NetworkPolicyDecider&gt;,
+  299      /// Whether to take side-git workspace snapshots before/after each turn.
+  300      pub snapshots_enabled: bool,
+  301      /// Maximum workspace size (in bytes) before snapshots self-disable on
+  302      /// first init. `0` disables the cap. Resolved from
+  303      /// `[snapshots] max_workspace_gb` × 1 GB at engine construction.
+  304      pub snapshots_max_workspace_bytes: u64,
+  305      /// Post-edit LSP diagnostics injection (#136). When `None`, the engine
+  306      /// constructs a disabled manager so the field is always present.
+  307      pub lsp_config: Option&lt;crate::lsp::LspConfig&gt;,
+  308      /// Durable runtime services exposed to model-visible tools.
+  309      pub runtime_services: RuntimeToolServices,
+  310      /// Per-role/type sub-agent model overrides already resolved from config.
+  311      pub subagent_model_overrides: HashMap&lt;String, String&gt;,
+  312      /// Merged fleet roster (built-ins + config + personal/workspace agent
+  313      /// files) shared by model-spawned sub-agents and fleet dispatch
+  314      /// (#fleet-roster cutover (v0.8.67)). Defaults to built-ins only; the
+  315      /// engine-config construction sites load it at session start and the setup
+  316      /// wizard refreshes it after each successful profile save.
+  317      pub fleet_roster: std::sync::Arc&lt;crate::fleet::roster::FleetRoster&gt;,
+  318      /// Whether the user-memory feature is enabled (#489). When `true` the
+  319      /// engine reads `memory_path` on each prompt assembly and prepends a
+  320      /// `&lt;user_memory&gt;` block to the system prompt.
+  321      pub memory_enabled: bool,
+  322      /// When `true`, the legacy `memory.rs` push/inject path is deprecated
+  323      /// in favour of Moraine MCP recall. `compose_block` returns `None`
+  324      /// regardless of `memory_enabled`, the `remember` tool is not
+  325      /// registered, and `# foo` quick-add falls through.
+  326      pub moraine_fallback: bool,
+  327      /// Path to the user memory file (#489). Always populated; only
+  328      /// consulted when `memory_enabled` is `true`.
+  329      pub memory_path: PathBuf,
+  330      /// Default directory for Xiaomi MiMo speech/TTS tool outputs.
+  331      pub speech_output_dir: Option&lt;PathBuf&gt;,
+  332      pub vision_config: Option&lt;crate::config::VisionModelConfig&gt;,
+  333      pub goal_objective: Option&lt;String&gt;,
+  334      pub goal_token_budget: Option&lt;u32&gt;,
+  335      pub goal_status: GoalStatus,
+  336      /// Tool restriction from custom slash command frontmatter.
+  337      /// `None` means the current turn may use the normal tool set.
+  338      pub allowed_tools: Option&lt;Vec&lt;String&gt;&gt;,
+  339      /// Tool deny-list.  Deny always wins over allow (#3027).
+  340      /// `None` means no tools are explicitly denied.
+  341      pub disallowed_tools: Option&lt;Vec&lt;String&gt;&gt;,
+  342      /// Hard per-turn cap on admitted tool calls (#4415). `None` (the default)
+  343      /// means unlimited and leaves the turn admission gate inert. Task hosts
+  344      /// set this from the task&#39;s structured `max_tool_calls` constraint; the
+  345      /// per-turn counter itself lives in the turn loop, not here.
+  346      pub max_tool_calls: Option&lt;u32&gt;,
+  347      /// Hook executor for control-plane hooks.
+  348      /// `ToolCallBefore` hooks may deny a tool call with exit code 2.
+  349      pub hook_executor: Option&lt;std::sync::Arc&lt;crate::hooks::HookExecutor&gt;&gt;,
+  350      /// Resolved BCP-47 locale tag (e.g. `&quot;en&quot;`, `&quot;zh-Hans&quot;`, `&quot;ja&quot;`)
+  351      /// for the `## Environment` block in the system prompt. The
+  352      /// caller resolves this from `Settings` once at engine
+  353      /// construction; the engine never touches disk for it.
+  354      pub locale_tag: String,
+  355      /// When true, force `tool_choice: &quot;required&quot;` and opt compatible function
+  356      /// schemas into DeepSeek beta strict mode.
+  357      pub strict_tool_mode: bool,
+  358      /// Workshop / large-tool-output routing (#548). `None` disables routing.
+  359      pub workshop: Option&lt;crate::tools::large_output_router::WorkshopConfig&gt;,
+  360      /// Which search backend `web_search` should use. Default: DuckDuckGo.
+  361      pub search_provider: crate::config::SearchProvider,
+  362      /// API key for Tavily, Bocha, Metaso, Baidu, Volcengine, or Sofya.
+  363      /// `None` for Bing, DuckDuckGo, or SearXNG.
+  364      /// Metaso also falls back to the `METASO_API_KEY` env var.
+  365      /// Baidu also falls back to `BAIDU_SEARCH_API_KEY`.
+  366      pub search_api_key: Option&lt;String&gt;,
+  367      /// Optional DuckDuckGo-compatible HTML endpoint override.
+  368      pub search_base_url: Option&lt;String&gt;,
+  369      /// Per-step DeepSeek API timeout for sub-agent `create_message` requests.</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/core/engine.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  221  #[derive(Debug, Clone)]
+  222  pub struct EngineConfig {
+  223      /// Model identifier to use for responses.
+  224      pub model: String,
+  225      /// Route/offering limits for the active provider+model, when the runtime
+  226      /// route resolver had concrete catalog facts.
+  227      pub active_route_limits: Option&lt;codewhale_config::route::RouteLimits&gt;,
+  228      /// Workspace root for tool execution and file operations.
+  229      pub workspace: PathBuf,
+  230      /// Optional host-owned root for delegated-agent runtime state.
+  231      ///
+  232      /// When unset, the worker ledger, complete transcript artifacts and
+  233      /// coordination lock retain their historical location under
+  234      /// `workspace/.codewhale/state`. Embedders may set a session-scoped root
+  235      /// to separate that control-plane state from the execution workspace.
+  236      /// Child cwd and file authority still derive from `workspace`; hosts using
+  237      /// distinct state roots for the same workspace must coordinate conflicting
+  238      /// writes themselves or isolate writers with worktrees.
+  239      pub subagent_state_root: Option&lt;PathBuf&gt;,
+  240      /// Allow shell tool execution when true.
+  241      pub allow_shell: bool,
+  242      /// Enable trust mode (skip approvals) when true.
+  243      pub trust_mode: bool,
+  244      /// Path to the notes file used by the notes tool.
+  245      pub notes_path: PathBuf,
+  246      /// Path to the MCP configuration file.
+  247      pub mcp_config_path: PathBuf,
+  248      /// Directory containing discoverable skills.
+  249      pub skills_dir: PathBuf,
+  250      /// Restrict skill discovery to CodeWhale-owned roots plus explicit
+  251      /// `skills_dir` configuration.
+  252      pub skills_scan_codewhale_only: bool,
+  253      /// Immutable plugin authority snapshot scoped to `workspace`. Normal App
+  254      /// hosts provide this explicitly; headless/embed callers that leave it
+  255      /// unset receive a fresh workspace-specific snapshot in [`Engine::new`].
+  256      pub plugin_registry: Option&lt;Arc&lt;crate::plugins::PluginRegistry&gt;&gt;,
+  257      /// Sources injected as `&lt;instructions source=&quot;…&quot;&gt;` blocks in the system
+  258      /// prompt (#454). Each entry is either a disk path (read at render time)
+  259      /// or an inline string. Loaded in declared order from the user&#39;s
+  260      /// `instructions = [...]` config or constructed by embedders.
+  261      ///
+  262      /// Generalized from `Vec&lt;PathBuf&gt;` so embedders can inject inline content
+  263      /// without staging a disk file. `From&lt;PathBuf&gt;` impl keeps existing callers
+  264      /// working with `.into()` at the call site.
+  265      pub instructions: Vec&lt;crate::prompts::InstructionSource&gt;,
+  266      pub project_context_pack_enabled: bool,
+  267      /// When true, the model is instructed to respond in the current locale
+  268      /// and a post-hoc translation layer replaces remaining English output.
+  269      pub translation_enabled: bool,
+  270      pub verbosity: Option&lt;String&gt;,
+  271      /// Maximum number of assistant steps before stopping.
+  272      pub max_steps: u32,
+  273      /// Maximum number of concurrently active subagents.
+  274      pub max_subagents: usize,
+  275      /// Maximum queued + running sub-agents admitted for this engine session.
+  276      pub max_admitted_subagents: usize,
+  277      /// Number of direct (depth-1) sub-agents that may execute concurrently
+  278      /// before further launches queue for a launch slot (#3095).
+  279      /// Resolved from `[subagents] launch_concurrency`.
+  280      pub launch_concurrency: usize,
+  281      /// Whether the model-facing `agent` tool is available after applying
+  282      /// feature flags and `[subagents]` opt-out controls.
+  283      pub subagents_enabled: bool,
+  284      /// Feature flags controlling tool availability.
+  285      pub features: Features,
+  286      /// Deterministic auto-review policy for tool calls.
+  287      pub auto_review_policy: crate::tui::auto_review::AutoReviewPolicy,
+  288      /// Auto-compaction settings for long conversations.
+  289      pub compaction: CompactionConfig,
+  290      /// Shared Todo list state.
+  291      pub todos: SharedTodoList,
+  292      /// Shared Plan state.
+  293      pub plan_state: SharedPlanState,
+  294      /// Shared runtime goal state for model-visible goal tools.
+  295      pub goal_state: SharedGoalState,
+  296      /// Maximum sub-agent recursion depth (default 3). See
+  297      /// `SubAgentRuntime::max_spawn_depth`. Override via
+  298      /// `[subagents] max_depth = N` in `~/.codewhale/config.toml`.
+  299      pub max_spawn_depth: u32,
+  300      /// Optional aggregate token budget for each root sub-agent run.
+  301      /// Descendant agents inherit the root pool unless a child starts a new
+  302      /// budget scope with an explicit per-call override.
+  303      pub subagent_token_budget: Option&lt;u64&gt;,
+  304      /// Per-domain network policy decider (#135). Shared across the session so
+  305      /// session-scoped approvals (`/network allow &lt;host&gt;`) persist for the
+  306      /// remainder of the run.
+  307      pub network_policy: Option&lt;crate::network_policy::NetworkPolicyDecider&gt;,
+  308      /// Whether to take side-git workspace snapshots before/after each turn.
+  309      pub snapshots_enabled: bool,
+  310      /// Maximum workspace size (in bytes) before snapshots self-disable on
+  311      /// first init. `0` disables the cap. Resolved from
+  312      /// `[snapshots] max_workspace_gb` × 1 GB at engine construction.
+  313      pub snapshots_max_workspace_bytes: u64,
+  314      /// Post-edit LSP diagnostics injection (#136). When `None`, the engine
+  315      /// constructs a disabled manager so the field is always present.
+  316      pub lsp_config: Option&lt;crate::lsp::LspConfig&gt;,
+  317      /// Durable runtime services exposed to model-visible tools.
+  318      pub runtime_services: RuntimeToolServices,
+  319      /// Per-role/type sub-agent model overrides already resolved from config.
+  320      pub subagent_model_overrides: HashMap&lt;String, String&gt;,
+  321      /// Merged fleet roster (built-ins + config + personal/workspace agent
+  322      /// files) shared by model-spawned sub-agents and fleet dispatch
+  323      /// (#fleet-roster cutover (v0.8.67)). Defaults to built-ins only; the
+  324      /// engine-config construction sites load it at session start and the setup
+  325      /// wizard refreshes it after each successful profile save.
+  326      pub fleet_roster: std::sync::Arc&lt;crate::fleet::roster::FleetRoster&gt;,
+  327      /// Whether the user-memory feature is enabled (#489). When `true` the
+  328      /// engine reads `memory_path` on each prompt assembly and prepends a
+  329      /// `&lt;user_memory&gt;` block to the system prompt.
+  330      pub memory_enabled: bool,
+  331      /// Path to the user memory file (#489). Always populated; only
+  332      /// consulted when `memory_enabled` is `true`.
+  333      pub memory_path: PathBuf,
+  334      /// Default directory for Xiaomi MiMo speech/TTS tool outputs.
+  335      pub speech_output_dir: Option&lt;PathBuf&gt;,
+  336      pub vision_config: Option&lt;crate::config::VisionModelConfig&gt;,
+  337      pub goal_objective: Option&lt;String&gt;,
+  338      pub goal_token_budget: Option&lt;u32&gt;,
+  339      pub goal_status: GoalStatus,
+  340      /// Safety backstop on automatic goal continuation passes (#5052).
+  341      /// Resolved from `[goal] max_continuations` in config.toml; `0` disables
+  342      /// the backstop so only completion, blocked state, or the continuation
+  343      /// limit stops an operate-mode goal run.
+  344      pub goal_max_continuations: u32,
+  345      /// Tool restriction from custom slash command frontmatter.
+  346      /// `None` means the current turn may use the normal tool set.
+  347      pub allowed_tools: Option&lt;Vec&lt;String&gt;&gt;,
+  348      /// Tool deny-list.  Deny always wins over allow (#3027).
+  349      /// `None` means no tools are explicitly denied.
+  350      pub disallowed_tools: Option&lt;Vec&lt;String&gt;&gt;,
+  351      /// Hard per-turn cap on admitted tool calls (#4415). `None` (the default)
+  352      /// means unlimited and leaves the turn admission gate inert. Task hosts
+  353      /// set this from the task&#39;s structured `max_tool_calls` constraint; the
+  354      /// per-turn counter itself lives in the turn loop, not here.
+  355      pub max_tool_calls: Option&lt;u32&gt;,
+  356      /// Hook executor for control-plane hooks.
+  357      /// `ToolCallBefore` hooks may deny a tool call with exit code 2.
+  358      pub hook_executor: Option&lt;std::sync::Arc&lt;crate::hooks::HookExecutor&gt;&gt;,
+  359      /// Resolved BCP-47 locale tag (e.g. `&quot;en&quot;`, `&quot;zh-Hans&quot;`, `&quot;ja&quot;`)
+  360      /// for the `## Environment` block in the system prompt. The
+  361      /// caller resolves this from `Settings` once at engine
+  362      /// construction; the engine never touches disk for it.
+  363      pub locale_tag: String,
+  364      /// When true, force `tool_choice: &quot;required&quot;` and opt compatible function
+  365      /// schemas into DeepSeek beta strict mode.
+  366      pub strict_tool_mode: bool,
+  367      /// Workshop / large-tool-output routing (#548). `None` disables routing.
+  368      pub workshop: Option&lt;crate::tools::large_output_router::WorkshopConfig&gt;,
+  369      /// Which search backend `web_search` should use. Default: Firecrawl.</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-arch-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · Turn 运行前冻结事实，运行后再做持久化与继续决策</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Engine::run 在每个 operation 前应用待处理 runtime authority；SendMessage 路径先解析路由、输入策略、tool surface 和快照，再进入 turn loop；异常会被 catch_unwind 转成失败 TurnComplete，成功完成才触发 goal continuation，post-turn snapshot 在完成事件后异步执行。</p></section><section><span>白话解释</span><p>它先把“这次请求到底用哪个模型、哪些工具、什么权限”钉住，再让模型开跑；失败不会把会话炸掉，也不会误判成完成。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>长任务系统需要 pre-dispatch receipt、失败终态和 post-turn checkpoint 三个明确边界，不能只靠一个 finally。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1920–1930</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1931–1942</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L1920-L1942" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine.rs:1920–1942</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L1920-L1942" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1920      /// Run the engine event loop
+ 1921      #[allow(clippy::too_many_lines)]
+ 1922      pub async fn run(mut self) {
+ 1923          // RuntimeThreadManager owns durable turn claims and installs a thread
+ 1924          // id in runtime services. Only the interactive TUI may autonomously
+ 1925          // create a new turn while the engine is otherwise idle; a hosted
+ 1926          // engine must wait for its host to claim and explicitly dispatch the
+ 1927          // next turn so events cannot be attached to the wrong durable record.
+ 1928          let host_managed_turns = self.host_managed_turns();
+ 1929
+ 1930          loop {
+ 1931              let Some(input) = self.next_run_input(host_managed_turns).await else {
+ 1932                  break;
+ 1933              };
+ 1934
+ 1935              // Runtime posture updates publish through shared typed state
+ 1936              // before attempting their best-effort wake-up. If the mailbox was
+ 1937              // already full, its next queued operation is the wake-up: apply
+ 1938              // the latest authority before doing any work under an obsolete
+ 1939              // policy.
+ 1940              if matches!(&amp;input, EngineRunInput::Operation(_)) {
+ 1941                  self.apply_pending_runtime_authority().await;
+ 1942              }
+ 1943
+ 1944              match input {
+ 1945                  EngineRunInput::SubAgentCompletion(completion) =&gt; {
+ 1946                      self.handle_idle_subagent_completion(completion).await;
+ 1947                  }
+ 1948                  EngineRunInput::Operation(op) =&gt; match *op {
+ 1949                      Op::SendMessage {
+ 1950                          content,
+ 1951                          mode,
+ 1952                          route,
+ 1953                          compaction,
+ 1954                          goal_objective,
+ 1955                          goal_token_budget,
+ 1956                          goal_status,
+ 1957                          reasoning_effort,
+ 1958                          reasoning_effort_auto,
+ 1959                          auto_model,
+ 1960                          allow_shell,
+ 1961                          trust_mode,
+ 1962                          auto_approve,
+ 1963                          approval_mode,
+ 1964                          translation_enabled,
+ 1965                          allowed_tools,
+ 1966                          dynamic_tools,
+ 1967                          hook_executor,
+ 1968                          verbosity,
+ 1969                          provenance,
+ 1970                      } =&gt; {
+ 1971                          self.handle_send_message(
+ 1972                              content,
+ 1973                              mode,
+ 1974                              *route,
+ 1975                              *compaction,
+ 1976                              goal_objective,
+ 1977                              goal_token_budget,
+ 1978                              goal_status,
+ 1979                              reasoning_effort,
+ 1980                              reasoning_effort_auto,
+ 1981                              auto_model,
+ 1982                              allow_shell,
+ 1983                              trust_mode,
+ 1984                              auto_approve,
+ 1985                              approval_mode,
+ 1986                              translation_enabled,
+ 1987                              allowed_tools,
+ 1988                              dynamic_tools,
+ 1989                              hook_executor,
+ 1990                              verbosity,
+ 1991                              provenance,
+ 1992                          )
+ 1993                          .await;
+ 1994                      }
+ 1995                      Op::ContinueGoal {
+ 1996                          dynamic_tools,
+ 1997                          engine_schedule_id,
+ 1998                      } =&gt; {
+ 1999                          let Some(dynamic_tools) = self
+ 2000                              .take_scheduled_goal_continuation(engine_schedule_id, dynamic_tools)
+ 2001                          else {
+ 2002                              continue;
+ 2003                          };
+ 2004                          // Status controls queued while the previous turn was
+ 2005                          // running are processed before this operation. Re-read
+ 2006                          // the live goal now so pause/clear/complete/blocked can
+ 2007                          // cancel a stale continuation without starting a turn.
+ 2008                          let (content, goal_snapshot) = match self.goal_continuation_if_active() {
+ 2009                              GoalContinuationAction::Inactive =&gt; continue,
+ 2010                              GoalContinuationAction::Dispatch { content, snapshot } =&gt; {
+ 2011                                  (content, *snapshot)
+ 2012                              }
+ 2013                              GoalContinuationAction::Stopped { message, reason } =&gt; {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/core/engine.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/core/engine.rs#L1920-L1942" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code> 1920          }
+ 1921          let route = match self.current_runtime_route() {
+ 1922              Ok(route) =&gt; route,
+ 1923              Err(err) =&gt; {
+ 1924                  // No route, no turn. Claim the once-only completion now so a
+ 1925                  // dead route cannot re-arm the wake into the same error every
+ 1926                  // poll tick; the user sees what finished and where the output
+ 1927                  // lives, and the next healthy turn proceeds normally.
+ 1928                  let finished = self
+ 1929                      .shell_manager
+ 1930                      .lock()
+ 1931                      .map(|mut manager| manager.drain_finished_jobs_with_evidence().len())
+ 1932                      .unwrap_or(0);
+ 1933                  let _ = self
+ 1934                      .tx_event
+ 1935                      .send(Event::error(ErrorEnvelope::fatal_auth(format!(
+ 1936                          &quot;{finished} background shell task(s) finished, but the turn cannot resume because the provider route is no longer valid: {err}. Their output stays available via /jobs.&quot;
+ 1937                      ))))
+ 1938                      .await;
+ 1939                  return;
+ 1940              }
+ 1941          };
+ 1942          let _ = self
+ 1943              .tx_event
+ 1944              .send(Event::status(
+ 1945                  &quot;Background shell work finished; resuming the turn&quot;.to_string(),
+ 1946              ))
+ 1947              .await;
+ 1948          let _ = self
+ 1949              .handle_send_message(
+ 1950                  &quot;[runtime] A background shell task finished; its completion evidence follows.&quot;
+ 1951                      .to_string(),
+ 1952                  self.current_mode,
+ 1953                  route,
+ 1954                  self.config.compaction.clone(),
+ 1955                  self.config.goal_objective.clone(),
+ 1956                  self.config.goal_token_budget,
+ 1957                  self.config.goal_status,
+ 1958                  self.session.reasoning_effort.clone(),
+ 1959                  self.session.reasoning_effort_auto,
+ 1960                  self.session.auto_model,
+ 1961                  self.session.allow_shell,
+ 1962                  self.session.trust_mode,
+ 1963                  self.session.auto_approve,
+ 1964                  self.session.approval_mode,
+ 1965                  self.config.translation_enabled,
+ 1966                  self.config.allowed_tools.clone(),
+ 1967                  Vec::new(),
+ 1968                  self.config.hook_executor.clone(),
+ 1969                  self.config.verbosity.clone(),
+ 1970                  UserInputProvenance::Runtime,
+ 1971              )
+ 1972              .await;
+ 1973      }
+ 1974
+ 1975      /// Run the engine event loop
+ 1976      #[allow(clippy::too_many_lines)]
+ 1977      pub async fn run(mut self) {
+ 1978          // RuntimeThreadManager owns durable turn claims and installs a thread
+ 1979          // id in runtime services. Only the interactive TUI may autonomously
+ 1980          // create a new turn while the engine is otherwise idle; a hosted
+ 1981          // engine must wait for its host to claim and explicitly dispatch the
+ 1982          // next turn so events cannot be attached to the wrong durable record.
+ 1983          let host_managed_turns = self.host_managed_turns();
+ 1984
+ 1985          loop {
+ 1986              let Some(input) = self.next_run_input(host_managed_turns).await else {
+ 1987                  break;
+ 1988              };
+ 1989
+ 1990              // Runtime posture updates publish through shared typed state
+ 1991              // before attempting their best-effort wake-up. If the mailbox was
+ 1992              // already full, its next queued operation is the wake-up: apply
+ 1993              // the latest authority before doing any work under an obsolete
+ 1994              // policy.
+ 1995              if matches!(&amp;input, EngineRunInput::Operation(_)) {
+ 1996                  self.apply_pending_runtime_authority().await;
+ 1997              }
+ 1998
+ 1999              match input {
+ 2000                  EngineRunInput::SubAgentCompletion(completion) =&gt; {
+ 2001                      self.handle_idle_subagent_completion(completion).await;
+ 2002                  }
+ 2003                  EngineRunInput::ShellCompletionWake =&gt; {
+ 2004                      self.handle_idle_shell_completion_wake().await;
+ 2005                  }
+ 2006                  EngineRunInput::Operation(op) =&gt; match *op {
+ 2007                      Op::SendMessage {
+ 2008                          content,
+ 2009                          mode,
+ 2010                          route,
+ 2011                          compaction,
+ 2012                          goal_objective,
+ 2013                          goal_token_budget,</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">LOOP · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>core/mod.rs 明确把 engine、events、ops、session、tool_parser、turn 分成独立模块，并在 TUI alt-screen 中禁止直接 print_stdout/print_stderr，要求通过 tracing 和事件通道输出。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/mod.rs#L1-L15" target="_blank" rel="noreferrer">crates/tui/src/core/mod.rs:1–15 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>EngineConfig 同时保存 workspace、allow_shell、trust_mode、MCP/Skills/instructions、max_steps、subagent concurrency/depth/token budget、compaction、snapshots、memory、allowed/disallowed tools、max_tool_calls、hooks、strict tool mode、network policy 与 sandbox 偏好。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L221-L298" target="_blank" rel="noreferrer">crates/tui/src/core/engine.rs:221–298 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>Engine::run 在每个 operation 前应用待处理 runtime authority；SendMessage 路径先解析路由、输入策略、tool surface 和快照，再进入 turn loop；异常会被 catch_unwind 转成失败 TurnComplete，成功完成才触发 goal continuation，post-turn snapshot 在完成事件后异步执行。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L1920-L1942" target="_blank" rel="noreferrer">crates/tui/src/core/engine.rs:1920–1942 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>Engine::run 在每个 operation 前应用待处理 runtime authority；SendMessage 路径先解析路由、输入策略、tool surface 和快照，再进入 turn loop；异常会被 catch_unwind 转成失败 TurnComplete，成功完成才触发 goal continuation，post-turn snapshot 在完成事件后异步执行。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine.rs#L1920-L1942" target="_blank" rel="noreferrer">crates/tui/src/core/engine.rs:1920–1942 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="CodeWhale capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch02-architecture.html">← 架构：有哪些层，谁负责什么</a><a href="ch04-model.html">模型与消息：流式结果如何进入状态 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

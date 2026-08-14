@@ -1,1 +1,838 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What enters context, and what gets compacted or recovered?"><title>Claude Code（复原） · M06 · Context: keeping long tasks coherent</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch06-context.html">中</a><a href="ch06-context.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="active" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M06 · Claude Code（复原） · 3bb6b5746238</p><h1>Context: keeping long tasks coherent</h1><p class="lede">What enters context, and what gets compacted or recovered?</p><div class="chapter-meta"><span>Chapter 6 / 10</span><span>6 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M06</span><b>Claude Code（复原） · M06 · 上下文：长任务怎样不丢重点</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch06-context.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch06-context.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Context is a workbench that tidies itself: current material stays visible, old material is archived, and indexes remain recoverable.</p></div><h2>Answer the chapter question first</h2><p>What enters context, and what gets compacted or recovered? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 6 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 共享预处理之后按 Provider 分流，Anthropic 仍是最深的主路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</p></section><section><span>PLAIN LANGUAGE</span><p>先把所有方言共有的消息账本整理好，再交给各家的翻译器；Anthropic 方言拥有最完整的缓存、thinking 和 beta 功能。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多模型可用性强，但新增兼容层不自动获得 Anthropic 路径全部语义，必须独立做工具与 usage 回归。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/api/claude.ts:1282–1338</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>共享消息预处理。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 流式异常可退回非流式请求，且为 fallback 设置独立超时</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>API 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。</p></section><section><span>PLAIN LANGUAGE</span><p>流式通道卡住时会换普通请求再试，不让“无限等待”成为默认恢复策略。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>交互韧性较高；但若工具已经由流式路径提前启动，重复请求可能产生双执行风险，所以代码也提供禁用该 fallback 的门。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L818-L925" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/api/claude.ts:818–925</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L818-L925" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>非流式 fallback 超时与请求。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 上下文不是单层摘要，而是 snip、工具结果瘦身、session memory 与 autocompact 的阶梯</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>snip 根据边界和 UUID 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。</p></section><section><span>PLAIN LANGUAGE</span><p>先精准剪掉明确不要的旧段，再清空大块工具输出，最后才用模型写摘要；不同手术刀处理不同类型的肥胖。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>比单一“全历史总结”更保真，但分层状态、缓存标记和 resume 重建复杂。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/snipCompact.ts#L60-L147" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/compact/snipCompact.ts:60–147</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/snipCompact.ts#L60-L147" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>snip boundary、UUID 过滤和 tokensFreed。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · 压缩为输出预留预算，并有连续失败熔断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。</p></section><section><span>PLAIN LANGUAGE</span><p>不会把车厢塞满到回答没座位；整理行李连续失败三次后先停手，不再每回合烧一次模型调用。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>阈值与错误治理成熟，但部分阈值注释来自不可核验的内部指标，报告只采纳代码常量和行为。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/autoCompact.ts#L28-L93" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/compact/autoCompact.ts:28–93</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/autoCompact.ts#L28-L93" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>输出预留和多窗口 buffer。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>modelContext</span></div><h3>05 · cache-editing 微压缩代码存在，但该固定提交的关键 beta header 为空</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>microcompact 的 cached path 能登记 tool result、生成 cache_edits 并维持 pinned edits；然而 API 层明确检查到本 fork 的 CACHE_EDITING_BETA_HEADER 为空，headerAvailable=false 时关闭该路径。</p></section><section><span>PLAIN LANGUAGE</span><p>发动机舱里有这套零件，但点火钥匙没公开，当前版本不会真正挂入生产链路。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>不能把 cached microcompact 计为该固定提交默认可用能力；真正可达的是 time-based 清空和 autocompact 等路径。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/microCompact.ts#L257-L307" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/compact/microCompact.ts:257–307</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/microCompact.ts#L257-L307" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>feature/model/source gate 与 cached path。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-004" data-finding-dimension="modelContext"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>06 · 超长请求有 reactive compact 与循环保护</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query 捕获 prompt-too-long 和媒体相关错误后可移除失败消息、触发压缩并重试；同时记录已尝试状态，防止恢复逻辑无限循环。</p></section><section><span>PLAIN LANGUAGE</span><p>真的撞到窗口上限时，会倒车、重新打包再试；同一次事故不会无限重复。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>预测阈值漏判时仍有救生路径，适合长会话，但压缩前后的 tool pairing 与 transcript 必须同步修复。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L1352-L1450" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:1352–1450</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L1352-L1450" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>reactive compact、媒体恢复和 loop guard。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="Claude Code（复原） capability" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch05-tools.html">← Tools: registering the agent&#39;s hands</a><a href="ch07-security.html">Security: approvals, permissions, boundaries →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What enters context, and what gets compacted or recovered?"><title>Claude Code（复原） · M06 · Context: keeping long tasks coherent</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch06-context.html">中</a><a href="ch06-context.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="active" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M06 · Claude Code（复原） · 3bb6b5746238</p><h1>Context: keeping long tasks coherent</h1><p class="lede">What enters context, and what gets compacted or recovered?</p><div class="chapter-meta"><span>Chapter 6 / 10</span><span>6 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M06</span><b>Claude Code（复原） · M06 · 上下文：长任务怎样不丢重点</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch06-context.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch06-context.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Context is a workbench that tidies itself: current material stays visible, old material is archived, and indexes remain recoverable.</p></div><h2>Answer the chapter question first</h2><p>What enters context, and what gets compacted or recovered? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 6 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 共享预处理之后按 Provider 分流，Anthropic 仍是最深的主路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</p></section><section><span>PLAIN LANGUAGE</span><p>先把所有方言共有的消息账本整理好，再交给各家的翻译器；Anthropic 方言拥有最完整的缓存、thinking 和 beta 功能。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多模型可用性强，但新增兼容层不自动获得 Anthropic 路径全部语义，必须独立做工具与 usage 回归。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1282–1309</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1310–1338</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/api/claude.ts:1282–1338</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1282    // Normalize messages before building system prompt (needed for fingerprinting)
+ 1283    // Instrumentation: Track message count before normalization
+ 1284    logEvent(&#39;tengu_api_before_normalize&#39;, {
+ 1285      preNormalizedMessageCount: messages.length,
+ 1286    })
+ 1287
+ 1288    queryCheckpoint(&#39;query_message_normalization_start&#39;)
+ 1289    let messagesForAPI = normalizeMessagesForAPI(messages, filteredTools)
+ 1290    queryCheckpoint(&#39;query_message_normalization_end&#39;)
+ 1291
+ 1292    // Model-specific post-processing: strip tool-search-specific fields if the
+ 1293    // selected model doesn&#39;t support tool search.
+ 1294    //
+ 1295    // Why is this needed in addition to normalizeMessagesForAPI?
+ 1296    // - normalizeMessagesForAPI uses isSearchExtraToolsEnabledNoModelCheck() because it&#39;s
+ 1297    //   called from ~20 places (analytics, feedback, sharing, etc.), many of which
+ 1298    //   don&#39;t have model context. Adding model to its signature would be a large refactor.
+ 1299    // - This post-processing uses the model-aware isSearchExtraToolsEnabled() check
+ 1300    // - This handles mid-conversation model switching (e.g., Sonnet → Haiku) where
+ 1301    //   stale tool-search fields from the previous model would cause 400 errors
+ 1302    //
+ 1303    // Note: For assistant messages, normalizeMessagesForAPI already normalized the
+ 1304    // tool inputs, so stripCallerFieldFromAssistantMessage only needs to remove the
+ 1305    // &#39;caller&#39; field (not re-normalize inputs).
+ 1306    if (!useSearchExtraTools) {
+ 1307      messagesForAPI = messagesForAPI.map(msg =&gt; {
+ 1308        switch (msg.type) {
+ 1309          case &#39;user&#39;:
+ 1310            // Strip tool_reference blocks from tool_result content
+ 1311            return stripToolReferenceBlocksFromUserMessage(msg)
+ 1312          case &#39;assistant&#39;:
+ 1313            // Strip &#39;caller&#39; field from tool_use blocks
+ 1314            return stripCallerFieldFromAssistantMessage(msg)
+ 1315          default:
+ 1316            return msg
+ 1317        }
+ 1318      })
+ 1319    }
+ 1320
+ 1321    // Repair tool_use/tool_result pairing mismatches that can occur when resuming
+ 1322    // remote/teleport sessions. Inserts synthetic error tool_results for orphaned
+ 1323    // tool_uses and strips orphaned tool_results referencing non-existent tool_uses.
+ 1324    messagesForAPI = ensureToolResultPairing(messagesForAPI)
+ 1325
+ 1326    // Strip advisor blocks — the API rejects them without the beta header.
+ 1327    if (!betas.includes(ADVISOR_BETA_HEADER)) {
+ 1328      messagesForAPI = stripAdvisorBlocks(messagesForAPI)
+ 1329    }
+ 1330
+ 1331    // Strip excess media items before making the API call.
+ 1332    // The API rejects requests with &gt;100 media items but returns a confusing error.
+ 1333    // Rather than erroring (which is hard to recover from in Cowork/CCD), we
+ 1334    // silently drop the oldest media items to stay within the limit.
+ 1335    messagesForAPI = stripExcessMediaItems(
+ 1336      messagesForAPI,
+ 1337      API_MAX_MEDIA_PER_REQUEST,
+ 1338    )
+ 1339
+ 1340    // OpenAI-compatible provider: delegate to the OpenAI adapter layer
+ 1341    // after shared preprocessing (message normalization, tool filtering,
+ 1342    // media stripping) but before Anthropic-specific logic (betas, thinking, caching).
+ 1343    if (getAPIProvider() === &#39;openai&#39;) {
+ 1344      const { queryModelOpenAI } = await import(&#39;./openai/index.js&#39;)
+ 1345      // OpenAI emulates Anthropic&#39;s dynamic tool loading client-side. It needs
+ 1346      // the full tool pool so SearchExtraToolsTool can search deferred MCP tools that
+ 1347      // were intentionally filtered out of the initial API tool list above.
+ 1348      yield* queryModelOpenAI(
+ 1349        messagesForAPI,
+ 1350        systemPrompt,
+ 1351        tools,
+ 1352        signal,
+ 1353        options,
+ 1354      )
+ 1355      return
+ 1356    }
+ 1357
+ 1358    if (getAPIProvider() === &#39;gemini&#39;) {
+ 1359      const { queryModelGemini } = await import(&#39;./gemini/index.js&#39;)
+ 1360      yield* queryModelGemini(
+ 1361        messagesForAPI,
+ 1362        systemPrompt,
+ 1363        filteredTools,
+ 1364        signal,
+ 1365        options,
+ 1366        thinkingConfig,
+ 1367      )
+ 1368      return
+ 1369    }
+ 1370
+ 1371    if (getAPIProvider() === &#39;grok&#39;) {
+ 1372      const { queryModelGrok } = await import(&#39;./grok/index.js&#39;)
+ 1373      yield* queryModelGrok(
+ 1374        messagesForAPI,
+ 1375        systemPrompt,
+ 1376        filteredTools,
+ 1377        signal,
+ 1378        options,
+ 1379      )
+ 1380      return
+ 1381    }
+ 1382
+ 1383    // Instrumentation: Track message count after normalization
+ 1384    logEvent(&#39;tengu_api_after_normalize&#39;, {
+ 1385      postNormalizedMessageCount: messagesForAPI.length,
+ 1386    })
+ 1387
+ 1388    // When the delta attachment is enabled, deferred tools are announced
+ 1389    // via persisted deferred_tools_delta attachments instead of this
+ 1390    // ephemeral prepend (which busts cache whenever the pool changes).
+ 1391    if (useSearchExtraTools &amp;&amp; !isDeferredToolsDeltaEnabled()) {
+ 1392      // Diff current deferred tools against what&#39;s already been announced in
+ 1393      // prior &lt;available-deferred-tools&gt; injections. Only re-inject when new
+ 1394      // tools appear (e.g. MCP server connects mid-session).
+ 1395      const deferredToolList = tools
+ 1396        .filter(t =&gt; deferredToolNames.has(t.name))
+ 1397        .map(formatDeferredToolLine)
+ 1398        .sort()
+ 1399        .join(&#39;\n&#39;)
+ 1400
+ 1401      if (deferredToolList) {
+ 1402        const currentTools = new Set(deferredToolList.split(&#39;\n&#39;))
+ 1403        const hasNewTools = [...currentTools].some(
+ 1404          t =&gt; !lastAnnouncedDeferredTools.has(t),
+ 1405        )
+ 1406
+ 1407        if (hasNewTools) {
+ 1408          lastAnnouncedDeferredTools.clear()
+ 1409          for (const t of currentTools) lastAnnouncedDeferredTools.add(t)</code></pre></div></div></article><article class="finding-card compact" id="claude-code-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 流式异常可退回非流式请求，且为 fallback 设置独立超时</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>API 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。</p></section><section><span>PLAIN LANGUAGE</span><p>流式通道卡住时会换普通请求再试，不让“无限等待”成为默认恢复策略。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>交互韧性较高；但若工具已经由流式路径提前启动，重复请求可能产生双执行风险，所以代码也提供禁用该 fallback 的门。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>818–870</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>871–925</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L818-L925" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/api/claude.ts:818–925</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L818-L925" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  818   * Per-attempt timeout for non-streaming fallback requests, in milliseconds.
+  819   * Reads API_TIMEOUT_MS when set so slow backends and the streaming path
+  820   * share the same ceiling.
+  821   *
+  822   * Remote sessions default to 120s to stay under CCR&#39;s container idle-kill
+  823   * (~5min) so a hung fallback to a wedged backend surfaces a clean
+  824   * APIConnectionTimeoutError instead of stalling past SIGKILL.
+  825   *
+  826   * Otherwise defaults to 300s — long enough for slow backends without
+  827   * approaching the API&#39;s 10-minute non-streaming boundary.
+  828   */
+  829  function getNonstreamingFallbackTimeoutMs(): number {
+  830    const override = parseInt(process.env.API_TIMEOUT_MS || &#39;&#39;, 10)
+  831    if (override) return override
+  832    return isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) ? 120_000 : 300_000
+  833  }
+  834
+  835  /**
+  836   * Helper generator for non-streaming API requests.
+  837   * Encapsulates the common pattern of creating a withRetry generator,
+  838   * iterating to yield system messages, and returning the final BetaMessage.
+  839   */
+  840  export async function* executeNonStreamingRequest(
+  841    clientOptions: {
+  842      model: string
+  843      fetchOverride?: Options[&#39;fetchOverride&#39;]
+  844      source: string
+  845    },
+  846    retryOptions: {
+  847      model: string
+  848      fallbackModel?: string
+  849      thinkingConfig: ThinkingConfig
+  850      fastMode?: boolean
+  851      signal: AbortSignal
+  852      initialConsecutive529Errors?: number
+  853      querySource?: QuerySource
+  854    },
+  855    paramsFromContext: (context: RetryContext) =&gt; BetaMessageStreamParams,
+  856    onAttempt: (attempt: number, start: number, maxOutputTokens: number) =&gt; void,
+  857    captureRequest: (params: BetaMessageStreamParams) =&gt; void,
+  858    /**
+  859     * Request ID of the failed streaming attempt this fallback is recovering
+  860     * from. Emitted in tengu_nonstreaming_fallback_error for funnel correlation.
+  861     */
+  862    originatingRequestId?: string | null,
+  863  ): AsyncGenerator&lt;SystemAPIErrorMessage, BetaMessage&gt; {
+  864    const fallbackTimeoutMs = getNonstreamingFallbackTimeoutMs()
+  865    const generator = withRetry(
+  866      () =&gt;
+  867        getAnthropicClient({
+  868          maxRetries: 0,
+  869          model: clientOptions.model,
+  870          fetchOverride: clientOptions.fetchOverride,
+  871          source: clientOptions.source,
+  872        }),
+  873      async (anthropic, attempt, context) =&gt; {
+  874        const start = Date.now()
+  875        const retryParams = paramsFromContext(context)
+  876        captureRequest(retryParams)
+  877        onAttempt(attempt, start, retryParams.max_tokens)
+  878
+  879        const adjustedParams = adjustParamsForNonStreaming(
+  880          retryParams,
+  881          MAX_NON_STREAMING_TOKENS,
+  882        )
+  883
+  884        try {
+  885          return await anthropic.beta.messages.create(
+  886            {
+  887              ...adjustedParams,
+  888              model: normalizeModelStringForAPI(adjustedParams.model),
+  889            },
+  890            {
+  891              signal: retryOptions.signal,
+  892              timeout: fallbackTimeoutMs,
+  893            },
+  894          )
+  895        } catch (err) {
+  896          // User aborts are not errors — re-throw immediately without logging
+  897          if (err instanceof APIUserAbortError) throw err
+  898
+  899          // Instrumentation: record when the non-streaming request errors (including
+  900          // timeouts). Lets us distinguish &quot;fallback hung past container kill&quot;
+  901          // (no event) from &quot;fallback hit the bounded timeout&quot; (this event).
+  902          logForDiagnosticsNoPII(&#39;error&#39;, &#39;cli_nonstreaming_fallback_error&#39;)
+  903          logEvent(&#39;tengu_nonstreaming_fallback_error&#39;, {
+  904            model:
+  905              clientOptions.model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+  906            error:
+  907              err instanceof Error
+  908                ? (err.name as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS)
+  909                : (&#39;unknown&#39; as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS),
+  910            attempt,
+  911            timeout_ms: fallbackTimeoutMs,
+  912            request_id: (originatingRequestId ??
+  913              &#39;unknown&#39;) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+  914          })
+  915          throw err
+  916        }
+  917      },
+  918      {
+  919        model: retryOptions.model,
+  920        fallbackModel: retryOptions.fallbackModel,
+  921        thinkingConfig: retryOptions.thinkingConfig,
+  922        ...(isFastModeEnabled() &amp;&amp; { fastMode: retryOptions.fastMode }),
+  923        signal: retryOptions.signal,
+  924        initialConsecutive529Errors: retryOptions.initialConsecutive529Errors,
+  925        querySource: retryOptions.querySource,
+  926      },
+  927    )
+  928
+  929    let e
+  930    do {
+  931      e = await generator.next()
+  932      if (!e.done &amp;&amp; e.value.type === &#39;system&#39;) {
+  933        yield e.value
+  934      }
+  935    } while (!e.done)
+  936
+  937    return e.value as BetaMessage
+  938  }
+  939
+  940  /**
+  941   * Extracts the request ID from the most recent assistant message in the
+  942   * conversation. Used to link consecutive API requests in analytics so we can
+  943   * join them for cache-hit-rate analysis and incremental token tracking.
+  944   *
+  945   * Deriving this from the message array (rather than global state) ensures each
+  946   * query chain (main thread, subagent, teammate) tracks its own request chain
+  947   * independently, and rollback/undo naturally updates the value.
+  948   */
+  949  function getPreviousRequestIdFromMessages(
+  950    messages: Message[],
+  951  ): string | undefined {
+  952    for (let i = messages.length - 1; i &gt;= 0; i--) {
+  953      const msg = messages[i]!
+  954      if (msg.type === &#39;assistant&#39; &amp;&amp; msg.requestId) {
+  955        return msg.requestId as string
+  956      }
+  957    }
+  958    return undefined
+  959  }
+  960
+  961  function isMedia(
+  962    block: BetaContentBlockParam,
+  963  ): block is BetaImageBlockParam | BetaRequestDocumentBlock {
+  964    return block.type === &#39;image&#39; || block.type === &#39;document&#39;
+  965  }
+  966
+  967  function isToolResult(
+  968    block: BetaContentBlockParam,
+  969  ): block is BetaToolResultBlockParam {
+  970    return block.type === &#39;tool_result&#39;
+  971  }
+  972
+  973  /**
+  974   * Ensures messages contain at most `limit` media items (images + documents).
+  975   * Strips oldest media first to preserve the most recent.
+  976   */
+  977  export function stripExcessMediaItems(
+  978    messages: (UserMessage | AssistantMessage)[],
+  979    limit: number,
+  980  ): (UserMessage | AssistantMessage)[] {
+  981    let toRemove = 0
+  982    for (const msg of messages) {
+  983      if (!Array.isArray(msg.message!.content)) continue
+  984      for (const block of msg.message!.content) {
+  985        if (isMedia(block)) toRemove++
+  986        if (isToolResult(block) &amp;&amp; Array.isArray(block.content)) {
+  987          for (const nested of block.content) {
+  988            if (isMedia(nested as BetaContentBlockParam)) toRemove++
+  989          }
+  990        }
+  991      }
+  992    }
+  993    toRemove -= limit
+  994    if (toRemove &lt;= 0) return messages
+  995
+  996    return messages.map(msg =&gt; {</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 上下文不是单层摘要，而是 snip、工具结果瘦身、session memory 与 autocompact 的阶梯</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>snip 根据边界和 UUID 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。</p></section><section><span>PLAIN LANGUAGE</span><p>先精准剪掉明确不要的旧段，再清空大块工具输出，最后才用模型写摘要；不同手术刀处理不同类型的肥胖。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>比单一“全历史总结”更保真，但分层状态、缓存标记和 resume 重建复杂。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>60–102</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>103–147</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/snipCompact.ts#L60-L147" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/compact/snipCompact.ts:60–147</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/snipCompact.ts#L60-L147" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   60  /**
+   61   * Scan the message array for the last `snip_boundary` system message and,
+   62   * if found, remove all messages whose UUIDs appear in its
+   63   * `snipMetadata.removedUuids`.
+   64   *
+   65   * This is the core memory-saving function. When a snip boundary exists:
+   66   * 1. All messages listed in `removedUuids` are filtered out.
+   67   * 2. The boundary message itself is kept (it records what was removed).
+   68   * 3. Messages not in `removedUuids` (including post-boundary messages)
+   69   *    are preserved.
+   70   *
+   71   * Called from:
+   72   * - `query.ts` — strips snipped messages from the model-facing array
+   73   *   before sending to the API.
+   74   * - `QueryEngine.ts` `snipReplay` — trims `mutableMessages` so the
+   75   *   in-memory store does not grow without bound in long SDK sessions.
+   76   *
+   77   * @param messages  Full message array (may contain a snip_boundary).
+   78   * @param options   `force` — if true, always execute when a boundary is
+   79   *                  present. Without `force`, the function still executes
+   80   *                  if a boundary is found (the &quot;if needed&quot; refers to
+   81   *                  whether a boundary exists, not a token threshold).
+   82   */
+   83  export function snipCompactIfNeeded(
+   84    messages: Message[],
+   85    _options?: { force?: boolean },
+   86  ): {
+   87    messages: Message[]
+   88    executed: boolean
+   89    tokensFreed: number
+   90    boundaryMessage?: Message
+   91  } {
+   92    // Find the last snip_boundary message
+   93    let boundaryIdx = -1
+   94    let removedUuids: string[] | undefined
+   95
+   96    for (let i = messages.length - 1; i &gt;= 0; i--) {
+   97      const msg = messages[i]!
+   98      if (
+   99        msg.type === &#39;system&#39; &amp;&amp;
+  100        (msg as Record&lt;string, unknown&gt;).subtype === &#39;snip_boundary&#39;
+  101      ) {
+  102        boundaryIdx = i
+  103        const meta = (msg as Record&lt;string, unknown&gt;).snipMetadata as
+  104          | { removedUuids?: string[] }
+  105          | undefined
+  106        removedUuids = meta?.removedUuids
+  107        break
+  108      }
+  109    }
+  110
+  111    if (boundaryIdx === -1) {
+  112      return { messages, executed: false, tokensFreed: 0 }
+  113    }
+  114
+  115    const boundaryMessage = messages[boundaryIdx]!
+  116
+  117    // No removedUuids metadata — fallback: keep boundary + everything after
+  118    if (!removedUuids || removedUuids.length === 0) {
+  119      const kept = messages.slice(boundaryIdx)
+  120      return {
+  121        messages: kept,
+  122        executed: true,
+  123        tokensFreed: 0,
+  124        boundaryMessage,
+  125      }
+  126    }
+  127
+  128    // Filter out messages whose UUIDs are listed in removedUuids
+  129    const removedSet = new Set(removedUuids)
+  130    const kept: Message[] = []
+  131    let tokensFreed = 0
+  132
+  133    for (const msg of messages) {
+  134      if (removedSet.has(msg.uuid)) {
+  135        tokensFreed += estimateMessageTokens(msg)
+  136        continue
+  137      }
+  138      kept.push(msg)
+  139    }
+  140
+  141    return {
+  142      messages: kept,
+  143      executed: true,
+  144      tokensFreed,
+  145      boundaryMessage,
+  146    }
+  147  }
+  148
+  149  /**
+  150   * Returns true when the snip runtime is active.
+  151   * Because this module is only loaded when the HISTORY_SNIP feature flag
+  152   * is enabled, this always returns true.
+  153   */
+  154  export function isSnipRuntimeEnabled(): boolean {
+  155    return true
+  156  }
+  157
+  158  /**
+  159   * Determine whether the conversation is long enough to warrant a nudge
+  160   * to the model to consider snipping. Uses a simple message-count
+  161   * threshold rather than an expensive token count.
+  162   */
+  163  export function shouldNudgeForSnips(messages: Message[]): boolean {
+  164    return messages.length &gt;= SNIP_NUDGE_THRESHOLD
+  165  }
+  166</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · 压缩为输出预留预算，并有连续失败熔断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。</p></section><section><span>PLAIN LANGUAGE</span><p>不会把车厢塞满到回答没座位；整理行李连续失败三次后先停手，不再每回合烧一次模型调用。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>阈值与错误治理成熟，但部分阈值注释来自不可核验的内部指标，报告只采纳代码常量和行为。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>28–59</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>60–93</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/autoCompact.ts#L28-L93" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/compact/autoCompact.ts:28–93</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/autoCompact.ts#L28-L93" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   28  // Reserve this many tokens for output during compaction
+   29  // Based on p99.99 of compact summary output being 17,387 tokens.
+   30  const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
+   31
+   32  // Returns the context window size minus the max output tokens for the model
+   33  export function getEffectiveContextWindowSize(model: string): number {
+   34    const reservedTokensForSummary = Math.min(
+   35      getMaxOutputTokensForModel(model),
+   36      MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+   37    )
+   38    let contextWindow = getContextWindowForModel(model, getSdkBetas())
+   39
+   40    const autoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+   41    if (autoCompactWindow) {
+   42      const parsed = parseInt(autoCompactWindow, 10)
+   43      if (!isNaN(parsed) &amp;&amp; parsed &gt; 0) {
+   44        contextWindow = Math.min(contextWindow, parsed)
+   45      }
+   46    }
+   47
+   48    return contextWindow - reservedTokensForSummary
+   49  }
+   50
+   51  export type AutoCompactTrackingState = {
+   52    compacted: boolean
+   53    turnCounter: number
+   54    // Unique ID per turn
+   55    turnId: string
+   56    // Consecutive autocompact failures. Reset on success.
+   57    // Used as a circuit breaker to stop retrying when the context is
+   58    // irrecoverably over the limit (e.g., prompt_too_long).
+   59    consecutiveFailures?: number
+   60  }
+   61
+   62  export const AUTOCOMPACT_BUFFER_TOKENS = 13_000
+   63  export const WARNING_THRESHOLD_BUFFER_TOKENS = 20_000
+   64  export const ERROR_THRESHOLD_BUFFER_TOKENS = 20_000
+   65  export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000
+   66
+   67  // Conservative estimate for tool result growth per turn.
+   68  // Typical tool results (file reads, grep, bash) average ~5-10K tokens;
+   69  // occasional large reads can spike to 20K+.
+   70  const TOOL_RESULT_GROWTH_ESTIMATE = 15_000
+   71
+   72  /**
+   73   * Context-aware autocompact buffer. Larger context windows need more
+   74   * headroom because a single turn can produce proportionally more tokens
+   75   * (longer model outputs + larger tool results).
+   76   */
+   77  export function getAutocompactBufferTokens(model: string): number {
+   78    const effectiveWindow = getEffectiveContextWindowSize(model)
+   79    if (effectiveWindow &gt;= 800_000) return 50_000
+   80    if (effectiveWindow &gt;= 400_000) return 30_000
+   81    return AUTOCOMPACT_BUFFER_TOKENS
+   82  }
+   83
+   84  /**
+   85   * Estimate the maximum token growth a single turn can produce.
+   86   * Used for predictive autocompact checks before the API call.
+   87   */
+   88  export function estimateMaxTurnGrowth(model: string): number {
+   89    const maxOutput = Math.min(
+   90      getMaxOutputTokensForModel(model),
+   91      MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+   92    )
+   93    return maxOutput + TOOL_RESULT_GROWTH_ESTIMATE
+   94  }
+   95
+   96  // Stop trying autocompact after this many consecutive failures.
+   97  // BQ 2026-03-10: 1,279 sessions had 50+ consecutive failures (up to 3,272)
+   98  // in a single session, wasting ~250K API calls/day globally.
+   99  const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
+  100
+  101  export function getAutoCompactThreshold(model: string): number {
+  102    const effectiveContextWindow = getEffectiveContextWindowSize(model)
+  103
+  104    const autocompactThreshold =
+  105      effectiveContextWindow - getAutocompactBufferTokens(model)
+  106
+  107    // Override for easier testing of autocompact
+  108    const envPercent = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+  109    if (envPercent) {
+  110      const parsed = parseFloat(envPercent)
+  111      if (!isNaN(parsed) &amp;&amp; parsed &gt; 0 &amp;&amp; parsed &lt;= 100) {
+  112        const percentageThreshold = Math.floor(
+  113          effectiveContextWindow * (parsed / 100),
+  114        )
+  115        return Math.min(percentageThreshold, autocompactThreshold)
+  116      }
+  117    }
+  118
+  119    return autocompactThreshold
+  120  }
+  121
+  122  export function calculateTokenWarningState(
+  123    tokenUsage: number,
+  124    model: string,
+  125  ): {
+  126    percentLeft: number
+  127    isAboveWarningThreshold: boolean
+  128    isAboveErrorThreshold: boolean
+  129    isAboveAutoCompactThreshold: boolean
+  130    isAtBlockingLimit: boolean
+  131  } {
+  132    const autoCompactThreshold = getAutoCompactThreshold(model)
+  133    const threshold = isAutoCompactEnabled()
+  134      ? autoCompactThreshold
+  135      : getEffectiveContextWindowSize(model)
+  136
+  137    const percentLeft = Math.max(
+  138      0,
+  139      Math.round(((threshold - tokenUsage) / threshold) * 100),
+  140    )
+  141
+  142    const warningThreshold = threshold - WARNING_THRESHOLD_BUFFER_TOKENS
+  143    const errorThreshold = threshold - ERROR_THRESHOLD_BUFFER_TOKENS
+  144
+  145    const isAboveWarningThreshold = tokenUsage &gt;= warningThreshold
+  146    const isAboveErrorThreshold = tokenUsage &gt;= errorThreshold
+  147
+  148    const isAboveAutoCompactThreshold =
+  149      isAutoCompactEnabled() &amp;&amp; tokenUsage &gt;= autoCompactThreshold
+  150
+  151    const actualContextWindow = getEffectiveContextWindowSize(model)
+  152    const defaultBlockingLimit =
+  153      actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS
+  154
+  155    // Allow override for testing
+  156    const blockingLimitOverride = process.env.CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE
+  157    const parsedOverride = blockingLimitOverride
+  158      ? parseInt(blockingLimitOverride, 10)
+  159      : NaN
+  160    const blockingLimit =
+  161      !isNaN(parsedOverride) &amp;&amp; parsedOverride &gt; 0
+  162        ? parsedOverride
+  163        : defaultBlockingLimit
+  164</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>modelContext</span></div><h3>05 · cache-editing 微压缩代码存在，但该固定提交的关键 beta header 为空</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>microcompact 的 cached path 能登记 tool result、生成 cache_edits 并维持 pinned edits；然而 API 层明确检查到本 fork 的 CACHE_EDITING_BETA_HEADER 为空，headerAvailable=false 时关闭该路径。</p></section><section><span>PLAIN LANGUAGE</span><p>发动机舱里有这套零件，但点火钥匙没公开，当前版本不会真正挂入生产链路。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>不能把 cached microcompact 计为该固定提交默认可用能力；真正可达的是 time-based 清空和 autocompact 等路径。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>257–281</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>282–307</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/microCompact.ts#L257-L307" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/services/compact/microCompact.ts:257–307</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/microCompact.ts#L257-L307" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  257  export async function microcompactMessages(
+  258    messages: Message[],
+  259    toolUseContext?: ToolUseContext,
+  260    querySource?: QuerySource,
+  261  ): Promise&lt;MicrocompactResult&gt; {
+  262    // Clear suppression flag at start of new microcompact attempt
+  263    clearCompactWarningSuppression()
+  264
+  265    // Time-based trigger runs first and short-circuits. If the gap since the
+  266    // last assistant message exceeds the threshold, the server cache has expired
+  267    // and the full prefix will be rewritten regardless — so content-clear old
+  268    // tool results now, before the request, to shrink what gets rewritten.
+  269    // Cached MC (cache-editing) is skipped when this fires: editing assumes a
+  270    // warm cache, and we just established it&#39;s cold.
+  271    const timeBasedResult = maybeTimeBasedMicrocompact(messages, querySource)
+  272    if (timeBasedResult) {
+  273      return timeBasedResult
+  274    }
+  275
+  276    // Only run cached MC for the main thread to prevent forked agents
+  277    // (session_memory, prompt_suggestion, etc.) from registering their
+  278    // tool_results in the global cachedMCState, which would cause the main
+  279    // thread to try deleting tools that don&#39;t exist in its own conversation.
+  280    if (feature(&#39;CACHED_MICROCOMPACT&#39;)) {
+  281      const mod = await getCachedMCModule()
+  282      const model = toolUseContext?.options.mainLoopModel ?? getMainLoopModel()
+  283      if (
+  284        mod.isCachedMicrocompactEnabled() &amp;&amp;
+  285        mod.isModelSupportedForCacheEditing(model) &amp;&amp;
+  286        isMainThreadSource(querySource)
+  287      ) {
+  288        return await cachedMicrocompactPath(messages, querySource)
+  289      }
+  290    }
+  291
+  292    // Legacy microcompact path removed — tengu_cache_plum_violet is always true.
+  293    // For contexts where cached microcompact is not available (external builds,
+  294    // non-ant users, unsupported models, sub-agents), no compaction happens here;
+  295    // autocompact handles context pressure instead.
+  296    return { messages }
+  297  }
+  298
+  299  /**
+  300   * Cached microcompact path - uses cache editing API to remove tool results
+  301   * without invalidating the cached prefix.
+  302   *
+  303   * Key differences from regular microcompact:
+  304   * - Does NOT modify local message content (cache_reference and cache_edits are added at API layer)
+  305   * - Uses count-based trigger/keep thresholds from GrowthBook config
+  306   * - Takes precedence over regular microcompact (no disk persistence)
+  307   * - Tracks tool results and queues cache edits for the API layer
+  308   */
+  309  async function cachedMicrocompactPath(
+  310    messages: Message[],
+  311    querySource: QuerySource | undefined,
+  312  ): Promise&lt;MicrocompactResult&gt; {
+  313    const mod = await getCachedMCModule()
+  314    const state = ensureCachedMCState()
+  315    const config = mod.getCachedMCConfig()
+  316
+  317    const compactableToolIds = new Set(collectCompactableToolIds(messages))
+  318    // Second pass: register tool results grouped by user message
+  319    for (const message of messages) {
+  320      if (message.type === &#39;user&#39; &amp;&amp; Array.isArray(message.message!.content)) {
+  321        const groupIds: string[] = []
+  322        for (const block of message.message!.content) {
+  323          if (
+  324            block.type === &#39;tool_result&#39; &amp;&amp;
+  325            compactableToolIds.has(block.tool_use_id) &amp;&amp;
+  326            !state.registeredTools.has(block.tool_use_id)
+  327          ) {
+  328            mod.registerToolResult(state, block.tool_use_id)
+  329            groupIds.push(block.tool_use_id)
+  330          }
+  331        }
+  332        mod.registerToolMessage(state, groupIds)
+  333      }
+  334    }
+  335
+  336    const toolsToDelete = mod.getToolResultsToDelete(state)
+  337
+  338    if (toolsToDelete.length &gt; 0) {
+  339      // Create and queue the cache_edits block for the API layer
+  340      const cacheEdits = mod.createCacheEditsBlock(state, toolsToDelete)
+  341      if (cacheEdits) {
+  342        pendingCacheEdits = cacheEdits
+  343      }
+  344
+  345      logForDebugging(
+  346        `Cached MC deleting ${toolsToDelete.length} tool(s): ${toolsToDelete.join(&#39;, &#39;)}`,
+  347      )
+  348
+  349      // Log the event
+  350      logEvent(&#39;tengu_cached_microcompact&#39;, {
+  351        toolsDeleted: toolsToDelete.length,
+  352        deletedToolIds: toolsToDelete.join(
+  353          &#39;,&#39;,
+  354        ) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+  355        activeToolCount: state.toolOrder.length - state.deletedRefs.size,
+  356        triggerType:
+  357          &#39;auto&#39; as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+  358        threshold: config.triggerThreshold,
+  359        keepRecent: config.keepRecent,
+  360      })
+  361
+  362      // Suppress warning after successful compaction
+  363      suppressCompactWarning()
+  364
+  365      // Notify cache break detection that cache reads will legitimately drop
+  366      if (feature(&#39;PROMPT_CACHE_BREAK_DETECTION&#39;)) {
+  367        // Pass the actual querySource — isMainThreadSource now prefix-matches
+  368        // so output-style variants enter here, and getTrackingKey keys on the
+  369        // full source string, not the &#39;repl_main_thread&#39; prefix.
+  370        notifyCacheDeletion(querySource ?? &#39;repl_main_thread&#39;)
+  371      }
+  372
+  373      // Return messages unchanged - cache_reference and cache_edits are added at API layer
+  374      // Boundary message is deferred until after API response so we can use
+  375      // actual cache_deleted_input_tokens from the API instead of client-side estimates
+  376      // Capture the baseline cumulative cache_deleted_input_tokens from the last
+  377      // assistant message so we can compute a per-operation delta after the API call
+  378      const lastAsst = messages.findLast(m =&gt; m.type === &#39;assistant&#39;)</code></pre></div></div></article><article class="finding-card compact" id="claude-code-context-004" data-finding-dimension="modelContext"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>06 · 超长请求有 reactive compact 与循环保护</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query 捕获 prompt-too-long 和媒体相关错误后可移除失败消息、触发压缩并重试；同时记录已尝试状态，防止恢复逻辑无限循环。</p></section><section><span>PLAIN LANGUAGE</span><p>真的撞到窗口上限时，会倒车、重新打包再试；同一次事故不会无限重复。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>预测阈值漏判时仍有救生路径，适合长会话，但压缩前后的 tool pairing 与 transcript 必须同步修复。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1352–1400</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1401–1450</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L1352-L1450" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:1352–1450</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L1352-L1450" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1352        // Prompt-too-long recovery: the streaming loop withheld the error
+ 1353        // (see withheldByCollapse / withheldByReactive above). Try collapse
+ 1354        // drain first (cheap, keeps granular context), then reactive compact
+ 1355        // (full summary). Single-shot on each — if a retry still 413&#39;s,
+ 1356        // the next stage handles it or the error surfaces.
+ 1357        const isWithheld413 =
+ 1358          lastMessage?.type === &#39;assistant&#39; &amp;&amp;
+ 1359          lastMessage.isApiErrorMessage &amp;&amp;
+ 1360          isPromptTooLongMessage(lastMessage)
+ 1361        // Media-size rejections (image/PDF/many-image) are recoverable via
+ 1362        // reactive compact&#39;s strip-retry. Unlike PTL, media errors skip the
+ 1363        // collapse drain — collapse doesn&#39;t strip images. mediaRecoveryEnabled
+ 1364        // is the hoisted gate from before the stream loop (same value as the
+ 1365        // withholding check — these two must agree or a withheld message is
+ 1366        // lost). If the oversized media is in the preserved tail, the
+ 1367        // post-compact turn will media-error again; hasAttemptedReactiveCompact
+ 1368        // prevents a spiral and the error surfaces.
+ 1369        const isWithheldMedia =
+ 1370          mediaRecoveryEnabled &amp;&amp;
+ 1371          reactiveCompact?.isWithheldMediaSizeError(lastMessage as Message)
+ 1372        if (isWithheld413) {
+ 1373          // First: drain all staged context-collapses. Gated on the PREVIOUS
+ 1374          // transition not being collapse_drain_retry — if we already drained
+ 1375          // and the retry still 413&#39;d, fall through to reactive compact.
+ 1376          if (
+ 1377            feature(&#39;CONTEXT_COLLAPSE&#39;) &amp;&amp;
+ 1378            contextCollapse &amp;&amp;
+ 1379            state.transition?.reason !== &#39;collapse_drain_retry&#39;
+ 1380          ) {
+ 1381            const drained = contextCollapse.recoverFromOverflow(
+ 1382              messagesForQuery,
+ 1383              querySource,
+ 1384            )
+ 1385            if (drained.committed &gt; 0) {
+ 1386              const next: State = {
+ 1387                messages: drained.messages,
+ 1388                toolUseContext,
+ 1389                autoCompactTracking: tracking,
+ 1390                maxOutputTokensRecoveryCount,
+ 1391                hasAttemptedReactiveCompact,
+ 1392                maxOutputTokensOverride: undefined,
+ 1393                pendingToolUseSummary: undefined,
+ 1394                stopHookActive: undefined,
+ 1395                turnCount,
+ 1396                transition: {
+ 1397                  reason: &#39;collapse_drain_retry&#39;,
+ 1398                  committed: drained.committed,
+ 1399                },
+ 1400              }
+ 1401              state = next
+ 1402              continue
+ 1403            }
+ 1404          }
+ 1405        }
+ 1406        if ((isWithheld413 || isWithheldMedia) &amp;&amp; reactiveCompact) {
+ 1407          const compacted = await reactiveCompact.tryReactiveCompact({
+ 1408            hasAttempted: hasAttemptedReactiveCompact,
+ 1409            querySource,
+ 1410            aborted: toolUseContext.abortController.signal.aborted,
+ 1411            messages: messagesForQuery,
+ 1412            cacheSafeParams: {
+ 1413              systemPrompt,
+ 1414              userContext,
+ 1415              systemContext,
+ 1416              toolUseContext,
+ 1417              forkContextMessages: messagesForQuery,
+ 1418            },
+ 1419          })
+ 1420
+ 1421          if (compacted) {
+ 1422            // task_budget: same carryover as the proactive path above.
+ 1423            // messagesForQuery still holds the pre-compact array here (the
+ 1424            // 413-failed attempt&#39;s input).
+ 1425            if (params.taskBudget) {
+ 1426              const preCompactContext =
+ 1427                finalContextTokensFromLastResponse(messagesForQuery)
+ 1428              taskBudgetRemaining = Math.max(
+ 1429                0,
+ 1430                (taskBudgetRemaining ?? params.taskBudget.total) -
+ 1431                  preCompactContext,
+ 1432              )
+ 1433            }
+ 1434
+ 1435            const postCompactMessages = buildPostCompactMessages(compacted)
+ 1436            for (const msg of postCompactMessages) {
+ 1437              yield msg
+ 1438            }
+ 1439            const next: State = {
+ 1440              messages: postCompactMessages,
+ 1441              toolUseContext,
+ 1442              autoCompactTracking: undefined,
+ 1443              maxOutputTokensRecoveryCount,
+ 1444              hasAttemptedReactiveCompact: true,
+ 1445              maxOutputTokensOverride: undefined,
+ 1446              pendingToolUseSummary: undefined,
+ 1447              stopHookActive: undefined,
+ 1448              turnCount,
+ 1449              transition: { reason: &#39;reactive_compact_retry&#39; },
+ 1450            }
+ 1451            state = next
+ 1452            continue
+ 1453          }
+ 1454
+ 1455          // No recovery — surface the withheld error and exit. Do NOT fall
+ 1456          // through to stop hooks: the model never produced a valid response,
+ 1457          // so hooks have nothing meaningful to evaluate. Running stop hooks
+ 1458          // on prompt-too-long creates a death spiral: error → hook blocking
+ 1459          // → retry → error → … (the hook injects more tokens each cycle).
+ 1460          yield lastMessage!
+ 1461          void executeStopFailureHooks(lastMessage!, toolUseContext)
+ 1462          return { reason: isWithheldMedia ? &#39;image_error&#39; : &#39;prompt_too_long&#39; }
+ 1463        } else if (feature(&#39;CONTEXT_COLLAPSE&#39;) &amp;&amp; isWithheld413) {
+ 1464          // reactiveCompact compiled out but contextCollapse withheld and
+ 1465          // couldn&#39;t recover (staged queue empty/stale). Surface. Same
+ 1466          // early-return rationale — don&#39;t fall through to stop hooks.
+ 1467          yield lastMessage
+ 1468          void executeStopFailureHooks(lastMessage, toolUseContext)
+ 1469          return { reason: &#39;prompt_too_long&#39; }
+ 1470        }
+ 1471
+ 1472        // Check for max_output_tokens and inject recovery message. The error
+ 1473        // was withheld from the stream above; only surface it if recovery
+ 1474        // exhausts.
+ 1475        if (isWithheldMaxOutputTokens(lastMessage)) {
+ 1476          // Escalating retry: if we used the capped 8k default and hit the
+ 1477          // limit, retry the SAME request at 64k — no meta message, no
+ 1478          // multi-turn dance. This fires once per turn (guarded by the
+ 1479          // override check), then falls through to multi-turn recovery if
+ 1480          // 64k also hits the cap.
+ 1481          // 3P default: false (not validated on Bedrock/Vertex)
+ 1482          const capEnabled = getFeatureValue_CACHED_MAY_BE_STALE(
+ 1483            &#39;tengu_otk_slot_v1&#39;,
+ 1484            false,
+ 1485          )
+ 1486          if (
+ 1487            capEnabled &amp;&amp;
+ 1488            maxOutputTokensOverride === undefined &amp;&amp;
+ 1489            !process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS
+ 1490          ) {
+ 1491            logEvent(&#39;tengu_max_tokens_escalate&#39;, {
+ 1492              escalatedTo: ESCALATED_MAX_TOKENS,
+ 1493            })
+ 1494            const next: State = {
+ 1495              messages: messagesForQuery,
+ 1496              toolUseContext,
+ 1497              autoCompactTracking: tracking,
+ 1498              maxOutputTokensRecoveryCount,
+ 1499              hasAttemptedReactiveCompact,
+ 1500              maxOutputTokensOverride: ESCALATED_MAX_TOKENS,
+ 1501              pendingToolUseSummary: undefined,
+ 1502              stopHookActive: undefined,
+ 1503              turnCount,
+ 1504              transition: { reason: &#39;max_output_tokens_escalate&#39; },
+ 1505            }
+ 1506            state = next
+ 1507            continue
+ 1508          }
+ 1509
+ 1510          if (maxOutputTokensRecoveryCount &lt; MAX_OUTPUT_TOKENS_RECOVERY_LIMIT) {
+ 1511            const recoveryMessage = createUserMessage({
+ 1512              content:
+ 1513                `Output token limit hit. Resume directly — no apology, no recap of what you were doing. ` +
+ 1514                `Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces.`,
+ 1515              isMeta: true,
+ 1516            })
+ 1517
+ 1518            const next: State = {
+ 1519              messages: [
+ 1520                ...messagesForQuery,
+ 1521                ...assistantMessages,</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">CONTEXT · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L1282-L1338" target="_blank" rel="noreferrer">src/services/api/claude.ts:1282–1338 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>API 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/api/claude.ts#L818-L925" target="_blank" rel="noreferrer">src/services/api/claude.ts:818–925 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>snip 根据边界和 UUID 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/snipCompact.ts#L60-L147" target="_blank" rel="noreferrer">src/services/compact/snipCompact.ts:60–147 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/services/compact/autoCompact.ts#L28-L93" target="_blank" rel="noreferrer">src/services/compact/autoCompact.ts:28–93 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="Claude Code（复原） capability" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch05-tools.html">← Tools: registering the agent&#39;s hands</a><a href="ch07-security.html">Security: approvals, permissions, boundaries →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

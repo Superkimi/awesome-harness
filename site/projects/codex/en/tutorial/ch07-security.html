@@ -1,1 +1,832 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>OpenAI Codex · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · OpenAI Codex · 902bd9e06b3e</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>4 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>OpenAI Codex · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/codex/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch07-security.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="codex-permission-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>security</span></div><h3>01 · 审批策略把“何时问”与“允许做什么”分成两条轴</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>AskForApproval 有 UnlessTrusted、OnRequest、Granular 和 Never；SandboxPolicy 独立描述 DangerFullAccess、ReadOnly、ExternalSandbox 与 WorkspaceWrite。</p></section><section><span>PLAIN LANGUAGE</span><p>一条轴决定要不要敲门，另一条轴决定进门后活动范围；“不用问”不等于“拥有整台机器”。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>企业策略能单独收紧提权频率与文件/网络能力。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/protocol/src/protocol.rs:890–932</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>审批策略枚举。</code></pre></div></div></article><article class="finding-card compact" id="codex-permission-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 审批缺失默认中止，且可授予一次、本会话或规则/网络修订</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>命令审批包含 command、cwd、reason、network amendment、execpolicy amendment、additional permissions 和 plugin provenance；等待通道消失时默认 Abort。ReviewDecision 支持单次、session、execpolicy/network amendment、拒绝、超时和 abort。</p></section><section><span>PLAIN LANGUAGE</span><p>授权不是一个“永远允许”按钮；可以只放这次、放本会话、或把精确规则写进政策，没人回答则停下。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>失败关闭且授权可结构化沉淀，适合审计。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L2295-L2376" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">codex-rs/protocol/src/protocol.rs:890–932 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/mod.rs:2295–2376</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L2295-L2376" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>命令审批请求与默认 Abort。</code></pre></div></div></article><article class="finding-card compact" id="codex-sandbox-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · 沙箱按平台变换真实进程：macOS Seatbelt、Linux seccomp/bwrap/landlock、Windows restricted token</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>SandboxManager 将抽象策略映射到平台后端；Auto 只在策略要求时选沙箱，Require/Forbid 明确覆盖选择，随后把命令变换为对应 launcher。</p></section><section><span>PLAIN LANGUAGE</span><p>不是在提示词里说“请别乱动”，而是在启动进程前给命令套上操作系统能执行的限制器。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>强度取决于平台与后端可用性；报告不把 unsupported 平台推断成同等隔离。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L34-L73" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">codex-rs/protocol/src/protocol.rs:890–932 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/sandboxing/src/manager.rs:34–73</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L34-L73" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>平台 sandbox 类型映射。</code></pre></div></div></article><article class="finding-card compact" id="codex-sandbox-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>04 · 自定义 permission profile 默认从受限文件系统和受限网络开始</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>custom profile 编译器先建立 restricted filesystem 与 restricted network，再应用条目；网络只有显式 true 才启用，WorkspaceWrite 默认也关闭网络，并保护 .git hooks 等元数据子路径。</p></section><section><span>PLAIN LANGUAGE</span><p>自定义政策从“什么都别给”开始逐项开门，而不是先全开再查漏补缺。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>默认拒绝更适合作为组织级安全基线。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L203-L213" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">codex-rs/protocol/src/protocol.rs:890–932 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/config/permissions.rs:203–213</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L203-L213" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>内建 read-only/workspace profile。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="OpenAI Codex architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>OpenAI Codex · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · OpenAI Codex · 902bd9e06b3e</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>4 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>OpenAI Codex · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/codex/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch07-security.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="codex-permission-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>security</span></div><h3>01 · 审批策略把“何时问”与“允许做什么”分成两条轴</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>AskForApproval 有 UnlessTrusted、OnRequest、Granular 和 Never；SandboxPolicy 独立描述 DangerFullAccess、ReadOnly、ExternalSandbox 与 WorkspaceWrite。</p></section><section><span>PLAIN LANGUAGE</span><p>一条轴决定要不要敲门，另一条轴决定进门后活动范围；“不用问”不等于“拥有整台机器”。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>企业策略能单独收紧提权频率与文件/网络能力。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>890–910</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>911–932</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/protocol/src/protocol.rs:890–932</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  890  /// Determines the conditions under which the user is consulted to approve
+  891  /// running the command proposed by Codex.
+  892  #[derive(
+  893      Debug,
+  894      Clone,
+  895      Copy,
+  896      Default,
+  897      PartialEq,
+  898      Eq,
+  899      Hash,
+  900      Serialize,
+  901      Deserialize,
+  902      Display,
+  903      JsonSchema,
+  904      TS,
+  905  )]
+  906  #[serde(rename_all = &quot;kebab-case&quot;)]
+  907  #[strum(serialize_all = &quot;kebab-case&quot;)]
+  908  pub enum AskForApproval {
+  909      /// Under this policy, only &quot;known safe&quot; commands—as determined by
+  910      /// `is_safe_command()`—that **only read files** are auto‑approved.
+  911      /// Everything else will ask the user to approve.
+  912      #[serde(rename = &quot;untrusted&quot;)]
+  913      #[strum(serialize = &quot;untrusted&quot;)]
+  914      UnlessTrusted,
+  915
+  916      /// The model decides when to ask the user for approval.
+  917      #[serde(alias = &quot;on-failure&quot;)]
+  918      #[default]
+  919      OnRequest,
+  920
+  921      /// Fine-grained controls for individual approval flows.
+  922      ///
+  923      /// When a field is `true`, commands in that category are allowed. When it
+  924      /// is `false`, those requests are automatically rejected instead of shown
+  925      /// to the user.
+  926      #[strum(serialize = &quot;granular&quot;)]
+  927      Granular(GranularApprovalConfig),
+  928
+  929      /// Never ask the user to approve commands. Failures are immediately returned
+  930      /// to the model, and never escalated to the user for approval.
+  931      Never,
+  932  }
+  933
+  934  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+  935  pub struct GranularApprovalConfig {
+  936      /// Whether to allow shell command approval requests, including inline
+  937      /// `with_additional_permissions` and `require_escalated` requests.
+  938      pub sandbox_approval: bool,
+  939      /// Whether to allow prompts triggered by execpolicy `prompt` rules.
+  940      pub rules: bool,
+  941      /// Whether to allow approval prompts triggered by skill script execution.
+  942      #[serde(default)]
+  943      pub skill_approval: bool,
+  944      /// Whether to allow prompts triggered by the `request_permissions` tool.
+  945      #[serde(default)]
+  946      pub request_permissions: bool,
+  947      /// Whether to allow MCP elicitation prompts.
+  948      pub mcp_elicitations: bool,
+  949  }
+  950
+  951  impl GranularApprovalConfig {
+  952      pub const fn allows_sandbox_approval(self) -&gt; bool {
+  953          self.sandbox_approval
+  954      }
+  955
+  956      pub const fn allows_rules_approval(self) -&gt; bool {
+  957          self.rules
+  958      }
+  959
+  960      pub const fn allows_skill_approval(self) -&gt; bool {
+  961          self.skill_approval
+  962      }
+  963
+  964      pub const fn allows_request_permissions(self) -&gt; bool {
+  965          self.request_permissions
+  966      }
+  967
+  968      pub const fn allows_mcp_elicitations(self) -&gt; bool {
+  969          self.mcp_elicitations
+  970      }
+  971  }
+  972
+  973  /// Represents whether outbound network access is available to the agent.
+  974  #[derive(
+  975      Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, Default, JsonSchema, TS,
+  976  )]
+  977  #[serde(rename_all = &quot;kebab-case&quot;)]
+  978  #[strum(serialize_all = &quot;kebab-case&quot;)]
+  979  pub enum NetworkAccess {
+  980      #[default]
+  981      Restricted,
+  982      Enabled,
+  983  }
+  984
+  985  impl NetworkAccess {
+  986      pub fn is_enabled(self) -&gt; bool {
+  987          matches!(self, NetworkAccess::Enabled)
+  988      }
+  989  }
+  990
+  991  /// Determines execution restrictions for model shell commands.
+  992  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema, TS)]
+  993  #[strum(serialize_all = &quot;kebab-case&quot;)]
+  994  #[serde(tag = &quot;type&quot;, rename_all = &quot;kebab-case&quot;)]
+  995  pub enum SandboxPolicy {
+  996      /// No restrictions whatsoever. Use with caution.
+  997      #[serde(rename = &quot;danger-full-access&quot;)]
+  998      DangerFullAccess,
+  999
+ 1000      /// Read-only access configuration.
+ 1001      #[serde(rename = &quot;read-only&quot;)]
+ 1002      ReadOnly {
+ 1003          /// When set to `true`, outbound network access is allowed. `false` by</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>codex-rs/protocol/src/protocol.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  890              Self::RunUserShellCommand { .. } =&gt; &quot;run_user_shell_command&quot;,
+  891          }
+  892      }
+  893  }
+  894
+  895  /// Determines the conditions under which the user is consulted to approve
+  896  /// running the command proposed by Codex.
+  897  #[derive(
+  898      Debug,
+  899      Clone,
+  900      Copy,
+  901      Default,
+  902      PartialEq,
+  903      Eq,
+  904      Hash,
+  905      Serialize,
+  906      Deserialize,
+  907      Display,
+  908      JsonSchema,
+  909      TS,
+  910  )]
+  911  #[serde(rename_all = &quot;kebab-case&quot;)]
+  912  #[strum(serialize_all = &quot;kebab-case&quot;)]
+  913  pub enum AskForApproval {
+  914      /// Under this policy, only &quot;known safe&quot; commands—as determined by
+  915      /// `is_safe_command()`—that **only read files** are auto‑approved.
+  916      /// Everything else will ask the user to approve.
+  917      #[serde(rename = &quot;untrusted&quot;)]
+  918      #[strum(serialize = &quot;untrusted&quot;)]
+  919      UnlessTrusted,
+  920
+  921      /// The model decides when to ask the user for approval.
+  922      #[serde(alias = &quot;on-failure&quot;)]
+  923      #[default]
+  924      OnRequest,
+  925
+  926      /// Fine-grained controls for individual approval flows.
+  927      ///
+  928      /// When a field is `true`, commands in that category are allowed. When it
+  929      /// is `false`, those requests are automatically rejected instead of shown
+  930      /// to the user.
+  931      #[strum(serialize = &quot;granular&quot;)]
+  932      Granular(GranularApprovalConfig),
+  933
+  934      /// Never ask the user to approve commands. Failures are immediately returned
+  935      /// to the model, and never escalated to the user for approval.
+  936      Never,
+  937  }
+  938
+  939  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+  940  pub struct GranularApprovalConfig {
+  941      /// Whether to allow shell command approval requests, including inline
+  942      /// `with_additional_permissions` and `require_escalated` requests.
+  943      pub sandbox_approval: bool,
+  944      /// Whether to allow prompts triggered by execpolicy `prompt` rules.
+  945      pub rules: bool,
+  946      /// Whether to allow approval prompts triggered by skill script execution.
+  947      #[serde(default)]
+  948      pub skill_approval: bool,
+  949      /// Whether to allow prompts triggered by the `request_permissions` tool.
+  950      #[serde(default)]
+  951      pub request_permissions: bool,
+  952      /// Whether to allow MCP elicitation prompts.
+  953      pub mcp_elicitations: bool,
+  954  }
+  955
+  956  impl GranularApprovalConfig {
+  957      pub const fn allows_sandbox_approval(self) -&gt; bool {
+  958          self.sandbox_approval
+  959      }
+  960
+  961      pub const fn allows_rules_approval(self) -&gt; bool {
+  962          self.rules
+  963      }
+  964
+  965      pub const fn allows_skill_approval(self) -&gt; bool {
+  966          self.skill_approval
+  967      }
+  968
+  969      pub const fn allows_request_permissions(self) -&gt; bool {
+  970          self.request_permissions
+  971      }
+  972
+  973      pub const fn allows_mcp_elicitations(self) -&gt; bool {
+  974          self.mcp_elicitations
+  975      }
+  976  }
+  977
+  978  /// Represents whether outbound network access is available to the agent.
+  979  #[derive(
+  980      Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, Default, JsonSchema, TS,
+  981  )]
+  982  #[serde(rename_all = &quot;kebab-case&quot;)]
+  983  #[strum(serialize_all = &quot;kebab-case&quot;)]
+  984  pub enum NetworkAccess {
+  985      #[default]
+  986      Restricted,
+  987      Enabled,
+  988  }
+  989
+  990  impl NetworkAccess {
+  991      pub fn is_enabled(self) -&gt; bool {
+  992          matches!(self, NetworkAccess::Enabled)
+  993      }
+  994  }
+  995
+  996  /// Determines execution restrictions for model shell commands.
+  997  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Display, JsonSchema, TS)]
+  998  #[strum(serialize_all = &quot;kebab-case&quot;)]
+  999  #[serde(tag = &quot;type&quot;, rename_all = &quot;kebab-case&quot;)]
+ 1000  pub enum SandboxPolicy {
+ 1001      /// No restrictions whatsoever. Use with caution.
+ 1002      #[serde(rename = &quot;danger-full-access&quot;)]
+ 1003      DangerFullAccess,</code></pre></details></div></div></article><article class="finding-card compact" id="codex-permission-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 审批缺失默认中止，且可授予一次、本会话或规则/网络修订</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>命令审批包含 command、cwd、reason、network amendment、execpolicy amendment、additional permissions 和 plugin provenance；等待通道消失时默认 Abort。ReviewDecision 支持单次、session、execpolicy/network amendment、拒绝、超时和 abort。</p></section><section><span>PLAIN LANGUAGE</span><p>授权不是一个“永远允许”按钮；可以只放这次、放本会话、或把精确规则写进政策，没人回答则停下。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>失败关闭且授权可结构化沉淀，适合审计。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>2295–2334</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>2335–2376</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L2295-L2376" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/mod.rs:2295–2376</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L2295-L2376" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 2295      pub async fn request_command_approval(
+ 2296          &amp;self,
+ 2297          turn_context: &amp;TurnContext,
+ 2298          call_id: String,
+ 2299          approval_id: Option&lt;String&gt;,
+ 2300          environment_id: Option&lt;String&gt;,
+ 2301          command: Vec&lt;String&gt;,
+ 2302          cwd: AbsolutePathBuf,
+ 2303          reason: Option&lt;String&gt;,
+ 2304          network_approval_context: Option&lt;NetworkApprovalContext&gt;,
+ 2305          proposed_execpolicy_amendment: Option&lt;ExecPolicyAmendment&gt;,
+ 2306          additional_permissions: Option&lt;AdditionalPermissionProfile&gt;,
+ 2307          available_decisions: Option&lt;Vec&lt;ReviewDecision&gt;&gt;,
+ 2308          plugin_attribution_override: Option&lt;PluginCommandAttribution&gt;,
+ 2309      ) -&gt; ReviewDecision {
+ 2310          let _elicitation = self.services.elicitations.register();
+ 2311          //  command-level approvals use `call_id`.
+ 2312          // `approval_id` is only present for subcommand callbacks (execve intercept)
+ 2313          let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
+ 2314          // Add the tx_approve callback to the map before sending the request.
+ 2315          let (tx_approve, rx_approve) = oneshot::channel();
+ 2316          let prev_entry = {
+ 2317              let mut active = self.active_turn.lock().await;
+ 2318              match active.as_mut() {
+ 2319                  Some(at) =&gt; {
+ 2320                      let mut ts = at.turn_state.lock().await;
+ 2321                      ts.insert_pending_approval(effective_approval_id.clone(), tx_approve)
+ 2322                  }
+ 2323                  None =&gt; None,
+ 2324              }
+ 2325          };
+ 2326          if prev_entry.is_some() {
+ 2327              warn!(&quot;Overwriting existing pending approval for call_id: {effective_approval_id}&quot;);
+ 2328          }
+ 2329
+ 2330          let parsed_cmd = parse_command(&amp;command);
+ 2331          let proposed_network_policy_amendments = network_approval_context.as_ref().map(|context| {
+ 2332              vec![
+ 2333                  NetworkPolicyAmendment {
+ 2334                      host: context.host.clone(),
+ 2335                      action: NetworkPolicyRuleAction::Allow,
+ 2336                  },
+ 2337                  NetworkPolicyAmendment {
+ 2338                      host: context.host.clone(),
+ 2339                      action: NetworkPolicyRuleAction::Deny,
+ 2340                  },
+ 2341              ]
+ 2342          });
+ 2343          let available_decisions = available_decisions.unwrap_or_else(|| {
+ 2344              ExecApprovalRequestEvent::default_available_decisions(
+ 2345                  network_approval_context.as_ref(),
+ 2346                  proposed_execpolicy_amendment.as_ref(),
+ 2347                  proposed_network_policy_amendments.as_deref(),
+ 2348                  additional_permissions.as_ref(),
+ 2349              )
+ 2350          });
+ 2351          let plugin_attribution = plugin_attribution_override
+ 2352              .or_else(|| turn_context.plugin_attribution_for_command(&amp;command, &amp;cwd));
+ 2353          let (plugin_id, script_path) = plugin_attribution
+ 2354              .as_ref()
+ 2355              .map(PluginCommandAttribution::serialized_fields)
+ 2356              .unzip();
+ 2357          let event = EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+ 2358              call_id,
+ 2359              plugin_id,
+ 2360              script_path,
+ 2361              approval_id,
+ 2362              turn_id: turn_context.sub_id.clone(),
+ 2363              environment_id,
+ 2364              started_at_ms: now_unix_timestamp_ms(),
+ 2365              command,
+ 2366              cwd,
+ 2367              reason,
+ 2368              network_approval_context,
+ 2369              proposed_execpolicy_amendment,
+ 2370              proposed_network_policy_amendments,
+ 2371              additional_permissions,
+ 2372              available_decisions: Some(available_decisions),
+ 2373              parsed_cmd,
+ 2374          });
+ 2375          self.send_event(turn_context, event).await;
+ 2376          rx_approve.await.unwrap_or(ReviewDecision::Abort)
+ 2377      }
+ 2378
+ 2379      #[expect(
+ 2380          clippy::await_holding_invalid_type,
+ 2381          reason = &quot;active turn checks and turn state updates must remain atomic&quot;
+ 2382      )]
+ 2383      pub async fn request_patch_approval(
+ 2384          &amp;self,
+ 2385          turn_context: &amp;TurnContext,
+ 2386          call_id: String,
+ 2387          changes: HashMap&lt;PathBuf, FileChange&gt;,
+ 2388          reason: Option&lt;String&gt;,
+ 2389          grant_root: Option&lt;PathBuf&gt;,
+ 2390      ) -&gt; ReviewDecision {
+ 2391          let _elicitation = self.services.elicitations.register();
+ 2392          // Add the tx_approve callback to the map before sending the request.
+ 2393          let (tx_approve, rx_approve) = oneshot::channel();
+ 2394          let approval_id = call_id.clone();
+ 2395          let prev_entry = {
+ 2396              let mut active = self.active_turn.lock().await;
+ 2397              match active.as_mut() {
+ 2398                  Some(at) =&gt; {
+ 2399                      let mut ts = at.turn_state.lock().await;
+ 2400                      ts.insert_pending_approval(approval_id.clone(), tx_approve)
+ 2401                  }
+ 2402                  None =&gt; None,
+ 2403              }
+ 2404          };
+ 2405          if prev_entry.is_some() {
+ 2406              warn!(&quot;Overwriting existing pending approval for call_id: {approval_id}&quot;);
+ 2407          }
+ 2408
+ 2409          let event = EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
+ 2410              call_id,
+ 2411              turn_id: turn_context.sub_id.clone(),
+ 2412              started_at_ms: now_unix_timestamp_ms(),
+ 2413              changes,
+ 2414              reason,
+ 2415              grant_root,
+ 2416          });
+ 2417          self.send_event(turn_context, event).await;
+ 2418          rx_approve.await.unwrap_or(ReviewDecision::Abort)
+ 2419      }
+ 2420
+ 2421      #[expect(
+ 2422          clippy::await_holding_invalid_type,
+ 2423          reason = &quot;active turn checks and turn state updates must remain atomic&quot;
+ 2424      )]
+ 2425      pub(crate) async fn request_permissions_for_environment(
+ 2426          self: &amp;Arc&lt;Self&gt;,
+ 2427          turn_context: &amp;Arc&lt;TurnContext&gt;,
+ 2428          call_id: String,
+ 2429          args: RequestPermissionsArgs,
+ 2430          environment: TurnEnvironmentSelection,
+ 2431          cancellation_token: CancellationToken,
+ 2432      ) -&gt; Option&lt;RequestPermissionsResponse&gt; {
+ 2433          match turn_context.as_ref().approval_policy.value() {
+ 2434              AskForApproval::Never =&gt; {
+ 2435                  return Some(RequestPermissionsResponse {
+ 2436                      permissions: RequestPermissionProfile::default(),
+ 2437                      scope: PermissionGrantScope::Turn,
+ 2438                      strict_auto_review: false,
+ 2439                  });
+ 2440              }
+ 2441              AskForApproval::Granular(granular_config)
+ 2442                  if !granular_config.allows_request_permissions() =&gt;
+ 2443              {
+ 2444                  return Some(RequestPermissionsResponse {
+ 2445                      permissions: RequestPermissionProfile::default(),
+ 2446                      scope: PermissionGrantScope::Turn,
+ 2447                      strict_auto_review: false,</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>codex-rs/core/src/session/mod.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/session/mod.rs#L2295-L2376" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code> 2295          Ok(())
+ 2296      }
+ 2297
+ 2298      fn validated_network_policy_amendment_host(
+ 2299          amendment: &amp;NetworkPolicyAmendment,
+ 2300          network_approval_context: &amp;NetworkApprovalContext,
+ 2301      ) -&gt; anyhow::Result&lt;String&gt; {
+ 2302          let approved_host = normalize_host(&amp;network_approval_context.host);
+ 2303          let amendment_host = normalize_host(&amp;amendment.host);
+ 2304          if amendment_host != approved_host {
+ 2305              return Err(anyhow::anyhow!(
+ 2306                  &quot;network policy amendment host &#39;{}&#39; does not match approved host &#39;{}&#39;&quot;,
+ 2307                  amendment.host,
+ 2308                  network_approval_context.host
+ 2309              ));
+ 2310          }
+ 2311          Ok(approved_host)
+ 2312      }
+ 2313
+ 2314      pub(crate) async fn record_network_policy_amendment_message(
+ 2315          &amp;self,
+ 2316          sub_id: &amp;str,
+ 2317          amendment: &amp;NetworkPolicyAmendment,
+ 2318      ) {
+ 2319          let message: ResponseItem = ContextualUserFragment::into(NetworkRuleSaved::new(amendment));
+ 2320          let turn_context = self.turn_context_for_sub_id(sub_id).await;
+ 2321          self.inject_no_new_turn(vec![message], turn_context.as_deref())
+ 2322              .await;
+ 2323      }
+ 2324
+ 2325      /// Emit an exec approval request event and await the user&#39;s decision.
+ 2326      ///
+ 2327      /// The request is keyed by `call_id` + `approval_id` so matching responses
+ 2328      /// are delivered to the correct in-flight turn. If the pending approval is
+ 2329      /// cleared before a response arrives, treat it as an abort so interrupted
+ 2330      /// turns do not continue on a synthetic denial.
+ 2331      ///
+ 2332      /// Note that if `available_decisions` is `None`, then the other fields will
+ 2333      /// be used to derive the available decisions via
+ 2334      /// [ExecApprovalRequestEvent::default_available_decisions].
+ 2335      #[allow(clippy::too_many_arguments)]
+ 2336      #[expect(
+ 2337          clippy::await_holding_invalid_type,
+ 2338          reason = &quot;active turn checks and turn state updates must remain atomic&quot;
+ 2339      )]
+ 2340      pub async fn request_command_approval(
+ 2341          &amp;self,
+ 2342          turn_context: &amp;TurnContext,
+ 2343          call_id: String,
+ 2344          approval_id: Option&lt;String&gt;,
+ 2345          environment_id: Option&lt;String&gt;,
+ 2346          command: Vec&lt;String&gt;,
+ 2347          cwd: AbsolutePathBuf,
+ 2348          reason: Option&lt;String&gt;,
+ 2349          network_approval_context: Option&lt;NetworkApprovalContext&gt;,
+ 2350          proposed_execpolicy_amendment: Option&lt;ExecPolicyAmendment&gt;,
+ 2351          additional_permissions: Option&lt;AdditionalPermissionProfile&gt;,
+ 2352          available_decisions: Option&lt;Vec&lt;ReviewDecision&gt;&gt;,
+ 2353          plugin_attribution_override: Option&lt;PluginCommandAttribution&gt;,
+ 2354      ) -&gt; ReviewDecision {
+ 2355          let _elicitation = self.services.elicitations.register();
+ 2356          //  command-level approvals use `call_id`.
+ 2357          // `approval_id` is only present for subcommand callbacks (execve intercept)
+ 2358          let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
+ 2359          // Add the tx_approve callback to the map before sending the request.
+ 2360          let (tx_approve, rx_approve) = oneshot::channel();
+ 2361          let prev_entry = {
+ 2362              let mut active = self.active_turn.lock().await;
+ 2363              match active.as_mut() {
+ 2364                  Some(at) =&gt; {
+ 2365                      let mut ts = at.turn_state.lock().await;
+ 2366                      ts.insert_pending_approval(effective_approval_id.clone(), tx_approve)
+ 2367                  }
+ 2368                  None =&gt; None,
+ 2369              }
+ 2370          };
+ 2371          if prev_entry.is_some() {
+ 2372              warn!(&quot;Overwriting existing pending approval for call_id: {effective_approval_id}&quot;);
+ 2373          }
+ 2374
+ 2375          let parsed_cmd = parse_command(&amp;command);
+ 2376          let proposed_network_policy_amendments = network_approval_context.as_ref().map(|context| {
+ 2377              vec![
+ 2378                  NetworkPolicyAmendment {
+ 2379                      host: context.host.clone(),
+ 2380                      action: NetworkPolicyRuleAction::Allow,
+ 2381                  },
+ 2382                  NetworkPolicyAmendment {
+ 2383                      host: context.host.clone(),
+ 2384                      action: NetworkPolicyRuleAction::Deny,
+ 2385                  },
+ 2386              ]
+ 2387          });
+ 2388          let available_decisions = available_decisions.unwrap_or_else(|| {
+ 2389              ExecApprovalRequestEvent::default_available_decisions(
+ 2390                  network_approval_context.as_ref(),
+ 2391                  proposed_execpolicy_amendment.as_ref(),
+ 2392                  proposed_network_policy_amendments.as_deref(),
+ 2393                  additional_permissions.as_ref(),
+ 2394              )
+ 2395          });
+ 2396          let plugin_attribution = plugin_attribution_override
+ 2397              .or_else(|| turn_context.plugin_attribution_for_command(&amp;command, &amp;cwd));
+ 2398          let (plugin_id, script_path) = plugin_attribution
+ 2399              .as_ref()
+ 2400              .map(PluginCommandAttribution::serialized_fields)
+ 2401              .unzip();
+ 2402          let event = EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+ 2403              call_id,
+ 2404              plugin_id,
+ 2405              script_path,
+ 2406              approval_id,
+ 2407              turn_id: turn_context.sub_id.clone(),
+ 2408              environment_id,
+ 2409              started_at_ms: now_unix_timestamp_ms(),
+ 2410              command,
+ 2411              cwd,
+ 2412              reason,
+ 2413              network_approval_context,
+ 2414              proposed_execpolicy_amendment,
+ 2415              proposed_network_policy_amendments,
+ 2416              additional_permissions,
+ 2417              available_decisions: Some(available_decisions),
+ 2418              parsed_cmd,
+ 2419          });
+ 2420          self.send_event(turn_context, event).await;
+ 2421          rx_approve.await.unwrap_or(ReviewDecision::Abort)
+ 2422      }
+ 2423
+ 2424      #[expect(
+ 2425          clippy::await_holding_invalid_type,
+ 2426          reason = &quot;active turn checks and turn state updates must remain atomic&quot;
+ 2427      )]
+ 2428      pub async fn request_patch_approval(
+ 2429          &amp;self,
+ 2430          turn_context: &amp;TurnContext,
+ 2431          call_id: String,
+ 2432          changes: HashMap&lt;PathBuf, FileChange&gt;,
+ 2433          reason: Option&lt;String&gt;,
+ 2434          grant_root: Option&lt;PathBuf&gt;,
+ 2435      ) -&gt; ReviewDecision {
+ 2436          let _elicitation = self.services.elicitations.register();
+ 2437          // Add the tx_approve callback to the map before sending the request.
+ 2438          let (tx_approve, rx_approve) = oneshot::channel();
+ 2439          let approval_id = call_id.clone();
+ 2440          let prev_entry = {
+ 2441              let mut active = self.active_turn.lock().await;
+ 2442              match active.as_mut() {
+ 2443                  Some(at) =&gt; {
+ 2444                      let mut ts = at.turn_state.lock().await;
+ 2445                      ts.insert_pending_approval(approval_id.clone(), tx_approve)
+ 2446                  }
+ 2447                  None =&gt; None,</code></pre></details></div></div></article><article class="finding-card compact" id="codex-sandbox-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · 沙箱按平台变换真实进程：macOS Seatbelt、Linux seccomp/bwrap/landlock、Windows restricted token</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>SandboxManager 将抽象策略映射到平台后端；Auto 只在策略要求时选沙箱，Require/Forbid 明确覆盖选择，随后把命令变换为对应 launcher。</p></section><section><span>PLAIN LANGUAGE</span><p>不是在提示词里说“请别乱动”，而是在启动进程前给命令套上操作系统能执行的限制器。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>强度取决于平台与后端可用性；报告不把 unsupported 平台推断成同等隔离。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>34–52</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>53–73</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L34-L73" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/sandboxing/src/manager.rs:34–73</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L34-L73" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   34  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+   35  pub enum SandboxType {
+   36      None,
+   37      MacosSeatbelt,
+   38      LinuxSeccomp,
+   39      WindowsRestrictedToken,
+   40  }
+   41
+   42  impl SandboxType {
+   43      pub fn as_metric_tag(self) -&gt; &amp;&#39;static str {
+   44          match self {
+   45              SandboxType::None =&gt; &quot;none&quot;,
+   46              SandboxType::MacosSeatbelt =&gt; &quot;seatbelt&quot;,
+   47              SandboxType::LinuxSeccomp =&gt; &quot;seccomp&quot;,
+   48              SandboxType::WindowsRestrictedToken =&gt; &quot;windows_sandbox&quot;,
+   49          }
+   50      }
+   51  }
+   52
+   53  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+   54  pub enum SandboxablePreference {
+   55      Auto,
+   56      Require,
+   57      Forbid,
+   58  }
+   59
+   60  pub fn get_platform_sandbox(windows_sandbox_enabled: bool) -&gt; Option&lt;SandboxType&gt; {
+   61      if cfg!(target_os = &quot;macos&quot;) {
+   62          Some(SandboxType::MacosSeatbelt)
+   63      } else if cfg!(target_os = &quot;linux&quot;) {
+   64          Some(SandboxType::LinuxSeccomp)
+   65      } else if cfg!(target_os = &quot;windows&quot;) {
+   66          if windows_sandbox_enabled {
+   67              Some(SandboxType::WindowsRestrictedToken)
+   68          } else {
+   69              None
+   70          }
+   71      } else {
+   72          None
+   73      }
+   74  }
+   75
+   76  pub fn with_managed_mitm_ca_readable_root(
+   77      permission_profile: PermissionProfile,
+   78      managed_mitm_ca_trust_bundle_path: Option&lt;&amp;AbsolutePathBuf&gt;,
+   79      sandbox_policy_cwd: &amp;Path,
+   80  ) -&gt; PermissionProfile {
+   81      let Some(managed_mitm_ca_trust_bundle_path) = managed_mitm_ca_trust_bundle_path else {
+   82          return permission_profile;
+   83      };
+   84      let (file_system_sandbox_policy, network_sandbox_policy) =
+   85          permission_profile.to_runtime_permissions();
+   86      let file_system_sandbox_policy = file_system_sandbox_policy.with_additional_readable_roots(
+   87          sandbox_policy_cwd,
+   88          std::slice::from_ref(managed_mitm_ca_trust_bundle_path),
+   89      );
+   90      PermissionProfile::from_runtime_permissions_with_enforcement(
+   91          permission_profile.enforcement(),
+   92          &amp;file_system_sandbox_policy,
+   93          network_sandbox_policy,
+   94      )
+   95  }
+   96
+   97  #[derive(Debug)]
+   98  pub struct SandboxCommand {
+   99      pub program: OsString,
+  100      pub args: Vec&lt;String&gt;,
+  101      pub cwd: PathUri,
+  102      pub env: HashMap&lt;String, String&gt;,
+  103      pub managed_network: Option&lt;ManagedNetworkSandboxContext&gt;,
+  104      pub additional_permissions: Option&lt;AdditionalPermissionProfile&gt;,
+  105  }
+  106
+  107  /// A host-native launch request produced after [`SandboxManager::transform`] validates URI inputs.
+  108  /// Build this only at the execution boundary: in exec-server, or in its logical equivalent within
+  109  /// app-server. Orchestration and transport code should retain [`PathUri`] values and defer
+  110  /// conversion to native paths until this request is created.
+  111  #[derive(Debug)]
+  112  pub struct SandboxExecRequest {
+  113      pub command: Vec&lt;String&gt;,
+  114      pub cwd: PathUri,
+  115      pub sandbox_policy_cwd: PathUri,
+  116      pub env: HashMap&lt;String, String&gt;,
+  117      pub network: Option&lt;NetworkProxy&gt;,
+  118      pub network_environment_id: Option&lt;String&gt;,
+  119      pub sandbox: SandboxType,
+  120      pub windows_sandbox_level: WindowsSandboxLevel,
+  121      pub windows_sandbox_private_desktop: bool,
+  122      pub permission_profile: PermissionProfile,
+  123      pub file_system_sandbox_policy: FileSystemSandboxPolicy,
+  124      pub network_sandbox_policy: NetworkSandboxPolicy,
+  125      pub arg0: Option&lt;String&gt;,
+  126  }
+  127
+  128  /// Bundled arguments for sandbox transformation.
+  129  ///
+  130  /// This keeps call sites self-documenting when several fields are optional.
+  131  pub struct SandboxTransformRequest&lt;&#39;a&gt; {
+  132      pub command: SandboxCommand,
+  133      pub permissions: &amp;&#39;a PermissionProfile,
+  134      pub sandbox: SandboxType,
+  135      pub enforce_managed_network: bool,
+  136      pub environment_id: Option&lt;&amp;&#39;a str&gt;,
+  137      // TODO(viyatb): Evaluate switching this to Option&lt;Arc&lt;NetworkProxy&gt;&gt;
+  138      // to make shared ownership explicit across runtime/sandbox plumbing.
+  139      pub network: Option&lt;&amp;&#39;a NetworkProxy&gt;,
+  140      pub sandbox_policy_cwd: &amp;&#39;a PathUri,
+  141      pub codex_linux_sandbox_exe: Option&lt;&amp;&#39;a Path&gt;,
+  142      pub use_legacy_landlock: bool,
+  143      pub windows_sandbox_level: WindowsSandboxLevel,
+  144      pub windows_sandbox_private_desktop: bool,</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>codex-rs/sandboxing/src/manager.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/sandboxing/src/manager.rs#L34-L73" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   34  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+   35  pub enum SandboxType {
+   36      None,
+   37      MacosSeatbelt,
+   38      LinuxSeccomp,
+   39      WindowsRestrictedToken,
+   40  }
+   41
+   42  impl SandboxType {
+   43      pub fn as_metric_tag(self) -&gt; &amp;&#39;static str {
+   44          match self {
+   45              SandboxType::None =&gt; &quot;none&quot;,
+   46              SandboxType::MacosSeatbelt =&gt; &quot;seatbelt&quot;,
+   47              SandboxType::LinuxSeccomp =&gt; &quot;seccomp&quot;,
+   48              SandboxType::WindowsRestrictedToken =&gt; &quot;windows_sandbox&quot;,
+   49          }
+   50      }
+   51  }
+   52
+   53  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+   54  pub enum SandboxablePreference {
+   55      Auto,
+   56      Require,
+   57      Forbid,
+   58  }
+   59
+   60  pub fn get_platform_sandbox(windows_sandbox_enabled: bool) -&gt; Option&lt;SandboxType&gt; {
+   61      if cfg!(target_os = &quot;macos&quot;) {
+   62          Some(SandboxType::MacosSeatbelt)
+   63      } else if cfg!(target_os = &quot;linux&quot;) {
+   64          Some(SandboxType::LinuxSeccomp)
+   65      } else if cfg!(target_os = &quot;windows&quot;) {
+   66          if windows_sandbox_enabled {
+   67              Some(SandboxType::WindowsRestrictedToken)
+   68          } else {
+   69              None
+   70          }
+   71      } else {
+   72          None
+   73      }
+   74  }
+   75
+   76  pub fn with_managed_mitm_ca_readable_root(
+   77      permission_profile: PermissionProfile,
+   78      managed_mitm_ca_trust_bundle_path: Option&lt;&amp;AbsolutePathBuf&gt;,
+   79      sandbox_policy_cwd: &amp;Path,
+   80  ) -&gt; PermissionProfile {
+   81      let Some(managed_mitm_ca_trust_bundle_path) = managed_mitm_ca_trust_bundle_path else {
+   82          return permission_profile;
+   83      };
+   84      let (file_system_sandbox_policy, network_sandbox_policy) =
+   85          permission_profile.to_runtime_permissions();
+   86      let file_system_sandbox_policy = file_system_sandbox_policy.with_additional_readable_roots(
+   87          sandbox_policy_cwd,
+   88          std::slice::from_ref(managed_mitm_ca_trust_bundle_path),
+   89      );
+   90      PermissionProfile::from_runtime_permissions_with_enforcement(
+   91          permission_profile.enforcement(),
+   92          &amp;file_system_sandbox_policy,
+   93          network_sandbox_policy,
+   94      )
+   95  }
+   96
+   97  #[derive(Debug)]
+   98  pub struct SandboxCommand {
+   99      pub program: OsString,
+  100      pub args: Vec&lt;String&gt;,
+  101      pub cwd: PathUri,
+  102      pub env: HashMap&lt;String, String&gt;,
+  103      pub managed_network: Option&lt;ManagedNetworkSandboxContext&gt;,
+  104      pub additional_permissions: Option&lt;AdditionalPermissionProfile&gt;,
+  105  }
+  106
+  107  /// A host-native launch request produced after [`SandboxManager::transform`] validates URI inputs.
+  108  /// Build this only at the execution boundary: in exec-server, or in its logical equivalent within
+  109  /// app-server. Orchestration and transport code should retain [`PathUri`] values and defer
+  110  /// conversion to native paths until this request is created.
+  111  #[derive(Debug)]
+  112  pub struct SandboxExecRequest {
+  113      pub command: Vec&lt;String&gt;,
+  114      pub cwd: PathUri,
+  115      pub sandbox_policy_cwd: PathUri,
+  116      pub env: HashMap&lt;String, String&gt;,
+  117      pub network: Option&lt;NetworkProxy&gt;,
+  118      pub network_environment_id: Option&lt;String&gt;,
+  119      pub sandbox: SandboxType,
+  120      pub windows_sandbox_level: WindowsSandboxLevel,
+  121      pub windows_sandbox_private_desktop: bool,
+  122      pub permission_profile: PermissionProfile,
+  123      pub arg0: Option&lt;String&gt;,
+  124  }
+  125
+  126  /// Bundled arguments for sandbox transformation.
+  127  ///
+  128  /// This keeps call sites self-documenting when several fields are optional.
+  129  pub struct SandboxTransformRequest&lt;&#39;a&gt; {
+  130      pub command: SandboxCommand,
+  131      pub permissions: &amp;&#39;a PermissionProfile,
+  132      pub sandbox: SandboxType,
+  133      pub enforce_managed_network: bool,
+  134      pub environment_id: Option&lt;&amp;&#39;a str&gt;,
+  135      // TODO(viyatb): Evaluate switching this to Option&lt;Arc&lt;NetworkProxy&gt;&gt;
+  136      // to make shared ownership explicit across runtime/sandbox plumbing.
+  137      pub network: Option&lt;&amp;&#39;a NetworkProxy&gt;,
+  138      pub sandbox_policy_cwd: &amp;&#39;a PathUri,
+  139      pub codex_linux_sandbox_exe: Option&lt;&amp;&#39;a Path&gt;,
+  140      pub use_legacy_landlock: bool,
+  141      pub windows_sandbox_level: WindowsSandboxLevel,
+  142      pub windows_sandbox_private_desktop: bool,
+  143  }
+  144</code></pre></details></div></div></article><article class="finding-card compact" id="codex-sandbox-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>04 · 自定义 permission profile 默认从受限文件系统和受限网络开始</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>custom profile 编译器先建立 restricted filesystem 与 restricted network，再应用条目；网络只有显式 true 才启用，WorkspaceWrite 默认也关闭网络，并保护 .git hooks 等元数据子路径。</p></section><section><span>PLAIN LANGUAGE</span><p>自定义政策从“什么都别给”开始逐项开门，而不是先全开再查漏补缺。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>默认拒绝更适合作为组织级安全基线。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>203–207</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>208–213</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L203-L213" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/config/permissions.rs:203–213</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L203-L213" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  203  fn extensible_builtin_parent_profile(profile_name: &amp;str) -&gt; Option&lt;PermissionProfileToml&gt; {
+  204      let file_system = match profile_name {
+  205          BUILT_IN_READ_ONLY_PROFILE =&gt; FileSystemSandboxPolicy::read_only(),
+  206          BUILT_IN_WORKSPACE_PROFILE =&gt; FileSystemSandboxPolicy::workspace_write(
+  207              &amp;[],
+  208              /*exclude_tmpdir_env_var*/ false,
+  209              /*exclude_slash_tmp*/ false,
+  210          ),
+  211          _ =&gt; return None,
+  212      };
+  213      Some(permission_profile_toml_from_file_system_policy(file_system))
+  214  }
+  215
+  216  fn permission_profile_toml_from_file_system_policy(
+  217      file_system: FileSystemSandboxPolicy,
+  218  ) -&gt; PermissionProfileToml {
+  219      let mut filesystem = FilesystemPermissionsToml {
+  220          glob_scan_max_depth: file_system.glob_scan_max_depth,
+  221          entries: BTreeMap::new(),
+  222      };
+  223      for entry in file_system.entries {
+  224          insert_filesystem_permission_toml(&amp;mut filesystem.entries, entry);
+  225      }
+  226      PermissionProfileToml {
+  227          description: None,
+  228          extends: None,
+  229          workspace_roots: None,
+  230          filesystem: Some(filesystem),
+  231          network: None,
+  232      }
+  233  }
+  234
+  235  fn insert_filesystem_permission_toml(
+  236      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  237      entry: FileSystemSandboxEntry,
+  238  ) {
+  239      if entry.skips_missing_path() {
+  240          return;
+  241      }
+  242
+  243      match entry.path {
+  244          FileSystemPath::Path { path } =&gt; {
+  245              entries.insert(
+  246                  path.into_path_buf().to_string_lossy().into_owned(),
+  247                  FilesystemPermissionToml::Access(entry.access),
+  248              );
+  249          }
+  250          FileSystemPath::GlobPattern { pattern } =&gt; {
+  251              entries.insert(pattern, FilesystemPermissionToml::Access(entry.access));
+  252          }
+  253          FileSystemPath::Special { value } =&gt; {
+  254              insert_special_filesystem_permission_toml(entries, value, entry.access);
+  255          }
+  256      }
+  257  }
+  258
+  259  fn insert_special_filesystem_permission_toml(
+  260      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  261      value: FileSystemSpecialPath,
+  262      access: FileSystemAccessMode,
+  263  ) {
+  264      match value {
+  265          FileSystemSpecialPath::Root =&gt; {
+  266              entries.insert(
+  267                  &quot;:root&quot;.to_string(),
+  268                  FilesystemPermissionToml::Access(access),
+  269              );
+  270          }
+  271          FileSystemSpecialPath::Minimal =&gt; {
+  272              entries.insert(
+  273                  &quot;:minimal&quot;.to_string(),
+  274                  FilesystemPermissionToml::Access(access),
+  275              );
+  276          }
+  277          FileSystemSpecialPath::ProjectRoots { subpath } =&gt; {
+  278              insert_scoped_filesystem_permission_toml(
+  279                  entries,
+  280                  &quot;:workspace_roots&quot;.to_string(),
+  281                  subpath.unwrap_or_else(|| &quot;.&quot;.to_string()),
+  282                  access,
+  283              );
+  284          }</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>AskForApproval 有 UnlessTrusted、OnRequest、Granular 和 Never；SandboxPolicy 独立描述 DangerFullAccess、ReadOnly、ExternalSandbox 与 WorkspaceWrite。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L890-L932" target="_blank" rel="noreferrer">codex-rs/protocol/src/protocol.rs:890–932 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>命令审批包含 command、cwd、reason、network amendment、execpolicy amendment、additional permissions 和 plugin provenance；等待通道消失时默认 Abort。ReviewDecision 支持单次、session、execpolicy/network amendment、拒绝、超时和 abort。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L2295-L2376" target="_blank" rel="noreferrer">codex-rs/core/src/session/mod.rs:2295–2376 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>SandboxManager 将抽象策略映射到平台后端；Auto 只在策略要求时选沙箱，Require/Forbid 明确覆盖选择，随后把命令变换为对应 launcher。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L34-L73" target="_blank" rel="noreferrer">codex-rs/sandboxing/src/manager.rs:34–73 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>custom profile 编译器先建立 restricted filesystem 与 restricted network，再应用条目；网络只有显式 true 才启用，WorkspaceWrite 默认也关闭网络，并保护 .git hooks 等元数据子路径。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L203-L213" target="_blank" rel="noreferrer">codex-rs/core/src/config/permissions.rs:203–213 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="OpenAI Codex architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

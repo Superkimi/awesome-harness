@@ -1,1 +1,1381 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>6 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch04-model.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · Provider 消息对象把模型内容与本地显示元数据分开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。</p></section><section><span>白话解释</span><p>用户看到的半截流式输出可以保存下来，但它不会偷偷再喂给模型；真正发到 API 的内容和本地 UI 账本是两条线。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>本地可观测性、恢复和 prompt cache 可以同时成立；模型可见消息类型必须有单独的 wire sanitizer。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/provider.go:40–75</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>Message 字段、reasoning 签名与 LocalOnly 语义。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 发请求前会修复 tool-call 配对和被截断的 JSON</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>NormalizeMessages 在 wire 层补齐未回答的 assistant tool call、丢弃孤儿 tool result、恢复缺失工具名，并对半流式截断参数闭合 JSON；健康历史走 zero-allocation fast path，存盘历史使用保守的 NormalizeSessionMessages。</p></section><section><span>白话解释</span><p>模型上次说“我要调用工具”但进程崩了，下一次请求前会补一张“没有结果”的占位回执，避免 API 因为票据对不上直接 400。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>恢复协议应在 provider 边界做防御性修复，而不是污染用户保存的原始 session。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/provider.go:179–192</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>SanitizeToolPairing 的 wire-safe 定位。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-provider-003" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · DeepSeek thinking 与工具调用 reasoning replay 是显式协议分支</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>OpenAI-compatible client 对 DeepSeek 标记 RequiresToolCallReasoning，并按模型/配置决定是否警告缺失 reasoning；构造请求时对包含 tool calls 的 assistant 消息发送 reasoning_content（包括空字符串），同时支持 DeepSeek Beta prefix continuation 和最多三次尚未输出 token 的断流重连。</p></section><section><span>白话解释</span><p>Reasonix 没把 DeepSeek 当普通 OpenAI 接口：它记得“思考字段”要跟着工具调用回放，并把 Beta 截断续写和断网重试接在同一个流上。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>如果自研只保存 text/tool_calls 而丢 reasoning，DeepSeek thinking 模型会在下一轮请求失败或失去缓存命中。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/openai/openai.go:279–316</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>DeepSeek tool-call reasoning requirement 与配置指纹。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-provider-004" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · Anthropic 与 DeepSeek Anthropic 端点共用抽象但保留签名差异</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Anthropic provider 使用手写 net/http SSE；原生 Anthropic 的 thinking block 需要签名回放，而 DeepSeek Anthropic 端点使用 unsigned thinking、thinking.type 与 output_config.effort，client 通过 deepseek 标志分别处理。</p></section><section><span>白话解释</span><p>同一套 Message 能接两种协议，但不会把 Anthropic 的签名规则硬套到 DeepSeek 兼容端点上。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Provider adapter 应该把“协议共性”和“供应商必须回放的证明字段”拆开，不要用一套简单 JSON 模板覆盖所有模型。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/anthropic/anthropic.go:1–20</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>手写 SSE、signed thinking 与 DeepSeek unsigned thinking 差异。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 上下文维护是 0.5/0.6/0.8/0.9 多级管道</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>默认 softCompactRatio=0.5、toolResultSnipRatio=0.6、compactRatio=0.8、forceRatio=0.9，tail 固定 16384 tokens；先提示并保持 cache prefix，再瘦身旧工具结果，必要时 prune 后摘要，连续两次仍压不下去则设置 compactStuck 暂停自动压缩。</p></section><section><span>白话解释</span><p>它不会一到 50% 就重写整段历史：先提醒、再剪掉过期工具输出，真的快满才摘要；窗口太小导致反复压缩时会熔断而不是死循环。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Context pipeline 应把成本、缓存稳定性、信息损失和熔断作为不同阈值测试，而不是单一 max-token 截断。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L19-L36" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/compact.go:19–36</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L19-L36" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>压缩比例、尾部预算与估算参数。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>06 · 摘要保留用户事实、最近尾部并归档完整旧历史</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>summarySystemPrompt 要求保留 standing facts、goal、decisions、files/code、commands/outcomes、errors/fixes、pending/next step；compact 会把可折叠区域先 archive，再摘要，摘要失败时使用机械 fold marker，保留小 user turns 和完整 active turn。</p></section><section><span>白话解释</span><p>压缩不是把聊天变成一句“继续工作”：它把用户硬约束、做过的命令、错误和下一步分栏记录，原始旧消息还留在 archive 里。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>摘要 schema 本身是 Harness 的恢复协议，应该有 golden tests，不能完全交给模型自由发挥。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L49-L80" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/compact.go:49–80</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L49-L80" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>结构化 summary headings 与不可编造规则。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepSeek-Reasonix architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>7 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>DeepSeek-Reasonix · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch04-model.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：7 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · Provider 消息对象把模型内容与本地显示元数据分开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。</p></section><section><span>白话解释</span><p>用户看到的半截流式输出可以保存下来，但它不会偷偷再喂给模型；真正发到 API 的内容和本地 UI 账本是两条线。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>本地可观测性、恢复和 prompt cache 可以同时成立；模型可见消息类型必须有单独的 wire sanitizer。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>40–56</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>57–75</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/provider.go:40–75</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   40  // Message is a single conversation message.
+   41  type Message struct {
+   42  	Role Role `json:&quot;role&quot;`
+   43  	// Content is the provider-visible conversation content. Keeping this legacy
+   44  	// field provider-visible preserves replay for older CLI/Desktop releases.
+   45  	Content string `json:&quot;content,omitempty&quot;`
+   46  	// RawContent is the user-authored form of a user turn, when it differs from
+   47  	// Content because the host added transient context. Older releases ignore
+   48  	// this field and still replay the provider-visible Content safely.
+   49  	RawContent string `json:&quot;raw_content,omitempty&quot;`
+   50  	// ProviderContent is a transitional field written by early Context Engine v2
+   51  	// builds. Loaders migrate it into Content/RawContent before normal use.
+   52  	ProviderContent  string   `json:&quot;provider_content,omitempty&quot;`
+   53  	Images           []string `json:&quot;images,omitempty&quot;`            // data URLs (data:&lt;mime&gt;;base64,…) on user (attachments) and tool (MCP image results) messages; embedded only for vision-capable models
+   54  	ReasoningContent string   `json:&quot;reasoning_content,omitempty&quot;` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
+   55  	// ReasoningSignature is an opaque, provider-issued proof that ReasoningContent
+   56  	// is genuine model output. Anthropic requires the signed thinking block be
+   57  	// replayed on the next turn when a tool call followed thinking; providers
+   58  	// without signed reasoning (e.g. the openai-compatible ones) leave it empty.
+   59  	// Round-tripped alongside ReasoningContent.
+   60  	ReasoningSignature string           `json:&quot;reasoning_signature,omitempty&quot;`
+   61  	ToolCalls          []ToolCall       `json:&quot;tool_calls,omitempty&quot;`      // set by assistant
+   62  	ToolCallID         string           `json:&quot;tool_call_id,omitempty&quot;`    // links a tool result to its call
+   63  	Name               string           `json:&quot;name,omitempty&quot;`            // tool message: tool name
+   64  	MemoryCitations    []MemoryCitation `json:&quot;memoryCitations,omitempty&quot;` // local UI metadata; provider requests ignore it
+   65  	WorkDurationMs     int64            `json:&quot;workDurationMs,omitempty&quot;`  // local UI metadata; provider requests ignore it
+   66  	CreatedAt          int64            `json:&quot;createdAt,omitempty&quot;`       // local UI metadata; unix milliseconds; stripped before provider requests
+   67  	Edited             bool             `json:&quot;edited,omitempty&quot;`          // local UI metadata; provider requests ignore it
+   68  	Original           string           `json:&quot;original,omitempty&quot;`        // user prompt before inline edit
+   69  	// LocalOnly marks durable transcript content that must never be sent to a
+   70  	// model provider. Interrupted streaming output uses it so every frontend can
+   71  	// replay what the user saw without feeding partial reasoning or tool-call
+   72  	// arguments back into the next request.
+   73  	LocalOnly       bool                     `json:&quot;local_only,omitempty&quot;`
+   74  	InterruptedTurn *InterruptedTurnRecovery `json:&quot;interrupted_turn,omitempty&quot;`
+   75  }
+   76
+   77  // InterruptedTurnRecovery is the durable, provider-excluded handoff for a turn
+   78  // that stopped before producing a clean final answer. It contains only bounded
+   79  // structural facts; raw partial reasoning remains on the LocalOnly Message for
+   80  // display and is never copied into the recovery prompt.
+   81  type InterruptedTurnRecovery struct {
+   82  	Pending                 bool                     `json:&quot;pending,omitempty&quot;`
+   83  	CompletedTools          []InterruptedToolSummary `json:&quot;completed_tools,omitempty&quot;`
+   84  	InterruptedTools        []string                 `json:&quot;interrupted_tools,omitempty&quot;`
+   85  	DroppedPartialText      bool                     `json:&quot;dropped_partial_text,omitempty&quot;`
+   86  	DroppedPartialReasoning bool                     `json:&quot;dropped_partial_reasoning,omitempty&quot;`
+   87  }
+   88
+   89  // InterruptedToolSummary records a completed, fully paired tool call without
+   90  // duplicating its arguments or result. The canonical assistant/tool messages
+   91  // immediately before the recovery record remain the source of truth.
+   92  type InterruptedToolSummary struct {
+   93  	ID      string   `json:&quot;id,omitempty&quot;`
+   94  	Name    string   `json:&quot;name&quot;`
+   95  	Files   []string `json:&quot;files,omitempty&quot;`
+   96  	Added   int      `json:&quot;added,omitempty&quot;`
+   97  	Removed int      `json:&quot;removed,omitempty&quot;`
+   98  }
+   99
+  100  // MemoryCitation is local display metadata for memories that influenced an
+  101  // assistant turn. Provider implementations must not forward it to model APIs.
+  102  type MemoryCitation struct {
+  103  	ID        string `json:&quot;id,omitempty&quot;`
+  104  	Source    string `json:&quot;source&quot;`
+  105  	LineStart int    `json:&quot;lineStart,omitempty&quot;`
+  106  	LineEnd   int    `json:&quot;lineEnd,omitempty&quot;`
+  107  	Note      string `json:&quot;note,omitempty&quot;`
+  108  	Kind      string `json:&quot;kind,omitempty&quot;`
+  109  }
+  110
+  111  // ParseImageDataURL splits a `data:&lt;media-type&gt;;base64,&lt;payload&gt;` URL into its
+  112  // media type and base64 payload. ok is false for anything that isn&#39;t a base64
+  113  // data URL — providers that need the split (Anthropic) skip those silently.
+  114  func ParseImageDataURL(dataURL string) (mediaType, base64Data string, ok bool) {
+  115  	rest, found := strings.CutPrefix(dataURL, &quot;data:&quot;)
+  116  	if !found {
+  117  		return &quot;&quot;, &quot;&quot;, false
+  118  	}
+  119  	meta, payload, found := strings.Cut(rest, &quot;,&quot;)
+  120  	if !found {
+  121  		return &quot;&quot;, &quot;&quot;, false
+  122  	}
+  123  	mt, found := strings.CutSuffix(meta, &quot;;base64&quot;)
+  124  	if !found || mt == &quot;&quot; {
+  125  		return &quot;&quot;, &quot;&quot;, false
+  126  	}
+  127  	return mt, payload, true
+  128  }
+  129
+  130  // ToolCall is a tool invocation requested by the model. Arguments is raw JSON.
+  131  type ToolCall struct {
+  132  	ID        string `json:&quot;id&quot;`
+  133  	Name      string `json:&quot;name&quot;`
+  134  	Arguments string `json:&quot;arguments&quot;`
+  135  	// ThoughtSignature is an opaque Gemini-issued proof attached to a function
+  136  	// call. OpenAI-compatible Gemini endpoints require it on message replay.
+  137  	ThoughtSignature string `json:&quot;thought_signature,omitempty&quot;`
+  138  	Diff             string `json:&quot;diff,omitempty&quot;`
+  139  	Added            int    `json:&quot;added,omitempty&quot;`
+  140  	Removed          int    `json:&quot;removed,omitempty&quot;`
+  141  	// Resolved* fields are Reasonix-local display metadata for stable proxy
+  142  	// calls such as use_capability. Provider request builders deliberately
+  143  	// serialize only provider-visible fields, so these values never alter the
+  144  	// provider-visible conversation or prompt-cache prefix.
+  145  	ResolvedName     string `json:&quot;resolved_name,omitempty&quot;`
+  146  	CapabilityID     string `json:&quot;capability_id,omitempty&quot;`</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/provider/provider.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   40  	LocalOnlyToolName = &quot;__reasonix_local_only__&quot;
+   41  	LocalOnlyToolID   = &quot;__reasonix_local_only__&quot;
+   42  )
+   43
+   44  // Message is a single conversation message.
+   45  type Message struct {
+   46  	Role Role `json:&quot;role&quot;`
+   47  	// Content is the provider-visible conversation content. Keeping this legacy
+   48  	// field provider-visible preserves replay for older CLI/Desktop releases.
+   49  	Content string `json:&quot;content,omitempty&quot;`
+   50  	// RawContent holds the full original when it differs from Content:
+   51  	// for user turns, the user-authored text before host-injected context;
+   52  	// for tool turns, the complete tool result when first-visible Content was
+   53  	// bounded. ModelMessages always clears it so provider serialization, prompt
+   54  	// cache hashes, and projection hashes never include it.
+   55  	RawContent string `json:&quot;raw_content,omitempty&quot;`
+   56  	// ProviderContent is a transitional field written by early Context Engine v2
+   57  	// builds. Loaders migrate it into Content/RawContent before normal use.
+   58  	ProviderContent  string   `json:&quot;provider_content,omitempty&quot;`
+   59  	Images           []string `json:&quot;images,omitempty&quot;`            // data URLs (data:&lt;mime&gt;;base64,…) on user (attachments) and tool (MCP image results) messages; embedded only for vision-capable models
+   60  	ReasoningContent string   `json:&quot;reasoning_content,omitempty&quot;` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
+   61  	// ReasoningID is the provider-issued reasoning-item id (OpenAI Responses:
+   62  	// Reasoning.id is required on input items), captured from the streamed
+   63  	// output item and round-tripped back into later inputs.
+   64  	ReasoningID string `json:&quot;reasoning_id,omitempty&quot;`
+   65  	// ReasoningStatus is the final status of the reasoning item
+   66  	// (&quot;in_progress&quot; | &quot;completed&quot;) as issued by the server&#39;s done event,
+   67  	// round-tripped back into the input alongside ReasoningID.
+   68  	ReasoningStatus string `json:&quot;reasoning_status,omitempty&quot;`
+   69  	// ReasoningSignature is an opaque, provider-issued proof that ReasoningContent
+   70  	// is genuine model output. Anthropic requires the signed thinking block be
+   71  	// replayed on the next turn when a tool call followed thinking; providers
+   72  	// without signed reasoning (e.g. the openai-compatible ones) leave it empty.
+   73  	// Round-tripped alongside ReasoningContent.
+   74  	ReasoningSignature string     `json:&quot;reasoning_signature,omitempty&quot;`
+   75  	ToolCalls          []ToolCall `json:&quot;tool_calls,omitempty&quot;` // set by assistant
+   76  	// ResponsesItems preserves provider-issued Responses API output items for
+   77  	// stateless replay. omitempty keeps old session files byte-compatible.
+   78  	ResponsesItems  []json.RawMessage  `json:&quot;responses_items,omitempty&quot;`
+   79  	ServerSearch    []ServerSearchCall `json:&quot;server_search,omitempty&quot;`   // cards + Anthropic replay; omitempty
+   80  	ToolCallID      string             `json:&quot;tool_call_id,omitempty&quot;`    // links a tool result to its call
+   81  	Name            string             `json:&quot;name,omitempty&quot;`            // tool message: tool name
+   82  	MemoryCitations []MemoryCitation   `json:&quot;memoryCitations,omitempty&quot;` // local UI metadata; provider requests ignore it
+   83  	WorkDurationMs  int64              `json:&quot;workDurationMs,omitempty&quot;`  // local UI metadata; provider requests ignore it
+   84  	CreatedAt       int64              `json:&quot;createdAt,omitempty&quot;`       // local UI metadata; unix milliseconds; stripped before provider requests
+   85  	Edited          bool               `json:&quot;edited,omitempty&quot;`          // local UI metadata; provider requests ignore it
+   86  	Original        string             `json:&quot;original,omitempty&quot;`        // user prompt before inline edit
+   87  	// LocalOnly marks durable transcript content that must never be sent to a
+   88  	// model provider. Interrupted streaming output uses it so every frontend can
+   89  	// replay what the user saw without feeding partial reasoning or tool-call
+   90  	// arguments back into the next request.
+   91  	LocalOnly       bool             `json:&quot;local_only,omitempty&quot;`
+   92  	DecisionReceipt *DecisionReceipt `json:&quot;decision_receipt,omitempty&quot;`
+   93  	// DecisionReceipts are local-only metadata attached to a provider-visible
+   94  	// message. Keeping them on the existing assistant record preserves the
+   95  	// assistant/tool-result adjacency required by current and older readers.
+   96  	// ModelMessages strips the field before handing requests to providers.
+   97  	DecisionReceipts []*DecisionReceipt       `json:&quot;decision_receipts,omitempty&quot;`
+   98  	InterruptedTurn  *InterruptedTurnRecovery `json:&quot;interrupted_turn,omitempty&quot;`
+   99  	// ToolExecution is local shell UI metadata on tool-result messages. It is
+  100  	// persisted for Desktop/CLI/Serve cards and stripped by ModelMessages before
+  101  	// any provider request so tool schemas and prompt-cache prefixes stay stable.
+  102  	ToolExecution *ToolExecution `json:&quot;tool_execution,omitempty&quot;`
+  103  }
+  104
+  105  // ToolExecution is host-local shell metadata mirrored from tool.ShellExecution.
+  106  // Provider serializers must never emit this object on the wire.
+  107  type ToolExecution struct {
+  108  	Kind           string `json:&quot;kind,omitempty&quot;`
+  109  	Shell          string `json:&quot;shell,omitempty&quot;`
+  110  	ShellVersion   string `json:&quot;shellVersion,omitempty&quot;`
+  111  	Platform       string `json:&quot;platform,omitempty&quot;`
+  112  	SupportsAndAnd bool   `json:&quot;supportsAndAnd&quot;`
+  113  	State          string `json:&quot;state,omitempty&quot;`
+  114  	FailurePhase   string `json:&quot;failurePhase,omitempty&quot;`
+  115  	ExitCode       *int   `json:&quot;exitCode,omitempty&quot;`
+  116  	OutputTail     string `json:&quot;outputTail,omitempty&quot;`
+  117  	MutationRisk   string `json:&quot;mutationRisk,omitempty&quot;`
+  118  	Verification   string `json:&quot;verification,omitempty&quot;`
+  119  	DurationMs     int64  `json:&quot;durationMs,omitempty&quot;`
+  120  }
+  121
+  122  // DecisionReceipt is durable, provider-excluded evidence of a user-owned
+  123  // approval decision. It intentionally contains only bounded labels and the
+  124  // outcome, never free-form guidance or provider-visible content.
+  125  type DecisionReceipt struct {
+  126  	ID      string `json:&quot;id&quot;`
+  127  	Kind    string `json:&quot;kind&quot;`
+  128  	Tool    string `json:&quot;tool,omitempty&quot;`
+  129  	Subject string `json:&quot;subject,omitempty&quot;`
+  130  	Outcome string `json:&quot;outcome&quot;`
+  131  }
+  132
+  133  // InterruptedTurnRecovery is the durable, provider-excluded handoff for a turn
+  134  // that stopped before producing a clean final answer. It contains only bounded
+  135  // structural facts; raw partial reasoning remains on the LocalOnly Message for
+  136  // display and is never copied into the recovery prompt.
+  137  type InterruptedTurnRecovery struct {
+  138  	Pending                 bool                     `json:&quot;pending,omitempty&quot;`
+  139  	CompletedTools          []InterruptedToolSummary `json:&quot;completed_tools,omitempty&quot;`
+  140  	InterruptedTools        []string                 `json:&quot;interrupted_tools,omitempty&quot;`
+  141  	DroppedPartialText      bool                     `json:&quot;dropped_partial_text,omitempty&quot;`
+  142  	DroppedPartialReasoning bool                     `json:&quot;dropped_partial_reasoning,omitempty&quot;`
+  143  }
+  144
+  145  // InterruptedToolSummary records a completed, fully paired tool call without
+  146  // duplicating its arguments or result. The canonical assistant/tool messages</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 发请求前会修复 tool-call 配对和被截断的 JSON</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>NormalizeMessages 在 wire 层补齐未回答的 assistant tool call、丢弃孤儿 tool result、恢复缺失工具名，并对半流式截断参数闭合 JSON；健康历史走 zero-allocation fast path，存盘历史使用保守的 NormalizeSessionMessages。</p></section><section><span>白话解释</span><p>模型上次说“我要调用工具”但进程崩了，下一次请求前会补一张“没有结果”的占位回执，避免 API 因为票据对不上直接 400。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>恢复协议应在 provider 边界做防御性修复，而不是污染用户保存的原始 session。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>179–184</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>185–192</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/provider.go:179–192</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  179  // interruptedToolResult stands in for a tool result that never landed — an
+  180  // assistant tool_calls turn whose execution was cut short (interrupt, crash) and
+  181  // later resumed. Sending such a turn unanswered trips the OpenAI/DeepSeek 400
+  182  // &quot;An assistant message with &#39;tool_calls&#39; must be followed by tool messages
+  183  // responding to each &#39;tool_call_id&#39;&quot;.
+  184  const interruptedToolResult = &quot;[no result: the previous turn was interrupted before this tool call completed]&quot;
+  185
+  186  // SanitizeToolPairing is the provider-side alias for NormalizeMessages. It repairs
+  187  // a history so it satisfies the tool-call contract the OpenAI-compatible and
+  188  // Anthropic APIs enforce (every assistant tool_calls answered, no orphan tool
+  189  // messages, truncated args closed) right before sending it to the wire — without
+  190  // touching the stored session. Kept as a distinct name so call sites read as
+  191  // &quot;defensive wire prep&quot; rather than &quot;session mutation&quot;.
+  192  func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(msgs) }
+  193
+  194  // ModelMessages removes durable display-only records before a request is
+  195  // handed to any provider. Healthy sessions without such records keep their
+  196  // original backing slice, preserving the allocation and prompt-cache fast path.
+  197  func ModelMessages(msgs []Message) []Message {
+  198  	needsCopy := false
+  199  	for _, m := range msgs {
+  200  		if m.LocalOnly || m.RawContent != &quot;&quot; || m.ProviderContent != &quot;&quot; {
+  201  			needsCopy = true
+  202  			break
+  203  		}
+  204  	}
+  205  	if !needsCopy {
+  206  		return msgs
+  207  	}
+  208  	out := make([]Message, 0, len(msgs))
+  209  	for _, candidate := range msgs {
+  210  		if candidate.LocalOnly {
+  211  			continue
+  212  		}
+  213  		if candidate.ProviderContent != &quot;&quot; {
+  214  			candidate.Content = candidate.ProviderContent
+  215  			candidate.ProviderContent = &quot;&quot;
+  216  		}
+  217  		candidate.RawContent = &quot;&quot;
+  218  		out = append(out, candidate)
+  219  	}
+  220  	return out
+  221  }
+  222
+  223  // NormalizeMessages repairs a conversation history so it satisfies the tool-call
+  224  // contract the OpenAI-compatible and Anthropic APIs enforce: every assistant
+  225  // tool_calls entry must be answered by a following tool message for its id, and a
+  226  // tool message must follow such a call. It backfills a placeholder result for any
+  227  // unanswered call (so the turn stays intact), drops orphan tool messages,
+  228  // backfills empty tool-call names from their results (#4727 — old sessions saved
+  229  // before adde2d3e can carry an empty name), and closes truncated call-argument
+  230  // JSON (DeepSeek 400s on replayed half-streamed args, #3953).
+  231  //
+  232  // This is the wire-safe entry point for provider requests. Stored session loads
+  233  // use NormalizeSessionMessages so they can share the assistant-turn repairs
+  234  // without deleting standalone tool messages that must round-trip through
+  235  // reasonix --resume.
+  236  //
+  237  // A well-formed history — no unanswered calls, no orphan results, no empty tool-
+  238  // call names, no truncated args — returns the input slice unchanged (same backing
+  239  // array, zero allocation). This keeps the prefix-cache key stable for healthy
+  240  // sessions and makes repeated normalization cheap.
+  241  func NormalizeMessages(msgs []Message) []Message {
+  242  	return normalizeMessages(msgs, true)
+  243  }
+  244
+  245  // NormalizeSessionMessages applies only repairs that are safe to persist in a
+  246  // saved session. It shares assistant-turn repairs with NormalizeMessages, but
+  247  // preserves existing tool messages instead of dropping or reordering them so
+  248  // Save/LoadSession remains a byte-for-byte conversation round trip for histories
+  249  // that were already on disk.
+  250  func NormalizeSessionMessages(msgs []Message) []Message {
+  251  	return normalizeMessages(msgs, false)
+  252  }
+  253
+  254  func normalizeMessages(msgs []Message, dropOrphanTools bool) []Message {
+  255  	if normalized, ok := tryNormalizeFastPath(msgs, dropOrphanTools); ok {
+  256  		return normalized // well-formed: pass through without allocating
+  257  	}
+  258  	out := make([]Message, 0, len(msgs))
+  259  	for i := 0; i &lt; len(msgs); {
+  260  		m := msgs[i]
+  261  		if m.LocalOnly {
+  262  			if !dropOrphanTools {
+  263  				out = append(out, m)</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/provider/provider.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  179  	mt, found := strings.CutSuffix(meta, &quot;;base64&quot;)
+  180  	if !found || mt == &quot;&quot; {
+  181  		return &quot;&quot;, &quot;&quot;, false
+  182  	}
+  183  	return mt, payload, true
+  184  }
+  185
+  186  // ToolCall is a tool invocation requested by the model. Arguments is raw JSON.
+  187  type ToolCall struct {
+  188  	ID        string `json:&quot;id&quot;`
+  189  	Name      string `json:&quot;name&quot;`
+  190  	Arguments string `json:&quot;arguments&quot;`
+  191  	// ThoughtSignature is an opaque Gemini-issued proof attached to a function
+  192  	// call. OpenAI-compatible Gemini endpoints require it on message replay.
+  193  	ThoughtSignature string `json:&quot;thought_signature,omitempty&quot;`
+  194  	Diff             string `json:&quot;diff,omitempty&quot;`
+  195  	Added            int    `json:&quot;added,omitempty&quot;`
+  196  	Removed          int    `json:&quot;removed,omitempty&quot;`
+  197  	// Resolved* fields are Reasonix-local display metadata for stable proxy
+  198  	// calls such as use_capability. Provider request builders deliberately
+  199  	// serialize only provider-visible fields, so these values never alter the
+  200  	// provider-visible conversation or prompt-cache prefix.
+  201  	ResolvedName     string `json:&quot;resolved_name,omitempty&quot;`
+  202  	CapabilityID     string `json:&quot;capability_id,omitempty&quot;`
+  203  	ResolvedReadOnly *bool  `json:&quot;resolved_read_only,omitempty&quot;`
+  204  }
+  205
+  206  // ToolSchema is a tool definition exposed to the model. Parameters is JSON Schema.
+  207  type ToolSchema struct {
+  208  	Name        string          `json:&quot;name&quot;`
+  209  	Description string          `json:&quot;description&quot;`
+  210  	Parameters  json.RawMessage `json:&quot;parameters&quot;`
+  211  }
+  212
+  213  // Request is a single completion request.
+  214  type Request struct {
+  215  	Messages    []Message
+  216  	Tools       []ToolSchema
+  217  	Temperature *float64 // nil = omit; non-nil = send the value, including 0
+  218  	MaxTokens   int
+  219  	// ResponseFormat, when non-nil, asks the endpoint for structured JSON
+  220  	// output (Responses: text.format.type=json_object). Nil omits the field
+  221  	// entirely — the common path must stay byte-stable for prompt caching.
+  222  	ResponseFormat *ResponseFormat `json:&quot;ResponseFormat,omitempty&quot;`
+  223  	EffortOverride string          `json:&quot;EffortOverride,omitempty&quot;` // per-call reasoning-depth override; adapters apply it only when the endpoint&#39;s effort vocabulary accepts it
+  224  }
+  225
+  226  // ResponseFormat asks a provider to constrain its output shape.
+  227  type ResponseFormat struct {
+  228  	// Type is the structured format: &quot;json_object&quot; is the only shape the
+  229  	// Responses endpoints currently define (MiMo/DashScope/OpenAI).
+  230  	Type string `json:&quot;type&quot;`
+  231  }
+  232
+  233  // Auto ladder for max_output_tokens=0. Bounds completion only; never compact_ratio.
+  234  const (
+  235  	DefaultOrdinaryOutputTokens      = 16 * 1024  // non-reasoning
+  236  	DefaultReasoningOutputTokens     = 32 * 1024  // ordinary reasoning
+  237  	DefaultHighReasoningOutputTokens = 64 * 1024  // high/max effort
+  238  	DefaultHighOutputTokens          = 128 * 1024 // explicit only; never auto
+  239  )
+  240
+  241  // AutoOutputBudget maps max_output_tokens=0 to 16K/32K/64K by reasoning effort.
+  242  func AutoOutputBudget(reasoningEnabled bool, effort string) int {
+  243  	if !reasoningEnabled {
+  244  		return DefaultOrdinaryOutputTokens
+  245  	}
+  246  	switch strings.ToLower(strings.TrimSpace(effort)) {
+  247  	case &quot;high&quot;, &quot;max&quot;:
+  248  		return DefaultHighReasoningOutputTokens
+  249  	default:
+  250  		return DefaultReasoningOutputTokens
+  251  	}
+  252  }
+  253
+  254  // TemperaturePtr wraps v in a pointer so callers that explicitly want a
+  255  // specific temperature, including 0 for deterministic output, can distinguish
+  256  // that intent from &quot;not set, use the provider default&quot;.
+  257  func TemperaturePtr(v float64) *float64 { return &amp;v }
+  258
+  259  // OptionalTemperature returns nil when v is zero, matching the historical
+  260  // config behavior where 0 meant &quot;not configured&quot;, and a pointer otherwise.
+  261  func OptionalTemperature(v float64) *float64 {
+  262  	if v == 0 {
+  263  		return nil</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-provider-003" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · DeepSeek thinking 与工具调用 reasoning replay 是显式协议分支</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>OpenAI-compatible client 对 DeepSeek 标记 RequiresToolCallReasoning，并按模型/配置决定是否警告缺失 reasoning；构造请求时对包含 tool calls 的 assistant 消息发送 reasoning_content（包括空字符串），同时支持 DeepSeek Beta prefix continuation 和最多三次尚未输出 token 的断流重连。</p></section><section><span>白话解释</span><p>Reasonix 没把 DeepSeek 当普通 OpenAI 接口：它记得“思考字段”要跟着工具调用回放，并把 Beta 截断续写和断网重试接在同一个流上。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>如果自研只保存 text/tool_calls 而丢 reasoning，DeepSeek thinking 模型会在下一轮请求失败或失去缓存命中。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>279–296</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>297–316</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/openai/openai.go:279–316</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  279  func (c *client) Name() string { return c.name }
+  280
+  281  func (c *client) RequiresToolCallReasoning() bool {
+  282  	return c != nil &amp;&amp; c.deepseek &amp;&amp; c.thinkingType != &quot;disabled&quot;
+  283  }
+  284
+  285  func (c *client) RequiresReasoningRoundTrip() bool {
+  286  	return c != nil &amp;&amp; c.kimiK3
+  287  }
+  288
+  289  func (c *client) WarnOnMissingToolCallReasoning() bool {
+  290  	return c.RequiresToolCallReasoning() &amp;&amp; expectsDeepSeekToolCallReasoning(c.model, c.thinkingType)
+  291  }
+  292
+  293  func expectsDeepSeekToolCallReasoning(model, thinkingType string) bool {
+  294  	if strings.EqualFold(strings.TrimSpace(thinkingType), &quot;enabled&quot;) {
+  295  		return true
+  296  	}
+  297  	model = strings.ToLower(strings.TrimSpace(model))
+  298  	return strings.Contains(model, &quot;deepseek-v4-flash&quot;) ||
+  299  		strings.Contains(model, &quot;deepseek-v4-pro&quot;) ||
+  300  		strings.Contains(model, &quot;deepseek-v3.2&quot;) ||
+  301  		strings.Contains(model, &quot;deepseek-reasoner&quot;) ||
+  302  		strings.Contains(model, &quot;deepseek-r1&quot;)
+  303  }
+  304
+  305  func (c *client) MissingToolCallReasoningWarningIdentity() string {
+  306  	if c == nil {
+  307  		return &quot;&quot;
+  308  	}
+  309  	protocol := &quot;openai&quot;
+  310  	if c.deepseek {
+  311  		protocol = &quot;deepseek&quot;
+  312  	}
+  313  	return strings.Join([]string{
+  314  		&quot;openai&quot;, strings.TrimSpace(c.name), strings.TrimSpace(c.baseURL),
+  315  		strings.TrimSpace(c.model), protocol, strings.TrimSpace(c.thinkingType), strings.TrimSpace(c.effort),
+  316  	}, &quot;\x00&quot;)
+  317  }
+  318
+  319  func (c *client) sendOpts() provider.SendOptions {
+  320  	return provider.SendOptions{
+  321  		Provider:   c.name,
+  322  		KeyEnv:     c.keyEnv,
+  323  		KeySource:  c.keySource,
+  324  		KeyPresent: c.apiKey != &quot;&quot;,
+  325  		RetryAuth:  c.authed.Load(),
+  326  	}
+  327  }
+  328
+  329  func normalizeReasoningProtocol(raw string) string {
+  330  	switch strings.ToLower(strings.TrimSpace(raw)) {
+  331  	case &quot;deepseek&quot;, &quot;openai&quot;, &quot;none&quot;:
+  332  		return strings.ToLower(strings.TrimSpace(raw))
+  333  	default:
+  334  		return &quot;&quot;
+  335  	}
+  336  }
+  337
+  338  func normalizeChatURL(baseURL, chatURL string) string {
+  339  	if trimmed := strings.TrimRight(strings.TrimSpace(chatURL), &quot;/&quot;); trimmed != &quot;&quot; {
+  340  		return trimmed
+  341  	}
+  342  	return strings.TrimRight(strings.TrimSpace(baseURL), &quot;/&quot;) + &quot;/chat/completions&quot;
+  343  }
+  344
+  345  func cleanCustomHeaders(in map[string]string) map[string]string {
+  346  	if len(in) == 0 {
+  347  		return nil
+  348  	}
+  349  	out := make(map[string]string, len(in))
+  350  	for rawName, rawValue := range in {
+  351  		name := strings.TrimSpace(rawName)
+  352  		value := strings.TrimSpace(rawValue)
+  353  		if name == &quot;&quot; || value == &quot;&quot; || reservedCustomHeader(name) {
+  354  			continue
+  355  		}
+  356  		out[name] = value
+  357  	}
+  358  	if len(out) == 0 {
+  359  		return nil
+  360  	}
+  361  	return out
+  362  }
+  363
+  364  func applyCustomHeaders(h http.Header, headers map[string]string) {
+  365  	for name, value := range cleanCustomHeaders(headers) {
+  366  		h.Set(name, value)
+  367  	}
+  368  }
+  369
+  370  func applyAPIKeyHeader(h http.Header, baseURL, apiKey string) {
+  371  	apiKey = strings.TrimSpace(apiKey)
+  372  	if apiKey == &quot;&quot; {
+  373  		return
+  374  	}
+  375  	if IsMiMo(baseURL) {
+  376  		h.Set(&quot;api-key&quot;, apiKey)
+  377  		return
+  378  	}
+  379  	h.Set(&quot;Authorization&quot;, &quot;Bearer &quot;+apiKey)
+  380  }
+  381
+  382  func cleanExtraBody(in map[string]any) map[string]any {
+  383  	if len(in) == 0 {
+  384  		return nil
+  385  	}
+  386  	out := make(map[string]any, len(in))
+  387  	for rawName, value := range in {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/provider/openai/openai.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  279  	name            string
+  280  	apiKey          string
+  281  	keyEnv          string // api_key_env name, surfaced in auth errors
+  282  	keySource       string // source of keyEnv, surfaced in auth errors
+  283  	baseURL         string
+  284  	chatURL         string
+  285  	prefixChatURL   string // official DeepSeek Beta endpoint; empty for custom gateways
+  286  	headers         map[string]string
+  287  	extraBody       map[string]any
+  288  	model           string
+  289  	http            *http.Client
+  290  	deepseek        bool
+  291  	minimax         bool          // true for api.minimaxi.com — emits MiniMax-M3&#39;s thinking knob instead of reasoning_effort
+  292  	zhipu           bool          // true for Zhipu GLM (bigmodel.cn / z.ai) — gates thinking via thinking.type, ignores reasoning_effort
+  293  	longcat         bool          // true for LongCat — gates thinking via thinking.type, ignores reasoning_effort
+  294  	kimiK3          bool          // true for the explicit K3 protocol or kimi-k3 on Moonshot&#39;s direct API hosts
+  295  	mimo            bool          // true for MiMo — upgrades legacy tuple schemas to Draft 2020-12
+  296  	thinkingType    string        // explicit `thinking` config override (enabled|disabled); &quot;&quot; = no override
+  297  	vision          bool          // model accepts image input — embed attached images as image_url parts
+  298  	visionDetail    string        // image_url detail hint (low|high); &quot;&quot; = auto/omit
+  299  	maxOutputTokens int           // resolved total output budget; &lt;=0 omits the optional field
+  300  	autoMaxOutput   bool          // true when max_output_tokens=0 (automatic ladder)
+  301  	effort          string        // reasoning_effort for OpenAI; thinking.type for MiniMax; &quot;&quot; = auto/provider default
+  302  	requestEfforts  []string      // depth levels a per-request EffortOverride may take; empty = overrides ignored
+  303  	idleTimeout     time.Duration // SSE stall watchdog window; defaultStreamIdleTimeout unless a test overrides
+  304  	authed          atomic.Bool   // a request has succeeded — gate transient-401 retry
+  305  }
+  306
+  307  func (c *client) Name() string { return c.name }
+  308
+  309  func (c *client) RequiresToolCallReasoning() bool {
+  310  	return c != nil &amp;&amp; c.deepseek &amp;&amp; c.thinkingType != &quot;disabled&quot;
+  311  }
+  312
+  313  func (c *client) RequiresReasoningRoundTrip() bool {
+  314  	return c != nil &amp;&amp; (c.kimiK3 || c.glmThinkingEnabled())
+  315  }
+  316
+  317  func (c *client) WarnOnMissingToolCallReasoning() bool {
+  318  	return c.RequiresToolCallReasoning() &amp;&amp; expectsDeepSeekToolCallReasoning(c.model, c.thinkingType)
+  319  }
+  320
+  321  func (c *client) glmThinkingEnabled() bool {
+  322  	if c == nil || !c.zhipu {
+  323  		return false
+  324  	}
+  325  	t := c.effort
+  326  	if c.thinkingType != &quot;&quot; {
+  327  		t = c.thinkingType
+  328  	}
+  329  	return t != &quot;disabled&quot;
+  330  }
+  331
+  332  func expectsDeepSeekToolCallReasoning(model, thinkingType string) bool {
+  333  	if strings.EqualFold(strings.TrimSpace(thinkingType), &quot;enabled&quot;) {
+  334  		return true
+  335  	}
+  336  	model = strings.ToLower(strings.TrimSpace(model))
+  337  	return strings.Contains(model, &quot;deepseek-v4-flash&quot;) ||
+  338  		strings.Contains(model, &quot;deepseek-v4-pro&quot;) ||
+  339  		strings.Contains(model, &quot;deepseek-v3.2&quot;) ||
+  340  		strings.Contains(model, &quot;deepseek-reasoner&quot;) ||
+  341  		strings.Contains(model, &quot;deepseek-r1&quot;)
+  342  }
+  343
+  344  func (c *client) MissingToolCallReasoningWarningIdentity() string {
+  345  	if c == nil {
+  346  		return &quot;&quot;
+  347  	}
+  348  	protocol := &quot;openai&quot;
+  349  	if c.deepseek {
+  350  		protocol = &quot;deepseek&quot;
+  351  	}
+  352  	return strings.Join([]string{
+  353  		&quot;openai&quot;, strings.TrimSpace(c.name), strings.TrimSpace(c.baseURL),
+  354  		strings.TrimSpace(c.model), protocol, strings.TrimSpace(c.thinkingType), strings.TrimSpace(c.effort),
+  355  	}, &quot;\x00&quot;)
+  356  }
+  357
+  358  func (c *client) sendOpts() provider.SendOptions {
+  359  	return provider.SendOptions{
+  360  		Provider:   c.name,
+  361  		KeyEnv:     c.keyEnv,
+  362  		KeySource:  c.keySource,
+  363  		KeyPresent: c.apiKey != &quot;&quot;,
+  364  		RetryAuth:  c.authed.Load(),
+  365  	}
+  366  }
+  367
+  368  func normalizeReasoningProtocol(raw string) string {
+  369  	switch strings.ToLower(strings.TrimSpace(raw)) {
+  370  	case &quot;deepseek&quot;, &quot;glm&quot;, &quot;kimi-k3&quot;, &quot;openai&quot;, &quot;none&quot;:
+  371  		return strings.ToLower(strings.TrimSpace(raw))
+  372  	default:
+  373  		return &quot;&quot;
+  374  	}
+  375  }
+  376
+  377  func normalizeChatURL(baseURL, chatURL string) string {
+  378  	if legacy := strings.TrimRight(strings.TrimSpace(chatURL), &quot;/&quot;); legacy != &quot;&quot; {
+  379  		return legacy
+  380  	}
+  381  	return strings.TrimRight(strings.TrimSpace(baseURL), &quot;/&quot;) + &quot;/chat/completions&quot;
+  382  }
+  383
+  384  func cleanCustomHeaders(in map[string]string) map[string]string {
+  385  	if len(in) == 0 {
+  386  		return nil
+  387  	}</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-provider-004" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · Anthropic 与 DeepSeek Anthropic 端点共用抽象但保留签名差异</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Anthropic provider 使用手写 net/http SSE；原生 Anthropic 的 thinking block 需要签名回放，而 DeepSeek Anthropic 端点使用 unsigned thinking、thinking.type 与 output_config.effort，client 通过 deepseek 标志分别处理。</p></section><section><span>白话解释</span><p>同一套 Message 能接两种协议，但不会把 Anthropic 的签名规则硬套到 DeepSeek 兼容端点上。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Provider adapter 应该把“协议共性”和“供应商必须回放的证明字段”拆开，不要用一套简单 JSON 模板覆盖所有模型。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–9</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>10–20</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/provider/anthropic/anthropic.go:1–20</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  // Package anthropic implements the Anthropic Messages API provider (POST
+    2  // /v1/messages, SSE streaming) with a hand-written net/http client — no SDK. It
+    3  // self-registers under the &quot;anthropic&quot; kind, so any Claude model is a config
+    4  // instance rather than code.
+    5  //
+    6  // Two notes, both rooted in the transport-agnostic provider.Message abstraction:
+    7  //
+    8  //   - Extended thinking is opt-in (provider config thinking=&quot;adaptive&quot;). Anthropic
+    9  //     requires the *signed* thinking block be replayed on the next turn when a tool
+   10  //     call followed thinking, so Message carries ReasoningSignature alongside
+   11  //     ReasoningContent and this provider replays the signed block on the next
+   12  //     request. DeepSeek&#39;s Anthropic endpoint instead uses unsigned thinking blocks,
+   13  //     thinking.type enabled|disabled, and output_config.effort; requests carrying
+   14  //     tools must replay all provider reasoning. Some other compatible gateways such
+   15  //     as LongCat use the binary toggle without output_config. (redacted_thinking
+   16  //     blocks are not yet captured/replayed.)
+   17  //   - Native Anthropic requests omit temperature/top_p. Current Claude models
+   18  //     (Opus 4.8/4.7) reject sampling parameters with a 400; Anthropic steers
+   19  //     behavior via prompting instead. DeepSeek&#39;s compatible endpoint accepts the
+   20  //     caller&#39;s temperature, so that field is preserved only for DeepSeek.
+   21  package anthropic
+   22
+   23  import (
+   24  	&quot;bufio&quot;
+   25  	&quot;bytes&quot;
+   26  	&quot;context&quot;
+   27  	&quot;encoding/json&quot;
+   28  	&quot;fmt&quot;
+   29  	&quot;net/http&quot;
+   30  	&quot;strings&quot;
+   31  	&quot;sync&quot;
+   32  	&quot;sync/atomic&quot;
+   33  	&quot;time&quot;
+   34
+   35  	&quot;reasonix/internal/netclient&quot;
+   36  	&quot;reasonix/internal/provider&quot;
+   37  	&quot;reasonix/internal/provider/openai&quot;
+   38  )
+   39
+   40  // defaultStreamIdleTimeout caps how long a started SSE stream may go silent before
+   41  // it&#39;s treated as a dropped connection — a half-open TCP connection (proxy switched
+   42  // mid-stream) sends no RST, so scanner.Scan() would block forever. Generous on
+   43  // purpose; live streams emit far more often. Stored per-client (client.idleTimeout)
+   44  // so a test can shorten it without a shared global that races other watchdogs.
+   45  const defaultStreamIdleTimeout = 120 * time.Second
+   46
+   47  const (
+   48  	// anthropicVersion is the required API version header value.
+   49  	anthropicVersion = &quot;2023-06-01&quot;
+   50  	// defaultBaseURL is the first-party endpoint; config may override it (e.g. a
+   51  	// gateway). Bedrock/Vertex use a different request shape and are out of scope.
+   52  	defaultBaseURL = &quot;https://api.anthropic.com&quot;
+   53  	// defaultMaxTokens is the output ceiling used when the request leaves MaxTokens
+   54  	// unset. Anthropic *requires* max_tokens, and the agent currently doesn&#39;t set
+   55  	// it, so this is the de-facto cap. Generous (you only pay for tokens actually
+   56  	// produced) and within every catalog model&#39;s limit (Sonnet/Haiku 64K, Opus 128K).
+   57  	defaultMaxTokens = 32768
+   58  )
+   59
+   60  func init() {
+   61  	provider.Register(&quot;anthropic&quot;, New)
+   62  }
+   63
+   64  // New builds an Anthropic provider from a resolved config.
+   65  func New(cfg provider.Config) (provider.Provider, error) {
+   66  	if cfg.Model == &quot;&quot; {
+   67  		return nil, fmt.Errorf(&quot;anthropic: model is required for provider %q&quot;, cfg.Name)
+   68  	}
+   69  	name := cfg.Name
+   70  	if name == &quot;&quot; {
+   71  		name = &quot;anthropic&quot;
+   72  	}
+   73  	baseURL := cfg.BaseURL
+   74  	if baseURL == &quot;&quot; {
+   75  		baseURL = defaultBaseURL
+   76  	}
+   77  	keyEnv, _ := cfg.Extra[&quot;api_key_env&quot;].(string) // for actionable auth errors
+   78  	keySource, _ := cfg.Extra[&quot;api_key_source&quot;].(string)
+   79  	thinking, _ := cfg.Extra[&quot;thinking&quot;].(string)
+   80  	thinking = strings.ToLower(strings.TrimSpace(thinking))
+   81  	effort, _ := cfg.Extra[&quot;effort&quot;].(string)
+   82  	effort = strings.ToLower(strings.TrimSpace(effort))
+   83  	vision, _ := cfg.Extra[&quot;vision&quot;].(bool)
+   84  	headers, _ := cfg.Extra[&quot;headers&quot;].(map[string]string)
+   85  	authHeader, _ := cfg.Extra[&quot;auth_header&quot;].(bool)
+   86  	httpClient, err := newHTTPClient(cfg)
+   87  	if err != nil {
+   88  		return nil, fmt.Errorf(&quot;anthropic: network: %w&quot;, err)
+   89  	}
+   90  	// Anthropic&#39;s API surface is at {root}/v1/messages, so c.baseURL stores
+   91  	// the *root* — without any trailing /v1. The setup wizard, however, lets</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/provider/anthropic/anthropic.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    1  // Package anthropic implements the Anthropic Messages API provider (POST
+    2  // /v1/messages, SSE streaming) with a hand-written net/http client — no SDK. It
+    3  // self-registers under the &quot;anthropic&quot; kind, so any Claude model is a config
+    4  // instance rather than code.
+    5  //
+    6  // Two notes, both rooted in the transport-agnostic provider.Message abstraction:
+    7  //
+    8  //   - Extended thinking is opt-in (provider config thinking=&quot;adaptive&quot;). Anthropic
+    9  //     requires the *signed* thinking block be replayed on the next turn when a tool
+   10  //     call followed thinking, so Message carries ReasoningSignature alongside
+   11  //     ReasoningContent and this provider replays the signed block on the next
+   12  //     request. DeepSeek&#39;s Anthropic endpoint instead uses unsigned thinking blocks,
+   13  //     thinking.type enabled|disabled, and output_config.effort; requests carrying
+   14  //     tools must replay all provider reasoning. Some other compatible gateways such
+   15  //     as LongCat use the binary toggle without output_config. (redacted_thinking
+   16  //     blocks are not yet captured/replayed.)
+   17  //   - Native Anthropic requests omit temperature/top_p. Current Claude models
+   18  //     (Opus 4.8/4.7) reject sampling parameters with a 400; Anthropic steers
+   19  //     behavior via prompting instead. DeepSeek&#39;s compatible endpoint accepts the
+   20  //     caller&#39;s temperature, so that field is preserved only for DeepSeek.
+   21  package anthropic
+   22
+   23  import (
+   24  	&quot;bufio&quot;
+   25  	&quot;bytes&quot;
+   26  	&quot;context&quot;
+   27  	&quot;encoding/json&quot;
+   28  	&quot;fmt&quot;
+   29  	&quot;io&quot;
+   30  	&quot;net/http&quot;
+   31  	&quot;strings&quot;
+   32  	&quot;sync&quot;
+   33  	&quot;sync/atomic&quot;
+   34  	&quot;time&quot;
+   35
+   36  	&quot;reasonix/internal/netclient&quot;
+   37  	&quot;reasonix/internal/provider&quot;
+   38  	&quot;reasonix/internal/provider/openai&quot;
+   39  )
+   40
+   41  // defaultStreamIdleTimeout caps how long a started SSE stream may go silent before
+   42  // it&#39;s treated as a dropped connection — a half-open TCP connection (proxy switched
+   43  // mid-stream) sends no RST, so scanner.Scan() would block forever. Generous on
+   44  // purpose; live streams emit far more often. Stored per-client (client.idleTimeout)
+   45  // so a test can shorten it without a shared global that races other watchdogs.
+   46  const defaultStreamIdleTimeout = 120 * time.Second
+   47
+   48  const (
+   49  	// anthropicVersion is the required API version header value.
+   50  	anthropicVersion = &quot;2023-06-01&quot;
+   51  	// defaultBaseURL is the first-party endpoint; config may override it (e.g. a
+   52  	// gateway). Bedrock/Vertex use a different request shape and are out of scope.
+   53  	defaultBaseURL = &quot;https://api.anthropic.com&quot;
+   54  	// defaultMaxTokens is the mandatory Anthropic fallback when neither config
+   55  	// nor request supplies max_tokens. Ordinary turns use 16K; reasoning-capable
+   56  	// paths raise via AutoOutputBudget. 128K is never automatic.
+   57  	defaultMaxTokens = provider.DefaultOrdinaryOutputTokens
+   58  )
+   59
+   60  func init() {
+   61  	provider.Register(&quot;anthropic&quot;, New)
+   62  }
+   63
+   64  // New builds an Anthropic provider from a resolved config.
+   65  func New(cfg provider.Config) (provider.Provider, error) {
+   66  	if cfg.Model == &quot;&quot; {
+   67  		return nil, fmt.Errorf(&quot;anthropic: model is required for provider %q&quot;, cfg.Name)
+   68  	}
+   69  	name := cfg.Name
+   70  	if name == &quot;&quot; {
+   71  		name = &quot;anthropic&quot;
+   72  	}
+   73  	baseURL := cfg.BaseURL
+   74  	if baseURL == &quot;&quot; {
+   75  		baseURL = defaultBaseURL
+   76  	}
+   77  	// Anthropic&#39;s API surface is at {root}/v1/messages, so c.baseURL stores
+   78  	// the *root* -- without any trailing /v1. The setup wizard, however, lets
+   79  	// users paste a full OpenAI-compatible URL (e.g.
+   80  	// &quot;https://proxy.example.com/v1&quot;) because that&#39;s what /models probes
+   81  	// expect. Stripping the trailing /v1 here makes both forms land on the
+   82  	// same endpoint without forcing users to remember Anthropic&#39;s quirky
+   83  	// root-vs-versioned split. Without this, a user pasting
+   84  	// &quot;https://proxy.example.com/v1&quot; would probe /v1/models successfully
+   85  	// but get the chat client concatenating onto
+   86  	// &quot;https://proxy.example.com/v1/v1/messages&quot; -- a 404.
+   87  	root := strings.TrimRight(baseURL, &quot;/&quot;)
+   88  	root = strings.TrimSuffix(root, &quot;/v1&quot;)
+   89  	if root == &quot;&quot; {
+   90  		root = defaultBaseURL
+   91  	}</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 上下文维护是 0.5/0.6/0.8/0.9 多级管道</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>默认 softCompactRatio=0.5、toolResultSnipRatio=0.6、compactRatio=0.8、forceRatio=0.9，tail 固定 16384 tokens；先提示并保持 cache prefix，再瘦身旧工具结果，必要时 prune 后摘要，连续两次仍压不下去则设置 compactStuck 暂停自动压缩。</p></section><section><span>白话解释</span><p>它不会一到 50% 就重写整段历史：先提醒、再剪掉过期工具输出，真的快满才摘要；窗口太小导致反复压缩时会熔断而不是死循环。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Context pipeline 应把成本、缓存稳定性、信息损失和熔断作为不同阈值测试，而不是单一 max-token 截断。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>19–26</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>27–36</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L19-L36" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/compact.go:19–36</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L19-L36" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   19  // Compaction is a low-frequency cache-reset point: the prompt grows append-only
+   20  // (high cache hits) until a turn nears compactRatio of the window, then it is
+   21  // compacted down to a tail budget. The budget is a fixed token count, not a
+   22  // fraction of the window, so a huge window still compacts rarely while a small
+   23  // one still lands below the trigger (which is what stops the re-compaction loop).
+   24  const (
+   25  	defaultSoftCompactRatio    = 0.5   // report growing context here, but keep the cache-stable prefix intact
+   26  	defaultToolResultSnipRatio = 0.6   // rewrite stale tool results cheaply before summary compaction
+   27  	defaultCompactRatio        = 0.8   // trigger: prompt at this fraction of the window compacts
+   28  	defaultCompactForceRatio   = 0.9   // force compaction at this high-water mark even for low-value folds
+   29  	defaultCompactTarget       = 0.5   // safety cap: the kept tail never exceeds this fraction of the window
+   30  	defaultTailTokens          = 16384 // verbatim recent-tail budget, in tokens
+   31  	minRecentKeep              = 2     // never keep fewer recent messages than this
+   32  	minCompactMessages         = 2     // skip compaction below this many compactable messages
+   33  	fallbackTokPerChar         = 0.25  // ~4 chars/token, used before any usage is available to calibrate
+   34  	maxPinnedFirstUserTokens   = 1500  // ceiling on pinning the first user turn verbatim; larger first turns (pasted content) stay foldable
+   35  	pinnedFirstUserWindowFrac  = 0.15  // and never pin a first turn worth more than this fraction of the window
+   36  )
+   37
+   38  // summaryTag wraps the compaction summary so the model can distinguish it from
+   39  // live user input and later strip or skip it when reasoning about the current turn.
+   40  const (
+   41  	summaryTagOpen  = &quot;&lt;compaction-summary&gt;&quot;
+   42  	summaryTagClose = &quot;&lt;/compaction-summary&gt;&quot;
+   43  )
+   44
+   45  // summaryTimeout bounds one summarizer call so a stalled stream surfaces a clear
+   46  // failure (then a mechanical fold) instead of hanging compaction indefinitely.
+   47  const summaryTimeout = 90 * time.Second
+   48
+   49  // summarySystemPrompt steers the executor to distill older history into a
+   50  // structured briefing it can keep relying on after the originals are dropped.
+   51  // The section layout mirrors what a coding agent actually needs to resume work
+   52  // mid-task: the goal verbatim, the concrete state of the code, and an explicit
+   53  // next step — so the post-compaction turn doesn&#39;t lose the thread or re-derive
+   54  // decisions already made.
+   55  const summarySystemPrompt = `You are compacting the earlier part of a coding agent&#39;s conversation to save context.
+   56  The agent keeps your summary alongside the user&#39;s own turns (kept verbatim) and the recent tail; your job is to fold the assistant/tool work into a briefing it can resume from.
+   57  Write under these exact headings, omitting a heading only if it has no content:
+   58
+   59  ## Standing facts &amp; constraints
+   60  Everything the user stated that still governs the work — names, paths, IDs, versions, tokens, preferences, and hard &quot;never do X&quot; rules — in their own words. Be exhaustive; this is the durable contract, so prefer over- to under-including.
+   61
+   62  ## Goal
+   63  The user&#39;s request and intent.
+   64
+   65  ## Decisions &amp; rationale
+   66  Key choices made so far and why — so they are not re-litigated or reversed.
+   67
+   68  ## Files &amp; code
+   69  Files read or modified, with the specific facts that matter: signatures, line locations, data shapes, and exact edits applied. Be concrete; this is what lets the agent act without re-reading everything.
+   70
+   71  ## Commands &amp; outcomes
+   72  Commands run (builds, tests, git) and their relevant results — what passed, what failed, and the error text that matters.
+   73
+   74  ## Errors &amp; fixes
+   75  Problems hit and how they were resolved (or not), so the same dead ends are not repeated.
+   76
+   77  ## Pending &amp; next step
+   78  What is still in progress or unstarted, and the single most concrete next action to take.
+   79
+   80  Rules: be terse — bullet points and fragments, not prose. Preserve identifiers, paths, and numbers exactly. Do NOT invent anything not present in the messages; if something is unknown, leave it out rather than guessing.`
+   81
+   82  // maybeCompact compacts the session when the last turn&#39;s prompt has grown to the
+   83  // configured fraction of the context window. It is a no-op when compaction is
+   84  // disabled (no window) or usage is unavailable.
+   85  func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
+   86  	if a.contextWindow &lt;= 0 || u == nil || u.PromptTokens == 0 {
+   87  		return
+   88  	}
+   89  	high := int(float64(a.contextWindow) * a.compactRatio)
+   90  	snip := int(float64(a.contextWindow) * a.toolResultSnipRatio)
+   91  	soft := int(float64(a.contextWindow) * a.softCompactRatio)
+   92  	// Between the soft ratio and the trigger, report growing context once without
+   93  	// rewriting the prefix — a compaction here would needlessly crater the cache.
+   94  	if u.PromptTokens &gt;= soft &amp;&amp; u.PromptTokens &lt; snip &amp;&amp; !a.softCompactNoticed {
+   95  		a.softCompactNoticed = true
+   96  		detail := fmt.Sprintf(&quot;context reached %.0f%% of window; keeping cache-first prefix until compact threshold %.0f%%&quot;, a.softCompactRatio*100, a.compactRatio*100)
+   97  		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: &quot;Context is getting large; preserving cache until cleanup is needed.&quot;, Detail: detail})
+   98  		return
+   99  	}
+  100  	if u.PromptTokens &gt;= snip &amp;&amp; u.PromptTokens &lt; high {
+  101  		ratio := a.tokPerChar()
+  102  		if st, err := a.SnipStaleToolResults(); err == nil &amp;&amp; st.Results &gt; 0 {
+  103  			saved := int(float64(st.SavedChars) * ratio)
+  104  			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(
+  105  				&quot;snipped %d stale tool results (~%d tokens est.) before compaction&quot;, st.Results, saved)})
+  106  		}
+  107  		return</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/compact.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/compact.go#L19-L36" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   19  // Compaction is a low-frequency cache-reset point: the prompt grows append-only
+   20  // until compactRatio of the window is crossed, then one content-driven summary
+   21  // checkpoint is installed (stable prefix + one structured digest + recent tail).
+   22  // 50% is only the normal acceptance ceiling — candidates are never padded up to it.
+   23  const (
+   24  	defaultCompactRatio        = 0.85 // sole automatic maintenance trigger (new configs)
+   25  	checkpointCeilingRatio     = 0.50 // normal auto-checkpoint acceptance ceiling
+   26  	recentTailBudgetRatio      = 0.10 // recent verbatim tail as a fraction of the window
+   27  	minRecentTailTokens        = 32 * 1024
+   28  	maxRecentTailTokens        = 96 * 1024
+   29  	summaryOutputMaxTokens     = 16 * 1024 // max digest output; further clipped by remaining candidate space
+   30  	exceptionalMinSavingsRatio = 0.25      // when fixed prefix alone exceeds 50%, require at least this savings
+   31  	minRecentKeep              = 2         // never keep fewer recent messages than this
+   32  	minCompactMessages         = 2         // skip compaction below this many compactable messages
+   33  	fallbackTokPerChar         = 0.25      // ~4 chars/token, used before any usage is available to calibrate
+   34  	maxPinnedFirstUserTokens   = 1500      // ceiling on pinning the first user turn verbatim
+   35  	pinnedFirstUserWindowFrac  = 0.15      // and never pin a first turn worth more than this fraction of the window
+   36  	maxKeptUserTurnTokens      = 1500      // ceiling on carrying one folded user turn verbatim
+   37  	keptUserTurnsBudgetTokens  = 8192      // and on all of them together within one fold
+   38  	keptUserTurnsWindowFrac    = 0.05      // never spend more than this fraction of the window on them
+   39  	protocolReserveTokens      = 256       // provider framing and control fields not represented by message estimates
+   40  )
+   41
+   42  var (
+   43  	errSummaryOutputTruncated = errors.New(&quot;summarizer output truncated&quot;)
+   44  	errCheckpointRejected     = errors.New(&quot;checkpoint candidate rejected&quot;)
+   45  )
+   46
+   47  // summaryTag wraps the compaction summary so the model can distinguish it from
+   48  // live user input and later strip or skip it when reasoning about the current turn.
+   49  const (
+   50  	summaryTagOpen  = &quot;&lt;compaction-summary&gt;&quot;
+   51  	summaryTagClose = &quot;&lt;/compaction-summary&gt;&quot;
+   52  )
+   53
+   54  // summaryTimeout bounds one summarizer call so a stalled stream surfaces a clear
+   55  // failure (then a mechanical fold) instead of hanging compaction indefinitely.
+   56  const summaryTimeout = 90 * time.Second
+   57
+   58  // summarySystemPrompt asks for a structured resume briefing (facts, goal,
+   59  // decisions, files, commands, errors, next step) under fixed headings.
+   60  const summarySystemPrompt = `You are compacting the earlier part of a coding agent&#39;s conversation to save context.
+   61  The agent keeps your summary alongside the user&#39;s own turns (kept verbatim) and the recent tail; your job is to fold the assistant/tool work into a briefing it can resume from.
+   62  Write under these exact headings, omitting a heading only if it has no content:
+   63
+   64  ## Standing facts &amp; constraints
+   65  Everything the user stated that still governs the work — names, paths, IDs, versions, tokens, preferences, and hard &quot;never do X&quot; rules — in their own words. Be exhaustive; this is the durable contract, so prefer over- to under-including.
+   66
+   67  ## Goal
+   68  The user&#39;s request and intent.
+   69
+   70  ## Decisions &amp; rationale
+   71  Key choices made so far and why — so they are not re-litigated or reversed.
+   72
+   73  ## Files &amp; code
+   74  Files read or modified, with the specific facts that matter: signatures, line locations, data shapes, and exact edits applied. Be concrete; this is what lets the agent act without re-reading everything.
+   75
+   76  ## Commands &amp; outcomes
+   77  Commands run (builds, tests, git) and their relevant results — what passed, what failed, and the error text that matters.
+   78
+   79  ## Errors &amp; fixes
+   80  Problems hit and how they were resolved (or not), so the same dead ends are not repeated.
+   81
+   82  ## Pending &amp; next step
+   83  What is still in progress or unstarted, and the single most concrete next action to take.
+   84
+   85  Rules: be terse — bullet points and fragments, not prose. Preserve identifiers, paths, and numbers exactly. Do NOT invent anything not present in the messages; if something is unknown, leave it out rather than guessing.`
+   86
+   87  // compactTrigger is the sole automatic context-maintenance boundary. Output
+   88  // budgets are intentionally absent: they are clipped against the final request
+   89  // at send time and must never make compaction happen earlier than the user&#39;s
+   90  // configured compact_ratio.
+   91  func (a *Agent) compactTrigger() int {
+   92  	if a == nil || a.contextWindow &lt;= 0 {
+   93  		return 0
+   94  	}
+   95  	ratio := a.compactRatio
+   96  	if ratio &lt;= 0 {
+   97  		ratio = defaultCompactRatio
+   98  	}
+   99  	if a.ablation.Off(ablation.Compaction) {
+  100  		ratio = 0.5
+  101  	}
+  102  	return max(1, int(float64(a.contextWindow)*ratio))
+  103  }
+  104
+  105  // hardInputCeiling is a physical input-safety boundary, not another user
+  106  // compaction threshold. Reply budgets are resolved independently at send time.
+  107  func (a *Agent) hardInputCeiling() int {</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>06 · 摘要保留用户事实、最近尾部并归档完整旧历史</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>summarySystemPrompt 要求保留 standing facts、goal、decisions、files/code、commands/outcomes、errors/fixes、pending/next step；compact 会把可折叠区域先 archive，再摘要，摘要失败时使用机械 fold marker，保留小 user turns 和完整 active turn。</p></section><section><span>白话解释</span><p>压缩不是把聊天变成一句“继续工作”：它把用户硬约束、做过的命令、错误和下一步分栏记录，原始旧消息还留在 archive 里。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>摘要 schema 本身是 Harness 的恢复协议，应该有 golden tests，不能完全交给模型自由发挥。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>49–63</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>64–80</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L49-L80" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/compact.go:49–80</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/compact.go#L49-L80" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   49  // summarySystemPrompt steers the executor to distill older history into a
+   50  // structured briefing it can keep relying on after the originals are dropped.
+   51  // The section layout mirrors what a coding agent actually needs to resume work
+   52  // mid-task: the goal verbatim, the concrete state of the code, and an explicit
+   53  // next step — so the post-compaction turn doesn&#39;t lose the thread or re-derive
+   54  // decisions already made.
+   55  const summarySystemPrompt = `You are compacting the earlier part of a coding agent&#39;s conversation to save context.
+   56  The agent keeps your summary alongside the user&#39;s own turns (kept verbatim) and the recent tail; your job is to fold the assistant/tool work into a briefing it can resume from.
+   57  Write under these exact headings, omitting a heading only if it has no content:
+   58
+   59  ## Standing facts &amp; constraints
+   60  Everything the user stated that still governs the work — names, paths, IDs, versions, tokens, preferences, and hard &quot;never do X&quot; rules — in their own words. Be exhaustive; this is the durable contract, so prefer over- to under-including.
+   61
+   62  ## Goal
+   63  The user&#39;s request and intent.
+   64
+   65  ## Decisions &amp; rationale
+   66  Key choices made so far and why — so they are not re-litigated or reversed.
+   67
+   68  ## Files &amp; code
+   69  Files read or modified, with the specific facts that matter: signatures, line locations, data shapes, and exact edits applied. Be concrete; this is what lets the agent act without re-reading everything.
+   70
+   71  ## Commands &amp; outcomes
+   72  Commands run (builds, tests, git) and their relevant results — what passed, what failed, and the error text that matters.
+   73
+   74  ## Errors &amp; fixes
+   75  Problems hit and how they were resolved (or not), so the same dead ends are not repeated.
+   76
+   77  ## Pending &amp; next step
+   78  What is still in progress or unstarted, and the single most concrete next action to take.
+   79
+   80  Rules: be terse — bullet points and fragments, not prose. Preserve identifiers, paths, and numbers exactly. Do NOT invent anything not present in the messages; if something is unknown, leave it out rather than guessing.`
+   81
+   82  // maybeCompact compacts the session when the last turn&#39;s prompt has grown to the
+   83  // configured fraction of the context window. It is a no-op when compaction is
+   84  // disabled (no window) or usage is unavailable.
+   85  func (a *Agent) maybeCompact(ctx context.Context, u *provider.Usage) {
+   86  	if a.contextWindow &lt;= 0 || u == nil || u.PromptTokens == 0 {
+   87  		return
+   88  	}
+   89  	high := int(float64(a.contextWindow) * a.compactRatio)
+   90  	snip := int(float64(a.contextWindow) * a.toolResultSnipRatio)
+   91  	soft := int(float64(a.contextWindow) * a.softCompactRatio)
+   92  	// Between the soft ratio and the trigger, report growing context once without
+   93  	// rewriting the prefix — a compaction here would needlessly crater the cache.
+   94  	if u.PromptTokens &gt;= soft &amp;&amp; u.PromptTokens &lt; snip &amp;&amp; !a.softCompactNoticed {
+   95  		a.softCompactNoticed = true
+   96  		detail := fmt.Sprintf(&quot;context reached %.0f%% of window; keeping cache-first prefix until compact threshold %.0f%%&quot;, a.softCompactRatio*100, a.compactRatio*100)
+   97  		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: &quot;Context is getting large; preserving cache until cleanup is needed.&quot;, Detail: detail})
+   98  		return
+   99  	}
+  100  	if u.PromptTokens &gt;= snip &amp;&amp; u.PromptTokens &lt; high {
+  101  		ratio := a.tokPerChar()
+  102  		if st, err := a.SnipStaleToolResults(); err == nil &amp;&amp; st.Results &gt; 0 {
+  103  			saved := int(float64(st.SavedChars) * ratio)
+  104  			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(
+  105  				&quot;snipped %d stale tool results (~%d tokens est.) before compaction&quot;, st.Results, saved)})
+  106  		}
+  107  		return
+  108  	}
+  109  	if u.PromptTokens &lt; high {
+  110  		// A turn that sits under the trigger is the breathing room a healthy
+  111  		// compaction buys; it clears the stuck latch and the run counter.
+  112  		a.consecutiveCompacts = 0
+  113  		a.compactStuck = false
+  114  		return
+  115  	}
+  116  	if a.compactStuck {
+  117  		return
+  118  	}
+  119  	force := u.PromptTokens &gt;= int(float64(a.contextWindow)*a.compactForceRatio)
+  120  	// Prune before folding: when eliding stale tool results alone clears the
+  121  	// trigger, this turn&#39;s (paid) summarize call is skipped entirely.
+  122  	ratio := a.tokPerChar()
+  123  	if st, err := a.PruneStaleToolResults(); err == nil &amp;&amp; st.Results &gt; 0 {
+  124  		saved := int(float64(st.SavedChars) * ratio)
+  125  		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf(
+  126  			&quot;pruned %d stale tool results (~%d tokens est.) before compaction&quot;, st.Results, saved)})
+  127  		if !force &amp;&amp; u.PromptTokens-saved &lt; high {
+  128  			return
+  129  		}
+  130  	}
+  131  	if err := a.compact(ctx, &quot;auto&quot;, &quot;&quot;, force); err != nil {
+  132  		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: &quot;Context cleanup skipped for now.&quot;, Detail: fmt.Sprintf(&quot;compaction skipped: %v&quot;, err)})
+  133  		return
+  134  	}
+  135  	// A healthy compaction drops the prompt under the trigger, so the next turn
+  136  	// won&#39;t compact. Compacting on consecutive turns means the kept tail alone
+  137  	// exceeds the trigger — the system prompt plus one verbatim turn is bigger than
+  138  	// the window allows. Re-firing every turn is the loop users hit, so pause
+  139  	// auto-compaction and say why, once.
+  140  	a.consecutiveCompacts++
+  141  	if a.consecutiveCompacts &gt;= 2 {
+  142  		a.compactStuck = true
+  143  		a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: &quot;Automatic context cleanup paused because the context window is too small.&quot;, Detail: fmt.Sprintf(
+  144  			&quot;context_window=%d is too small for compaction to help (the system prompt plus one turn already exceeds %.0f%% of it); raise context_window or shrink tool output. Auto-compaction paused until the prompt drops.&quot;,
+  145  			a.contextWindow, a.compactRatio*100)})
+  146  	}
+  147  }
+  148
+  149  // foldEconomics estimates whether compacting the given region saves enough
+  150  // tokens to justify the summarization API call. It returns false when the
+  151  // region is too small for the savings to outweigh the extra round-trip cost</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/compact.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/compact.go#L49-L80" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   49  const (
+   50  	summaryTagOpen  = &quot;&lt;compaction-summary&gt;&quot;
+   51  	summaryTagClose = &quot;&lt;/compaction-summary&gt;&quot;
+   52  )
+   53
+   54  // summaryTimeout bounds one summarizer call so a stalled stream surfaces a clear
+   55  // failure (then a mechanical fold) instead of hanging compaction indefinitely.
+   56  const summaryTimeout = 90 * time.Second
+   57
+   58  // summarySystemPrompt asks for a structured resume briefing (facts, goal,
+   59  // decisions, files, commands, errors, next step) under fixed headings.
+   60  const summarySystemPrompt = `You are compacting the earlier part of a coding agent&#39;s conversation to save context.
+   61  The agent keeps your summary alongside the user&#39;s own turns (kept verbatim) and the recent tail; your job is to fold the assistant/tool work into a briefing it can resume from.
+   62  Write under these exact headings, omitting a heading only if it has no content:
+   63
+   64  ## Standing facts &amp; constraints
+   65  Everything the user stated that still governs the work — names, paths, IDs, versions, tokens, preferences, and hard &quot;never do X&quot; rules — in their own words. Be exhaustive; this is the durable contract, so prefer over- to under-including.
+   66
+   67  ## Goal
+   68  The user&#39;s request and intent.
+   69
+   70  ## Decisions &amp; rationale
+   71  Key choices made so far and why — so they are not re-litigated or reversed.
+   72
+   73  ## Files &amp; code
+   74  Files read or modified, with the specific facts that matter: signatures, line locations, data shapes, and exact edits applied. Be concrete; this is what lets the agent act without re-reading everything.
+   75
+   76  ## Commands &amp; outcomes
+   77  Commands run (builds, tests, git) and their relevant results — what passed, what failed, and the error text that matters.
+   78
+   79  ## Errors &amp; fixes
+   80  Problems hit and how they were resolved (or not), so the same dead ends are not repeated.
+   81
+   82  ## Pending &amp; next step
+   83  What is still in progress or unstarted, and the single most concrete next action to take.
+   84
+   85  Rules: be terse — bullet points and fragments, not prose. Preserve identifiers, paths, and numbers exactly. Do NOT invent anything not present in the messages; if something is unknown, leave it out rather than guessing.`
+   86
+   87  // compactTrigger is the sole automatic context-maintenance boundary. Output
+   88  // budgets are intentionally absent: they are clipped against the final request
+   89  // at send time and must never make compaction happen earlier than the user&#39;s
+   90  // configured compact_ratio.
+   91  func (a *Agent) compactTrigger() int {
+   92  	if a == nil || a.contextWindow &lt;= 0 {
+   93  		return 0
+   94  	}
+   95  	ratio := a.compactRatio
+   96  	if ratio &lt;= 0 {
+   97  		ratio = defaultCompactRatio
+   98  	}
+   99  	if a.ablation.Off(ablation.Compaction) {
+  100  		ratio = 0.5
+  101  	}
+  102  	return max(1, int(float64(a.contextWindow)*ratio))
+  103  }
+  104
+  105  // hardInputCeiling is a physical input-safety boundary, not another user
+  106  // compaction threshold. Reply budgets are resolved independently at send time.
+  107  func (a *Agent) hardInputCeiling() int {
+  108  	if a == nil || a.contextWindow &lt;= 0 {
+  109  		return 0
+  110  	}
+  111  	return max(1, a.contextWindow-protocolReserveTokens)
+  112  }
+  113
+  114  // recentTailBudget is the content-construction budget for the recent verbatim
+  115  // tail. Production windows use clamp(window×10%, 32K, 96K). Smaller synthetic
+  116  // windows (tests / constrained providers) drop the 32K floor so the tail cannot
+  117  // alone exceed the window.
+  118  func (a *Agent) recentTailBudget() int {
+  119  	if a == nil || a.contextWindow &lt;= 0 {
+  120  		return minRecentTailTokens
+  121  	}
+  122  	n := int(float64(a.contextWindow) * recentTailBudgetRatio)
+  123  	if a.contextWindow &gt;= minRecentTailTokens*2 {
+  124  		if n &lt; minRecentTailTokens {
+  125  			n = minRecentTailTokens
+  126  		}
+  127  	}
+  128  	if n &gt; maxRecentTailTokens {
+  129  		n = maxRecentTailTokens
+  130  	}
+  131  	if max := a.contextWindow / 2; max &gt; 0 &amp;&amp; n &gt; max {
+  132  		n = max
+  133  	}
+  134  	return max(1, n)
+  135  }
+  136
+  137  // checkpointCeiling is the normal auto-checkpoint acceptance upper bound
+  138  // (50% of the window). Candidates below this are accepted without padding.
+  139  func (a *Agent) checkpointCeiling() int {
+  140  	if a == nil || a.contextWindow &lt;= 0 {
+  141  		return 0
+  142  	}
+  143  	return max(1, int(float64(a.contextWindow)*checkpointCeilingRatio))
+  144  }
+  145
+  146  // exceptionalMinimumSavings is required only when the fixed prefix alone already
+  147  // exceeds the 50% ceiling; otherwise ordinary candidates simply stay under 50%.
+  148  func (a *Agent) exceptionalMinimumSavings() int {
+  149  	if a == nil || a.contextWindow &lt;= 0 {
+  150  		return 0
+  151  	}</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>07 · 项目指令与记忆在启动时组成稳定 system prefix，编辑延迟到下一 session</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>memory.Load 一次发现层级文档和自动记忆索引，Compose 把 base prompt 放在最前并追加 memory；WriteDoc 只允许写已识别的记忆文件，并明确不会改变当前 cache-stable system prefix，而是由 controller 通过 turn-tail note 临时生效。</p></section><section><span>白话解释</span><p>REASONIX/AGENTS/全局记忆像开机时装进机器的说明书；本轮改说明书不会偷偷改掉正在复用的缓存前缀，下一次 session 才完全换新。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>指令层级和 cache key 需要一起设计；动态信息应走短暂 turn injection，不要频繁重写系统前缀。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>12–31</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>32–53</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/memory/memory.go#L12-L53" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/memory/memory.go:12–53</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/memory/memory.go#L12-L53" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   12  // Set is everything memory loaded for one session: the hierarchical docs and a
+   13  // handle to the auto-memory store (whose index is captured at load time). It is
+   14  // assembled once at boot and folded into the system prompt by Compose. CWD and
+   15  // UserDir are retained so the controller can resolve quick-add targets without
+   16  // re-deriving discovery context.
+   17  type Set struct {
+   18  	Docs                   []Source // REASONIX.md / AGENTS.md, ascending precedence
+   19  	GlobalGuidance         []Memory // stable snapshot of global user/feedback bodies
+   20  	Store                  Store    // auto-memory store (may be a zero/disabled Store)
+   21  	Index                  string   // MEMORY.md contents at load time
+   22  	CWD                    string   // project working dir used for discovery
+   23  	UserDir                string   // user config root (may be &quot;&quot;)
+   24  	InstructionDiagnostics []instruction.Diagnostic
+   25  }
+   26
+   27  // Options configures discovery. CWD defaults to &quot;.&quot; and UserDir is the user
+   28  // config root (config.MemoryUserDir()); a &quot;&quot; UserDir disables user-global docs
+   29  // and the auto-memory store.
+   30  type Options struct {
+   31  	CWD     string
+   32  	UserDir string
+   33  }
+   34
+   35  // Load discovers all memory for a session: the hierarchical docs and the
+   36  // auto-memory index. It is best-effort and never errors — missing files just
+   37  // mean less memory — so boot can call it unconditionally.
+   38  func Load(opts Options) *Set {
+   39  	cwd := opts.CWD
+   40  	if cwd == &quot;&quot; {
+   41  		cwd = &quot;.&quot;
+   42  	}
+   43  	store := StoreFor(opts.UserDir, cwd)
+   44  	resolved := instruction.Resolve(instruction.ResolveOptions{TargetDir: cwd, UserDir: opts.UserDir})
+   45  	return &amp;Set{
+   46  		Docs:                   resolved.Documents,
+   47  		GlobalGuidance:         store.globalGuidanceForProject(),
+   48  		Store:                  store,
+   49  		Index:                  store.Index(),
+   50  		CWD:                    cwd,
+   51  		UserDir:                opts.UserDir,
+   52  		InstructionDiagnostics: resolved.Diagnostics,
+   53  	}
+   54  }
+   55
+   56  // DocPath returns the doc-memory file a given scope writes to. To avoid splitting
+   57  // a project&#39;s memory across conventions, it prefers a file that already exists
+   58  // (REASONIX.md / AGENTS.md / CLAUDE.md, in that order); when none exists it
+   59  // creates the universal default (AGENTS.md / AGENTS.local.md). ScopeUser →
+   60  // &lt;userDir&gt;, ScopeLocal → &lt;cwd&gt; with the *.local.md names, anything else → &lt;cwd&gt;.
+   61  // Returns &quot;&quot; for ScopeUser when no user dir is configured.
+   62  func (s *Set) DocPath(scope Scope) string {
+   63  	dir := s.CWD
+   64  	names, def := docNames, defaultDocName
+   65  	switch scope {
+   66  	case ScopeUser:
+   67  		if s.UserDir == &quot;&quot; {
+   68  			return &quot;&quot;
+   69  		}
+   70  		dir = s.UserDir
+   71  	case ScopeLocal:
+   72  		names, def = localNames, defaultLocalName
+   73  	}
+   74  	for _, n := range names {
+   75  		p := filepath.Join(dir, n)
+   76  		if _, err := os.Stat(p); err == nil {
+   77  			return p // append to the doc already in use
+   78  		}
+   79  	}
+   80  	return filepath.Join(dir, def)
+   81  }
+   82
+   83  // Empty reports whether the set carries nothing to inject, so Compose can leave
+   84  // the base prompt byte-for-byte untouched (and the cache prefix maximal) when
+   85  // there is no memory at all.
+   86  func (s *Set) Empty() bool {
+   87  	return s == nil || (len(s.Docs) == 0 &amp;&amp; len(s.GlobalGuidance) == 0 &amp;&amp; strings.TrimSpace(s.Index) == &quot;&quot;)
+   88  }
+   89
+   90  // docScopes are the scopes the panel can target for a quick-add or a new doc.
+   91  // Ordered broad → specific for display.
+   92  var docScopes = []Scope{ScopeUser, ScopeProject, ScopeLocal}
+   93
+   94  // allowedDocPaths is the closed set of files WriteDoc / AppendDoc may touch: the
+   95  // canonical file for each writable scope, plus every doc already discovered this
+   96  // session (so an ancestor or AGENTS.md the user is already editing stays
+   97  // editable). Keyed by absolute path. This bounds frontend-driven writes to real
+   98  // memory files rather than arbitrary paths.
+   99  func (s *Set) allowedDocPaths() map[string]bool {
+  100  	allow := map[string]bool{}
+  101  	for _, sc := range docScopes {
+  102  		if p := s.DocPath(sc); p != &quot;&quot; {
+  103  			allow[absOf(p)] = true
+  104  		}
+  105  	}
+  106  	for _, d := range s.Docs {
+  107  		allow[absOf(d.Path)] = true
+  108  	}
+  109  	return allow
+  110  }
+  111
+  112  // WriteDoc overwrites a doc-memory file with body, after checking path is a
+  113  // recognized memory file (see allowedDocPaths). It is the save side of the
+  114  // desktop panel&#39;s in-place editor. The write lands on disk immediately but does
+  115  // NOT mutate the cache-stable system prefix — the edit folds into the prefix on
+  116  // the next session; to make it apply this session, the controller separately
+  117  // queues a turn-tail note. Returns the path written.
+  118  func (s *Set) WriteDoc(path, body string) (string, error) {
+  119  	if s == nil {
+  120  		return &quot;&quot;, fmt.Errorf(&quot;memory unavailable&quot;)
+  121  	}
+  122  	if strings.TrimSpace(path) == &quot;&quot; {
+  123  		return &quot;&quot;, fmt.Errorf(&quot;no path given&quot;)
+  124  	}</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/memory/memory.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/memory/memory.go#L12-L53" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   12  // Set is everything memory loaded for one session: the hierarchical docs and a
+   13  // handle to the auto-memory store (whose index is captured at load time). It is
+   14  // assembled once at boot and folded into the system prompt by Compose. CWD and
+   15  // UserDir are retained so the controller can resolve quick-add targets without
+   16  // re-deriving discovery context.
+   17  type Set struct {
+   18  	Docs                   []Source // REASONIX.md / AGENTS.md, ascending precedence
+   19  	PinnedGuidance         []Memory // stable snapshot of pinned fact bodies (incl. legacy global user/feedback)
+   20  	Store                  Store    // auto-memory store (may be a zero/disabled Store)
+   21  	Index                  string   // MEMORY.md contents at load time
+   22  	CWD                    string   // project working dir used for discovery
+   23  	UserDir                string   // user config root (may be &quot;&quot;)
+   24  	InstructionDiagnostics []instruction.Diagnostic
+   25
+   26  	// recall is the snapshot&#39;s prebuilt retrieval index (nil when memory is
+   27  	// hidden or empty); Set.AutoRecall serves each turn from it without disk.
+   28  	recall *RecallIndex
+   29  }
+   30
+   31  // Options configures discovery. CWD defaults to &quot;.&quot; and UserDir is the user
+   32  // config root (config.MemoryUserDir()); a &quot;&quot; UserDir disables user-global docs
+   33  // and the auto-memory store.
+   34  type Options struct {
+   35  	CWD     string
+   36  	UserDir string
+   37  }
+   38
+   39  // Load discovers all memory for a session: the hierarchical docs and the
+   40  // auto-memory index. It is best-effort and never errors — missing files just
+   41  // mean less memory — so boot can call it unconditionally.
+   42  func Load(opts Options) *Set {
+   43  	cwd := opts.CWD
+   44  	if cwd == &quot;&quot; {
+   45  		cwd = &quot;.&quot;
+   46  	}
+   47  	resolved := instruction.Resolve(instruction.ResolveOptions{TargetDir: cwd, UserDir: opts.UserDir})
+   48  	// MemoryBench&#39;s counterfactual arm: hide the store, index, pinned
+   49  	// guidance, and recall so paired runs measure memory&#39;s contribution.
+   50  	// Instruction docs stay — standing instructions are not under test.
+   51  	if os.Getenv(&quot;REASONIX_EXPERIMENT_NO_MEMORY&quot;) == &quot;1&quot; {
+   52  		return &amp;Set{Docs: resolved.Documents, CWD: cwd, UserDir: opts.UserDir,
+   53  			InstructionDiagnostics: resolved.Diagnostics}
+   54  	}
+   55  	store := StoreFor(opts.UserDir, cwd)
+   56  	return &amp;Set{
+   57  		Docs:                   resolved.Documents,
+   58  		PinnedGuidance:         store.pinnedGuidanceForProject(),
+   59  		Store:                  store,
+   60  		Index:                  store.Index(),
+   61  		CWD:                    cwd,
+   62  		UserDir:                opts.UserDir,
+   63  		InstructionDiagnostics: resolved.Diagnostics,
+   64  		recall:                 BuildRecallIndex(store),
+   65  	}
+   66  }
+   67
+   68  // DocPath returns the doc-memory file a given scope writes to. To avoid splitting
+   69  // a project&#39;s memory across conventions, it prefers a file that already exists
+   70  // (REASONIX.md / AGENTS.md / CLAUDE.md, in that order); when none exists it
+   71  // creates the universal default (AGENTS.md / AGENTS.local.md). ScopeUser →
+   72  // &lt;userDir&gt;, ScopeLocal → &lt;cwd&gt; with the *.local.md names, anything else → &lt;cwd&gt;.
+   73  // Returns &quot;&quot; for ScopeUser when no user dir is configured.
+   74  func (s *Set) DocPath(scope Scope) string {
+   75  	dir := s.CWD
+   76  	names, def := docNames, defaultDocName
+   77  	switch scope {
+   78  	case ScopeUser:
+   79  		if s.UserDir == &quot;&quot; {
+   80  			return &quot;&quot;
+   81  		}
+   82  		dir = s.UserDir
+   83  	case ScopeLocal:
+   84  		names, def = localNames, defaultLocalName
+   85  	}
+   86  	for _, n := range names {
+   87  		p := filepath.Join(dir, n)
+   88  		if _, err := os.Stat(p); err == nil {
+   89  			return p // append to the doc already in use
+   90  		}
+   91  	}
+   92  	return filepath.Join(dir, def)
+   93  }
+   94
+   95  // Empty reports whether the set carries nothing to inject, so Compose can leave
+   96  // the base prompt byte-for-byte untouched (and the cache prefix maximal) when
+   97  // there is no memory at all.
+   98  func (s *Set) Empty() bool {
+   99  	return s == nil || (len(s.Docs) == 0 &amp;&amp; len(s.PinnedGuidance) == 0 &amp;&amp; strings.TrimSpace(s.Index) == &quot;&quot;)
+  100  }
+  101
+  102  // docScopes are the scopes the panel can target for a quick-add or a new doc.
+  103  // Ordered broad → specific for display.
+  104  var docScopes = []Scope{ScopeUser, ScopeProject, ScopeLocal}
+  105
+  106  // allowedDocPaths is the closed set of files WriteDoc / AppendDoc may touch: the
+  107  // canonical file for each writable scope, plus every doc already discovered this
+  108  // session (so an ancestor or AGENTS.md the user is already editing stays
+  109  // editable). Keyed by absolute path. This bounds frontend-driven writes to real
+  110  // memory files rather than arbitrary paths.
+  111  func (s *Set) allowedDocPaths() map[string]bool {
+  112  	allow := map[string]bool{}
+  113  	for _, sc := range docScopes {
+  114  		if p := s.DocPath(sc); p != &quot;&quot; {
+  115  			allow[absOf(p)] = true
+  116  		}
+  117  	}
+  118  	for _, d := range s.Docs {
+  119  		allow[absOf(d.Path)] = true
+  120  	}
+  121  	return allow
+  122  }
+  123
+  124  // WriteDoc overwrites a doc-memory file with body, after checking path is a</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>provider.Message 同时承载正文、Raw/ProviderContent、图片、reasoning_content、Anthropic 签名、tool calls 和 LocalOnly；ModelMessages 会在发请求前移除 LocalOnly、RawContent 和 provider-only metadata，并在健康历史上原样返回底层切片以保留缓存路径。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L40-L75" target="_blank" rel="noreferrer">internal/provider/provider.go:40–75 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>NormalizeMessages 在 wire 层补齐未回答的 assistant tool call、丢弃孤儿 tool result、恢复缺失工具名，并对半流式截断参数闭合 JSON；健康历史走 zero-allocation fast path，存盘历史使用保守的 NormalizeSessionMessages。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/provider.go#L179-L192" target="_blank" rel="noreferrer">internal/provider/provider.go:179–192 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>OpenAI-compatible client 对 DeepSeek 标记 RequiresToolCallReasoning，并按模型/配置决定是否警告缺失 reasoning；构造请求时对包含 tool calls 的 assistant 消息发送 reasoning_content（包括空字符串），同时支持 DeepSeek Beta prefix continuation 和最多三次尚未输出 token 的断流重连。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/openai/openai.go#L279-L316" target="_blank" rel="noreferrer">internal/provider/openai/openai.go:279–316 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>Anthropic provider 使用手写 net/http SSE；原生 Anthropic 的 thinking block 需要签名回放，而 DeepSeek Anthropic 端点使用 unsigned thinking、thinking.type 与 output_config.effort，client 通过 deepseek 标志分别处理。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/provider/anthropic/anthropic.go#L1-L20" target="_blank" rel="noreferrer">internal/provider/anthropic/anthropic.go:1–20 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepSeek-Reasonix architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,1 +1,502 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How do entrypoints, runtime, models, tools, and state connect?"><title>Claude Code（复原） · M02 · Architecture: layers and ownership</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch02-architecture.html">中</a><a href="ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="active" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Claude Code（复原） · 3bb6b5746238</p><h1>Architecture: layers and ownership</h1><p class="lede">How do entrypoints, runtime, models, tools, and state connect?</p><div class="chapter-meta"><span>Chapter 2 / 10</span><span>2 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Claude Code（复原） · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch02-architecture.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Like tracing a building&#39;s pipes: entry, control, execution, and records each have a job, and edges show handoff.</p></div><h2>Answer the chapter question first</h2><p>How do entrypoints, runtime, models, tools, and state connect? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 2 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 是一个持续循环的消息变换与工具执行流水线</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</p></section><section><span>PLAIN LANGUAGE</span><p>每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文、工具、权限和恢复都在同一编排循环交汇，修改其中任何一步都可能影响缓存与 transcript 一致性。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:460–666</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>主循环和压缩前置流水线。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 工具可以随流式响应提前启动，并补齐协议不完整的 tool result</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</p></section><section><span>PLAIN LANGUAGE</span><p>模型还在吐后续内容时，已经完整的工具参数可以先开工；账本缺一张回执时，系统会补一张失败回执，避免下一轮 API 拒绝整段对话。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>降低工具启动延迟并提高恢复性，但要求工具调用去重、取消和消息顺序非常严谨。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:971–1124</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>streaming tool executor 与 tool_use backfill。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Claude Code（复原） sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← Overview: start with the problem</a><a href="ch03-loop.html">The loop: why work keeps moving →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How do entrypoints, runtime, models, tools, and state connect?"><title>Claude Code（复原） · M02 · Architecture: layers and ownership</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch02-architecture.html">中</a><a href="ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="active" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Claude Code（复原） · 3bb6b5746238</p><h1>Architecture: layers and ownership</h1><p class="lede">How do entrypoints, runtime, models, tools, and state connect?</p><div class="chapter-meta"><span>Chapter 2 / 10</span><span>2 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Claude Code（复原） · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch02-architecture.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Like tracing a building&#39;s pipes: entry, control, execution, and records each have a job, and edges show handoff.</p></div><h2>Answer the chapter question first</h2><p>How do entrypoints, runtime, models, tools, and state connect? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 2 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 是一个持续循环的消息变换与工具执行流水线</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</p></section><section><span>PLAIN LANGUAGE</span><p>每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文、工具、权限和恢复都在同一编排循环交汇，修改其中任何一步都可能影响缓存与 transcript 一致性。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>460–562</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>563–666</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:460–666</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  460    while (true) {
+  461      // Destructure state at the top of each iteration. toolUseContext alone
+  462      // is reassigned within an iteration (queryTracking, messages updates);
+  463      // the rest are read-only between continue sites.
+  464      let { toolUseContext } = state
+  465      const {
+  466        messages,
+  467        autoCompactTracking,
+  468        maxOutputTokensRecoveryCount,
+  469        hasAttemptedReactiveCompact,
+  470        maxOutputTokensOverride,
+  471        pendingToolUseSummary,
+  472        stopHookActive,
+  473        turnCount,
+  474      } = state
+  475
+  476      // Skill discovery prefetch — per-iteration (uses findWritePivot guard
+  477      // that returns early on non-write iterations). Discovery runs while the
+  478      // model streams and tools execute; awaited post-tools alongside the
+  479      // memory prefetch consume. Replaces the blocking assistant_turn path
+  480      // that ran inside getAttachmentMessages (97% of those calls found
+  481      // nothing in prod). Turn-0 user-input discovery still blocks in
+  482      // userInputAttachments — that&#39;s the one signal where there&#39;s no prior
+  483      // work to hide under.
+  484      const pendingSkillPrefetch = skillPrefetch?.startSkillDiscoveryPrefetch(
+  485        null,
+  486        messages,
+  487        toolUseContext,
+  488      )
+  489      const pendingToolPrefetch =
+  490        searchExtraToolsPrefetch?.startSearchExtraToolsPrefetch(
+  491          toolUseContext.options.tools ?? [],
+  492          messages,
+  493        )
+  494
+  495      yield { type: &#39;stream_request_start&#39; }
+  496
+  497      queryCheckpoint(&#39;query_fn_entry&#39;)
+  498
+  499      // Record query start for headless latency tracking (skip for subagents)
+  500      if (!toolUseContext.agentId) {
+  501        headlessProfilerCheckpoint(&#39;query_started&#39;)
+  502      }
+  503
+  504      // Initialize or increment query chain tracking
+  505      const queryTracking = toolUseContext.queryTracking
+  506        ? {
+  507            chainId: toolUseContext.queryTracking.chainId,
+  508            depth: toolUseContext.queryTracking.depth + 1,
+  509          }
+  510        : {
+  511            chainId: deps.uuid(),
+  512            depth: 0,
+  513          }
+  514
+  515      const queryChainIdForAnalytics =
+  516        queryTracking.chainId as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS
+  517
+  518      toolUseContext = {
+  519        ...toolUseContext,
+  520        queryTracking,
+  521      }
+  522
+  523      let messagesForQuery = getMessagesAfterCompactBoundary(messages)
+  524
+  525      // Release toolUseResult payloads from previous turns — the next API call
+  526      // only needs message.message.content (tool_result blocks), not the raw
+  527      // output object. This prevents unbounded memory growth in long sessions
+  528      // before compact triggers (a single FileRead of a 400KB file would
+  529      // otherwise stay in mutableMessages forever).
+  530      //
+  531      // IMPORTANT: shallow-copy rather than mutate. messagesForQuery elements
+  532      // are references shared with mutableMessages (UI state); deleting
+  533      // toolUseResult in place strips it from the live message while React may
+  534      // still be rendering it. The next query can start within milliseconds of
+  535      // tool_result creation (model immediately calls the next tool), before
+  536      // the UI commit lands — UserToolSuccessMessage reads
+  537      // message.toolUseResult to delegate to tool.renderToolResultMessage, so a
+  538      // mutation race makes tool-result rows render blank. Map to a stripped
+  539      // copy so mutableMessages keeps the original for the UI; downstream API
+  540      // transformations (applyToolResultBudget, snip, microcompact) already
+  541      // build new arrays via .map(), so they compose cleanly with this copy.
+  542      messagesForQuery = messagesForQuery.map(msg =&gt; {
+  543        if (
+  544          msg.type !== &#39;user&#39; ||
+  545          !(&#39;toolUseResult&#39; in msg) ||
+  546          (msg as { toolUseResult?: unknown }).toolUseResult === undefined
+  547        ) {
+  548          return msg
+  549        }
+  550        const copy: typeof msg = { ...msg }
+  551        delete (copy as Message &amp; { toolUseResult?: unknown }).toolUseResult
+  552        return copy
+  553      })
+  554
+  555      let tracking = autoCompactTracking
+  556
+  557      // Enforce per-message budget on aggregate tool result size. Runs BEFORE
+  558      // microcompact — cached MC operates purely by tool_use_id (never inspects
+  559      // content), so content replacement is invisible to it and the two compose
+  560      // cleanly. No-ops when contentReplacementState is undefined (feature off).
+  561      // Persist only for querySources that read records back on resume: agentId
+  562      // routes to sidechain file (AgentTool resume) or session file (/resume).
+  563      // Ephemeral runForkedAgent callers (agent_summary etc.) don&#39;t persist.
+  564      const persistReplacements =
+  565        querySource.startsWith(&#39;agent:&#39;) ||
+  566        querySource.startsWith(&#39;repl_main_thread&#39;)
+  567      messagesForQuery = await applyToolResultBudget(
+  568        messagesForQuery,
+  569        toolUseContext.contentReplacementState,
+  570        persistReplacements
+  571          ? records =&gt;
+  572              void recordContentReplacement(
+  573                records,
+  574                toolUseContext.agentId,
+  575              ).catch(logError)
+  576          : undefined,
+  577        new Set(
+  578          toolUseContext.options.tools
+  579            .filter(t =&gt; !Number.isFinite(t.maxResultSizeChars))
+  580            .map(t =&gt; t.name),
+  581        ),
+  582      )
+  583
+  584      // Apply snip before microcompact (both may run — they are not mutually exclusive).
+  585      // snipTokensFreed is plumbed to autocompact so its threshold check reflects
+  586      // what snip removed; tokenCountWithEstimation alone can&#39;t see it (reads usage
+  587      // from the protected-tail assistant, which survives snip unchanged).
+  588      let snipTokensFreed = 0
+  589      if (feature(&#39;HISTORY_SNIP&#39;)) {
+  590        queryCheckpoint(&#39;query_snip_start&#39;)
+  591        const snipResult = snipModule!.snipCompactIfNeeded(messagesForQuery)
+  592        messagesForQuery = snipResult.messages
+  593        snipTokensFreed = snipResult.tokensFreed
+  594        if (snipResult.boundaryMessage) {
+  595          yield snipResult.boundaryMessage
+  596        }
+  597        queryCheckpoint(&#39;query_snip_end&#39;)
+  598      }
+  599
+  600      // Apply microcompact before autocompact
+  601      queryCheckpoint(&#39;query_microcompact_start&#39;)
+  602      const microcompactResult = await deps.microcompact(
+  603        messagesForQuery,
+  604        toolUseContext,
+  605        querySource,
+  606      )
+  607      messagesForQuery = microcompactResult.messages
+  608      // Release original strings from contentReplacementState.replacements for
+  609      // tool results whose content was replaced with the cleared message.
+  610      if (microcompactResult.clearedToolUseIds?.length) {
+  611        const replacements = toolUseContext?.contentReplacementState?.replacements
+  612        if (replacements) {
+  613          for (const id of microcompactResult.clearedToolUseIds) {
+  614            replacements.delete(id)
+  615          }
+  616        }
+  617      }
+  618      // For cached microcompact (cache editing), defer boundary message until after
+  619      // the API response so we can use actual cache_deleted_input_tokens.
+  620      // Gated behind feature() so the string is eliminated from external builds.
+  621      const pendingCacheEdits = feature(&#39;CACHED_MICROCOMPACT&#39;)
+  622        ? microcompactResult.compactionInfo?.pendingCacheEdits
+  623        : undefined
+  624      queryCheckpoint(&#39;query_microcompact_end&#39;)
+  625
+  626      // Project the collapsed context view and maybe commit more collapses.
+  627      // Runs BEFORE autocompact so that if collapse gets us under the
+  628      // autocompact threshold, autocompact is a no-op and we keep granular
+  629      // context instead of a single summary.
+  630      //
+  631      // Nothing is yielded — the collapsed view is a read-time projection
+  632      // over the REPL&#39;s full history. Summary messages live in the collapse
+  633      // store, not the REPL array. This is what makes collapses persist
+  634      // across turns: projectView() replays the commit log on every entry.
+  635      // Within a turn, the view flows forward via state.messages at the
+  636      // continue site (query.ts:1192), and the next projectView() no-ops
+  637      // because the archived messages are already gone from its input.
+  638      if (feature(&#39;CONTEXT_COLLAPSE&#39;) &amp;&amp; contextCollapse) {
+  639        const collapseResult = await contextCollapse.applyCollapsesIfNeeded(
+  640          messagesForQuery,
+  641          toolUseContext,
+  642          querySource,
+  643        )
+  644        messagesForQuery = collapseResult.messages
+  645      }
+  646
+  647      const fullSystemPrompt = asSystemPrompt(
+  648        appendSystemContext(systemPrompt, systemContext),
+  649      )
+  650
+  651      queryCheckpoint(&#39;query_autocompact_start&#39;)
+  652      const { compactionResult, consecutiveFailures } = await deps.autocompact(
+  653        messagesForQuery,
+  654        toolUseContext,
+  655        {
+  656          systemPrompt,
+  657          userContext,
+  658          systemContext,
+  659          toolUseContext,
+  660          forkContextMessages: messagesForQuery,
+  661        },
+  662        querySource,
+  663        tracking,
+  664        snipTokensFreed,
+  665      )
+  666      queryCheckpoint(&#39;query_autocompact_end&#39;)
+  667
+  668      if (compactionResult) {
+  669        const {
+  670          preCompactTokenCount,
+  671          postCompactTokenCount,
+  672          truePostCompactTokenCount,
+  673          compactionUsage,
+  674        } = compactionResult
+  675
+  676        logEvent(&#39;tengu_auto_compact_succeeded&#39;, {
+  677          originalMessageCount: messages.length,
+  678          compactedMessageCount:
+  679            compactionResult.summaryMessages.length +
+  680            compactionResult.attachments.length +
+  681            compactionResult.hookResults.length,
+  682          preCompactTokenCount,
+  683          postCompactTokenCount,
+  684          truePostCompactTokenCount,
+  685          compactionInputTokens: compactionUsage?.input_tokens,
+  686          compactionOutputTokens: compactionUsage?.output_tokens,
+  687          compactionCacheReadTokens:
+  688            compactionUsage?.cache_read_input_tokens ?? 0,
+  689          compactionCacheCreationTokens:
+  690            compactionUsage?.cache_creation_input_tokens ?? 0,
+  691          compactionTotalTokens: compactionUsage
+  692            ? compactionUsage.input_tokens +
+  693              (compactionUsage.cache_creation_input_tokens ?? 0) +
+  694              (compactionUsage.cache_read_input_tokens ?? 0) +
+  695              compactionUsage.output_tokens
+  696            : 0,
+  697
+  698          queryChainId: queryChainIdForAnalytics,
+  699          queryDepth: queryTracking.depth,
+  700        })
+  701
+  702        // task_budget: capture pre-compact final context window before
+  703        // messagesForQuery is replaced with postCompactMessages below.
+  704        // iterations[-1] is the authoritative final window (post server tool
+  705        // loops); see #304930.
+  706        if (params.taskBudget) {
+  707          const preCompactContext =
+  708            finalContextTokensFromLastResponse(messagesForQuery)
+  709          taskBudgetRemaining = Math.max(
+  710            0,
+  711            (taskBudgetRemaining ?? params.taskBudget.total) - preCompactContext,
+  712          )
+  713        }
+  714
+  715        // Reset on every compact so turnCounter/turnId reflect the MOST RECENT
+  716        // compact. recompactionInfo (autoCompact.ts:190) already captured the
+  717        // old values for turnsSincePreviousCompact/previousCompactTurnId before
+  718        // the call, so this reset doesn&#39;t lose those.
+  719        tracking = {
+  720          compacted: true,
+  721          turnId: deps.uuid(),
+  722          turnCounter: 0,
+  723          consecutiveFailures: 0,
+  724        }
+  725
+  726        const postCompactMessages = buildPostCompactMessages(compactionResult)
+  727
+  728        for (const message of postCompactMessages) {
+  729          yield message
+  730        }
+  731
+  732        // Continue on with the current query call using the post compact messages
+  733        messagesForQuery = postCompactMessages
+  734      } else if (consecutiveFailures !== undefined) {
+  735        // Autocompact failed — propagate failure count so the circuit breaker
+  736        // can stop retrying on the next iteration.
+  737        tracking = {</code></pre></div></div></article><article class="finding-card compact" id="claude-code-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 工具可以随流式响应提前启动，并补齐协议不完整的 tool result</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</p></section><section><span>PLAIN LANGUAGE</span><p>模型还在吐后续内容时，已经完整的工具参数可以先开工；账本缺一张回执时，系统会补一张失败回执，避免下一轮 API 拒绝整段对话。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>降低工具启动延迟并提高恢复性，但要求工具调用去重、取消和消息顺序非常严谨。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>971–1046</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1047–1124</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/query.ts:971–1124</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  971                // Discard pending results from the failed streaming attempt and create
+  972                // a fresh executor. This prevents orphan tool_results (with old tool_use_ids)
+  973                // from being yielded after the fallback response arrives.
+  974                if (streamingToolExecutor) {
+  975                  streamingToolExecutor.discard()
+  976                  streamingToolExecutor = new StreamingToolExecutor(
+  977                    toolUseContext.options.tools,
+  978                    canUseTool,
+  979                    toolUseContext,
+  980                  )
+  981                }
+  982              }
+  983              // Backfill tool_use inputs on a cloned message before yield so
+  984              // SDK stream output and transcript serialization see legacy/derived
+  985              // fields. The original `message` is left untouched for
+  986              // assistantMessages.push below — it flows back to the API and
+  987              // mutating it would break prompt caching (byte mismatch).
+  988              let yieldMessage: typeof message = message
+  989              if (message.type === &#39;assistant&#39;) {
+  990                const assistantMsg = message as AssistantMessage
+  991                const contentArr = Array.isArray(assistantMsg.message?.content)
+  992                  ? (assistantMsg.message.content as unknown as Array&lt;{
+  993                      type: string
+  994                      input?: unknown
+  995                      name?: string
+  996                      [key: string]: unknown
+  997                    }&gt;)
+  998                  : []
+  999                let clonedContent: typeof contentArr | undefined
+ 1000                for (let i = 0; i &lt; contentArr.length; i++) {
+ 1001                  const block = contentArr[i]!
+ 1002                  if (
+ 1003                    block.type === &#39;tool_use&#39; &amp;&amp;
+ 1004                    typeof block.input === &#39;object&#39; &amp;&amp;
+ 1005                    block.input !== null
+ 1006                  ) {
+ 1007                    const tool = findToolByName(
+ 1008                      toolUseContext.options.tools,
+ 1009                      block.name as string,
+ 1010                    )
+ 1011                    if (tool?.backfillObservableInput) {
+ 1012                      const originalInput = block.input as Record&lt;string, unknown&gt;
+ 1013                      const inputCopy = { ...originalInput }
+ 1014                      tool.backfillObservableInput(inputCopy)
+ 1015                      // Only yield a clone when backfill ADDED fields; skip if
+ 1016                      // it only OVERWROTE existing ones (e.g. file tools
+ 1017                      // expanding file_path). Overwrites change the serialized
+ 1018                      // transcript and break VCR fixture hashes on resume,
+ 1019                      // while adding nothing the SDK stream needs — hooks get
+ 1020                      // the expanded path via toolExecution.ts separately.
+ 1021                      const addedFields = Object.keys(inputCopy).some(
+ 1022                        k =&gt; !(k in originalInput),
+ 1023                      )
+ 1024                      if (addedFields) {
+ 1025                        clonedContent ??= [...contentArr]
+ 1026                        clonedContent[i] = { ...block, input: inputCopy }
+ 1027                      }
+ 1028                    }
+ 1029                  }
+ 1030                }
+ 1031                if (clonedContent) {
+ 1032                  yieldMessage = {
+ 1033                    ...message,
+ 1034                    message: {
+ 1035                      ...(assistantMsg.message ?? {}),
+ 1036                      content: clonedContent,
+ 1037                    },
+ 1038                  } as typeof message
+ 1039                }
+ 1040              }
+ 1041              // Withhold recoverable errors (prompt-too-long, max-output-tokens)
+ 1042              // until we know whether recovery (collapse drain / reactive
+ 1043              // compact / truncation retry) can succeed. Still pushed to
+ 1044              // assistantMessages so the recovery checks below find them.
+ 1045              // Either subsystem&#39;s withhold is sufficient — they&#39;re
+ 1046              // independent so turning one off doesn&#39;t break the other&#39;s
+ 1047              // recovery path.
+ 1048              //
+ 1049              // feature() only works in if/ternary conditions (bun:bundle
+ 1050              // tree-shaking constraint), so the collapse check is nested
+ 1051              // rather than composed.
+ 1052              let withheld = false
+ 1053              if (feature(&#39;CONTEXT_COLLAPSE&#39;)) {
+ 1054                if (
+ 1055                  contextCollapse?.isWithheldPromptTooLong(
+ 1056                    message as Message,
+ 1057                    isPromptTooLongMessage as (msg: Message) =&gt; boolean,
+ 1058                    querySource,
+ 1059                  )
+ 1060                ) {
+ 1061                  withheld = true
+ 1062                }
+ 1063              }
+ 1064              if (reactiveCompact?.isWithheldPromptTooLong(message as Message)) {
+ 1065                withheld = true
+ 1066              }
+ 1067              if (
+ 1068                mediaRecoveryEnabled &amp;&amp;
+ 1069                reactiveCompact?.isWithheldMediaSizeError(message as Message)
+ 1070              ) {
+ 1071                withheld = true
+ 1072              }
+ 1073              if (isWithheldMaxOutputTokens(message)) {
+ 1074                withheld = true
+ 1075              }
+ 1076              if (!withheld) {
+ 1077                yield yieldMessage
+ 1078              }
+ 1079              if (message.type === &#39;assistant&#39;) {
+ 1080                const assistantMessage = message as AssistantMessage
+ 1081                assistantMessages.push(assistantMessage)
+ 1082
+ 1083                const msgToolUseBlocks = (
+ 1084                  Array.isArray(assistantMessage.message?.content)
+ 1085                    ? assistantMessage.message.content
+ 1086                    : []
+ 1087                ).filter(
+ 1088                  (content: { type: string }) =&gt; content.type === &#39;tool_use&#39;,
+ 1089                ) as ToolUseBlock[]
+ 1090                if (msgToolUseBlocks.length &gt; 0) {
+ 1091                  toolUseBlocks.push(...msgToolUseBlocks)
+ 1092                  needsFollowUp = true
+ 1093                }
+ 1094
+ 1095                if (
+ 1096                  streamingToolExecutor &amp;&amp;
+ 1097                  !toolUseContext.abortController.signal.aborted
+ 1098                ) {
+ 1099                  for (const toolBlock of msgToolUseBlocks) {
+ 1100                    streamingToolExecutor.addTool(toolBlock, assistantMessage)
+ 1101                  }
+ 1102                }
+ 1103              }
+ 1104
+ 1105              if (
+ 1106                streamingToolExecutor &amp;&amp;
+ 1107                !toolUseContext.abortController.signal.aborted
+ 1108              ) {
+ 1109                for (const result of streamingToolExecutor.getCompletedResults()) {
+ 1110                  if (result.message) {
+ 1111                    yield result.message
+ 1112                    toolResults.push(
+ 1113                      ...normalizeMessagesForAPI(
+ 1114                        [result.message],
+ 1115                        toolUseContext.options.tools,
+ 1116                      ).filter(_ =&gt; _.type === &#39;user&#39;),
+ 1117                    )
+ 1118                  }
+ 1119                }
+ 1120              }
+ 1121            }
+ 1122            queryCheckpoint(&#39;query_api_streaming_end&#39;)
+ 1123
+ 1124            // Yield deferred microcompact boundary message using actual API-reported
+ 1125            // token deletion count instead of client-side estimates.
+ 1126            // Entire block gated behind feature() so the excluded string
+ 1127            // is eliminated from external builds.
+ 1128            if (feature(&#39;CACHED_MICROCOMPACT&#39;) &amp;&amp; pendingCacheEdits) {
+ 1129              const lastAssistant = assistantMessages.at(-1)
+ 1130              // The API field is cumulative/sticky across requests, so we
+ 1131              // subtract the baseline captured before this request to get the delta.
+ 1132              const usage = lastAssistant?.message.usage
+ 1133              const cumulativeDeleted = usage
+ 1134                ? ((usage as unknown as Record&lt;string, number&gt;)
+ 1135                    .cache_deleted_input_tokens ?? 0)
+ 1136                : 0
+ 1137              const deletedTokens = Math.max(
+ 1138                0,
+ 1139                cumulativeDeleted - pendingCacheEdits.baselineCacheDeletedTokens,
+ 1140              )
+ 1141              if (deletedTokens &gt; 0) {
+ 1142                yield createMicrocompactBoundaryMessage(
+ 1143                  pendingCacheEdits.trigger,
+ 1144                  0,
+ 1145                  deletedTokens,
+ 1146                  pendingCacheEdits.deletedToolIds,
+ 1147                  [],
+ 1148                )
+ 1149              }
+ 1150            }
+ 1151          } catch (innerError) {
+ 1152            if (innerError instanceof FallbackTriggeredError &amp;&amp; fallbackModel) {
+ 1153              // Fallback was triggered - switch model and retry
+ 1154              currentModel = fallbackModel
+ 1155              attemptWithFallback = true
+ 1156
+ 1157              // Clear assistant messages since we&#39;ll retry the entire request
+ 1158              yield* yieldMissingToolResultBlocks(
+ 1159                assistantMessages,
+ 1160                &#39;Model fallback triggered&#39;,
+ 1161              )
+ 1162              assistantMessages.length = 0
+ 1163              toolResults.length = 0
+ 1164              toolUseBlocks.length = 0
+ 1165              needsFollowUp = false
+ 1166
+ 1167              // Discard pending results from the failed attempt and create a
+ 1168              // fresh executor. This prevents orphan tool_results (with old
+ 1169              // tool_use_ids) from leaking into the retry.
+ 1170              if (streamingToolExecutor) {
+ 1171                streamingToolExecutor.discard()
+ 1172                streamingToolExecutor = new StreamingToolExecutor(
+ 1173                  toolUseContext.options.tools,
+ 1174                  canUseTool,
+ 1175                  toolUseContext,
+ 1176                )
+ 1177              }
+ 1178
+ 1179              // Update tool use context with new model
+ 1180              toolUseContext.options.mainLoopModel = fallbackModel
+ 1181
+ 1182              // Thinking signatures are model-bound: replaying a protected-thinking
+ 1183              // block (e.g. capybara) to an unprotected fallback (e.g. opus) 400s.
+ 1184              // Strip before retry so the fallback model gets clean history.
+ 1185              if (process.env.USER_TYPE === &#39;ant&#39;) {
+ 1186                messagesForQuery = stripSignatureBlocks(messagesForQuery)
+ 1187              }
+ 1188
+ 1189              // Log the fallback event
+ 1190              logEvent(&#39;tengu_model_fallback_triggered&#39;, {
+ 1191                original_model:
+ 1192                  innerError.originalModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+ 1193                fallback_model:
+ 1194                  fallbackModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+ 1195                entrypoint:</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L460-L666" target="_blank" rel="noreferrer">src/query.ts:460–666 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/query.ts#L971-L1124" target="_blank" rel="noreferrer">src/query.ts:971–1124 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Claude Code（复原） sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← Overview: start with the problem</a><a href="ch03-loop.html">The loop: why work keeps moving →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

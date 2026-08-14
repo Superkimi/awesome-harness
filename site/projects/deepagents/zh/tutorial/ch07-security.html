@@ -1,1 +1,865 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>DeepAgents · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepAgents · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepAgents</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>217b9eb372fa</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · DeepAgents · 217b9eb372fa</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>6 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>DeepAgents · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/deepagents/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepagents/ch07-security.srt" data-video-status="published">SRT</a><em>217b9eb372fa</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ DeepAgents 把 Agent 看成一张可配置的 LangGraph：模型、文件工具、子 Agent、压缩、记忆和审批都作为中间件节点组合。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="deep-security-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · FilesystemPermission 是 first-match allow/deny/interrupt 规则</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>FilesystemPermission 验证路径必须以 / 开头、禁止 .. 和 ~；_check_fs_permission 按声明顺序找第一条匹配规则，返回 allow/deny/interrupt，interrupt 交给 HumanInTheLoopMiddleware。</p></section><section><span>白话解释</span><p>权限规则像防火墙：先匹配到的规则生效，读写可以拒绝，敏感路径可以暂停让人确认。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>路径权限要固定顺序、拒绝目录穿越，并让“需要审批”与“直接拒绝”是不同结果。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L383-L430" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">libs/deepagents/deepagents/backends/state.py:37–47 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/filesystem.py:383–430</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L383-L430" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>path validation and first-match rule。</code></pre></div></div></article><article class="finding-card compact" id="deep-security-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>security</span></div><h3>02 · 权限对可执行 backend 的通用 execute gate 明确还没实现</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>FilesystemMiddleware 初始化时发现 permissions 与 SandboxBackendProtocol 同时存在且规则没有完全 scoped 到 Composite routes，就抛 NotImplementedError，并说明 execute 的 tool-level permissions 未实现。</p></section><section><span>白话解释</span><p>文件读写权限很细，但一旦后端允许 shell，通用权限规则不能假装能限制 shell 里的任意命令；代码选择直接拒绝这种配置。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>这是诚实的 fail-closed 设计，但部署方必须为 shell 另建 command policy/sandbox，不应误以为 path rules 能包住 shell。</p></section><div class="finding-caveat"><span>边界 / 风险</span><ul><li>当规则完全 scoped 到 Composite route 时，初始化条件不同；本结论针对通用 execution backend。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L1649-L1674" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">libs/deepagents/deepagents/backends/state.py:37–47 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/filesystem.py:1649–1674</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L1649-L1674" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>permissions + execution backend NotImplementedError。</code></pre></div></div></article><article class="finding-card compact" id="deep-security-003" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · DeepAgents Code 的 shell allow-list 在 execute 前直接返回错误</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ShellAllowListMiddleware 只检查 execute command，命令不在 allow-list 就构造 error ToolMessage，不进入 HITL 暂停；空列表和 SHELL_ALLOW_ALL sentinel 会被拒绝。</p></section><section><span>白话解释</span><p>非交互模式下，危险 shell 不是等人点确认，而是根本不执行；并且不能用空列表伪装成限制或用 all 绕过。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>headless runner 可用 fail-fast allow-list 保持连续 trace，但必须明确它只控制 command name，不是完整 OS sandbox。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L774-L810" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">libs/deepagents/deepagents/backends/state.py:37–47 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:774–810</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L774-L810" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>allow-list middleware guard。</code></pre></div></div></article><article class="finding-card compact" id="deep-security-004" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>security</span></div><h3>04 · PTC all/YOLO 是强能力开关，代码要求显式承认但允许绕过 HITL</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>_resolve_ptc_option 在 interpreter_ptc=&#39;all&#39; 且非 auto_approve 时要求 acknowledge_unsafe；提示明确 PTC host tools 会 bypass HITL。Approval mode 中 YOLO 直接不 interrupt，AUTO 是否绕过取决于 classifier eligibility。</p></section><section><span>白话解释</span><p>用户可以选择极快的自动模式，但这不是默认安全路径；代码要求显式开关并记录 write/shell tools。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>产品应把 Manual/Auto/YOLO/PTC 做成可审计的 run-scoped authority，并在 UI 中显示其会绕过哪些批准。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L898-L937" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">libs/deepagents/deepagents/backends/state.py:37–47 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:898–937</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L898-L937" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>PTC all acknowledgement contract。</code></pre></div></div></article><article class="finding-card compact" id="deep-cli-002" data-finding-dimension="security"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>05 · 审批模式从 live Store 读取，缺失/异步错误会 fail closed 到 Manual</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>AsyncApprovalHITLMiddleware 在模型返回后重新从 async Store 解析 ApprovalMode；缺失 key 或同步运行无法安全读 live mode 时记录 warning 并走 Manual；_add_interrupt_on 默认覆盖 shell、文件写、web、task 和 MCP side-effect tools。</p></section><section><span>白话解释</span><p>Auto/YOLO 不是图输入里随便塞一个 dict 就能伪造的状态；拿不到可信的 live mode，就回到人工审批。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自治模式要绑定受信运行时上下文，而不是让模型或 checkpoint state 自己宣布“已批准”。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L1784-L1858" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">libs/deepagents/deepagents/backends/state.py:37–47 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:1784–1858</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L1784-L1858" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>typed mode and live Store resolution。</code></pre></div></div></article><article class="finding-card compact" id="deep-recommend-002" data-finding-dimension="security"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L2</b><span>inference</span><span>security</span></div><h3>06 · DeepAgents 适合做 policy-aware coding agent，但 shell/connector authority 仍需部署层补强</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SDK 提供 first-match filesystem permissions、HumanInTheLoop、tool allowlist、shell allow-list、MCP trust、Auto/PTC 显式开关；同时 local shell 和 execute permission gap 都由源码明确暴露。</p></section><section><span>白话解释</span><p>它把“谁能读写哪个路径、哪种工具要问人、哪个 MCP 能加载”做得很完整；但真正的进程隔离和 shell 内部权限必须由 sandbox/backend/部署策略提供。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可以直接借鉴它的 approval/permission/middleware 结构，再把执行后端设为强制容器或 remote sandbox，形成更强的生产基线。</p></section><div class="finding-caveat"><span>边界 / 风险</span><ul><li>这是建设建议，不是对某个默认部署安全等级的认证。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L383-L430" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">libs/deepagents/deepagents/backends/state.py:37–47 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/filesystem.py:383–430</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L383-L430" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>permission rule evaluator。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepAgents architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>DeepAgents · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepAgents · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepAgents</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>217b9eb372fa</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · DeepAgents · 217b9eb372fa</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>8 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>DeepAgents · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/deepagents/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepagents/ch07-security.srt" data-video-status="published">SRT</a><em>217b9eb372fa</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ DeepAgents 把 Agent 看成一张可配置的 LangGraph：模型、文件工具、子 Agent、压缩、记忆和审批都作为中间件节点组合。</p><h2>本章证据板：8 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="deep-backend-003" data-finding-dimension="execution"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>01 · SDK 默认 StateBackend 是会话内临时存储，execute 只对 sandbox backend 出现</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>StateBackend 文档说明文件存进 LangGraph state、在 thread 内 checkpoint、跨 thread 不持久；FilesystemMiddleware 默认 StateBackend，只有 backend 实现 SandboxBackendProtocol 时才创建 execute tool。</p></section><section><span>白话解释</span><p>纯 SDK 默认不会因为用了 FilesystemMiddleware 就在用户电脑执行 shell；要持久化或执行，调用方必须显式换 backend。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>默认安全基线应是无 shell、可回收 state；把持久化和执行作为显式部署决策。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>37–41</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>42–47</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/backends/state.py:37–47</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   37  class StateBackend(BackendProtocol):
+   38      &quot;&quot;&quot;Backend that stores files in agent state (ephemeral).
+   39
+   40      Uses LangGraph&#39;s state management and checkpointing. Files persist within
+   41      a conversation thread but not across threads. State is automatically
+   42      checkpointed after each agent step.
+   43
+   44      Reads and writes go through LangGraph&#39;s `CONFIG_KEY_READ` /
+   45      `CONFIG_KEY_SEND` so that state updates are applied as channel writes
+   46      to the `files` state key.
+   47      &quot;&quot;&quot;
+   48
+   49      def __init__(self) -&gt; None:
+   50          &quot;&quot;&quot;Initialize StateBackend.&quot;&quot;&quot;
+   51
+   52      # ------------------------------------------------------------------
+   53      # Internal helpers for reading / writing state via config keys
+   54      # ------------------------------------------------------------------
+   55
+   56      def _get_config(self) -&gt; RunnableConfig:
+   57          &quot;&quot;&quot;Return the current LangGraph config, with a clear error if missing.&quot;&quot;&quot;
+   58          try:
+   59              config = get_config()
+   60          except RuntimeError:
+   61              msg = (
+   62                  &quot;StateBackend must be used inside a LangGraph graph execution &quot;
+   63                  &quot;(e.g. via create_deep_agent). It cannot read or write state &quot;
+   64                  &quot;outside of a graph context. To pre-populate files, pass them &quot;
+   65                  &#39;on invoke: agent.invoke({&quot;messages&quot;: [...], &quot;files&quot;: {...}})&#39;
+   66              )
+   67              raise RuntimeError(msg) from None
+   68          configurable = config.get(&quot;configurable&quot;, {})
+   69          if CONFIG_KEY_READ not in configurable:
+   70              msg = (
+   71                  &quot;StateBackend requires CONFIG_KEY_READ / CONFIG_KEY_SEND in &quot;
+   72                  &quot;the LangGraph config. Make sure the backend is used inside &quot;
+   73                  &quot;a graph node or tool, not called directly. To pre-populate &quot;
+   74                  &quot;files, pass them on invoke: &quot;
+   75                  &#39;agent.invoke({&quot;messages&quot;: [...], &quot;files&quot;: {...}})&#39;
+   76              )
+   77              raise RuntimeError(msg)
+   78          return config
+   79
+   80      def _read_files(self) -&gt; dict[str, Any]:
+   81          &quot;&quot;&quot;Read the current `files` channel via Pregel internals.
+   82
+   83          Uses `CONFIG_KEY_READ` to read state directly — this lets us
+   84          initialize StateBackend once and fetch state on demand from any
+   85          graph context (tools, middleware nodes, etc.).
+   86
+   87          `fresh=True` applies any pending task writes through the channel&#39;s
+   88          reducer before returning, giving read-your-writes semantics within
+   89          a single superstep — e.g. a tool that writes a file and then reads
+   90          it back, or a code interpreter that issues multiple sub-tool calls
+   91          inside one eval.
+   92          &quot;&quot;&quot;
+   93          config = self._get_config()
+   94          read = config[&quot;configurable&quot;][CONFIG_KEY_READ]
+   95          fresh = True
+   96          return read(&quot;files&quot;, fresh) or {}
+   97
+   98      def _send_files_update(self, update: dict[str, Any]) -&gt; None:
+   99          &quot;&quot;&quot;Queue a write to the `files` channel via Pregel internals.
+  100
+  101          The whole point of this helper is that callers of `backend.write`
+  102          / `backend.edit` don&#39;t need to know about or manage state updates
+  103          themselves — the backend handles it internally.
+  104
+  105          Uses `CONFIG_KEY_SEND` to enqueue a partial `files` update
+  106          directly — same rationale as `_read_files` for initializing
+  107          StateBackend once and writing from any graph context. `send`
+  108          takes a list of `(channel, value)` tuples; the `files` channel
+  109          uses a dict-merge reducer, so we only need to include changed
+  110          files — unchanged ones are preserved by the reducer.
+  111
+  112          Sends are visible to subsequent `_read_files` calls within the
+  113          same superstep via `fresh=True`; they are committed to state at
+  114          the node boundary.
+  115          &quot;&quot;&quot;
+  116          config = self._get_config()
+  117          send = config[&quot;configurable&quot;][CONFIG_KEY_SEND]
+  118          send([(&quot;files&quot;, update)])</code></pre></div></div></article><article class="finding-card compact" id="deep-security-001" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · FilesystemPermission 是 first-match allow/deny/interrupt 规则</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>FilesystemPermission 验证路径必须以 / 开头、禁止 .. 和 ~；_check_fs_permission 按声明顺序找第一条匹配规则，返回 allow/deny/interrupt，interrupt 交给 HumanInTheLoopMiddleware。</p></section><section><span>白话解释</span><p>权限规则像防火墙：先匹配到的规则生效，读写可以拒绝，敏感路径可以暂停让人确认。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>路径权限要固定顺序、拒绝目录穿越，并让“需要审批”与“直接拒绝”是不同结果。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>383–405</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>406–430</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L383-L430" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/filesystem.py:383–430</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L383-L430" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  383  @dataclass
+  384  class FilesystemPermission:
+  385      &quot;&quot;&quot;A single access rule for filesystem operations.&quot;&quot;&quot;
+  386
+  387      operations: list[FilesystemOperation]
+  388      paths: list[str]
+  389      mode: Literal[&quot;allow&quot;, &quot;deny&quot;, &quot;interrupt&quot;] = &quot;allow&quot;
+  390      &quot;&quot;&quot;Effect when a tool call matches this rule:
+  391
+  392      - `&quot;allow&quot;` (default): the call proceeds.
+  393      - `&quot;deny&quot;`: the tool returns a permission-denied error.
+  394      - `&quot;interrupt&quot;`: the call is paused for human approval via
+  395          [`HumanInTheLoopMiddleware`][langchain.agents.middleware.HumanInTheLoopMiddleware].
+  396
+  397          Best paired with patterns that have a literal leading anchor (e.g.,
+  398          `/secrets/**`, `/projects/*/secrets/**`). Bulk tools
+  399          (`ls`/`glob`/`grep`) fire the interrupt based on whether their
+  400          search subtree could overlap the rule&#39;s anchored prefix, so a fully
+  401          unanchored pattern (`/**/secrets`) collapses to `/` and
+  402          conservatively over-fires for any bulk call.
+  403      &quot;&quot;&quot;
+  404
+  405      def __post_init__(self) -&gt; None:
+  406          &quot;&quot;&quot;Validate permission path patterns.&quot;&quot;&quot;
+  407          for path in self.paths:
+  408              if not path.startswith(&quot;/&quot;):
+  409                  msg = f&quot;Permission path must start with &#39;/&#39;: {path!r}&quot;
+  410                  raise ValueError(msg)
+  411              parts = PurePosixPath(path.replace(&quot;\\&quot;, &quot;/&quot;)).parts
+  412              if &quot;..&quot; in parts:
+  413                  msg = f&quot;Permission path must not contain &#39;..&#39;: {path!r}&quot;
+  414                  raise ValueError(msg)
+  415              if &quot;~&quot; in parts:
+  416                  msg = f&quot;Permission path must not contain &#39;~&#39;: {path!r}&quot;
+  417                  raise NotImplementedError(msg)
+  418
+  419
+  420  def _check_fs_permission(
+  421      rules: list[FilesystemPermission],
+  422      operation: FilesystemOperation,
+  423      path: str,
+  424  ) -&gt; Literal[&quot;allow&quot;, &quot;deny&quot;, &quot;interrupt&quot;]:
+  425      for rule in rules:
+  426          if operation not in rule.operations:
+  427              continue
+  428          if any(wcglob.globmatch(path, pattern, flags=_FS_WCMATCH_FLAGS) for pattern in rule.paths):
+  429              return rule.mode
+  430      return &quot;allow&quot;
+  431
+  432
+  433  def _wildcard_delete_overlap(pattern: str, anchor: str, target: str) -&gt; bool:
+  434      &quot;&quot;&quot;Check whether a wildcard deny pattern overlaps a recursive delete target.
+  435
+  436      Args:
+  437          pattern: The original glob pattern (e.g. ``/work/*.log``).
+  438          anchor: The longest wildcard-free prefix of ``pattern``.
+  439          target: The absolute path being recursively deleted.
+  440
+  441      Returns:
+  442          True if the pattern&#39;s matches intersect the delete subtree.
+  443      &quot;&quot;&quot;
+  444      # Root anchor (&quot;/**/x&quot;): pattern can match anywhere, block all.
+  445      if anchor == &quot;/&quot;:
+  446          return True
+  447      # Target directly matches the glob: block.
+  448      if wcglob.globmatch(target, pattern, flags=_FS_WCMATCH_FLAGS):
+  449          return True
+  450      # Anchor is inside the delete subtree: recursive delete would remove
+  451      # matching descendants — block.
+  452      if PurePosixPath(anchor).is_relative_to(PurePosixPath(target)):
+  453          return True
+  454      # Target is below the anchor: safe to allow ONLY when the pattern suffix
+  455      # is a single, non-** component (fixed depth) AND no ancestor of the
+  456      # target matches the glob. &quot;/work/*.log&quot; can never match anything under
+  457      # &quot;/work/notes.txt&quot;. But &quot;/work/*&quot; matches &quot;/work/app&quot;, so deleting
+  458      # &quot;/work/app/child&quot; mutates a denied path&#39;s contents and must be blocked.
+  459      # Patterns with directory wildcards (&quot;/work/*/secrets&quot;) could match
+  460      # descendants of the target, so fail closed for those.
+  461      if not PurePosixPath(target).is_relative_to(PurePosixPath(anchor)):
+  462          return False
+  463      anchor_parts = PurePosixPath(anchor).parts
+  464      pattern_parts = PurePosixPath(pattern).parts
+  465      suffix = pattern_parts[len(anchor_parts) :]
+  466      if len(suffix) != 1 or &quot;**&quot; in suffix[0]:
+  467          return True
+  468      # Check whether any ancestor of the target (between anchor and target)
+  469      # matches the glob. If so, the target is inside a denied directory&#39;s
+  470      # subtree.
+  471      target_parts = PurePosixPath(target).parts
+  472      return any(
+  473          wcglob.globmatch(
+  474              str(PurePosixPath(*target_parts[:depth])),
+  475              pattern,
+  476              flags=_FS_WCMATCH_FLAGS,
+  477          )
+  478          for depth in range(len(anchor_parts), len(target_parts))
+  479      )
+  480
+  481
+  482  def _leaf_from_parent_listing(ls_result: LsResult, target: str) -&gt; bool:
+  483      &quot;&quot;&quot;Resolve the ambiguous &quot;empty `ls(target)`, no error&quot; case.
+  484
+  485      On flat/virtual backends, an exact file and an empty directory produce the
+  486      same `ls(target)` result. Use `target`&#39;s `FileInfo.is_dir` from the parent
+  487      listing, which is consistent across backends.
+  488      &quot;&quot;&quot;
+  489      if ls_result.error is not None:
+  490          return True
+  491      target_norm = target.rstrip(&quot;/&quot;)
+  492      matches = [entry for entry in ls_result.entries or [] if entry[&quot;path&quot;].rstrip(&quot;/&quot;) == target_norm]
+  493      if not matches:
+  494          return True
+  495      return any(entry.get(&quot;is_dir&quot;) for entry in matches)
+  496
+  497
+  498  def _delete_target_may_have_descendants(backend: BackendProtocol, target: str, *, permissions_configured: bool) -&gt; bool:
+  499      &quot;&quot;&quot;Whether `delete` should use the conservative recursive permission check.
+  500
+  501      Falls back to the conservative check when no permission rules are configured</code></pre></div></div></article><article class="finding-card compact" id="deep-security-002" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>security</span></div><h3>03 · 权限对可执行 backend 的通用 execute gate 明确还没实现</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>FilesystemMiddleware 初始化时发现 permissions 与 SandboxBackendProtocol 同时存在且规则没有完全 scoped 到 Composite routes，就抛 NotImplementedError，并说明 execute 的 tool-level permissions 未实现。</p></section><section><span>白话解释</span><p>文件读写权限很细，但一旦后端允许 shell，通用权限规则不能假装能限制 shell 里的任意命令；代码选择直接拒绝这种配置。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>这是诚实的 fail-closed 设计，但部署方必须为 shell 另建 command policy/sandbox，不应误以为 path rules 能包住 shell。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1649–1660</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1661–1674</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><div class="finding-caveat"><span>边界 / 风险</span><ul><li>当规则完全 scoped 到 Composite route 时，初始化条件不同；本结论针对通用 execution backend。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L1649-L1674" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/filesystem.py:1649–1674</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L1649-L1674" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1649          if isinstance(tools, list) and &quot;read_file&quot; not in tools:
+ 1650              msg = &quot;read_file must be included in tools; it is required by FilesystemMiddleware&quot;
+ 1651              raise ValueError(msg)
+ 1652          if max_execute_timeout &lt;= 0:
+ 1653              msg = f&quot;max_execute_timeout must be positive, got {max_execute_timeout}&quot;
+ 1654              raise ValueError(msg)
+ 1655          if grep_max_count is not None and grep_max_count &lt;= 0:
+ 1656              msg = f&quot;grep_max_count must be positive or None, got {grep_max_count}&quot;
+ 1657              raise ValueError(msg)
+ 1658          # Use provided backend or default to StateBackend instance
+ 1659          self.backend = backend if backend is not None else StateBackend()
+ 1660          if callable(self.backend) and not isinstance(self.backend, BackendProtocol):
+ 1661              msg = (
+ 1662                  &quot;backend must be an initialized backend instance. Backend factories &quot;
+ 1663                  &quot;were removed in deepagents 0.7; pass StateBackend(), &quot;
+ 1664                  &quot;CompositeBackend(...), or another BackendProtocol instance instead.&quot;
+ 1665              )
+ 1666              raise TypeError(msg)
+ 1667          if _permissions and supports_execution(self.backend) and not _all_paths_scoped_to_routes(_permissions, self.backend):
+ 1668              msg = (
+ 1669                  &quot;FilesystemMiddleware does not yet support permissions with backends that &quot;
+ 1670                  &quot;provide command execution (SandboxBackendProtocol). Tool-level permissions &quot;
+ 1671                  &quot;for the execute tool are not implemented. Either remove permissions or use &quot;
+ 1672                  &quot;a backend without execution support.&quot;
+ 1673              )
+ 1674              raise NotImplementedError(msg)
+ 1675
+ 1676          artifacts_root = self.backend.artifacts_root if isinstance(self.backend, CompositeBackend) else &quot;/&quot;
+ 1677          _root = artifacts_root.rstrip(&quot;/&quot;)
+ 1678          self._large_tool_results_prefix = f&quot;{_root}/large_tool_results&quot;
+ 1679          self._conversation_history_prefix = f&quot;{_root}/conversation_history&quot;
+ 1680
+ 1681          # Store configuration (private - internal implementation details)
+ 1682          self._custom_system_prompt = system_prompt
+ 1683          self._custom_tool_descriptions = custom_tool_descriptions or {}
+ 1684          self._tool_token_limit_before_evict = tool_token_limit_before_evict
+ 1685          self._human_message_token_limit_before_evict = human_message_token_limit_before_evict
+ 1686          self._max_execute_timeout = max_execute_timeout
+ 1687          self._grep_max_count = grep_max_count
+ 1688          if isinstance(tools, list):
+ 1689              self._enabled_tools: frozenset[str] | None = frozenset(tools)
+ 1690          elif tools == &quot;all&quot;:
+ 1691              self._enabled_tools = frozenset(_ALL_FS_TOOL_NAMES)
+ 1692          else:  # None -- user did not specify, defaults to all tools opted-in
+ 1693              self._enabled_tools = None
+ 1694          self._permissions = list(_permissions or [])
+ 1695
+ 1696          # Shared executor for enforcing GLOB_TIMEOUT on the sync glob tool.
+ 1697          # Timed-out worker threads keep running until the backend call returns,
+ 1698          # so the semaphore rejects overload instead of queueing behind them.
+ 1699          self._glob_executor = concurrent.futures.ThreadPoolExecutor(
+ 1700              max_workers=_SYNC_GLOB_WORKERS,
+ 1701              thread_name_prefix=&quot;deepagents-glob&quot;,
+ 1702          )
+ 1703          self._glob_slots = threading.BoundedSemaphore(_SYNC_GLOB_WORKERS)
+ 1704
+ 1705          tool_factories: tuple[tuple[str, Callable[[], BaseTool]], ...] = (
+ 1706              (&quot;ls&quot;, self._create_ls_tool),
+ 1707              (&quot;read_file&quot;, self._create_read_file_tool),
+ 1708              (&quot;write_file&quot;, self._create_write_file_tool),
+ 1709              (&quot;edit_file&quot;, self._create_edit_file_tool),
+ 1710              (&quot;delete&quot;, self._create_delete_tool),
+ 1711              (&quot;glob&quot;, self._create_glob_tool),
+ 1712              (&quot;grep&quot;, self._create_grep_tool),
+ 1713              (&quot;execute&quot;, self._create_execute_tool),
+ 1714          )
+ 1715          # Excluded tools are omitted here entirely, not just hidden from the
+ 1716          # model&#39;s schema, so a tool name outside `tools=` never reaches the
+ 1717          # dispatchable tool node
+ 1718          self.tools = [factory() for name, factory in tool_factories if self._enabled_tools is None or name in self._enabled_tools]
+ 1719
+ 1720      def _create_ls_tool(self) -&gt; BaseTool:
+ 1721          &quot;&quot;&quot;Create the ls (list files) tool.&quot;&quot;&quot;
+ 1722          tool_description = self._custom_tool_descriptions.get(&quot;ls&quot;) or LIST_FILES_TOOL_DESCRIPTION
+ 1723
+ 1724          def sync_ls(
+ 1725              runtime: ToolRuntime[None, FilesystemState],
+ 1726              path: str,
+ 1727          ) -&gt; ToolMessage:
+ 1728              &quot;&quot;&quot;Synchronous wrapper for ls tool.&quot;&quot;&quot;
+ 1729              resolved_backend = self.backend
+ 1730              try:
+ 1731                  validated_path = validate_path(path)
+ 1732              except ValueError as e:
+ 1733                  return ToolMessage(
+ 1734                      content=f&quot;Error: {e}&quot;,
+ 1735                      name=&quot;ls&quot;,
+ 1736                      tool_call_id=runtime.tool_call_id,
+ 1737                      status=&quot;error&quot;,
+ 1738                  )
+ 1739              if _check_fs_permission(self._permissions, &quot;read&quot;, validated_path) == &quot;deny&quot;:
+ 1740                  return ToolMessage(
+ 1741                      content=f&quot;Error: permission denied for read on {validated_path}&quot;,
+ 1742                      name=&quot;ls&quot;,
+ 1743                      tool_call_id=runtime.tool_call_id,
+ 1744                      status=&quot;error&quot;,
+ 1745                  )</code></pre></div></div></article><article class="finding-card compact" id="deep-security-003" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>04 · DeepAgents Code 的 shell allow-list 在 execute 前直接返回错误</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ShellAllowListMiddleware 只检查 execute command，命令不在 allow-list 就构造 error ToolMessage，不进入 HITL 暂停；空列表和 SHELL_ALLOW_ALL sentinel 会被拒绝。</p></section><section><span>白话解释</span><p>非交互模式下，危险 shell 不是等人点确认，而是根本不执行；并且不能用空列表伪装成限制或用 all 绕过。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>headless runner 可用 fail-fast allow-list 保持连续 trace，但必须明确它只控制 command name，不是完整 OS sandbox。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>774–791</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>792–810</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L774-L810" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:774–810</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L774-L810" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  774  class ShellAllowListMiddleware(AgentMiddleware):
+  775      &quot;&quot;&quot;Validate shell commands against an allow-list without HITL interrupts.
+  776
+  777      When the agent invokes the `execute` shell tool, this middleware checks
+  778      the command against the configured allow-list **before execution**.
+  779      Rejected commands are returned as error `ToolMessage` objects — the
+  780      graph never pauses, so LangSmith traces stay as a single continuous
+  781      run.
+  782
+  783      Use this middleware in non-interactive mode to avoid the
+  784      interrupt/resume cycle that fragments traces.
+  785      &quot;&quot;&quot;
+  786
+  787      def __init__(self, allow_list: list[str]) -&gt; None:
+  788          &quot;&quot;&quot;Initialize with the shell allow-list to validate commands against.
+  789
+  790          Args:
+  791              allow_list: Allowed command names (e.g. `[&quot;ls&quot;, &quot;cat&quot;, &quot;grep&quot;]`).
+  792                  Must be a non-empty restrictive list — not `SHELL_ALLOW_ALL`.
+  793
+  794          Raises:
+  795              ValueError: If `allow_list` is empty.
+  796              TypeError: If `allow_list` is the `SHELL_ALLOW_ALL` sentinel.
+  797          &quot;&quot;&quot;
+  798          from deepagents_code.config import SHELL_ALLOW_ALL
+  799
+  800          super().__init__()
+  801          if not allow_list:
+  802              msg = &quot;allow_list must not be empty; disable shell access instead&quot;
+  803              raise ValueError(msg)
+  804          if isinstance(allow_list, type(SHELL_ALLOW_ALL)):
+  805              msg = (
+  806                  &quot;SHELL_ALLOW_ALL should not be used with &quot;
+  807                  &quot;ShellAllowListMiddleware; use auto_approve=True instead&quot;
+  808              )
+  809              raise TypeError(msg)
+  810          self._allow_list = list(allow_list)
+  811
+  812      def _validate_tool_call(self, request: ToolCallRequest) -&gt; ToolMessage | None:
+  813          &quot;&quot;&quot;Return an error tool message when a shell command is not allowed.
+  814
+  815          Args:
+  816              request: The tool call request being processed.
+  817
+  818          Returns:
+  819              An error `ToolMessage` when the shell command should be rejected,
+  820              otherwise `None`.
+  821          &quot;&quot;&quot;
+  822          from langchain_core.messages import ToolMessage as LCToolMessage
+  823
+  824          from deepagents_code.config import is_shell_command_allowed
+  825
+  826          if request.tool_call[&quot;name&quot;] != &quot;execute&quot;:
+  827              return None
+  828
+  829          args = request.tool_call.get(&quot;args&quot;) or {}
+  830          command = args.get(&quot;command&quot;, &quot;&quot;)
+  831          if is_shell_command_allowed(command, self._allow_list):
+  832              logger.debug(&quot;Shell command allowed: %r&quot;, command)
+  833              return None
+  834
+  835          logger.warning(&quot;Shell command rejected by allow-list: %r&quot;, command)
+  836          allowed_str = &quot;, &quot;.join(self._allow_list)
+  837          return LCToolMessage(
+  838              content=(
+  839                  f&quot;Shell command rejected: `{command}` is not in the allow-list. &quot;
+  840                  f&quot;Allowed commands: {allowed_str}. &quot;
+  841                  f&quot;Please use an allowed command or try another approach.&quot;
+  842              ),
+  843              name=&quot;execute&quot;,
+  844              tool_call_id=request.tool_call[&quot;id&quot;],
+  845              status=&quot;error&quot;,
+  846          )
+  847
+  848      def wrap_tool_call(
+  849          self,
+  850          request: ToolCallRequest,
+  851          handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+  852      ) -&gt; ToolMessage | Command[Any]:
+  853          &quot;&quot;&quot;Reject disallowed shell commands; pass everything else through.
+  854
+  855          Args:
+  856              request: The tool call request being processed.
+  857              handler: The next handler in the middleware chain.
+  858
+  859          Returns:
+  860              The tool execution result, or an error `ToolMessage` for rejected
+  861              shell commands.
+  862          &quot;&quot;&quot;
+  863          if (rejection := self._validate_tool_call(request)) is not None:
+  864              return rejection
+  865          return handler(request)
+  866
+  867      async def awrap_tool_call(
+  868          self,
+  869          request: ToolCallRequest,
+  870          handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+  871      ) -&gt; ToolMessage | Command[Any]:
+  872          &quot;&quot;&quot;Reject disallowed shell commands; pass everything else through.
+  873
+  874          Args:
+  875              request: The tool call request being processed.
+  876              handler: The next handler in the middleware chain.
+  877
+  878          Returns:
+  879              The tool execution result, or an error `ToolMessage` for rejected
+  880              shell commands.
+  881          &quot;&quot;&quot;</code></pre></div></div></article><article class="finding-card compact" id="deep-security-004" data-finding-dimension="security"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>security</span></div><h3>05 · PTC all/YOLO 是强能力开关，代码要求显式承认但允许绕过 HITL</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>_resolve_ptc_option 在 interpreter_ptc=&#39;all&#39; 且非 auto_approve 时要求 acknowledge_unsafe；提示明确 PTC host tools 会 bypass HITL。Approval mode 中 YOLO 直接不 interrupt，AUTO 是否绕过取决于 classifier eligibility。</p></section><section><span>白话解释</span><p>用户可以选择极快的自动模式，但这不是默认安全路径；代码要求显式开关并记录 write/shell tools。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>产品应把 Manual/Auto/YOLO/PTC 做成可审计的 run-scoped authority，并在 UI 中显示其会绕过哪些批准。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>898–916</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>917–937</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L898-L937" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:898–937</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L898-L937" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  898  def _resolve_ptc_option(
+  899      ptc: str | bool | list[str],
+  900      *,
+  901      tools: Sequence[BaseTool | Callable | dict[str, Any]],
+  902      acknowledge_unsafe: bool,
+  903      auto_approve: bool,
+  904  ) -&gt; list[str] | None:
+  905      &quot;&quot;&quot;Resolve the configured PTC allowlist to a concrete list of tool names.
+  906
+  907      Names are *not* validated against `tools`. The Deep Agents SDK injects the
+  908      filesystem, `task`, and `execute` tools via middleware in
+  909      `create_deep_agent` — *after* this point — so they are absent from `tools`
+  910      here, and the SDK exposes no importable list of them. `CodeInterpreterMiddleware`
+  911      matches the resolved names against the live runtime registry and silently
+  912      ignores any that are absent, so resolution passes names through and lets
+  913      runtime decide. (Names that match nothing at runtime are dropped, so a typo
+  914      silently exposes no tool rather than raising.)
+  915
+  916      Args:
+  917          ptc: Raw `interpreter_ptc` value from settings or CLI. Accepts
+  918              `False`/`[]`, `&quot;safe&quot;`, `&quot;all&quot;`, or a list of names. A list may
+  919              include `&quot;safe&quot;`, which expands to `INTERPRETER_PTC_SAFE_PRESET`;
+  920              `&quot;all&quot;` is rejected inside a list.
+  921          tools: Tools passed to `create_cli_agent`. Used only to enumerate
+  922              `&quot;all&quot;`, which is therefore limited to these explicitly-passed
+  923              tools (the SDK runtime built-ins cannot be enumerated here).
+  924          acknowledge_unsafe: Mirrors `settings.interpreter_ptc_acknowledge_unsafe`;
+  925              required when `ptc=&quot;all&quot;` and `auto_approve` is `False`.
+  926          auto_approve: Whether HITL approval is globally disabled. When `True`,
+  927              `&quot;all&quot;` does not require `acknowledge_unsafe` because every host
+  928              tool already runs without prompting.
+  929
+  930      Returns:
+  931          `None` when PTC should be disabled, otherwise a list of tool names
+  932          suitable for `CodeInterpreterMiddleware(ptc=...)`.
+  933
+  934      Raises:
+  935          ValueError: For `&quot;all&quot;` inside a list, for `&quot;all&quot;` without
+  936              `acknowledge_unsafe` outside of `auto_approve`, or for an invalid
+  937              `ptc` type or string.
+  938      &quot;&quot;&quot;
+  939      from langchain.tools import BaseTool as _BaseTool
+  940
+  941      if ptc is False or ptc is None or ptc == []:
+  942          return None
+  943
+  944      live_names: list[str] = []
+  945      for candidate in tools:
+  946          if isinstance(candidate, _BaseTool):
+  947              name = candidate.name
+  948              if isinstance(name, str):
+  949                  live_names.append(name)
+  950          elif isinstance(candidate, dict):
+  951              raw_name = cast(&quot;dict[str, Any]&quot;, candidate).get(&quot;name&quot;)
+  952              if isinstance(raw_name, str):
+  953                  live_names.append(raw_name)
+  954          else:
+  955              attr = getattr(candidate, &quot;name&quot;, None)
+  956              if isinstance(attr, str):
+  957                  live_names.append(attr)
+  958      live_set: set[str] = set(live_names)
+  959
+  960      if isinstance(ptc, str):
+  961          normalized = ptc.strip().lower()
+  962          if normalized == &quot;safe&quot;:
+  963              from deepagents_code.config import INTERPRETER_PTC_SAFE_PRESET
+  964
+  965              # Return the preset as-is; the middleware exposes whichever members
+  966              # exist in the live registry at runtime (they are SDK built-ins not
+  967              # present in `tools` here).
+  968              return sorted(INTERPRETER_PTC_SAFE_PRESET)
+  969          if normalized == &quot;all&quot;:
+  970              if not auto_approve and not acknowledge_unsafe:
+  971                  msg = (
+  972                      &quot;interpreter_ptc=&#39;all&#39; exposes every host tool to PTC &quot;
+  973                      &quot;calls that bypass HITL approval. Set &quot;
+  974                      &quot;interpreter_ptc_acknowledge_unsafe=True (or use &quot;
+  975                      &quot;auto_approve=True) to opt in.&quot;
+  976                  )
+  977                  raise ValueError(msg)
+  978              # `all` can only enumerate the tools passed to `create_cli_agent`;
+  979              # SDK runtime built-ins (filesystem, `task`, …) are injected later
+  980              # and are not enumerable here. Exposing them under `all` needs an
+  981              # &quot;expose everything&quot; sentinel in `CodeInterpreterMiddleware`
+  982              # (tracked in langchain-ai/deepagents#3847).
+  983              included = sorted(live_set)
+  984              write_included = sorted(_INTERPRETER_WRITE_TOOLS &amp; live_set)
+  985              if write_included:
+  986                  logger.info(
+  987                      &quot;interpreter_ptc=&#39;all&#39; includes write/shell tools: %s&quot;,
+  988                      write_included,
+  989                  )
+  990              return included
+  991          msg = (
+  992              f&quot;Invalid interpreter_ptc string {ptc!r}; expected &#39;safe&#39;, &#39;all&#39;, &quot;
+  993              &quot;or a list of tool names.&quot;
+  994          )
+  995          raise ValueError(msg)
+  996
+  997      if isinstance(ptc, list):
+  998          from deepagents_code.config import INTERPRETER_PTC_SAFE_PRESET
+  999
+ 1000          if any(name.strip().lower() == &quot;all&quot; for name in ptc):
+ 1001              msg = (
+ 1002                  &quot;interpreter_ptc list entries cannot include &#39;all&#39;; use &#39;all&#39; &quot;
+ 1003                  &quot;as a standalone value or list explicit tool names (optionally &quot;
+ 1004                  &quot;with the &#39;safe&#39; preset).&quot;
+ 1005              )
+ 1006              raise ValueError(msg)
+ 1007
+ 1008          resolved: list[str] = []</code></pre></div></div></article><article class="finding-card compact" id="deep-runtime-001" data-finding-dimension="execution"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>06 · CLI 明确区分 local shell、local filesystem 和 remote sandbox</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>create_cli_agent 在 sandbox=None 且 enable_shell 时创建 LocalShellBackend(root_dir, virtual_mode=False, inherit_env=False, curated env)；关闭 shell 用 FilesystemBackend；传入 sandbox 时直接把 remote backend 作为执行后端，并禁止 enable_interpreter。</p></section><section><span>白话解释</span><p>同一个 CLI 可以跑在本机项目目录，也可以把所有文件/命令交给 Modal 等远端 sandbox；模式是显式分支，不是运行中猜。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Harness 应把执行环境当成 backend contract，远端执行和本地开发不要共用模糊的 cwd 权限。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>2685–2705</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>2706–2728</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L2685-L2728" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:2685–2728</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L2685-L2728" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 2685      # CONDITIONAL SETUP: Local vs Remote Sandbox
+ 2686      if sandbox is None:
+ 2687          # ========== LOCAL MODE ==========
+ 2688          root_dir = effective_cwd if effective_cwd is not None else Path.cwd()
+ 2689          if enable_shell:
+ 2690              # Create environment for shell commands.
+ 2691              # Restore the user&#39;s original LANGSMITH_PROJECT so their code traces
+ 2692              # separately. When they had none, drop the agent&#39;s override (the
+ 2693              # `deepagents-code` default applied at bootstrap) entirely so shell
+ 2694              # commands don&#39;t inherit it.
+ 2695              shell_env = os.environ.copy()
+ 2696              if settings.user_langchain_project is not None:
+ 2697                  shell_env[&quot;LANGSMITH_PROJECT&quot;] = settings.user_langchain_project
+ 2698              else:
+ 2699                  shell_env.pop(&quot;LANGSMITH_PROJECT&quot;, None)
+ 2700              restore_user_tracing_env(shell_env)
+ 2701              restore_user_tracing_api_keys(shell_env)
+ 2702              # Re-apply a launch-time PYTHONPATH that was stripped from the server
+ 2703              # interpreter but relayed for approval-gated `execute` commands.
+ 2704              _apply_inherited_pythonpath(shell_env)
+ 2705
+ 2706              # Use LocalShellBackend for filesystem + shell execution.
+ 2707              # The SDK&#39;s FilesystemMiddleware exposes per-command timeout
+ 2708              # on the execute tool natively.
+ 2709              # `inherit_env=False`: `shell_env` is already a complete, curated
+ 2710              # copy of `os.environ`. Inheriting again would re-copy `os.environ`
+ 2711              # and resurrect the popped carrier var, leaking it into `execute`.
+ 2712              # `restore_user_tracing_api_keys` above depends on this too: flipping
+ 2713              # to `inherit_env=True` would re-copy the agent&#39;s overridden
+ 2714              # `LANGSMITH_API_KEY` and undo the restore, leaking it into `execute`.
+ 2715              backend = LocalShellBackend(
+ 2716                  root_dir=root_dir,
+ 2717                  virtual_mode=False,
+ 2718                  inherit_env=False,
+ 2719                  env=shell_env,
+ 2720              )
+ 2721          else:
+ 2722              # No shell access - use plain FilesystemBackend
+ 2723              backend = FilesystemBackend(root_dir=root_dir, virtual_mode=False)
+ 2724      else:
+ 2725          # ========== REMOTE SANDBOX MODE ==========
+ 2726          backend = sandbox  # Remote sandbox (ModalSandbox, etc.)
+ 2727          # Note: Shell middleware not used in sandbox mode
+ 2728          # File operations and execute tool are provided by the sandbox backend
+ 2729
+ 2730      if enable_interpreter:
+ 2731          if sandbox is not None:
+ 2732              msg = (
+ 2733                  &quot;enable_interpreter=True is not supported with a remote &quot;
+ 2734                  &quot;sandbox in this release. Disable the sandbox or unset &quot;
+ 2735                  &quot;enable_interpreter.&quot;
+ 2736              )
+ 2737              raise ValueError(msg)
+ 2738          # Lazy import keeps `dcode -v` fast — see AGENTS.md startup-perf rule.
+ 2739          from langchain_core._api import (  # noqa: PLC2701  # re-exported in _api.__all__
+ 2740              suppress_langchain_beta_warning,
+ 2741          )
+ 2742          from langchain_quickjs import CodeInterpreterMiddleware, PTCOption
+ 2743
+ 2744          ptc_names = _resolve_ptc_option(
+ 2745              settings.interpreter_ptc,
+ 2746              tools=tools,
+ 2747              acknowledge_unsafe=settings.interpreter_ptc_acknowledge_unsafe,
+ 2748              auto_approve=auto_approve,
+ 2749          )
+ 2750          ptc_option: PTCOption | None = (
+ 2751              cast(&quot;PTCOption&quot;, list(ptc_names)) if ptc_names is not None else None
+ 2752          )
+ 2753          # `CodeInterpreterMiddleware` is decorated `@beta()`, which emits a
+ 2754          # `LangChainBetaWarning` on every instantiation. We intentionally use it
+ 2755          # and the warning is not actionable for users, so suppress it.
+ 2756          with suppress_langchain_beta_warning():
+ 2757              agent_middleware.append(
+ 2758                  CodeInterpreterMiddleware(
+ 2759                      tool_name=&quot;js_eval&quot;,
+ 2760                      timeout=settings.interpreter_timeout_seconds,
+ 2761                      memory_limit=settings.interpreter_memory_limit_mb * 1024 * 1024,
+ 2762                      max_ptc_calls=settings.interpreter_max_ptc_calls,
+ 2763                      max_result_chars=settings.interpreter_max_result_chars,
+ 2764                      ptc=ptc_option,
+ 2765                  )
+ 2766              )
+ 2767
+ 2768      # Local context middleware (git info, directory tree, etc.).
+ 2769      if isinstance(backend, (_ExecutableBackend, _AsyncExecutableBackend)):
+ 2770          agent_middleware.append(
+ 2771              LocalContextMiddleware(
+ 2772                  backend=backend,
+ 2773                  mcp_server_info=mcp_server_info,
+ 2774                  tracing_project=get_langsmith_project_name(),
+ 2775                  user_tracing_project=settings.user_langchain_project,
+ 2776              )
+ 2777          )
+ 2778
+ 2779      # Add shell allow-list middleware when interrupt_shell_only is active.
+ 2780      if restrictive_shell_allow_list is not None:
+ 2781          agent_middleware.append(ShellAllowListMiddleware(restrictive_shell_allow_list))
+ 2782
+ 2783      # Get or use custom system prompt
+ 2784      if system_prompt is None:
+ 2785          system_prompt = get_system_prompt(
+ 2786              assistant_id=assistant_id,
+ 2787              sandbox_type=sandbox_type,
+ 2788              interactive=interactive,
+ 2789              cwd=effective_cwd,
+ 2790              fs_tools=fs_tools,
+ 2791          )
+ 2792
+ 2793      interrupt_on: dict[str, bool | InterruptOnConfig] = {}
+ 2794      auto_mode_config: tuple[Path, list[str]] | None = None
+ 2795      if resolved_interrupt_on is not None and auto_mode_enabled:
+ 2796          configured_allow_list = shell_allow_list or settings.shell_allow_list
+ 2797          narrow_allow_list = (
+ 2798              configured_allow_list if isinstance(configured_allow_list, list) else []
+ 2799          )</code></pre></div></div></article><article class="finding-card compact" id="deep-cli-002" data-finding-dimension="security"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>07 · 审批模式从 live Store 读取，缺失/异步错误会 fail closed 到 Manual</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>AsyncApprovalHITLMiddleware 在模型返回后重新从 async Store 解析 ApprovalMode；缺失 key 或同步运行无法安全读 live mode 时记录 warning 并走 Manual；_add_interrupt_on 默认覆盖 shell、文件写、web、task 和 MCP side-effect tools。</p></section><section><span>白话解释</span><p>Auto/YOLO 不是图输入里随便塞一个 dict 就能伪造的状态；拿不到可信的 live mode，就回到人工审批。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自治模式要绑定受信运行时上下文，而不是让模型或 checkpoint state 自己宣布“已批准”。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1784–1820</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1821–1858</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L1784-L1858" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:1784–1858</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L1784-L1858" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1784      &quot;&quot;&quot;A trusted Store key whose record must be read, failing closed to Manual.&quot;&quot;&quot;
+ 1785
+ 1786      key: str
+ 1787      &quot;&quot;&quot;Validated, non-empty Store key whose approval-mode record must be read.&quot;&quot;&quot;
+ 1788
+ 1789
+ 1790  def _approval_mode_source(context: object) -&gt; _DecidedMode | _LiveLookup:
+ 1791      &quot;&quot;&quot;Resolve the live Store lookup or a safe context-only decision.
+ 1792
+ 1793      Args:
+ 1794          context: Run context supplied by the local graph or RemoteGraph.
+ 1795
+ 1796      Returns:
+ 1797          A `_LiveLookup` carrying a validated, trusted Store key, or a
+ 1798          `_DecidedMode` when no live record is configured or the key cannot be
+ 1799          trusted. A key is only ever emitted as `_LiveLookup`, so callers cannot
+ 1800          confuse a live lookup with a context-only decision.
+ 1801      &quot;&quot;&quot;
+ 1802      if isinstance(context, CLIContextSchema):
+ 1803          raw_key: object = context.approval_mode_key
+ 1804          thread_id: object = context.thread_id
+ 1805          raw_mode: object = context.approval_mode
+ 1806          legacy_auto: object = context.auto_approve
+ 1807          has_typed_mode = True
+ 1808      elif isinstance(context, dict):
+ 1809          raw_key = context.get(&quot;approval_mode_key&quot;)
+ 1810          thread_id = context.get(&quot;thread_id&quot;)
+ 1811          raw_mode = context.get(&quot;approval_mode&quot;)
+ 1812          legacy_auto = context.get(&quot;auto_approve&quot;)
+ 1813          has_typed_mode = &quot;approval_mode&quot; in context
+ 1814      else:
+ 1815          if context is not None:
+ 1816              logger.warning(
+ 1817                  &quot;approval predicate received unexpected context type %s; &quot;
+ 1818                  &quot;interrupting for safety&quot;,
+ 1819                  type(context).__name__,
+ 1820              )
+ 1821          return _DecidedMode(ApprovalMode.MANUAL)
+ 1822
+ 1823      if raw_key is not None:
+ 1824          if not isinstance(raw_key, str) or not raw_key:
+ 1825              logger.warning(&quot;Approval-mode Store key is malformed&quot;)
+ 1826              return _DecidedMode(ApprovalMode.MANUAL)
+ 1827          key = _validated_live_approval_key(raw_key, thread_id)
+ 1828          if key is None:
+ 1829              return _DecidedMode(ApprovalMode.MANUAL)
+ 1830          return _LiveLookup(key)
+ 1831
+ 1832      if has_typed_mode:
+ 1833          requested = coerce_approval_mode(raw_mode)
+ 1834          if requested is not ApprovalMode.MANUAL:
+ 1835              logger.warning(
+ 1836                  &quot;Typed autonomous mode is missing its Store key; using Manual&quot;
+ 1837              )
+ 1838          elif raw_mode == ApprovalMode.MANUAL.value and legacy_auto is True:
+ 1839              # Compatibility for callers predating typed modes. New typed Auto
+ 1840              # and YOLO values always require a live Store record.
+ 1841              return _DecidedMode(ApprovalMode.YOLO)
+ 1842          return _DecidedMode(ApprovalMode.MANUAL)
+ 1843      if legacy_auto is True:
+ 1844          return _DecidedMode(ApprovalMode.YOLO)
+ 1845      return _DecidedMode(ApprovalMode.MANUAL)
+ 1846
+ 1847
+ 1848  def _resolve_approval_mode(context: object, store: object) -&gt; ApprovalMode:
+ 1849      &quot;&quot;&quot;Resolve approval mode through the synchronous local Store interface.
+ 1850
+ 1851      Args:
+ 1852          context: Current run context.
+ 1853          store: Current LangGraph Store.
+ 1854
+ 1855      Returns:
+ 1856          The validated mode, failing closed to Manual.
+ 1857      &quot;&quot;&quot;
+ 1858      source = _approval_mode_source(context)
+ 1859      if isinstance(source, _DecidedMode):
+ 1860          return source.mode
+ 1861      mode = read_approval_mode_from_store(store, source.key)
+ 1862      if mode is None:
+ 1863          logger.warning(
+ 1864              &quot;Approval-mode store item is unavailable; interrupting for safety&quot;
+ 1865          )
+ 1866          return ApprovalMode.MANUAL
+ 1867      return mode
+ 1868
+ 1869
+ 1870  async def _aresolve_approval_mode(context: object, store: object) -&gt; ApprovalMode:
+ 1871      &quot;&quot;&quot;Resolve approval mode through the async server Store interface.
+ 1872
+ 1873      Args:
+ 1874          context: Current run context.
+ 1875          store: Current LangGraph Store.
+ 1876
+ 1877      Returns:
+ 1878          The validated mode, failing closed to Manual.
+ 1879      &quot;&quot;&quot;
+ 1880      source = _approval_mode_source(context)
+ 1881      if isinstance(source, _DecidedMode):
+ 1882          return source.mode
+ 1883      mode = await aread_approval_mode_from_store(store, source.key)
+ 1884      if mode is None:
+ 1885          logger.warning(
+ 1886              &quot;Approval-mode store item is unavailable; interrupting for safety&quot;
+ 1887          )
+ 1888          return ApprovalMode.MANUAL
+ 1889      return mode
+ 1890
+ 1891
+ 1892  _ASYNC_APPROVAL_ROUTING_KEY = &quot;_deepagents_code_async_approval_routing&quot;
+ 1893
+ 1894
+ 1895  @dataclass(frozen=True)
+ 1896  class _RoutingDecision:
+ 1897      &quot;&quot;&quot;A trusted in-process approval decision from the async read hook.
+ 1898
+ 1899      Its *type identity* is the trust signal: a checkpoint round-trip or graph
+ 1900      input deserializes to a plain `dict`/`list`, never to this private class, so
+ 1901      graph state cannot forge an autonomous mode.
+ 1902      &quot;&quot;&quot;
+ 1903
+ 1904      mode: ApprovalMode
+ 1905
+ 1906
+ 1907  def _async_routing_mode(state: object) -&gt; ApprovalMode | None:
+ 1908      &quot;&quot;&quot;Return a mode resolved by the async HITL hook in this call only.&quot;&quot;&quot;
+ 1909      if isinstance(state, dict):
+ 1910          routed = state.get(_ASYNC_APPROVAL_ROUTING_KEY)
+ 1911          if isinstance(routed, _RoutingDecision):
+ 1912              return routed.mode
+ 1913      return None
+ 1914
+ 1915
+ 1916  def _should_interrupt_tool_call(
+ 1917      request: ToolCallRequest, *, auto_mode_enabled: bool = True
+ 1918  ) -&gt; bool:
+ 1919      &quot;&quot;&quot;Decide whether stock HITL should pause for a gated tool call.
+ 1920
+ 1921      Args:
+ 1922          request: Pending tool call.
+ 1923          auto_mode_enabled: Whether classifier-backed Auto is eligible to bypass
+ 1924              approvals for this graph (the top-level local Textual graph, and the
+ 1925              subagent / goal-criteria stacks that reuse this predicate). When
+ 1926              `False`, a live Auto record interrupts instead of bypassing, keeping
+ 1927              delegated internals gated in graphs without the classifier.
+ 1928
+ 1929      Returns:</code></pre></div></div></article><article class="finding-card compact" id="deep-risk-001" data-finding-dimension="execution"><header><span class="finding-index">08</span><div><div class="finding-meta"><b>L2</b><span>risk</span><span>execution</span></div><h3>08 · local mode 仍是宿主进程，真正隔离取决于 sandbox backend</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>CLI local enable_shell 使用 LocalShellBackend，virtual_mode=False 并传入 curated host env；只有调用方提供 remote SandboxBackend 才把执行交给远端环境。</p></section><section><span>白话解释</span><p>默认本地开发很方便，但它不是容器边界；不可信 repo 需要在 deploy 层传入真正隔离的 sandbox。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署文档应把 local shell 与 container/VM/remote sandbox 明确分级，审批和 secrets policy 也要跟着分支变化。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>2706–2716</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>2717–2728</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><div class="finding-caveat"><span>边界 / 风险</span><ul><li>LocalShellBackend 自身可能有其他实现层保护；本报告只把当前 agent.py 分支识别为宿主执行路径。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L2706-L2728" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/code/deepagents_code/agent.py:2706–2728</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L2706-L2728" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 2706              # Use LocalShellBackend for filesystem + shell execution.
+ 2707              # The SDK&#39;s FilesystemMiddleware exposes per-command timeout
+ 2708              # on the execute tool natively.
+ 2709              # `inherit_env=False`: `shell_env` is already a complete, curated
+ 2710              # copy of `os.environ`. Inheriting again would re-copy `os.environ`
+ 2711              # and resurrect the popped carrier var, leaking it into `execute`.
+ 2712              # `restore_user_tracing_api_keys` above depends on this too: flipping
+ 2713              # to `inherit_env=True` would re-copy the agent&#39;s overridden
+ 2714              # `LANGSMITH_API_KEY` and undo the restore, leaking it into `execute`.
+ 2715              backend = LocalShellBackend(
+ 2716                  root_dir=root_dir,
+ 2717                  virtual_mode=False,
+ 2718                  inherit_env=False,
+ 2719                  env=shell_env,
+ 2720              )
+ 2721          else:
+ 2722              # No shell access - use plain FilesystemBackend
+ 2723              backend = FilesystemBackend(root_dir=root_dir, virtual_mode=False)
+ 2724      else:
+ 2725          # ========== REMOTE SANDBOX MODE ==========
+ 2726          backend = sandbox  # Remote sandbox (ModalSandbox, etc.)
+ 2727          # Note: Shell middleware not used in sandbox mode
+ 2728          # File operations and execute tool are provided by the sandbox backend
+ 2729
+ 2730      if enable_interpreter:
+ 2731          if sandbox is not None:
+ 2732              msg = (
+ 2733                  &quot;enable_interpreter=True is not supported with a remote &quot;
+ 2734                  &quot;sandbox in this release. Disable the sandbox or unset &quot;
+ 2735                  &quot;enable_interpreter.&quot;
+ 2736              )
+ 2737              raise ValueError(msg)
+ 2738          # Lazy import keeps `dcode -v` fast — see AGENTS.md startup-perf rule.
+ 2739          from langchain_core._api import (  # noqa: PLC2701  # re-exported in _api.__all__
+ 2740              suppress_langchain_beta_warning,
+ 2741          )
+ 2742          from langchain_quickjs import CodeInterpreterMiddleware, PTCOption
+ 2743
+ 2744          ptc_names = _resolve_ptc_option(
+ 2745              settings.interpreter_ptc,
+ 2746              tools=tools,
+ 2747              acknowledge_unsafe=settings.interpreter_ptc_acknowledge_unsafe,
+ 2748              auto_approve=auto_approve,
+ 2749          )
+ 2750          ptc_option: PTCOption | None = (
+ 2751              cast(&quot;PTCOption&quot;, list(ptc_names)) if ptc_names is not None else None
+ 2752          )
+ 2753          # `CodeInterpreterMiddleware` is decorated `@beta()`, which emits a
+ 2754          # `LangChainBetaWarning` on every instantiation. We intentionally use it
+ 2755          # and the warning is not actionable for users, so suppress it.
+ 2756          with suppress_langchain_beta_warning():
+ 2757              agent_middleware.append(
+ 2758                  CodeInterpreterMiddleware(
+ 2759                      tool_name=&quot;js_eval&quot;,
+ 2760                      timeout=settings.interpreter_timeout_seconds,
+ 2761                      memory_limit=settings.interpreter_memory_limit_mb * 1024 * 1024,
+ 2762                      max_ptc_calls=settings.interpreter_max_ptc_calls,
+ 2763                      max_result_chars=settings.interpreter_max_result_chars,
+ 2764                      ptc=ptc_option,
+ 2765                  )
+ 2766              )
+ 2767
+ 2768      # Local context middleware (git info, directory tree, etc.).
+ 2769      if isinstance(backend, (_ExecutableBackend, _AsyncExecutableBackend)):
+ 2770          agent_middleware.append(
+ 2771              LocalContextMiddleware(
+ 2772                  backend=backend,
+ 2773                  mcp_server_info=mcp_server_info,
+ 2774                  tracing_project=get_langsmith_project_name(),
+ 2775                  user_tracing_project=settings.user_langchain_project,
+ 2776              )
+ 2777          )
+ 2778
+ 2779      # Add shell allow-list middleware when interrupt_shell_only is active.
+ 2780      if restrictive_shell_allow_list is not None:
+ 2781          agent_middleware.append(ShellAllowListMiddleware(restrictive_shell_allow_list))
+ 2782
+ 2783      # Get or use custom system prompt
+ 2784      if system_prompt is None:
+ 2785          system_prompt = get_system_prompt(
+ 2786              assistant_id=assistant_id,
+ 2787              sandbox_type=sandbox_type,
+ 2788              interactive=interactive,
+ 2789              cwd=effective_cwd,
+ 2790              fs_tools=fs_tools,
+ 2791          )
+ 2792
+ 2793      interrupt_on: dict[str, bool | InterruptOnConfig] = {}
+ 2794      auto_mode_config: tuple[Path, list[str]] | None = None
+ 2795      if resolved_interrupt_on is not None and auto_mode_enabled:
+ 2796          configured_allow_list = shell_allow_list or settings.shell_allow_list
+ 2797          narrow_allow_list = (
+ 2798              configured_allow_list if isinstance(configured_allow_list, list) else []
+ 2799          )</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>StateBackend 文档说明文件存进 LangGraph state、在 thread 内 checkpoint、跨 thread 不持久；FilesystemMiddleware 默认 StateBackend，只有 backend 实现 SandboxBackendProtocol 时才创建 execute tool。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/backends/state.py#L37-L47" target="_blank" rel="noreferrer">libs/deepagents/deepagents/backends/state.py:37–47 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>FilesystemPermission 验证路径必须以 / 开头、禁止 .. 和 ~；_check_fs_permission 按声明顺序找第一条匹配规则，返回 allow/deny/interrupt，interrupt 交给 HumanInTheLoopMiddleware。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L383-L430" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/filesystem.py:383–430 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>FilesystemMiddleware 初始化时发现 permissions 与 SandboxBackendProtocol 同时存在且规则没有完全 scoped 到 Composite routes，就抛 NotImplementedError，并说明 execute 的 tool-level permissions 未实现。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/filesystem.py#L1649-L1674" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/filesystem.py:1649–1674 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>ShellAllowListMiddleware 只检查 execute command，命令不在 allow-list 就构造 error ToolMessage，不进入 HITL 暂停；空列表和 SHELL_ALLOW_ALL sentinel 会被拒绝。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/code/deepagents_code/agent.py#L774-L810" target="_blank" rel="noreferrer">libs/code/deepagents_code/agent.py:774–810 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="DeepAgents architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

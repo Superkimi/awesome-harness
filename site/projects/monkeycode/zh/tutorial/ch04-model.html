@@ -1,1 +1,843 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>MonkeyCode · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">MonkeyCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>MonkeyCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>fcc5320b15a1</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · MonkeyCode · fcc5320b15a1</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>MonkeyCode · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/monkeycode/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/monkeycode/ch04-model.srt" data-video-status="published">SRT</a><em>fcc5320b15a1</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="monkey-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · LLM proxy 用 VM 绑定临时密钥隐藏真实上游凭据</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>任务拿到 ModelApiKey/runtime token 和平台 proxy URL；proxy 再从数据库解析 user、VM、provider、真实 BaseURL/API key，重写 Authorization/X-Api-Key 后访问上游。</p></section><section><span>白话解释</span><p>工作 VM 拿的是代金券，不是模型厂商的保险柜钥匙；平台看到券后再替它换成真正凭据。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可撤销密钥、统一用量和上游切换都集中在控制面。</p></section><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:585–590</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>运行时使用 proxy URL 与临时 key。</code></pre></div></div></article><article class="finding-card compact" id="monkey-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 代理只放行三种 LLM 协议，并阻止任务偷换模型</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>入口只接受 chat/completions、responses、messages；请求必须有 bearer 或 X-api-key，body 中 model 若与 token 绑定模型不一致直接 403。</p></section><section><span>白话解释</span><p>这不是任意 HTTP 隧道；票上写的是哪个模型，就只能点那个模型。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>减小了凭据代理被滥用成通用外网代理或越权消费的空间。</p></section><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L28-L34" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:585–590 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/llmproxy/proxy.go:28–34</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L28-L34" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>三条允许路径。</code></pre></div></div></article><article class="finding-card compact" id="monkey-provider-003" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>modelContext</span></div><h3>03 · 运行中切模仅支持 OpenCode，并通过 restart 恢复 session</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SwitchModel 要求 processing、owner/privileged、模型授权；重建配置后若 runtime 不是 OpenCode 就报错，随后调用 TaskManager.Restart 并可选择 LoadSession。</p></section><section><span>白话解释</span><p>换发动机不是所有车都支持：目前只有 OpenCode 能中途换模型，且本质是重启运行时再接回会话。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Codex/Claude 的长任务无法享受平台级模型升降档。</p></section><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L165-L218" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:585–590 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:165–218</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L165-L218" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>切模授权、配置重建和 OpenCode 限制。</code></pre></div></div></article><article class="finding-card compact" id="monkey-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>modelContext</span></div><h3>04 · 平台知道模型窗口上限，但不管理内层 compaction</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>OpenCode 配置缺省 context=200000、output=32000；Taskflow 请求只下发 prompt/config/session，MonkeyCode 仓库没有在推理循环中计算 live context 或触发 compaction 的代码。</p></section><section><span>白话解释</span><p>平台知道油箱标称多大，却不看里面还剩多少油；何时压缩历史由 OpenCode/Codex/Claude 自己决定。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>跨 runtime 的长任务可靠性会随各 CLI 内核不同而波动。</p></section><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L788-L792" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:585–590 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:788–792</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L788-L792" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>模型窗口和输出缺省值。</code></pre></div></div></article><article class="finding-card compact" id="monkey-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 任务摘要是异步 UI 元数据，不是 Agent 记忆回写</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>TaskSummaryService 从持久化 task log 取 conversation，用独立 LLM 延迟生成 summary 并写入 Task.summary；任务 Create/Continue 协议未读取该字段回灌内层会话。</p></section><section><span>白话解释</span><p>它会给长对话写一段“给人看的剧情简介”，但这段简介不会自动塞回 Agent 的脑子里。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>摘要改善列表浏览和通知，不应被误计为上下文压缩或长期记忆。</p></section><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L32-L92" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:585–590 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/service/tasksummary.go:32–92</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L32-L92" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>独立 summary LLM 与 tasklog reader。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="MonkeyCode architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>MonkeyCode · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">MonkeyCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>MonkeyCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>fcc5320b15a1</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · MonkeyCode · fcc5320b15a1</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>MonkeyCode · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/monkeycode/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/monkeycode/ch04-model.srt" data-video-status="published">SRT</a><em>fcc5320b15a1</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="monkey-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · LLM proxy 用 VM 绑定临时密钥隐藏真实上游凭据</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>任务拿到 ModelApiKey/runtime token 和平台 proxy URL；proxy 再从数据库解析 user、VM、provider、真实 BaseURL/API key，重写 Authorization/X-Api-Key 后访问上游。</p></section><section><span>白话解释</span><p>工作 VM 拿的是代金券，不是模型厂商的保险柜钥匙；平台看到券后再替它换成真正凭据。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可撤销密钥、统一用量和上游切换都集中在控制面。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>585–586</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>587–590</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:585–590</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  585  	var runtimeToken string
+  586  	if keys := m.Edges.Apikeys; len(keys) &gt; 0 {
+  587  		m.APIKey = keys[0].APIKey
+  588  		m.BaseURL = a.cfg.LLMProxy.BaseURL + &quot;/v1&quot;
+  589  		runtimeToken = keys[0].APIKey
+  590  	}
+  591
+  592  	coding, configs, agentRes, err := a.getCodingConfigs(ctx, req.CliName, m, req.Extra.SkillIDs, req.Extra.PluginIDs, a.userScope(ctx, user), true)
+  593  	if err != nil {
+  594  		return nil, err
+  595  	}
+  596
+  597  	createdVm, err := a.taskflow.VirtualMachiner().Create(ctx, &amp;taskflow.CreateVirtualMachineReq{
+  598  		ID:       vmID,
+  599  		UserID:   user.ID.String(),
+  600  		HostID:   req.HostID,
+  601  		HostName: t.ID.String(),
+  602  		Git:      git,
+  603  		ZipUrl:   req.RepoReq.ZipURL,
+  604  		ImageURL: cmp.Or(imageName, i.Name),
+  605  		ProxyURL: &quot;&quot;,
+  606  		TaskID:   t.ID,
+  607  		LLM: taskflow.LLMProviderReq{
+  608  			Provider: taskflow.LlmProviderOpenAI,
+  609  			ApiKey:   m.APIKey,
+  610  			BaseURL:  m.BaseURL,
+  611  			Model:    m.Model,
+  612  		},
+  613  		Cores:    &quot;2&quot;,
+  614  		Memory:   8 &lt;&lt; 30,
+  615  		Envs:     env,
+  616  		LogStore: normalizeTaskLogStore(t.LogStore),
+  617  	})
+  618  	if err != nil {
+  619  		return nil, err
+  620  	}
+  621
+  622  	if createdVm == nil {
+  623  		return nil, fmt.Errorf(&quot;vm is nil&quot;)
+  624  	}
+  625  	if createdVm.ID == &quot;&quot; {
+  626  		createdVm.ID = vmID
+  627  	}
+  628  	if createdVm.ID != vmID {
+  629  		return nil, fmt.Errorf(&quot;taskflow returned vm id %s, want %s&quot;, createdVm.ID, vmID)
+  630  	}
+  631  	if err := a.repo.CompleteCreate(ctx, vmID, createdVm); err != nil {
+  632  		return nil, err
+  633  	}
+  634
+  635  	mcps := a.buildMCPConfigs(t.ID, runtimeToken)
+  636
+  637  	// DEBUG: 把准备透传给 taskflow → codingmatrix 的整组 ConfigFile
+  638  	// marshal 成一个 JSON 串、一行日志打出来。仅在 DEBUG 级别开启，
+  639  	// 生产无噪声。
+  640  	if a.logger.Enabled(ctx, slog.LevelDebug) {
+  641  		if payload, err := json.Marshal(configs); err != nil {
+  642  			a.logger.WarnContext(ctx, &quot;tasker configs marshal failed&quot;,
+  643  				slog.String(&quot;task_id&quot;, t.ID.String()),
+  644  				slog.Any(&quot;err&quot;, err))
+  645  		} else {
+  646  			a.logger.DebugContext(ctx, &quot;tasker configs&quot;,
+  647  				slog.String(&quot;task_id&quot;, t.ID.String()),
+  648  				slog.Int(&quot;count&quot;, len(configs)),
+  649  				slog.String(&quot;configs&quot;, string(payload)),
+  650  			)
+  651  		}
+  652  	}
+  653
+  654  	// 存储 CreateTaskReq 到 Redis（10 分钟过期），供 Lifecycle Manager 消费
+  655  	createTaskReq := &amp;taskflow.CreateTaskReq{
+  656  		ID:           t.ID,
+  657  		VMID:         createdVm.ID,
+  658  		Text:         req.Content,
+  659  		Attachments:  attachments,
+  660  		SystemPrompt: req.SystemPrompt,
+  661  		CodingAgent:  coding,</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>backend/biz/task/usecase/task.go · fcc5320b15a1</span><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  585
+  586  	var runtimeToken string
+  587  	if keys := m.Edges.Apikeys; len(keys) &gt; 0 {
+  588  		m.APIKey = keys[0].APIKey
+  589  		m.BaseURL = a.cfg.LLMProxy.BaseURL + &quot;/v1&quot;
+  590  		runtimeToken = keys[0].APIKey
+  591  	}
+  592
+  593  	coding, configs, agentRes, err := a.getCodingConfigs(ctx, req.CliName, m, req.Extra.SkillIDs, req.Extra.PluginIDs, a.userScope(ctx, user), true)
+  594  	if err != nil {
+  595  		return nil, err
+  596  	}
+  597
+  598  	createdVm, err := a.taskflow.VirtualMachiner().Create(ctx, &amp;taskflow.CreateVirtualMachineReq{
+  599  		ID:       vmID,
+  600  		UserID:   user.ID.String(),
+  601  		HostID:   req.HostID,
+  602  		HostName: t.ID.String(),
+  603  		Git:      git,
+  604  		ZipUrl:   req.RepoReq.ZipURL,
+  605  		ImageURL: cmp.Or(imageName, i.Name),
+  606  		ProxyURL: &quot;&quot;,
+  607  		TaskID:   t.ID,
+  608  		LLM: taskflow.LLMProviderReq{
+  609  			Provider: taskflow.LlmProviderOpenAI,
+  610  			ApiKey:   m.APIKey,
+  611  			BaseURL:  m.BaseURL,
+  612  			Model:    m.Model,
+  613  		},
+  614  		Cores:    &quot;2&quot;,
+  615  		Memory:   8 &lt;&lt; 30,
+  616  		Envs:     env,
+  617  		LogStore: normalizeTaskLogStore(t.LogStore),
+  618  	})
+  619  	if err != nil {
+  620  		return nil, err
+  621  	}
+  622
+  623  	if createdVm == nil {
+  624  		return nil, fmt.Errorf(&quot;vm is nil&quot;)
+  625  	}
+  626  	if createdVm.ID == &quot;&quot; {
+  627  		createdVm.ID = vmID
+  628  	}
+  629  	if createdVm.ID != vmID {
+  630  		return nil, fmt.Errorf(&quot;taskflow returned vm id %s, want %s&quot;, createdVm.ID, vmID)
+  631  	}
+  632  	if err := a.repo.CompleteCreate(ctx, vmID, createdVm); err != nil {
+  633  		return nil, err
+  634  	}
+  635
+  636  	mcps := a.buildMCPConfigs(t.ID, runtimeToken)
+  637
+  638  	// DEBUG: 把准备透传给 taskflow → codingmatrix 的整组 ConfigFile
+  639  	// marshal 成一个 JSON 串、一行日志打出来。仅在 DEBUG 级别开启，
+  640  	// 生产无噪声。
+  641  	if a.logger.Enabled(ctx, slog.LevelDebug) {
+  642  		if payload, err := json.Marshal(configs); err != nil {
+  643  			a.logger.WarnContext(ctx, &quot;tasker configs marshal failed&quot;,
+  644  				slog.String(&quot;task_id&quot;, t.ID.String()),
+  645  				slog.Any(&quot;err&quot;, err))
+  646  		} else {
+  647  			a.logger.DebugContext(ctx, &quot;tasker configs&quot;,
+  648  				slog.String(&quot;task_id&quot;, t.ID.String()),
+  649  				slog.Int(&quot;count&quot;, len(configs)),
+  650  				slog.String(&quot;configs&quot;, string(payload)),
+  651  			)
+  652  		}
+  653  	}
+  654
+  655  	// 存储 CreateTaskReq 到 Redis（10 分钟过期），供 Lifecycle Manager 消费
+  656  	createTaskReq := &amp;taskflow.CreateTaskReq{
+  657  		ID:           t.ID,
+  658  		VMID:         createdVm.ID,
+  659  		Text:         req.Content,
+  660  		Attachments:  attachments,
+  661  		SystemPrompt: req.SystemPrompt,</code></pre></details></div></div></article><article class="finding-card compact" id="monkey-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 代理只放行三种 LLM 协议，并阻止任务偷换模型</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>入口只接受 chat/completions、responses、messages；请求必须有 bearer 或 X-api-key，body 中 model 若与 token 绑定模型不一致直接 403。</p></section><section><span>白话解释</span><p>这不是任意 HTTP 隧道；票上写的是哪个模型，就只能点那个模型。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>减小了凭据代理被滥用成通用外网代理或越权消费的空间。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>28–30</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>31–34</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L28-L34" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/llmproxy/proxy.go:28–34</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L28-L34" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   28  const upstreamFailureMessage = &quot;连接上游模型失败，请检查模型配置，或重试&quot;
+   29
+   30  var allowPaths = map[string]string{
+   31  	&quot;/v1/chat/completions&quot;: &quot;/chat/completions&quot;,
+   32  	&quot;/v1/responses&quot;:        &quot;/responses&quot;,
+   33  	&quot;/v1/messages&quot;:         &quot;/messages&quot;,
+   34  }
+   35
+   36  type contextKey struct{}
+   37
+   38  type modelContext struct {
+   39  	modelID   uuid.UUID
+   40  	userID    uuid.UUID
+   41  	vmID      string
+   42  	provider  string
+   43  	modelName string
+   44  	baseURL   string
+   45  	apiKey    string
+   46  }
+   47
+   48  type proxyContext struct {
+   49  	model        *modelContext
+   50  	upstreamPath string
+   51  	stream       bool
+   52  }
+   53
+   54  type Proxy struct {
+   55  	db                  *db.Client
+   56  	logger              *slog.Logger
+   57  	recorder            usageRecorder
+   58  	transport           http.RoundTripper
+   59  	proxy               *httputil.ReverseProxy
+   60  	blockPrivateNetwork bool
+   61  }
+   62
+   63  type usageRecorder interface {
+   64  	Record(ctx context.Context, event modelusage.Event) error
+   65  }
+   66
+   67  type Option func(*Proxy)
+   68
+   69  func WithUsageRecorder(recorder usageRecorder) Option {
+   70  	return func(p *Proxy) {
+   71  		p.recorder = recorder
+   72  	}
+   73  }
+   74
+   75  func WithPrivateNetworkBlocked(block bool) Option {
+   76  	return func(p *Proxy) {
+   77  		p.blockPrivateNetwork = block
+   78  	}
+   79  }
+   80
+   81  func NewProxy(db *db.Client, logger *slog.Logger, opts ...Option) *Proxy {
+   82  	if logger == nil {
+   83  		logger = slog.Default()
+   84  	}
+   85  	p := &amp;Proxy{
+   86  		db:     db,
+   87  		logger: logger.With(&quot;module&quot;, &quot;llmproxy&quot;),
+   88  	}
+   89  	for _, opt := range opts {
+   90  		opt(p)
+   91  	}
+   92  	transport := &amp;http.Transport{
+   93  		MaxIdleConns:        100,
+   94  		MaxIdleConnsPerHost: 100,
+   95  		MaxConnsPerHost:     100,
+   96  		IdleConnTimeout:     90 * time.Second,
+   97  		Proxy:               http.ProxyFromEnvironment,
+   98  		DialContext: (&amp;net.Dialer{
+   99  			Timeout:   5 * time.Second,
+  100  			KeepAlive: 30 * time.Second,
+  101  		}).DialContext,
+  102  		TLSHandshakeTimeout:   5 * time.Second,
+  103  		ResponseHeaderTimeout: 300 * time.Second,
+  104  	}
+  105  	p.transport = netguard.New(p.blockPrivateNetwork).HTTPClient(&amp;http.Client{Transport: transport}).Transport</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>backend/biz/llmproxy/proxy.go · fcc5320b15a1</span><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/llmproxy/proxy.go#L28-L34" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   28  	&quot;github.com/chaitin/MonkeyCode/backend/pkg/modelusage&quot;
+   29  	&quot;github.com/chaitin/MonkeyCode/backend/pkg/netguard&quot;
+   30  )
+   31
+   32  const upstreamFailureMessage = &quot;连接上游模型失败，请检查模型配置，或重试&quot;
+   33
+   34  var errModelForbidden = errors.New(&quot;model is not accessible&quot;)
+   35
+   36  var allowPaths = map[string]string{
+   37  	&quot;/v1/chat/completions&quot;: &quot;/chat/completions&quot;,
+   38  	&quot;/v1/responses&quot;:        &quot;/responses&quot;,
+   39  	&quot;/v1/messages&quot;:         &quot;/messages&quot;,
+   40  }
+   41
+   42  type contextKey struct{}
+   43
+   44  type modelContext struct {
+   45  	modelID       uuid.UUID
+   46  	userID        uuid.UUID
+   47  	vmID          string
+   48  	keyKind       modelapikey.Kind
+   49  	provider      string
+   50  	modelName     string
+   51  	baseURL       string
+   52  	apiKey        string
+   53  	signingSecret string
+   54  }
+   55
+   56  type proxyContext struct {
+   57  	model        *modelContext
+   58  	upstreamPath string
+   59  	stream       bool
+   60  }
+   61
+   62  type Proxy struct {
+   63  	db                  *db.Client
+   64  	logger              *slog.Logger
+   65  	recorder            usageRecorder
+   66  	transport           http.RoundTripper
+   67  	proxy               *httputil.ReverseProxy
+   68  	blockPrivateNetwork bool
+   69  }
+   70
+   71  type usageRecorder interface {
+   72  	Record(ctx context.Context, event modelusage.Event) error
+   73  }
+   74
+   75  type Option func(*Proxy)
+   76
+   77  func WithUsageRecorder(recorder usageRecorder) Option {
+   78  	return func(p *Proxy) {
+   79  		p.recorder = recorder
+   80  	}
+   81  }
+   82
+   83  func WithPrivateNetworkBlocked(block bool) Option {
+   84  	return func(p *Proxy) {
+   85  		p.blockPrivateNetwork = block
+   86  	}
+   87  }
+   88
+   89  func NewProxy(db *db.Client, logger *slog.Logger, opts ...Option) *Proxy {
+   90  	if logger == nil {
+   91  		logger = slog.Default()
+   92  	}
+   93  	p := &amp;Proxy{
+   94  		db:     db,
+   95  		logger: logger.With(&quot;module&quot;, &quot;llmproxy&quot;),
+   96  	}
+   97  	for _, opt := range opts {
+   98  		opt(p)
+   99  	}
+  100  	transport := &amp;http.Transport{
+  101  		MaxIdleConns:        100,
+  102  		MaxIdleConnsPerHost: 100,
+  103  		MaxConnsPerHost:     100,
+  104  		IdleConnTimeout:     90 * time.Second,
+  105  		Proxy:               http.ProxyFromEnvironment,</code></pre></details></div></div></article><article class="finding-card compact" id="monkey-provider-003" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>modelContext</span></div><h3>03 · 运行中切模仅支持 OpenCode，并通过 restart 恢复 session</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SwitchModel 要求 processing、owner/privileged、模型授权；重建配置后若 runtime 不是 OpenCode 就报错，随后调用 TaskManager.Restart 并可选择 LoadSession。</p></section><section><span>白话解释</span><p>换发动机不是所有车都支持：目前只有 OpenCode 能中途换模型，且本质是重启运行时再接回会话。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Codex/Claude 的长任务无法享受平台级模型升降档。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>165–190</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>191–218</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L165-L218" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:165–218</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L165-L218" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  165  // SwitchModel 切换运行中任务使用的模型
+  166  func (a *TaskUsecase) SwitchModel(ctx context.Context, user *domain.User, taskID uuid.UUID, req domain.SwitchTaskModelReq) (*domain.SwitchTaskModelResp, error) {
+  167  	t, owner, err := a.Info(ctx, user, taskID)
+  168  	if err != nil {
+  169  		return nil, err
+  170  	}
+  171  	if !owner &amp;&amp; !a.isPrivileged(ctx, user.ID) {
+  172  		return nil, errcode.ErrForbidden
+  173  	}
+  174  	if t.Status != consts.TaskStatusProcessing {
+  175  		return nil, fmt.Errorf(&quot;task is not processing&quot;)
+  176  	}
+  177  	if t.VirtualMachine == nil {
+  178  		return nil, fmt.Errorf(&quot;task virtual machine is nil&quot;)
+  179  	}
+  180
+  181  	taskOwnerID := t.UserID
+  182  	if a.modelHook != nil {
+  183  		if err := a.modelHook.ValidateAccess(ctx, taskOwnerID, req.ModelID.String()); err != nil {
+  184  			return nil, err
+  185  		}
+  186  	}
+  187  	model, err := a.modelRepo.Get(ctx, taskOwnerID, req.ModelID)
+  188  	if err != nil {
+  189  		return nil, err
+  190  	}
+  191  	runtimeKey, err := a.modelRepo.CreateRuntimeAPIKey(ctx, taskOwnerID, req.ModelID, t.VirtualMachine.ID)
+  192  	if err != nil {
+  193  		return nil, err
+  194  	}
+  195  	if runtimeKey != &quot;&quot; {
+  196  		model.APIKey = runtimeKey
+  197  		if a.cfg != nil {
+  198  			model.BaseURL = a.cfg.LLMProxy.BaseURL + &quot;/v1&quot;
+  199  		}
+  200
+  201  		if a.redis != nil {
+  202  			if err := a.redis.Del(ctx, consts.PublicModelKey(runtimeKey)).Err(); err != nil {
+  203  				return nil, fmt.Errorf(&quot;delete model cache: %w&quot;, err)
+  204  			}
+  205  		}
+  206  	}
+  207
+  208  	var skillIDs, pluginIDs []string
+  209  	if t.Extra != nil {
+  210  		skillIDs = t.Extra.SkillIDs
+  211  		pluginIDs = t.Extra.PluginIDs
+  212  	}
+  213  	coding, configs, agentRes, err := a.getCodingConfigs(ctx, t.CliName, model, skillIDs, pluginIDs, a.userScope(ctx, user), false)
+  214  	if err != nil {
+  215  		return nil, err
+  216  	}
+  217  	if coding != taskflow.CodingAgentOpenCode {
+  218  		return nil, fmt.Errorf(&quot;switch model only supports opencode runtime&quot;)
+  219  	}
+  220  	_ = agentRes // switch-model intentionally leaves AgentResources nil (see design spec: nil = agent does not touch on-disk assets).
+  221
+  222  	envs := map[string]string{
+  223  		&quot;OPENAI_API_KEY&quot;:                   model.APIKey,
+  224  		&quot;OPEN_CODE_API_KEY&quot;:                model.APIKey,
+  225  		&quot;OPENCODE_DISABLE_DEFAULT_PLUGINS&quot;: &quot;1&quot;,
+  226  		&quot;OPENCODE_DISABLE_LSP_DOWNLOAD&quot;:    &quot;true&quot;,
+  227  	}
+  228  	if model.InterfaceType != &quot;&quot; {
+  229  		envs[&quot;MCAI_MODEL_PROVIDER_TYPE&quot;] = model.InterfaceType
+  230  	}
+  231
+  232  	var fromModelID *uuid.UUID
+  233  	if t.Model != nil &amp;&amp; t.Model.ID != uuid.Nil {
+  234  		id := t.Model.ID
+  235  		fromModelID = &amp;id
+  236  	}
+  237  	item := &amp;domain.TaskModelSwitch{
+  238  		ID:          uuid.New(),
+  239  		TaskID:      taskID,
+  240  		UserID:      taskOwnerID,
+  241  		FromModelID: fromModelID,
+  242  		ToModelID:   req.ModelID,
+  243  		RequestID:   req.RequestID,
+  244  		LoadSession: req.LoadSession,
+  245  	}
+  246  	if user.ID != taskOwnerID {
+  247  		a.logger.InfoContext(ctx, &quot;switch model on behalf of task owner&quot;, &quot;operator_id&quot;, user.ID, &quot;task_owner_id&quot;, taskOwnerID, &quot;task_id&quot;, taskID, &quot;model_id&quot;, req.ModelID)
+  248  	}
+  249  	if err := a.repo.CreateModelSwitch(ctx, item); err != nil {
+  250  		return nil, err
+  251  	}
+  252
+  253  	resp, err := a.taskflow.TaskManager().Restart(ctx, taskflow.RestartTaskReq{
+  254  		ID:          taskID,
+  255  		RequestId:   req.RequestID,
+  256  		LoadSession: req.LoadSession,
+  257  		LogStore:    string(t.LogStore),
+  258  		ExecutionConfig: &amp;taskflow.TaskExecutionConfig{
+  259  			Envs:        envs,
+  260  			ConfigFiles: configs,
+  261  		},
+  262  	})
+  263  	if err != nil {
+  264  		if finishErr := a.repo.FinishModelSwitch(ctx, item.ID, false, err.Error(), &quot;&quot;); finishErr != nil {
+  265  			a.logger.WarnContext(ctx, &quot;failed to finish model switch after restart error&quot;, &quot;error&quot;, finishErr, &quot;switch_id&quot;, item.ID)
+  266  		}
+  267  		return nil, err
+  268  	}
+  269  	if resp == nil {
+  270  		resp = &amp;taskflow.RestartTaskResp{
+  271  			RequestId: req.RequestID,
+  272  			Success:   false,
+  273  			Message:   &quot;taskflow restart response is nil&quot;,
+  274  		}
+  275  	}
+  276
+  277  	if err := a.repo.CompleteModelSwitch(ctx, item.ID, taskID, req.ModelID, resp.Success, resp.Message, resp.SessionID); err != nil {
+  278  		a.logger.ErrorContext(ctx, &quot;failed to persist model switch after restart&quot;, &quot;error&quot;, err, &quot;switch_id&quot;, item.ID, &quot;task_id&quot;, taskID)
+  279  		if resp.Success {
+  280  			resp.Message = strings.TrimSpace(resp.Message + &quot;; persist model switch failed: &quot; + err.Error())
+  281  			if finishErr := a.repo.FinishModelSwitch(ctx, item.ID, true, resp.Message, resp.SessionID); finishErr != nil {
+  282  				a.logger.WarnContext(ctx, &quot;failed to finish model switch after persistence error&quot;, &quot;error&quot;, finishErr, &quot;switch_id&quot;, item.ID)
+  283  			}
+  284  		} else {
+  285  			if finishErr := a.repo.FinishModelSwitch(ctx, item.ID, false, resp.Message, resp.SessionID); finishErr != nil {
+  286  				a.logger.WarnContext(ctx, &quot;failed to finish failed model switch&quot;, &quot;error&quot;, finishErr, &quot;switch_id&quot;, item.ID)
+  287  			}
+  288  		}
+  289  	}</code></pre></div></div></article><article class="finding-card compact" id="monkey-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>modelContext</span></div><h3>04 · 平台知道模型窗口上限，但不管理内层 compaction</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>OpenCode 配置缺省 context=200000、output=32000；Taskflow 请求只下发 prompt/config/session，MonkeyCode 仓库没有在推理循环中计算 live context 或触发 compaction 的代码。</p></section><section><span>白话解释</span><p>平台知道油箱标称多大，却不看里面还剩多少油；何时压缩历史由 OpenCode/Codex/Claude 自己决定。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>跨 runtime 的长任务可靠性会随各 CLI 内核不同而波动。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>788–789</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>790–792</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L788-L792" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/usecase/task.go:788–792</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L788-L792" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  788  func modelRuntimeDefaults(m *db.Model) (thinking bool, contextLimit int, outputLimit int) {
+  789  	thinking = m.ThinkingEnabled
+  790  	contextLimit = cmp.Or(m.ContextLimit, 200000)
+  791  	outputLimit = cmp.Or(m.OutputLimit, 32000)
+  792  	return thinking, contextLimit, outputLimit
+  793  }
+  794
+  795  // agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在
+  796  // VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip
+  797  // 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的
+  798  // `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。
+  799  const (
+  800  	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;
+  801  	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;
+  802  	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;
+  803  )
+  804
+  805  // parseStringUUIDs 把字符串切片解析成 uuid.UUID 切片。单条解析失败时打一条
+  806  // WARN 日志后跳过，避免一个脏 ID 把整个 task 创建打挂（resolver 内部对
+  807  // per-resource fetch 失败也是 skip-and-log 的策略，这里保持一致）。
+  808  //
+  809  // kind 用来在日志里区分是 skill_ids 还是 plugin_ids。
+  810  func (a *TaskUsecase) parseStringUUIDs(ctx context.Context, kind string, raw []string) []uuid.UUID {
+  811  	if len(raw) == 0 {
+  812  		return nil
+  813  	}
+  814  	out := make([]uuid.UUID, 0, len(raw))
+  815  	for _, s := range raw {
+  816  		trimmed := strings.TrimSpace(s)
+  817  		id, err := uuid.Parse(trimmed)
+  818  		if err != nil {
+  819  			a.logger.WarnContext(ctx, &quot;getCodingConfigs: skip invalid uuid&quot;,
+  820  				slog.String(&quot;kind&quot;, kind),
+  821  				slog.String(&quot;value&quot;, s),
+  822  				slog.Any(&quot;err&quot;, err))
+  823  			continue
+  824  		}
+  825  		out = append(out, id)
+  826  	}
+  827  	return out
+  828  }
+  829
+  830  // injectOpenCodePlugins 重写 cfs 中 path==opencodePath 的那个 ConfigFile，
+  831  // 把 file:// URL 列表注入到 JSON 的 `plugin` 数组。opencode.json 模板里
+  832  // 没有 plugin 字段是有意为之（plugin 列表是运行时动态的），所以这里走渲染后
+  833  // 后置处理而不是 fork 模板。
+  834  func injectOpenCodePlugins(cfs []taskflow.ConfigFile, opencodePath string, pluginURLs []string) ([]taskflow.ConfigFile, error) {
+  835  	for i, c := range cfs {
+  836  		if c.Path != opencodePath {
+  837  			continue
+  838  		}
+  839  		var obj map[string]any
+  840  		if err := json.Unmarshal([]byte(c.Content), &amp;obj); err != nil {
+  841  			return nil, fmt.Errorf(&quot;unmarshal opencode.json: %w&quot;, err)
+  842  		}
+  843  		obj[&quot;plugin&quot;] = pluginURLs
+  844  		out, err := json.MarshalIndent(obj, &quot;&quot;, &quot;  &quot;)
+  845  		if err != nil {
+  846  			return nil, fmt.Errorf(&quot;marshal opencode.json: %w&quot;, err)
+  847  		}
+  848  		cfs[i].Content = string(out)
+  849  		return cfs, nil
+  850  	}
+  851  	return nil, fmt.Errorf(&quot;opencode.json ConfigFile not found at %s&quot;, opencodePath)
+  852  }
+  853
+  854  // userScope 从 DB 查用户所在 team,不依赖 session 里的 Team 字段。
+  855  func (a *TaskUsecase) userScope(ctx context.Context, user *domain.User) agentresource.ScopeFilter {
+  856  	f := agentresource.ScopeFilter{IncludeGlobal: true}
+  857  	if user == nil || a.dbClient == nil {
+  858  		return f
+  859  	}
+  860  	member, err := a.dbClient.TeamMember.Query().
+  861  		Where(teammember.UserIDEQ(user.ID)).
+  862  		First(ctx)
+  863  	if err != nil {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>backend/biz/task/usecase/task.go · fcc5320b15a1</span><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/usecase/task.go#L788-L792" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  788
+  789  func modelRuntimeDefaults(m *db.Model) (thinking bool, contextLimit int, outputLimit int) {
+  790  	thinking = m.ThinkingEnabled
+  791  	contextLimit = cmp.Or(m.ContextLimit, 200000)
+  792  	outputLimit = cmp.Or(m.OutputLimit, 32000)
+  793  	return thinking, contextLimit, outputLimit
+  794  }
+  795
+  796  // agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在
+  797  // VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip
+  798  // 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的
+  799  // `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。
+  800  const (
+  801  	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;
+  802  	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;
+  803  	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;
+  804  )
+  805
+  806  // parseStringUUIDs 把字符串切片解析成 uuid.UUID 切片。单条解析失败时打一条
+  807  // WARN 日志后跳过，避免一个脏 ID 把整个 task 创建打挂（resolver 内部对
+  808  // per-resource fetch 失败也是 skip-and-log 的策略，这里保持一致）。
+  809  //
+  810  // kind 用来在日志里区分是 skill_ids 还是 plugin_ids。
+  811  func (a *TaskUsecase) parseStringUUIDs(ctx context.Context, kind string, raw []string) []uuid.UUID {
+  812  	if len(raw) == 0 {
+  813  		return nil
+  814  	}
+  815  	out := make([]uuid.UUID, 0, len(raw))
+  816  	for _, s := range raw {
+  817  		trimmed := strings.TrimSpace(s)
+  818  		id, err := uuid.Parse(trimmed)
+  819  		if err != nil {
+  820  			a.logger.WarnContext(ctx, &quot;getCodingConfigs: skip invalid uuid&quot;,
+  821  				slog.String(&quot;kind&quot;, kind),
+  822  				slog.String(&quot;value&quot;, s),
+  823  				slog.Any(&quot;err&quot;, err))
+  824  			continue
+  825  		}
+  826  		out = append(out, id)
+  827  	}
+  828  	return out
+  829  }
+  830
+  831  // injectOpenCodePlugins 重写 cfs 中 path==opencodePath 的那个 ConfigFile，
+  832  // 把 file:// URL 列表注入到 JSON 的 `plugin` 数组。opencode.json 模板里
+  833  // 没有 plugin 字段是有意为之（plugin 列表是运行时动态的），所以这里走渲染后
+  834  // 后置处理而不是 fork 模板。
+  835  func injectOpenCodePlugins(cfs []taskflow.ConfigFile, opencodePath string, pluginURLs []string) ([]taskflow.ConfigFile, error) {
+  836  	for i, c := range cfs {
+  837  		if c.Path != opencodePath {
+  838  			continue
+  839  		}
+  840  		var obj map[string]any
+  841  		if err := json.Unmarshal([]byte(c.Content), &amp;obj); err != nil {
+  842  			return nil, fmt.Errorf(&quot;unmarshal opencode.json: %w&quot;, err)
+  843  		}
+  844  		obj[&quot;plugin&quot;] = pluginURLs
+  845  		out, err := json.MarshalIndent(obj, &quot;&quot;, &quot;  &quot;)
+  846  		if err != nil {
+  847  			return nil, fmt.Errorf(&quot;marshal opencode.json: %w&quot;, err)
+  848  		}
+  849  		cfs[i].Content = string(out)
+  850  		return cfs, nil
+  851  	}
+  852  	return nil, fmt.Errorf(&quot;opencode.json ConfigFile not found at %s&quot;, opencodePath)
+  853  }
+  854
+  855  // userScope 从 DB 查用户所在 team,不依赖 session 里的 Team 字段。
+  856  func (a *TaskUsecase) userScope(ctx context.Context, user *domain.User) agentresource.ScopeFilter {
+  857  	f := agentresource.ScopeFilter{IncludeGlobal: true}
+  858  	if user == nil || a.dbClient == nil {
+  859  		return f
+  860  	}
+  861  	member, err := a.dbClient.TeamMember.Query().
+  862  		Where(teammember.UserIDEQ(user.ID)).
+  863  		First(ctx)</code></pre></details></div></div></article><article class="finding-card compact" id="monkey-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 任务摘要是异步 UI 元数据，不是 Agent 记忆回写</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>TaskSummaryService 从持久化 task log 取 conversation，用独立 LLM 延迟生成 summary 并写入 Task.summary；任务 Create/Continue 协议未读取该字段回灌内层会话。</p></section><section><span>白话解释</span><p>它会给长对话写一段“给人看的剧情简介”，但这段简介不会自动塞回 Agent 的脑子里。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>摘要改善列表浏览和通知，不应被误计为上下文压缩或长期记忆。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>32–61</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>62–92</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · ddc3794fc31e · <a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L32-L92" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>backend/biz/task/service/tasksummary.go:32–92</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L32-L92" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   32  // TaskSummaryService 任务摘要生成服务
+   33  type TaskSummaryService struct {
+   34  	cfg                *config.Config
+   35  	db                 *db.Client
+   36  	llm                *llm.Client
+   37  	summaryQueue       *delayqueue.TaskSummaryQueue
+   38  	logger             *slog.Logger
+   39  	conversationReader ConversationReader
+   40
+   41  	// 生命周期管理
+   42  	cancel context.CancelFunc
+   43  	wg     sync.WaitGroup
+   44  }
+   45
+   46  type tasklogGateway interface {
+   47  	QueryTurns(ctx context.Context, taskID uuid.UUID, taskCreatedAt time.Time, opts tasklog.QueryTurnsOpts, store consts.LogStore) (*tasklog.QueryTurnsResp, error)
+   48  }
+   49
+   50  type ConversationReader interface {
+   51  	Fetch(ctx context.Context, taskID uuid.UUID, createdAt time.Time, store consts.LogStore, initialContent string, maxRounds int) ([]llm.Message, error)
+   52  }
+   53
+   54  type tasklogConversationReader struct {
+   55  	gateway tasklogGateway
+   56  	logger  *slog.Logger
+   57  }
+   58
+   59  func newTasklogConversationReader(gateway tasklogGateway, logger *slog.Logger) *tasklogConversationReader {
+   60  	return &amp;tasklogConversationReader{gateway: gateway, logger: logger}
+   61  }
+   62
+   63  // NewTaskSummaryService 创建任务摘要生成服务
+   64  func NewTaskSummaryService(i *do.Injector) (*TaskSummaryService, error) {
+   65  	cfg := do.MustInvoke[*config.Config](i)
+   66  	d := do.MustInvoke[*db.Client](i)
+   67  	tlg := do.MustInvoke[*tasklog.Gateway](i)
+   68  	sq := do.MustInvoke[*delayqueue.TaskSummaryQueue](i)
+   69  	l := do.MustInvoke[*slog.Logger](i)
+   70  	logger := l.With(&quot;module&quot;, &quot;TaskSummaryService&quot;)
+   71
+   72  	// 使用 task_summary 自己的 LLM 配置，不依赖全局 LLM Client
+   73  	llmClient := llm.NewClient(llm.Config{
+   74  		BaseURL:       cfg.TaskSummary.BaseURL,
+   75  		APIKey:        cfg.TaskSummary.ApiKey,
+   76  		Model:         cfg.TaskSummary.Model,
+   77  		InterfaceType: llm.InterfaceType(cfg.TaskSummary.InterfaceType),
+   78  	})
+   79
+   80  	s := &amp;TaskSummaryService{
+   81  		cfg:                cfg,
+   82  		db:                 d,
+   83  		llm:                llmClient,
+   84  		summaryQueue:       sq,
+   85  		logger:             logger,
+   86  		conversationReader: newTasklogConversationReader(tlg, logger),
+   87  	}
+   88
+   89  	// 启动消费者
+   90  	s.Start(context.Background())
+   91
+   92  	return s, nil
+   93  }
+   94
+   95  // Start 启动消费者（由 server 启动流程调用）
+   96  func (s *TaskSummaryService) Start(ctx context.Context) {
+   97  	if !s.cfg.TaskSummary.Enabled {
+   98  		s.logger.Info(&quot;task summary service is disabled&quot;)
+   99  		return
+  100  	}
+  101
+  102  	s.logger.Info(&quot;task summary service is starting&quot;,
+  103  		&quot;delay&quot;, s.cfg.TaskSummary.Delay,
+  104  		&quot;max_chars&quot;, s.cfg.TaskSummary.MaxChars,
+  105  	)
+  106
+  107  	ctx, s.cancel = context.WithCancel(ctx)
+  108  	s.startConsumer(ctx)
+  109  }
+  110
+  111  // Close 优雅关闭消费者
+  112  func (s *TaskSummaryService) Close() {
+  113  	if s.cancel != nil {
+  114  		s.logger.Info(&quot;task summary service is stopping&quot;)
+  115  		s.cancel()
+  116  		s.wg.Wait()
+  117  		s.logger.Info(&quot;task summary service stopped&quot;)
+  118  	}
+  119  }
+  120
+  121  // EnqueueSummary 将任务加入摘要生成队列
+  122  func (s *TaskSummaryService) EnqueueSummary(ctx context.Context, taskID string, createdAt time.Time) error {
+  123  	if !s.cfg.TaskSummary.Enabled {
+  124  		s.logger.DebugContext(ctx, &quot;task summary is disabled, skip enqueue&quot;, &quot;task_id&quot;, taskID)
+  125  		return nil
+  126  	}
+  127  	s.logger.DebugContext(ctx, &quot;enqueueing task summary&quot;, &quot;task_id&quot;, taskID, &quot;created_at&quot;, createdAt)
+  128
+  129  	payload := &amp;delayqueue.TaskSummaryPayload{
+  130  		TaskID:    taskID,
+  131  		CreatedAt: createdAt.Unix(),
+  132  	}
+  133
+  134  	delay := time.Duration(s.cfg.TaskSummary.Delay) * time.Second
+  135  	if delay &lt;= 0 {
+  136  		delay = 1 * time.Hour
+  137  	}
+  138  	runAt := time.Now().Add(delay)
+  139
+  140  	if _, err := s.summaryQueue.Enqueue(ctx, consts.TaskSummaryQueueKey, payload, runAt, taskID); err != nil {
+  141  		s.logger.ErrorContext(ctx, &quot;failed to enqueue task summary&quot;, &quot;task_id&quot;, taskID, &quot;error&quot;, err)
+  142  		return err
+  143  	}
+  144  	s.logger.DebugContext(ctx, &quot;enqueued task summary&quot;, &quot;task_id&quot;, taskID, &quot;run_at&quot;, runAt)
+  145  	return nil
+  146  }
+  147
+  148  // GenerateSummaryNow 立即生成任务摘要（用于手动触发），返回生成的摘要
+  149  func (s *TaskSummaryService) GenerateSummaryNow(ctx context.Context, taskID string) (string, error) {
+  150  	logger := s.logger.With(&quot;task_id&quot;, taskID)
+  151
+  152  	taskUUID, err := uuid.Parse(taskID)
+  153  	if err != nil {
+  154  		logger.ErrorContext(ctx, &quot;invalid task id&quot;, &quot;error&quot;, err)
+  155  		return &quot;&quot;, fmt.Errorf(&quot;invalid task id: %w&quot;, err)
+  156  	}
+  157
+  158  	t, err := s.db.Task.Query().Where(task.ID(taskUUID)).Only(ctx)
+  159  	if err != nil {
+  160  		logger.ErrorContext(ctx, &quot;failed to get task&quot;, &quot;error&quot;, err)
+  161  		return &quot;&quot;, fmt.Errorf(&quot;failed to get task: %w&quot;, err)
+  162  	}
+  163</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>backend/biz/task/service/tasksummary.go · fcc5320b15a1</span><a href="https://github.com/chaitin/MonkeyCode/blob/fcc5320b15a10dfec4d5891ce44d9d1470e10c2b/backend/biz/task/service/tasksummary.go#L32-L92" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   32  type summaryLLM interface {
+   33  	Chat(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error)
+   34  }
+   35
+   36  // TaskSummaryService 任务摘要生成服务
+   37  type TaskSummaryService struct {
+   38  	cfg                *config.Config
+   39  	db                 *db.Client
+   40  	llm                summaryLLM
+   41  	summaryQueue       *delayqueue.TaskSummaryQueue
+   42  	logger             *slog.Logger
+   43  	conversationReader ConversationReader
+   44
+   45  	// 生命周期管理
+   46  	cancel context.CancelFunc
+   47  	wg     sync.WaitGroup
+   48  }
+   49
+   50  type tasklogGateway interface {
+   51  	QueryTurns(ctx context.Context, taskID uuid.UUID, taskCreatedAt time.Time, opts tasklog.QueryTurnsOpts, store consts.LogStore) (*tasklog.QueryTurnsResp, error)
+   52  }
+   53
+   54  type ConversationReader interface {
+   55  	Fetch(ctx context.Context, taskID uuid.UUID, createdAt time.Time, store consts.LogStore, initialContent string, maxRounds int) ([]llm.Message, error)
+   56  }
+   57
+   58  type tasklogConversationReader struct {
+   59  	gateway tasklogGateway
+   60  	logger  *slog.Logger
+   61  }
+   62
+   63  func newTasklogConversationReader(gateway tasklogGateway, logger *slog.Logger) *tasklogConversationReader {
+   64  	return &amp;tasklogConversationReader{gateway: gateway, logger: logger}
+   65  }
+   66
+   67  // NewTaskSummaryService 创建任务摘要生成服务
+   68  func NewTaskSummaryService(i *do.Injector) (*TaskSummaryService, error) {
+   69  	cfg := do.MustInvoke[*config.Config](i)
+   70  	d := do.MustInvoke[*db.Client](i)
+   71  	tlg := do.MustInvoke[*tasklog.Gateway](i)
+   72  	sq := do.MustInvoke[*delayqueue.TaskSummaryQueue](i)
+   73  	l := do.MustInvoke[*slog.Logger](i)
+   74  	logger := l.With(&quot;module&quot;, &quot;TaskSummaryService&quot;)
+   75
+   76  	// 使用 task_summary 自己的 LLM 配置，不依赖全局 LLM Client
+   77  	llmClient := llm.NewClient(llm.Config{
+   78  		BaseURL:       cfg.TaskSummary.BaseURL,
+   79  		APIKey:        cfg.TaskSummary.ApiKey,
+   80  		Model:         cfg.TaskSummary.Model,
+   81  		InterfaceType: llm.InterfaceType(cfg.TaskSummary.InterfaceType),
+   82  	})
+   83
+   84  	s := &amp;TaskSummaryService{
+   85  		cfg:                cfg,
+   86  		db:                 d,
+   87  		llm:                llmClient,
+   88  		summaryQueue:       sq,
+   89  		logger:             logger,
+   90  		conversationReader: newTasklogConversationReader(tlg, logger),
+   91  	}
+   92
+   93  	// 启动消费者
+   94  	s.Start(context.Background())
+   95
+   96  	return s, nil
+   97  }
+   98
+   99  // Start 启动消费者（由 server 启动流程调用）
+  100  func (s *TaskSummaryService) Start(ctx context.Context) {
+  101  	if !s.cfg.TaskSummary.Enabled {
+  102  		s.logger.Info(&quot;task summary service is disabled&quot;)
+  103  		return
+  104  	}
+  105
+  106  	s.logger.Info(&quot;task summary service is starting&quot;,
+  107  		&quot;delay&quot;, s.cfg.TaskSummary.Delay,
+  108  		&quot;max_chars&quot;, s.cfg.TaskSummary.MaxChars,
+  109  	)
+  110
+  111  	ctx, s.cancel = context.WithCancel(ctx)
+  112  	s.startConsumer(ctx)
+  113  }
+  114
+  115  // Close 优雅关闭消费者
+  116  func (s *TaskSummaryService) Close() {
+  117  	if s.cancel != nil {
+  118  		s.logger.Info(&quot;task summary service is stopping&quot;)
+  119  		s.cancel()
+  120  		s.wg.Wait()
+  121  		s.logger.Info(&quot;task summary service stopped&quot;)
+  122  	}
+  123  }
+  124
+  125  // EnqueueSummary 将任务加入摘要生成队列
+  126  func (s *TaskSummaryService) EnqueueSummary(ctx context.Context, taskID string, createdAt time.Time) error {
+  127  	if !s.cfg.TaskSummary.Enabled {
+  128  		s.logger.DebugContext(ctx, &quot;task summary is disabled, skip enqueue&quot;, &quot;task_id&quot;, taskID)
+  129  		return nil
+  130  	}
+  131  	s.logger.DebugContext(ctx, &quot;enqueueing task summary&quot;, &quot;task_id&quot;, taskID, &quot;created_at&quot;, createdAt)
+  132
+  133  	payload := &amp;delayqueue.TaskSummaryPayload{
+  134  		TaskID:    taskID,
+  135  		CreatedAt: createdAt.Unix(),
+  136  	}
+  137
+  138  	delay := time.Duration(s.cfg.TaskSummary.Delay) * time.Second
+  139  	if delay &lt;= 0 {
+  140  		delay = 1 * time.Hour
+  141  	}
+  142  	runAt := time.Now().Add(delay)
+  143
+  144  	if _, err := s.summaryQueue.Enqueue(ctx, consts.TaskSummaryQueueKey, payload, runAt, taskID); err != nil {
+  145  		s.logger.ErrorContext(ctx, &quot;failed to enqueue task summary&quot;, &quot;task_id&quot;, taskID, &quot;error&quot;, err)
+  146  		return err
+  147  	}
+  148  	s.logger.DebugContext(ctx, &quot;enqueued task summary&quot;, &quot;task_id&quot;, taskID, &quot;run_at&quot;, runAt)
+  149  	return nil
+  150  }
+  151
+  152  // GenerateSummaryNow 立即生成任务摘要（用于手动触发），返回生成的摘要
+  153  func (s *TaskSummaryService) GenerateSummaryNow(ctx context.Context, taskID string) (string, error) {
+  154  	logger := s.logger.With(&quot;task_id&quot;, taskID)
+  155
+  156  	taskUUID, err := uuid.Parse(taskID)
+  157  	if err != nil {
+  158  		logger.ErrorContext(ctx, &quot;invalid task id&quot;, &quot;error&quot;, err)
+  159  		return &quot;&quot;, fmt.Errorf(&quot;invalid task id: %w&quot;, err)
+  160  	}
+  161
+  162  	t, err := s.db.Task.Query().Where(task.ID(taskUUID)).Only(ctx)
+  163  	if err != nil {</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>任务拿到 ModelApiKey/runtime token 和平台 proxy URL；proxy 再从数据库解析 user、VM、provider、真实 BaseURL/API key，重写 Authorization/X-Api-Key 后访问上游。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L585-L590" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:585–590 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>入口只接受 chat/completions、responses、messages；请求必须有 bearer 或 X-api-key，body 中 model 若与 token 绑定模型不一致直接 403。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L28-L34" target="_blank" rel="noreferrer">backend/biz/llmproxy/proxy.go:28–34 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>SwitchModel 要求 processing、owner/privileged、模型授权；重建配置后若 runtime 不是 OpenCode 就报错，随后调用 TaskManager.Restart 并可选择 LoadSession。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L165-L218" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:165–218 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>OpenCode 配置缺省 context=200000、output=32000；Taskflow 请求只下发 prompt/config/session，MonkeyCode 仓库没有在推理循环中计算 live context 或触发 compaction 的代码。</blockquote><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L788-L792" target="_blank" rel="noreferrer">backend/biz/task/usecase/task.go:788–792 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="MonkeyCode architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

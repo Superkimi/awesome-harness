@@ -1,1 +1,571 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>Prime Agent · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Prime Agent · 7787f07415d8</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>2 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Prime Agent · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/prime-agent/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/prime-agent/ch07-security.srt" data-video-status="published">SRT</a><em>7787f07415d8</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 2 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="prime-tools-002" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · before/after tool hook 是可编程的策略门</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>prepareToolCall 在参数 schema 验证后调用 beforeToolCall，返回 block 就生成错误结果而不执行；执行结束后 afterToolCall 可覆盖 content、details、isError 和 terminate。</p></section><section><span>PLAIN LANGUAGE</span><p>审批、审计、脱敏、工具白名单和“这个结果是否要终止 Agent”都可以在一个统一钩子里实现，而且 block 发生在真正执行前。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>策略要留在 dispatch pipeline，而不是散落在每个工具内部；同时要审计扩展是否能覆盖结果或终止状态。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L795-L848" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:795–848</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L795-L848" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>tool lookup、参数验证与 beforeToolCall block。</code></pre></div></div></article><article class="finding-card compact" id="prime-ext-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · Extension runner 按注册顺序串行执行，session-before 可以取消</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>runner.emit 遍历 extension 和 handler，捕获异常写入 ExtensionError；session_before_* 事件收到 cancel 会立即返回。emitToolCall 也按顺序处理 block，emitContext 与 before_provider_request 允许前一个结果成为下一个输入。</p></section><section><span>PLAIN LANGUAGE</span><p>扩展链像一条可观察的中间件管线：早期扩展能阻止 session switch 或 tool call，后面的扩展看到前面已经变换过的 context。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>要把 extension handler 的顺序、异常隔离、阻断和结果变换写进契约测试，避免插件之间互相覆盖。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/runner.ts#L670-L711" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/agent/src/agent-loop.ts#L795-L848" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:795–848 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/extensions/runner.ts:670–711</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/runner.ts#L670-L711" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>顺序 dispatch、session cancel、error capture。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Prime Agent architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>Prime Agent · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Prime Agent · 7787f07415d8</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>5 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Prime Agent · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/prime-agent/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/prime-agent/ch07-security.srt" data-video-status="published">SRT</a><em>7787f07415d8</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 5 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="prime-tools-002" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · before/after tool hook 是可编程的策略门</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>prepareToolCall 在参数 schema 验证后调用 beforeToolCall，返回 block 就生成错误结果而不执行；执行结束后 afterToolCall 可覆盖 content、details、isError 和 terminate。</p></section><section><span>PLAIN LANGUAGE</span><p>审批、审计、脱敏、工具白名单和“这个结果是否要终止 Agent”都可以在一个统一钩子里实现，而且 block 发生在真正执行前。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>策略要留在 dispatch pipeline，而不是散落在每个工具内部；同时要审计扩展是否能覆盖结果或终止状态。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>795–820</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>821–848</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L795-L848" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:795–848</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L795-L848" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  795  async function prepareToolCall(
+  796  	currentContext: AgentContext,
+  797  	assistantMessage: AssistantMessage,
+  798  	toolCall: AgentToolCall,
+  799  	config: AgentLoopConfig,
+  800  	signal: AbortSignal | undefined,
+  801  ): Promise&lt;PreparedToolCall | ImmediateToolCallOutcome&gt; {
+  802  	const tool = currentContext.tools?.find((t) =&gt; t.name === toolCall.name);
+  803  	if (!tool) {
+  804  		return {
+  805  			kind: &quot;immediate&quot;,
+  806  			result: createErrorToolResult(`Tool ${toolCall.name} not found`),
+  807  			isError: true,
+  808  		};
+  809  	}
+  810
+  811  	try {
+  812  		const preparedToolCall = prepareToolCallArguments(tool, toolCall);
+  813  		const validatedArgs = validateToolArguments(tool, preparedToolCall);
+  814  		if (config.beforeToolCall) {
+  815  			const beforeResult = await maybePromiseWithAbort(
+  816  				config.beforeToolCall(
+  817  					{
+  818  						assistantMessage,
+  819  						toolCall,
+  820  						args: validatedArgs,
+  821  						context: currentContext,
+  822  					},
+  823  					signal,
+  824  				),
+  825  				signal,
+  826  			);
+  827  			if (beforeResult?.block) {
+  828  				return {
+  829  					kind: &quot;immediate&quot;,
+  830  					result: createErrorToolResult(beforeResult.reason || &quot;Tool execution was blocked&quot;),
+  831  					isError: true,
+  832  				};
+  833  			}
+  834  		}
+  835  		return {
+  836  			kind: &quot;prepared&quot;,
+  837  			toolCall,
+  838  			tool,
+  839  			args: validatedArgs,
+  840  		};
+  841  	} catch (error) {
+  842  		return {
+  843  			kind: &quot;immediate&quot;,
+  844  			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+  845  			isError: true,
+  846  		};
+  847  	}
+  848  }
+  849
+  850  async function executePreparedToolCall(
+  851  	prepared: PreparedToolCall,
+  852  	signal: AbortSignal | undefined,
+  853  	emit: AgentEventSink,
+  854  ): Promise&lt;ExecutedToolCallOutcome&gt; {
+  855  	const updateEvents: Promise&lt;void&gt;[] = [];
+  856  	let acceptingUpdates = true;
+  857
+  858  	try {
+  859  		throwIfAborted(signal);
+  860  		const result = await raceWithAbort(
+  861  			prepared.tool.execute(prepared.toolCall.id, prepared.args as never, signal, (partialResult) =&gt; {
+  862  				if (!acceptingUpdates || signal?.aborted) {
+  863  					return;
+  864  				}
+  865  				updateEvents.push(
+  866  					Promise.resolve(
+  867  						emit({
+  868  							type: &quot;tool_execution_update&quot;,
+  869  							toolCallId: prepared.toolCall.id,
+  870  							toolName: prepared.toolCall.name,
+  871  							args: prepared.toolCall.arguments,
+  872  							partialResult,
+  873  						}),
+  874  					),
+  875  				);
+  876  			}),
+  877  			signal,
+  878  		);
+  879  		acceptingUpdates = false;
+  880  		try {
+  881  			await raceWithAbort(
+  882  				Promise.all(updateEvents).then(() =&gt; undefined),
+  883  				signal,
+  884  			);
+  885  		} catch (error) {
+  886  			if (!signal?.aborted || !isAbortError(error)) {
+  887  				throw error;
+  888  			}
+  889  		}
+  890  		return { result, isError: false };
+  891  	} catch (error) {
+  892  		acceptingUpdates = false;
+  893  		await raceWithAbort(
+  894  			Promise.all(updateEvents).then(() =&gt; undefined),
+  895  			signal,
+  896  		).catch(() =&gt; undefined);
+  897  		return {
+  898  			result: createErrorToolResult(
+  899  				signal?.aborted ? &quot;Tool execution aborted&quot; : error instanceof Error ? error.message : String(error),
+  900  			),
+  901  			isError: true,
+  902  		};
+  903  	}
+  904  }
+  905
+  906  async function finalizeExecutedToolCall(
+  907  	currentContext: AgentContext,
+  908  	assistantMessage: AssistantMessage,
+  909  	prepared: PreparedToolCall,
+  910  	executed: ExecutedToolCallOutcome,
+  911  	config: AgentLoopConfig,
+  912  	signal: AbortSignal | undefined,
+  913  ): Promise&lt;FinalizedToolCallOutcome&gt; {
+  914  	let result = executed.result;
+  915  	let isError = executed.isError;
+  916
+  917  	if (config.afterToolCall) {
+  918  		try {
+  919  			const afterResult = await maybePromiseWithAbort(</code></pre></div></div></article><article class="finding-card compact" id="prime-exec-001" data-finding-dimension="execution"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>execution</span></div><h3>02 · 默认 bash 是宿主 shell，不等于 OS 沙箱</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>createLocalBashOperations 使用 getShellConfig 得到的 shell，spawn 时传入当前 cwd 与 shell env，detached 子进程由 killProcessTree 管理；BashOperations 只是可插拔执行接口。</p></section><section><span>PLAIN LANGUAGE</span><p>它能可靠地超时和杀掉进程树，但默认命令就是在当前机器的 shell 里跑；源码没有在这里自动启动容器、Seatbelt 或 bubblewrap。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>如果产品面向不可信仓库，必须显式注入远端/容器 BashOperations 或在更上层做 sandbox policy，不能把 timeout 当隔离。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>36–46</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>47–58</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><div class="finding-caveat"><span>CAVEAT / RISK</span><ul><li>上层配置或 extension 可以替换 operations；本结论只针对这个默认实现。</li></ul></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/tools/bash.ts#L36-L58" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/bash.ts:36–58</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/tools/bash.ts#L36-L58" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   36  /**
+   37   * Pluggable operations for the bash tool.
+   38   * Override these to delegate command execution to remote systems (for example SSH).
+   39   */
+   40  export interface BashOperations {
+   41  	/**
+   42  	 * Execute a command and stream output.
+   43  	 * @param command The command to execute
+   44  	 * @param cwd Working directory
+   45  	 * @param options Execution options
+   46  	 * @returns Promise resolving to exit code (null if killed)
+   47  	 */
+   48  	exec: (
+   49  		command: string,
+   50  		cwd: string,
+   51  		options: {
+   52  			onData: (data: Buffer) =&gt; void;
+   53  			signal?: AbortSignal;
+   54  			timeout?: number;
+   55  			env?: NodeJS.ProcessEnv;
+   56  		},
+   57  	) =&gt; Promise&lt;{ exitCode: number | null }&gt;;
+   58  }
+   59
+   60  /**
+   61   * Create bash operations using pi&#39;s built-in local shell execution backend.
+   62   *
+   63   * This is useful for extensions that intercept user_bash and still want pi&#39;s
+   64   * standard local shell behavior while wrapping or rewriting commands.
+   65   */
+   66  export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
+   67  	return {
+   68  		exec: (command, cwd, { onData, signal, timeout, env }) =&gt; {
+   69  			return new Promise((resolve, reject) =&gt; {
+   70  				const { shell, args } = getShellConfig(options?.shellPath);
+   71  				if (!existsSync(cwd)) {
+   72  					reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
+   73  					return;
+   74  				}
+   75  				const child = spawn(shell, [...args, command], {
+   76  					cwd,
+   77  					detached: process.platform !== &quot;win32&quot;,
+   78  					env: env ?? getShellEnv(),
+   79  					stdio: [&quot;ignore&quot;, &quot;pipe&quot;, &quot;pipe&quot;],
+   80  				});
+   81  				if (child.pid) trackDetachedChildPid(child.pid);
+   82  				let timedOut = false;
+   83  				let timeoutHandle: NodeJS.Timeout | undefined;
+   84  				// Set timeout if provided.
+   85  				if (timeout !== undefined &amp;&amp; timeout &gt; 0) {
+   86  					timeoutHandle = setTimeout(() =&gt; {
+   87  						timedOut = true;
+   88  						if (child.pid) killProcessTree(child.pid);
+   89  					}, timeout * 1000);
+   90  				}
+   91  				// Stream stdout and stderr.
+   92  				child.stdout?.on(&quot;data&quot;, onData);
+   93  				child.stderr?.on(&quot;data&quot;, onData);
+   94  				// Handle abort signal by killing the entire process tree.
+   95  				const onAbort = () =&gt; {
+   96  					if (child.pid) killProcessTree(child.pid);
+   97  				};
+   98  				if (signal) {
+   99  					if (signal.aborted) onAbort();
+  100  					else signal.addEventListener(&quot;abort&quot;, onAbort, { once: true });
+  101  				}
+  102  				// Handle shell spawn errors and wait for the process to terminate without hanging
+  103  				// on inherited stdio handles held by detached descendants.
+  104  				waitForChildProcess(child)
+  105  					.then((code) =&gt; {
+  106  						if (child.pid) untrackDetachedChildPid(child.pid);
+  107  						if (timeoutHandle) clearTimeout(timeoutHandle);
+  108  						if (signal) signal.removeEventListener(&quot;abort&quot;, onAbort);
+  109  						if (signal?.aborted) {
+  110  							reject(new Error(&quot;aborted&quot;));
+  111  							return;
+  112  						}
+  113  						if (timedOut) {
+  114  							reject(new Error(`timeout:${timeout}`));
+  115  							return;
+  116  						}
+  117  						resolve({ exitCode: code });
+  118  					})
+  119  					.catch((err) =&gt; {
+  120  						if (child.pid) untrackDetachedChildPid(child.pid);
+  121  						if (timeoutHandle) clearTimeout(timeoutHandle);
+  122  						if (signal) signal.removeEventListener(&quot;abort&quot;, onAbort);
+  123  						reject(err);
+  124  					});
+  125  			});
+  126  		},
+  127  	};
+  128  }
+  129</code></pre></div></div></article><article class="finding-card compact" id="prime-exec-002" data-finding-dimension="execution"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>03 · Bash 输出有行/字节上限并把完整内容留在临时文件</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Bash tool description 宣布输出按 DEFAULT_MAX_LINES 或 DEFAULT_MAX_BYTES 截断；OutputAccumulator 在流式 update 和结束时生成 truncation/fullOutputPath details。</p></section><section><span>PLAIN LANGUAGE</span><p>大日志不会把上下文撑爆，模型还能拿到一个完整输出文件路径继续查。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>执行工具应把展示输出和可恢复 artifact 分离，并在 tool result 中明确截断范围。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>250–257</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>258–266</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/tools/bash.ts#L250-L266" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/bash.ts:250–266</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/tools/bash.ts#L250-L266" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  250  	const truncation = result.details?.truncation;
+  251  	const fullOutputPath = result.details?.fullOutputPath;
+  252  	if (truncation?.truncated || fullOutputPath) {
+  253  		const warnings: string[] = [];
+  254  		if (fullOutputPath) {
+  255  			warnings.push(`Full output: ${fullOutputPath}`);
+  256  		}
+  257  		if (truncation?.truncated) {
+  258  			if (truncation.truncatedBy === &quot;lines&quot;) {
+  259  				warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
+  260  			} else {
+  261  				warnings.push(
+  262  					`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
+  263  				);
+  264  			}
+  265  		}
+  266  		component.addChild(new Text(`\n${theme.fg(&quot;warning&quot;, `[${warnings.join(&quot;. &quot;)}]`)}`, 0, 0));
+  267  	}
+  268
+  269  	if (startedAt !== undefined) {
+  270  		const label = options.isPartial ? &quot;Elapsed&quot; : &quot;Took&quot;;
+  271  		const endTime = endedAt ?? Date.now();
+  272  		component.addChild(new Text(`\n${theme.fg(&quot;muted&quot;, `${label} ${formatDuration(endTime - startedAt)}`)}`, 0, 0));
+  273  	}
+  274  }
+  275
+  276  export function createBashToolDefinition(
+  277  	cwd: string,
+  278  	options?: BashToolOptions,
+  279  ): ToolDefinition&lt;typeof bashSchema, BashToolDetails | undefined, BashRenderState&gt; {
+  280  	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
+  281  	const commandPrefix = options?.commandPrefix;
+  282  	const spawnHook = options?.spawnHook;
+  283  	const definition: ToolDefinition&lt;typeof bashSchema, BashToolDetails | undefined, BashRenderState&gt; = {
+  284  		name: &quot;bash&quot;,
+  285  		label: &quot;bash&quot;,
+  286  		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+  287  		promptSnippet: &quot;Execute bash commands (ls, grep, find, etc.)&quot;,
+  288  		parameters: bashSchema,
+  289  		async execute(
+  290  			_toolCallId,
+  291  			{ command, timeout }: { command: string; timeout?: number },
+  292  			signal?: AbortSignal,
+  293  			onUpdate?,
+  294  			_ctx?,
+  295  		) {
+  296  			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
+  297  			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
+  298  			const output = new OutputAccumulator({ tempFilePrefix: &quot;pi-bash&quot; });
+  299  			let updateTimer: NodeJS.Timeout | undefined;
+  300  			let updateDirty = false;
+  301  			let lastUpdateAt = 0;
+  302
+  303  			const emitOutputUpdate = () =&gt; {
+  304  				if (!onUpdate || !updateDirty) return;
+  305  				updateDirty = false;
+  306  				lastUpdateAt = Date.now();
+  307  				const snapshot = output.snapshot({ persistIfTruncated: true });
+  308  				onUpdate({
+  309  					content: [{ type: &quot;text&quot;, text: snapshot.content || &quot;&quot; }],
+  310  					details: {
+  311  						truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
+  312  						fullOutputPath: snapshot.fullOutputPath,
+  313  					},
+  314  				});
+  315  			};
+  316
+  317  			const clearUpdateTimer = () =&gt; {
+  318  				if (updateTimer) {
+  319  					clearTimeout(updateTimer);
+  320  					updateTimer = undefined;
+  321  				}
+  322  			};
+  323
+  324  			const scheduleOutputUpdate = () =&gt; {
+  325  				if (!onUpdate) return;
+  326  				updateDirty = true;
+  327  				const delay = BASH_UPDATE_THROTTLE_MS - (Date.now() - lastUpdateAt);
+  328  				if (delay &lt;= 0) {
+  329  					clearUpdateTimer();
+  330  					emitOutputUpdate();
+  331  					return;
+  332  				}
+  333  				updateTimer ??= setTimeout(() =&gt; {
+  334  					updateTimer = undefined;
+  335  					emitOutputUpdate();
+  336  				}, delay);
+  337  			};</code></pre></div></div></article><article class="finding-card compact" id="prime-ext-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>04 · Extension runner 按注册顺序串行执行，session-before 可以取消</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>runner.emit 遍历 extension 和 handler，捕获异常写入 ExtensionError；session_before_* 事件收到 cancel 会立即返回。emitToolCall 也按顺序处理 block，emitContext 与 before_provider_request 允许前一个结果成为下一个输入。</p></section><section><span>PLAIN LANGUAGE</span><p>扩展链像一条可观察的中间件管线：早期扩展能阻止 session switch 或 tool call，后面的扩展看到前面已经变换过的 context。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>要把 extension handler 的顺序、异常隔离、阻断和结果变换写进契约测试，避免插件之间互相覆盖。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>670–689</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>690–711</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/runner.ts#L670-L711" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/extensions/runner.ts:670–711</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/runner.ts#L670-L711" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  670  	private isSessionBeforeEvent(event: RunnerEmitEvent): event is SessionBeforeEvent {
+  671  		return (
+  672  			event.type === &quot;session_before_switch&quot; ||
+  673  			event.type === &quot;session_before_fork&quot; ||
+  674  			event.type === &quot;session_before_compact&quot; ||
+  675  			event.type === &quot;session_before_tree&quot;
+  676  		);
+  677  	}
+  678
+  679  	async emit&lt;TEvent extends RunnerEmitEvent&gt;(event: TEvent): Promise&lt;RunnerEmitResult&lt;TEvent&gt;&gt; {
+  680  		const ctx = this.createContext();
+  681  		let result: SessionBeforeEventResult | undefined;
+  682
+  683  		for (const ext of this.extensions) {
+  684  			const handlers = ext.handlers.get(event.type);
+  685  			if (!handlers || handlers.length === 0) continue;
+  686
+  687  			for (const handler of handlers) {
+  688  				try {
+  689  					const handlerResult = await handler(event, ctx);
+  690
+  691  					if (this.isSessionBeforeEvent(event) &amp;&amp; handlerResult) {
+  692  						result = handlerResult as SessionBeforeEventResult;
+  693  						if (result.cancel) {
+  694  							return result as RunnerEmitResult&lt;TEvent&gt;;
+  695  						}
+  696  					}
+  697  				} catch (err) {
+  698  					const message = err instanceof Error ? err.message : String(err);
+  699  					const stack = err instanceof Error ? err.stack : undefined;
+  700  					this.emitError({
+  701  						extensionPath: ext.path,
+  702  						event: event.type,
+  703  						error: message,
+  704  						stack,
+  705  					});
+  706  				}
+  707  			}
+  708  		}
+  709
+  710  		return result as RunnerEmitResult&lt;TEvent&gt;;
+  711  	}
+  712
+  713  	async emitMessageEnd(event: MessageEndEvent): Promise&lt;AgentMessage | undefined&gt; {
+  714  		const ctx = this.createContext();
+  715  		let currentMessage = event.message;
+  716  		let modified = false;
+  717
+  718  		for (const ext of this.extensions) {
+  719  			const handlers = ext.handlers.get(&quot;message_end&quot;);
+  720  			if (!handlers || handlers.length === 0) continue;
+  721
+  722  			for (const handler of handlers) {
+  723  				try {
+  724  					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
+  725  					const handlerResult = (await handler(currentEvent, ctx)) as MessageEndEventResult | undefined;
+  726  					if (!handlerResult?.message) continue;
+  727
+  728  					if (handlerResult.message.role !== currentMessage.role) {
+  729  						this.emitError({
+  730  							extensionPath: ext.path,
+  731  							event: &quot;message_end&quot;,
+  732  							error: &quot;message_end handlers must return a message with the same role&quot;,
+  733  						});
+  734  						continue;
+  735  					}
+  736
+  737  					currentMessage = handlerResult.message;
+  738  					modified = true;
+  739  				} catch (err) {
+  740  					const message = err instanceof Error ? err.message : String(err);
+  741  					const stack = err instanceof Error ? err.stack : undefined;
+  742  					this.emitError({
+  743  						extensionPath: ext.path,
+  744  						event: &quot;message_end&quot;,
+  745  						error: message,
+  746  						stack,
+  747  					});
+  748  				}
+  749  			}
+  750  		}
+  751
+  752  		return modified ? currentMessage : undefined;
+  753  	}
+  754
+  755  	async emitToolResult(event: ToolResultEvent): Promise&lt;ToolResultEventResult | undefined&gt; {
+  756  		const ctx = this.createContext();
+  757  		const currentEvent: ToolResultEvent = { ...event };
+  758  		let modified = false;
+  759
+  760  		for (const ext of this.extensions) {
+  761  			const handlers = ext.handlers.get(&quot;tool_result&quot;);
+  762  			if (!handlers || handlers.length === 0) continue;
+  763
+  764  			for (const handler of handlers) {
+  765  				try {
+  766  					const handlerResult = (await handler(currentEvent, ctx)) as ToolResultEventResult | undefined;
+  767  					if (!handlerResult) continue;
+  768
+  769  					if (handlerResult.content !== undefined) {
+  770  						currentEvent.content = handlerResult.content;
+  771  						modified = true;
+  772  					}
+  773  					if (handlerResult.details !== undefined) {
+  774  						currentEvent.details = handlerResult.details;
+  775  						modified = true;
+  776  					}
+  777  					if (handlerResult.isError !== undefined) {
+  778  						currentEvent.isError = handlerResult.isError;
+  779  						modified = true;
+  780  					}
+  781  				} catch (err) {
+  782  					const message = err instanceof Error ? err.message : String(err);</code></pre></div></div></article><article class="finding-card compact" id="prime-risk-001" data-finding-dimension="execution"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L2</b><span>risk</span><span>execution</span></div><h3>05 · 扩展可以获得 shell/exec 和 active tool 控制权，权限面很宽</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ExtensionAPI 同时暴露 exec、registerTool、setActiveTools、provider registration、appendEntry 和 session actions；资源 loader 还会加载用户/项目/CLI extension。</p></section><section><span>PLAIN LANGUAGE</span><p>插件一旦被加载，不只是加一段说明，它可以执行命令、改工具面、持久化状态和注册模型。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>生产部署应对 extension 来源做 allowlist/签名/隔离，至少在报告和审批面把 extension 能力显式列出来。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1080–1120</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1121–1163</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><div class="finding-caveat"><span>CAVEAT / RISK</span><ul><li>本风险是插件权限面的架构推断，不等于每个 extension 都恶意。</li></ul></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/types.ts#L1080-L1163" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/extensions/types.ts:1080–1163</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/types.ts#L1080-L1163" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1080  	/** Register a tool that the LLM can call. */
+ 1081  	registerTool&lt;TParams extends TSchema = TSchema, TDetails = unknown, TState = any&gt;(
+ 1082  		tool: ToolDefinition&lt;TParams, TDetails, TState&gt;,
+ 1083  	): void;
+ 1084
+ 1085  	// =========================================================================
+ 1086  	// Command, Shortcut, Flag Registration
+ 1087  	// =========================================================================
+ 1088
+ 1089  	/** Register a custom command. */
+ 1090  	registerCommand(name: string, options: Omit&lt;RegisteredCommand, &quot;name&quot; | &quot;sourceInfo&quot;&gt;): void;
+ 1091
+ 1092  	/** Register a keyboard shortcut. */
+ 1093  	registerShortcut(
+ 1094  		shortcut: KeyId,
+ 1095  		options: {
+ 1096  			description?: string;
+ 1097  			handler: (ctx: ExtensionContext) =&gt; Promise&lt;void&gt; | void;
+ 1098  		},
+ 1099  	): void;
+ 1100
+ 1101  	/** Register a CLI flag. */
+ 1102  	registerFlag(
+ 1103  		name: string,
+ 1104  		options: {
+ 1105  			description?: string;
+ 1106  			type: &quot;boolean&quot; | &quot;string&quot;;
+ 1107  			default?: boolean | string;
+ 1108  		},
+ 1109  	): void;
+ 1110
+ 1111  	/** Get the value of a registered CLI flag. */
+ 1112  	getFlag(name: string): boolean | string | undefined;
+ 1113
+ 1114  	// =========================================================================
+ 1115  	// Message Rendering
+ 1116  	// =========================================================================
+ 1117
+ 1118  	/** Register a custom renderer for CustomMessageEntry. */
+ 1119  	registerMessageRenderer&lt;T = unknown&gt;(customType: string, renderer: MessageRenderer&lt;T&gt;): void;
+ 1120
+ 1121  	// =========================================================================
+ 1122  	// Actions
+ 1123  	// =========================================================================
+ 1124
+ 1125  	/** Send a custom message to the session. */
+ 1126  	sendMessage&lt;T = unknown&gt;(
+ 1127  		message: Pick&lt;CustomMessage&lt;T&gt;, &quot;customType&quot; | &quot;content&quot; | &quot;display&quot; | &quot;details&quot;&gt;,
+ 1128  		options?: { triggerTurn?: boolean; deliverAs?: &quot;steer&quot; | &quot;followUp&quot; | &quot;nextTurn&quot; },
+ 1129  	): void;
+ 1130
+ 1131  	/**
+ 1132  	 * Send a user message to the agent. Always triggers a turn.
+ 1133  	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+ 1134  	 */
+ 1135  	sendUserMessage(
+ 1136  		content: string | (TextContent | ImageContent)[],
+ 1137  		options?: { deliverAs?: &quot;steer&quot; | &quot;followUp&quot; },
+ 1138  	): void;
+ 1139
+ 1140  	/** Append a custom entry to the session for state persistence (not sent to LLM). */
+ 1141  	appendEntry&lt;T = unknown&gt;(customType: string, data?: T): void;
+ 1142
+ 1143  	// =========================================================================
+ 1144  	// Session Metadata
+ 1145  	// =========================================================================
+ 1146
+ 1147  	/** Set the session display name (shown in session selector). */
+ 1148  	setSessionName(name: string): void | Promise&lt;void&gt;;
+ 1149
+ 1150  	/** Get the current session name, if set. */
+ 1151  	getSessionName(): string | undefined;
+ 1152
+ 1153  	/** Set or clear a label on an entry. Labels are user-defined markers for bookmarking/navigation. */
+ 1154  	setLabel(entryId: string, label: string | undefined): void;
+ 1155
+ 1156  	/** Execute a shell command. */
+ 1157  	exec(command: string, args: string[], options?: ExecOptions): Promise&lt;ExecResult&gt;;
+ 1158
+ 1159  	/** Get the list of currently active tool names. */
+ 1160  	getActiveTools(): string[];
+ 1161
+ 1162  	/** Get all configured tools with parameter schema and source metadata. */
+ 1163  	getAllTools(): ToolInfo[];
+ 1164
+ 1165  	/** Set the active tools by name. */
+ 1166  	setActiveTools(toolNames: string[]): void;
+ 1167
+ 1168  	/** Get available slash commands in the current session. */
+ 1169  	getCommands(): SlashCommandInfo[];
+ 1170
+ 1171  	// =========================================================================
+ 1172  	// Model and Thinking Level
+ 1173  	// =========================================================================
+ 1174
+ 1175  	/** Set the current model. Returns false if no API key available. */
+ 1176  	setModel(model: Model&lt;any&gt;): Promise&lt;boolean&gt;;
+ 1177
+ 1178  	/** Get current thinking level. */
+ 1179  	getThinkingLevel(): ThinkingLevel;
+ 1180
+ 1181  	/** Set thinking level (clamped to model capabilities). */
+ 1182  	setThinkingLevel(level: ThinkingLevel): void;
+ 1183
+ 1184  	// =========================================================================
+ 1185  	// Provider Registration
+ 1186  	// =========================================================================
+ 1187
+ 1188  	/**
+ 1189  	 * Register or override a model provider.
+ 1190  	 *
+ 1191  	 * If `models` is provided: replaces all existing models for this provider.
+ 1192  	 * If only `baseUrl` is provided: overrides the URL for existing models.
+ 1193  	 * If `oauth` is provided: registers OAuth provider for /login support.
+ 1194  	 * If `streamSimple` is provided: registers a custom API stream handler.
+ 1195  	 *
+ 1196  	 * During initial extension load this call is queued and applied once the
+ 1197  	 * runner has bound its context. After that it takes effect immediately, so
+ 1198  	 * it is safe to call from command handlers or event callbacks without
+ 1199  	 * requiring a `/reload`.
+ 1200  	 *
+ 1201  	 * @example
+ 1202  	 * // Register a new provider with custom models
+ 1203  	 * pi.registerProvider(&quot;my-proxy&quot;, {
+ 1204  	 *   baseUrl: &quot;https://proxy.example.com&quot;,
+ 1205  	 *   apiKey: &quot;PROXY_API_KEY&quot;,
+ 1206  	 *   api: &quot;anthropic-messages&quot;,
+ 1207  	 *   models: [
+ 1208  	 *     {
+ 1209  	 *       id: &quot;claude-sonnet-4-20250514&quot;,
+ 1210  	 *       name: &quot;Claude 4 Sonnet (proxy)&quot;,
+ 1211  	 *       reasoning: false,
+ 1212  	 *       input: [&quot;text&quot;, &quot;image&quot;],
+ 1213  	 *       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+ 1214  	 *       contextWindow: 200000,
+ 1215  	 *       maxTokens: 16384
+ 1216  	 *     }
+ 1217  	 *   ]
+ 1218  	 * });
+ 1219  	 *
+ 1220  	 * @example
+ 1221  	 * // Override baseUrl for an existing provider
+ 1222  	 * pi.registerProvider(&quot;anthropic&quot;, {
+ 1223  	 *   baseUrl: &quot;https://proxy.example.com&quot;
+ 1224  	 * });
+ 1225  	 *
+ 1226  	 * @example
+ 1227  	 * // Register provider with OAuth support
+ 1228  	 * pi.registerProvider(&quot;corporate-ai&quot;, {
+ 1229  	 *   baseUrl: &quot;https://ai.corp.com&quot;,
+ 1230  	 *   api: &quot;openai-responses&quot;,
+ 1231  	 *   models: [...],
+ 1232  	 *   oauth: {
+ 1233  	 *     name: &quot;Corporate AI (SSO)&quot;,
+ 1234  	 *     async login(callbacks) { ... },</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>prepareToolCall 在参数 schema 验证后调用 beforeToolCall，返回 block 就生成错误结果而不执行；执行结束后 afterToolCall 可覆盖 content、details、isError 和 terminate。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L795-L848" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:795–848 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>createLocalBashOperations 使用 getShellConfig 得到的 shell，spawn 时传入当前 cwd 与 shell env，detached 子进程由 killProcessTree 管理；BashOperations 只是可插拔执行接口。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/tools/bash.ts#L36-L58" target="_blank" rel="noreferrer">packages/coding-agent/src/core/tools/bash.ts:36–58 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>Bash tool description 宣布输出按 DEFAULT_MAX_LINES 或 DEFAULT_MAX_BYTES 截断；OutputAccumulator 在流式 update 和结束时生成 truncation/fullOutputPath details。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/tools/bash.ts#L250-L266" target="_blank" rel="noreferrer">packages/coding-agent/src/core/tools/bash.ts:250–266 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>runner.emit 遍历 extension 和 handler，捕获异常写入 ExtensionError；session_before_* 事件收到 cancel 会立即返回。emitToolCall 也按顺序处理 block，emitContext 与 before_provider_request 允许前一个结果成为下一个输入。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/extensions/runner.ts#L670-L711" target="_blank" rel="noreferrer">packages/coding-agent/src/core/extensions/runner.ts:670–711 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Prime Agent architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

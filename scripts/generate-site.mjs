@@ -2,12 +2,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { projects, chapterDefs, dimensionNotes } from "../data/projects.mjs";
 import { videoEntries } from "../data/videos.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = path.join(root, "sources");
+const historicalSourceRoot = path.resolve(root, "..", "sources");
 const siteRoot = path.join(root, "site");
 const sourceInfo = new Map(projects.map((project) => [project.slug, project]));
 const evidenceRoot = path.join(root, "data", "legacy", "evidence");
@@ -33,7 +35,30 @@ function esc(value) {
   return String(value ?? "").replace(/[ \t]+(?=\n|$)/g, "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 function unescape(value) { return String(value ?? "").replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&#39;", "'"); }
-function repoPath(project, relative) { return path.join(sourceRoot, project.slug, relative); }
+function sourceRepo(project) {
+  const aliases = project.slug === "monkeycode" ? ["MonkeyCode", "monkeycode"] : [project.slug];
+  const candidates = aliases.flatMap((slug) => [path.join(sourceRoot, slug), path.join(historicalSourceRoot, slug)]);
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, ".git"))) || candidates[0];
+}
+function repoPath(project, relative) { return path.join(sourceRepo(project), relative); }
+const sourceContentCache = new Map();
+function sourceSnippet(project, commit, relative, start, end, maxLines = 72) {
+  const repo = sourceRepo(project);
+  const file = path.join(repo, relative);
+  const cacheKey = `${repo}\0${commit || "WORKTREE"}\0${relative}`;
+  let content = sourceContentCache.get(cacheKey) || "";
+  if (!content && !sourceContentCache.has(cacheKey) && fs.existsSync(path.join(repo, ".git")) && commit) {
+    const shown = spawnSync("git", ["-C", repo, "show", `${commit}:${relative}`], { encoding: "utf8" });
+    if (shown.status === 0) content = shown.stdout;
+  }
+  if (!content && !sourceContentCache.has(cacheKey) && fs.existsSync(file)) content = fs.readFileSync(file, "utf8");
+  sourceContentCache.set(cacheKey, content);
+  if (!content) return "";
+  const lines = content.split(/\r?\n/);
+  const safeStart = Math.max(1, Number(start) || 1);
+  const safeEnd = Math.min(lines.length, Math.max(safeStart, Number(end) || safeStart) + maxLines - 1);
+  return lines.slice(safeStart - 1, safeEnd).map((line, index) => `${String(safeStart + index).padStart(5, " ")}  ${line}`).join("\n");
+}
 function sourceUrl(project, relative, start, end) { return `https://github.com/${project.repo}/blob/${project.commit}/${relative}#L${start}-L${end}`; }
 function rel(from, to) { return path.relative(path.dirname(from), to).replaceAll(path.sep, "/") || "index.html"; }
 function langName(lang) { return lang === "zh" ? "中文" : "English"; }
@@ -129,16 +154,16 @@ const findingDimensionAliases = {
 };
 
 const chapterFindingPatterns = {
-  overview: /architecture|entry|runtime_loop|harness-routing|backend-runtime/i,
-  architecture: /architecture|entry|backend-runtime|middleware/i,
-  loop: /runtime_loop|architecture-loop|entry-session-loop|harness-routing/i,
-  model: /provider|model/i,
-  tools: /tools|editing|tool-dispatch/i,
-  context: /context/i,
-  security: /permissions|sandbox|security|trust/i,
-  ecosystem: /extensions|mcp|skills|plugins|connectors/i,
-  collaboration: /collaboration|subagents|swarm/i,
-  evidence: /tests|observability|persistence|maturity|recovery/i
+  overview: /architecture|loop/i,
+  architecture: /^architecture$/i,
+  loop: /^loop$/i,
+  model: /modelContext/i,
+  tools: /^tools$/i,
+  context: /modelContext|context/i,
+  security: /security|execution/i,
+  ecosystem: /connectors|instructions/i,
+  collaboration: /^collaboration$/i,
+  evidence: /observability|recovery/i
 };
 
 function fieldText(value, lang, fallback = "") {
@@ -161,6 +186,12 @@ function projectFindings(project, lang) {
     return ledger.findings.map((finding, index) => {
       const citation = finding.citations?.[0] || {};
       const dimension = findingDimensionAliases[finding.dimension] || finding.dimension || "architecture";
+      const historicalCommit = ledger.snapshot?.commit || project.commit;
+      const historicalSnippet = sourceSnippet(project, historicalCommit, citation.path, citation.startLine, citation.endLine) || citation.excerpt || currentCitation(project, dimension).snippet;
+      const currentPath = citation.path || currentCitation(project, dimension).path;
+      const currentStart = citation.startLine || currentCitation(project, dimension).start;
+      const currentEnd = citation.endLine || currentCitation(project, dimension).end;
+      const currentSnippet = sourceSnippet(project, project.commit, currentPath, currentStart, currentEnd);
       return {
         id: finding.id || `${project.slug}-finding-${index + 1}`,
         dimension,
@@ -175,8 +206,12 @@ function projectFindings(project, lang) {
           path: citation.path || currentCitation(project, dimension).path,
           start: citation.startLine || currentCitation(project, dimension).start,
           end: citation.endLine || currentCitation(project, dimension).end,
-          snippet: citation.excerpt || currentCitation(project, dimension).snippet,
-          commit: ledger.snapshot?.commit || project.commit,
+          snippet: historicalSnippet,
+          currentSnippet,
+          currentPath,
+          currentStart,
+          currentEnd,
+          commit: historicalCommit,
           current: currentCitation(project, dimension),
         },
       };
@@ -195,7 +230,7 @@ function projectFindings(project, lang) {
       plain: analogies[lang][chapterAnchor[dimension.id] ? (chapterAnchor[dimension.id] === "model" ? "model" : chapterAnchor[dimension.id]) : "overview"] || note,
       implication: lang === "zh" ? "把这条实现放回完整任务链，检查输入、状态、副作用、回执和恢复出口。" : "Place this implementation back into the task chain and inspect input, state, effects, receipts, and recovery exits.",
       caveats: [],
-      citation: { ...citation, commit: project.commit, current: citation },
+      citation: { ...citation, snippet: sourceSnippet(project, project.commit, citation.path, citation.start, citation.end) || citation.snippet, currentSnippet: sourceSnippet(project, project.commit, citation.path, citation.start, citation.end) || citation.snippet, commit: project.commit, current: citation },
     };
   });
 }
@@ -205,22 +240,39 @@ function findingsForChapter(project, lang, chapter) {
   const pattern = chapterFindingPatterns[chapter.id] || /./;
   const matches = all.filter((finding) => pattern.test(finding.dimension));
   const selected = matches.length ? matches : all.slice(0, 3);
-  return selected.slice(0, 6);
+  return selected.slice(0, 8);
+}
+
+function lineReadingGuide(project, lang, finding) {
+  const citation = finding.citation || {};
+  const start = Number(citation.start) || 1;
+  const end = Math.max(start, Number(citation.end) || start);
+  const mid = Math.max(start, Math.floor((start + end) / 2));
+  const labels = lang === "zh"
+    ? [[`${start}–${Math.max(start, mid - 1)}`, "入口、配置和状态初始化", "先确认谁拿到输入、读取了哪些配置、创建了哪些状态。"], [`${mid}–${end}`, "分支、副作用和回执", "再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。"], ["after", "回到调用者", "最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。"]]
+    : [[`${start}–${Math.max(start, mid - 1)}`, "Inputs, configuration, and state", "Identify who owns the input, which configuration is read, and which state is created."], [`${mid}–${end}`, "Branches, effects, and receipts", "Trace conditions, external calls, event writes, and failure exits instead of reading only names."], ["after", "Return to the caller", "Follow the caller and the next event to see how this code's result is consumed."]];
+  return `<div class="line-guide"><span>${lang === "zh" ? "逐段阅读提示" : "LINE-BY-LINE READING"}</span><ol>${labels.map(([range, title, copy]) => `<li><code>${esc(range)}</code><div><b>${esc(title)}</b><p>${esc(copy)}</p></div></li>`).join("")}</ol></div>`;
 }
 
 function findingCard(project, lang, finding, index, compact = false) {
   const citation = finding.citation;
   const pathLabel = `${citation.path}:${citation.start}–${citation.end}`;
   const ledgerCommit = citation.commit && citation.commit !== project.commit;
+  const currentPath = citation.currentPath || citation.current?.path || citation.path;
+  const currentStart = citation.currentStart || citation.current?.start || citation.start;
+  const currentEnd = citation.currentEnd || citation.current?.end || citation.end;
   const title = `${String(index + 1).padStart(2, "0")} · ${finding.title}`;
   const caveats = finding.caveats?.length ? `<div class="finding-caveat"><span>${lang === "zh" ? "边界 / 风险" : "CAVEAT / RISK"}</span><ul>${finding.caveats.map((item) => `<li>${esc(fieldText(item, lang, item))}</li>`).join("")}</ul></div>` : "";
   const historical = ledgerCommit
     ? `<small class="finding-source-note">${lang === "zh" ? "叙述来自历史证据账本" : "Narrative from historical evidence ledger"} · ${esc(citation.commit.slice(0, 12))} · <a href="${esc(sourceUrlAtCommit(project, citation.path, citation.start, citation.end, citation.commit))}" target="_blank" rel="noreferrer">${lang === "zh" ? "打开账本提交" : "open ledger commit"} ↗</a></small>`
     : "";
-  const currentLink = citation.current && (citation.current.path !== citation.path || citation.current.start !== citation.start)
-    ? `<small class="finding-source-note">${lang === "zh" ? "当前刷新提交对照" : "Current refreshed snapshot"} · <a href="${esc(sourceUrlAtCommit(project, citation.current.path, citation.current.start, citation.current.end))}" target="_blank" rel="noreferrer">${esc(citation.current.path)}:${citation.current.start}–${citation.current.end} ↗</a></small>`
+  const currentLink = (currentPath !== citation.path || currentStart !== citation.start || currentEnd !== citation.end)
+    ? `<small class="finding-source-note">${lang === "zh" ? "当前刷新提交对照" : "Current refreshed snapshot"} · <a href="${esc(sourceUrlAtCommit(project, currentPath, currentStart, currentEnd))}" target="_blank" rel="noreferrer">${esc(currentPath)}:${currentStart}–${currentEnd} ↗</a></small>`
     : "";
-  return `<article class="finding-card${compact ? " compact" : ""}" id="${esc(finding.id)}" data-finding-dimension="${esc(finding.dimension)}"><header><span class="finding-index">${String(index + 1).padStart(2, "0")}</span><div><div class="finding-meta"><b>${esc(finding.evidenceLevel)}</b><span>${esc(finding.claimType)}</span><span>${esc(finding.dimension)}</span></div><h3>${esc(title)}</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>${lang === "zh" ? "源码事实" : "SOURCE FACT"}</span><p>${esc(finding.fact)}</p></section><section><span>${lang === "zh" ? "白话解释" : "PLAIN LANGUAGE"}</span><p>${esc(finding.plain)}</p></section><section class="finding-impact"><span>${lang === "zh" ? "对自研 Harness 的含义" : "IMPLICATION"}</span><p>${esc(finding.implication)}</p></section>${caveats}${historical}${currentLink}</div><div class="finding-code"><div class="finding-code-head"><span>${esc(pathLabel)}</span><a href="${esc(sourceUrlAtCommit(project, citation.path, citation.start, citation.end, citation.commit || project.commit))}" target="_blank" rel="noreferrer">${lang === "zh" ? "固定提交" : "PINNED"} ↗</a></div><pre><code>${esc(citation.snippet)}</code></pre></div></div></article>`;
+  const currentCode = citation.currentSnippet && citation.currentSnippet !== citation.snippet
+    ? `<details class="current-source"><summary>${lang === "zh" ? "展开当前刷新提交的同路径代码" : "Show the same path from the refreshed commit"}</summary><div class="finding-code-head"><span>${esc(currentPath)} · ${esc(project.commit.slice(0, 12))}</span><a href="${esc(sourceUrlAtCommit(project, currentPath, currentStart, currentEnd, project.commit))}" target="_blank" rel="noreferrer">${lang === "zh" ? "当前源码" : "CURRENT"} ↗</a></div><pre><code>${esc(citation.currentSnippet)}</code></pre></details>`
+    : "";
+  return `<article class="finding-card${compact ? " compact" : ""}" id="${esc(finding.id)}" data-finding-dimension="${esc(finding.dimension)}"><header><span class="finding-index">${String(index + 1).padStart(2, "0")}</span><div><div class="finding-meta"><b>${esc(finding.evidenceLevel)}</b><span>${esc(finding.claimType)}</span><span>${esc(finding.dimension)}</span></div><h3>${esc(title)}</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>${lang === "zh" ? "源码事实" : "SOURCE FACT"}</span><p>${esc(finding.fact)}</p></section><section><span>${lang === "zh" ? "白话解释" : "PLAIN LANGUAGE"}</span><p>${esc(finding.plain)}</p></section><section class="finding-impact"><span>${lang === "zh" ? "对自研 Harness 的含义" : "IMPLICATION"}</span><p>${esc(finding.implication)}</p></section>${lineReadingGuide(project, lang, finding)}${caveats}${historical}${currentLink}</div><div class="finding-code"><div class="finding-code-head"><span>${esc(pathLabel)}</span><a href="${esc(sourceUrlAtCommit(project, citation.path, citation.start, citation.end, citation.commit || project.commit))}" target="_blank" rel="noreferrer">${lang === "zh" ? "固定提交" : "PINNED"} ↗</a></div><pre><code>${esc(citation.snippet)}</code></pre>${currentCode}</div></div></article>`;
 }
 
 const chapterAnchor = { overview: "architecture", architecture: "architecture", loop: "loop", model: "model", tools: "tools", context: "context", security: "security", ecosystem: "ecosystem", collaboration: "collaboration", evidence: "engineering" };
@@ -399,6 +451,163 @@ function richDiagram(project, lang, type) {
   return `<!doctype html><html lang="${lang === "zh" ? "zh-CN" : "en"}" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>:root{--bg:#07111f;--panel:#0d1b2d;--grid:#1c334e;--line:#6283a2;--text:#eff7ff;--muted:#a3b8c9;--accent:#54e0bf;--hot:#f5b45d}html[data-theme="light"]{--bg:#f3efe3;--panel:#faf7ef;--grid:#d4c8b0;--line:#42698d;--text:#18385f;--muted:#6e6b60;--accent:#087f69;--hot:#a54a35}*{box-sizing:border-box}body{margin:0;padding:22px;background:var(--bg);color:var(--text);font:13px/1.6 system-ui,sans-serif;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:32px 32px}header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:14px}h1{margin:0;font:400 32px Georgia,serif;letter-spacing:-.03em;color:var(--text)}.meta{font:10px monospace;color:var(--muted);letter-spacing:.08em}.toolbar{display:flex;gap:6px;align-items:center;margin-left:auto}.toolbar button,.toolbar input{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:7px 9px;font:10px monospace}.toolbar input{width:180px}.canvas{margin-top:16px;border:1px solid var(--line);background:rgba(5,13,25,.28);overflow:auto;min-height:520px}.canvas svg{display:block;width:100%;min-width:${width}px;height:auto}.lane{fill:var(--panel);stroke:var(--line);stroke-width:1;opacity:.6}.diagram-edge{fill:none;stroke:var(--line);stroke-width:2;stroke-dasharray:7 6;animation:flow 2.5s linear infinite}.edge-label{fill:var(--muted);font:10px monospace}.diagram-node{cursor:pointer}.diagram-node rect{fill:var(--panel);stroke:var(--accent);stroke-width:1.7;filter:drop-shadow(0 8px 12px rgba(0,0,0,.2))}.diagram-node:hover rect,.diagram-node.is-focus rect{fill:color-mix(in srgb,var(--accent) 18%,var(--panel));stroke:var(--hot);stroke-width:2.5}.node-title{fill:var(--text);font-weight:700;font-size:14px}.node-sub{fill:var(--accent);font:10px monospace}.node-note{fill:var(--muted);font:10px system-ui}.legend{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:12px;color:var(--muted);font:10px monospace}.detail{margin-top:14px;border:1px solid var(--line);padding:12px;background:var(--panel);min-height:65px}.detail b{color:var(--accent)}.detail a{color:var(--hot)}@keyframes flow{to{stroke-dashoffset:-52px}}@media(prefers-reduced-motion:reduce){.diagram-edge{animation:none}}@media(max-width:720px){body{padding:12px}h1{font-size:25px}.toolbar{margin-left:0}.toolbar input{width:140px}}</style></head><body><header><div><div class="meta">${esc(type.toUpperCase())} · SOURCE ${esc(project.commit.slice(0, 12))} · ARCHIFY-READY</div><h1>${esc(title)}</h1></div><div class="toolbar"><input id="search" type="search" placeholder="${lang === "zh" ? "筛选节点" : "Filter nodes"}"><button data-zoom="in">＋</button><button data-zoom="out">−</button><button data-reset>RESET</button><button data-theme>☼</button></div></header><div class="canvas"><svg id="map" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(title)}"><defs><marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 z" fill="var(--accent)"/></marker></defs><rect class="lane" x="22" y="26" width="${width - 44}" height="${height - 52}" rx="16"/>${type === "sequence" ? `<text class="edge-label" x="42" y="80">${lang === "zh" ? "一条用户请求在多个可拦截边界之间流动" : "One request crosses multiple interceptable boundaries"}</text>` : ""}${edges}${nodeMarkup}</svg></div><div class="detail" id="detail"><b>${lang === "zh" ? "点击任意节点查看源码事实" : "Click a node for the source fact"}</b></div><div class="legend"><span>${lang === "zh" ? "虚线 = 控制/事件 handoff；绿色 = 可替换 seam；橙色 = 当前选中证据" : "Dashed = control/event handoff; green = replaceable seam; orange = selected evidence"}</span><a id="source-link" href="https://github.com/${esc(project.repo)}/tree/${esc(project.commit)}" target="_blank" rel="noreferrer">${lang === "zh" ? "打开固定源码" : "Open pinned source"} ↗</a></div><script>const root=document.documentElement,map=document.getElementById('map'),nodes=[...document.querySelectorAll('.diagram-node')],detail=document.getElementById('detail'),link=document.getElementById('source-link');let base='0 0 ${width} ${height}',scale=1;function focus(n){nodes.forEach(x=>x.classList.remove('is-focus'));n?.classList.add('is-focus');if(n){detail.innerHTML='<b>'+n.dataset.label+'</b><br>'+n.dataset.detail+'<br><a href="'+n.dataset.href+'" target="_blank" rel="noreferrer">'+n.dataset.source+' ↗</a>';link.href=n.dataset.href}}nodes.forEach(n=>n.addEventListener('click',()=>focus(n)));document.getElementById('search').addEventListener('input',e=>{const q=e.target.value.toLowerCase();nodes.forEach(n=>n.style.opacity=!q||n.dataset.label.toLowerCase().includes(q)?'1':'.16')});document.querySelector('[data-zoom="in"]').addEventListener('click',()=>{scale=Math.max(.7,scale-.1);map.setAttribute('viewBox','0 0 '+${width}*scale+' '+${height}*scale)});document.querySelector('[data-zoom="out"]').addEventListener('click',()=>{scale=Math.min(1.8,scale+.1);map.setAttribute('viewBox','0 0 '+${width}*scale+' '+${height}*scale)});document.querySelector('[data-reset]').addEventListener('click',()=>{scale=1;map.setAttribute('viewBox',base);focus(null)});document.querySelector('[data-theme]').addEventListener('click',()=>root.dataset.theme=root.dataset.theme==='dark'?'light':'dark');</script></body></html>`;
 }
 
+// The first generation of this atlas used a small bespoke SVG viewer.  The
+// older Goose reports already contain the complete Archify reader: guided
+// views, evidence beacons, node detail panels, presets, keyboard navigation,
+// export, and a light-first theme.  Keep that reader as the canonical shell
+// and only author the project-specific SVG/data payload here.  This prevents
+// every report from growing a subtly different, fragile diagram runtime.
+function archifyEvidence(project, lang) {
+  const findings = projectFindings(project, lang);
+  const aliases = {
+    architecture: "entry", loop: "loop", modelContext: "provider", tools: "tools",
+    execution: "security", security: "security", connectors: "extensions",
+    instructions: "extensions", observability: "store", recovery: "store",
+    collaboration: "agents"
+  };
+  const nodes = {};
+  for (const finding of findings) {
+    const id = aliases[finding.dimension] || finding.dimension;
+    if (!id || !finding.citation) continue;
+    nodes[id] ||= [];
+    if (nodes[id].length >= 3) continue;
+    const citation = finding.citation;
+    nodes[id].push({
+      path: citation.path,
+      line: citation.start,
+      endLine: citation.end,
+      label: finding.title,
+      href: sourceUrlAtCommit(project, citation.path, citation.start, citation.end, citation.commit || project.commit)
+    });
+  }
+  return {
+    schemaVersion: 1,
+    verified: true,
+    repository: { url: `https://github.com/${project.repo}`, revision: project.commit, shortRevision: project.commit.slice(0, 7) },
+    referenceCount: Object.values(nodes).reduce((sum, refs) => sum + refs.length, 0),
+    nodes
+  };
+}
+
+function archifySvg(project, lang, type) {
+  const findings = projectFindings(project, lang);
+  const byDimension = new Map(findings.map((finding) => [finding.dimension, finding]));
+  const pick = (dimension) => byDimension.get(dimension) || findings.find((item) => item.dimension === dimension) || findings[0] || { citation: currentCitation(project, "architecture") };
+  const nodeKind = { entry: "frontend", loop: "backend", context: "database", provider: "cloud", tools: "backend", security: "security", extensions: "external", store: "database", agents: "messagebus", user: "frontend", model: "cloud", policy: "security" };
+  const architectureNodes = [
+    ["entry", lang === "zh" ? "入口 / UI" : "Entry / UI", lang === "zh" ? "CLI、Desktop 或 API" : "CLI, desktop, or API", 30, 330, "architecture"],
+    ["loop", lang === "zh" ? "Agent Loop" : "Agent loop", lang === "zh" ? "主控制循环" : "Control loop", 280, 330, "loop"],
+    ["context", lang === "zh" ? "Context Pack" : "Context pack", lang === "zh" ? "检索、压缩、预算" : "Retrieval, compaction, budget", 280, 110, "modelContext"],
+    ["provider", lang === "zh" ? "模型 / Provider" : "Model / provider", lang === "zh" ? "流式响应与 tool call" : "Streaming and tool calls", 530, 330, "modelContext"],
+    ["tools", lang === "zh" ? "Tool Registry" : "Tool registry", lang === "zh" ? "注册、参数、调度" : "Registration and dispatch", 780, 330, "tools"],
+    ["security", lang === "zh" ? "Approval / Sandbox" : "Approval / sandbox", lang === "zh" ? "策略与隔离" : "Policy and isolation", 780, 520, "security"],
+    ["extensions", lang === "zh" ? "MCP / Plugins" : "MCP / plugins", lang === "zh" ? "连接器与指令" : "Connectors and instructions", 1030, 110, "connectors"],
+    ["store", lang === "zh" ? "Session / Trace" : "Session / trace", lang === "zh" ? "日志、状态、恢复" : "Logs, state, recovery", 1030, 330, "observability"],
+    ["agents", lang === "zh" ? "Sub-agent / Jobs" : "Sub-agent / jobs", lang === "zh" ? "协作与并行任务" : "Collaboration and parallel work", 1030, 520, "collaboration"]
+  ];
+  const sequenceNodes = [
+    ["user", lang === "zh" ? "User" : "User", lang === "zh" ? "提交目标" : "Submit goal", 25, 300, "architecture"],
+    ["entry", lang === "zh" ? "Entry" : "Entry", lang === "zh" ? "建 session / profile" : "Create session / profile", 160, 300, "architecture"],
+    ["loop", lang === "zh" ? "主循环" : "Agent loop", lang === "zh" ? "读取事件与状态" : "Read events and state", 295, 300, "loop"],
+    ["model", lang === "zh" ? "模型" : "Model", lang === "zh" ? "流式生成下一步" : "Stream next step", 430, 300, "modelContext"],
+    ["policy", lang === "zh" ? "权限 / 审批" : "Policy / approval", lang === "zh" ? "检查副作用" : "Check side effects", 565, 300, "security"],
+    ["tools", lang === "zh" ? "工具" : "Tools", lang === "zh" ? "执行并回传结果" : "Execute and return", 700, 300, "tools"],
+    ["store", lang === "zh" ? "日志 / 恢复" : "Log / recovery", lang === "zh" ? "追加事件并决定续跑" : "Append and continue", 835, 300, "observability"]
+  ];
+  const capabilityNodes = [
+    ["entry", lang === "zh" ? "入口" : "Entry", lang === "zh" ? "CLI / API / UI" : "CLI / API / UI", 30, 330, "architecture"],
+    ["loop", lang === "zh" ? "循环" : "Loop", lang === "zh" ? "step / turn / cancel" : "step / turn / cancel", 280, 330, "loop"],
+    ["provider", lang === "zh" ? "模型" : "Model", lang === "zh" ? "上下文与流式协议" : "Context and streaming", 530, 330, "modelContext"],
+    ["tools", lang === "zh" ? "工具" : "Tools", lang === "zh" ? "注册、队列、并行" : "Registry, queue, parallel", 780, 330, "tools"],
+    ["security", lang === "zh" ? "安全" : "Security", lang === "zh" ? "审批、权限、沙箱" : "Approval, permission, sandbox", 1030, 330, "security"],
+    ["extensions", lang === "zh" ? "扩展" : "Extensions", lang === "zh" ? "MCP、插件、skills" : "MCP, plugins, skills", 280, 520, "connectors"],
+    ["agents", lang === "zh" ? "协作" : "Collaboration", lang === "zh" ? "子 Agent / jobs" : "Sub-agents / jobs", 530, 520, "collaboration"],
+    ["store", lang === "zh" ? "观测" : "Observability", lang === "zh" ? "session log / replay" : "session log / replay", 780, 520, "observability"],
+    ["context", lang === "zh" ? "恢复" : "Recovery", lang === "zh" ? "压缩、重试、回滚" : "Compact, retry, rollback", 1030, 520, "recovery"]
+  ];
+  const authored = type === "sequence" ? sequenceNodes : type === "capability" ? capabilityNodes : architectureNodes;
+  const width = type === "sequence" ? 980 : 1300;
+  const height = type === "sequence" ? 760 : 720;
+  const nodes = authored.map(([id, label, sublabel, x, y, dimension]) => {
+    const finding = pick(dimension);
+    const citation = finding.citation || currentCitation(project, dimension);
+    const kind = nodeKind[id] || "backend";
+    const detail = (finding.fact || finding.plain || dimensionNotes[project.slug]?.[lang]?.[dimension] || sublabel || "").slice(0, 240);
+    const aria = `${label}, ${sublabel}, ${citation.path}:${citation.start}`;
+    return `<g id="node-${esc(id)}" data-node-id="${esc(id)}" data-node-label="${esc(label)}" tabindex="0" role="button" aria-label="${esc(aria)}" aria-pressed="false" data-node-kind="${esc(kind)}" data-node-sublabel="${esc(sublabel)}" data-node-context="${esc(dimension)}"><title>${esc(`${label} · ${sublabel}`)}</title><rect x="${x}" y="${y}" width="190" height="64" rx="6" class="c-mask"/><rect x="${x}" y="${y}" width="190" height="64" rx="6" class="c-${esc(kind)}" stroke-width="1.5"/><text data-detail-anchor x="${x + 95}" y="${y + 28}" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">${esc(label)}</text><text data-detail="${esc(detail)}" x="${x + 95}" y="${y + 46}" class="t-muted" font-size="9" text-anchor="middle">${esc(sublabel)}</text></g>`;
+  }).join("");
+  const edgePairs = type === "sequence"
+    ? [["user", "entry"], ["entry", "loop"], ["loop", "model"], ["model", "policy"], ["policy", "tools"], ["tools", "store"], ["store", "loop"]]
+    : [["entry", "loop"], ["loop", "provider"], ["provider", "tools"], ["tools", "store"], ["context", "loop"], ["security", "tools"], ["extensions", "provider"], ["agents", "store"]];
+  const positionById = new Map(authored.map(([id, , , x, y]) => [id, { x, y }]));
+  const edges = edgePairs.map(([from, to], index) => {
+    const a = positionById.get(from); const b = positionById.get(to); if (!a || !b) return "";
+    const x1 = a.x + 190; const y1 = a.y + 32; const x2 = b.x; const y2 = b.y + 32;
+    const cls = index === 0 || index === 1 ? "a-emphasis" : index === 5 ? "a-security" : "a-dashed";
+    const marker = cls === "a-emphasis" ? "arrowhead-emphasis" : cls === "a-security" ? "arrowhead-security" : "arrowhead-dashed";
+    const points = `${x1},${y1};${x2},${y2}`;
+    const d = x1 <= x2 ? `M ${x1} ${y1} L ${x2} ${y2}` : `M ${x1} ${y1} C ${x1 + 70} ${y1}, ${x2 - 70} ${y2}, ${x2} ${y2}`;
+    return `<path data-edge-from="${esc(from)}" data-edge-to="${esc(to)}" data-edge-key="${index}" data-edge-id="${esc(`${from}-${to}`)}" data-composition-points="${points}" d="${d}" class="${cls}" stroke-width="1.8" marker-end="url(#${marker})"/>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="editorial" data-quality-profile="showcase"><title id="archify-diagram-title">${esc(project.name)}</title><desc id="archify-diagram-description">${esc(lang === "zh" ? "基于固定提交的源码证据图" : "Source evidence map from a pinned commit")}</desc><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="m-default"/></marker><marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="m-emphasis"/></marker><marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="m-security"/></marker><marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="m-dashed"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/></pattern></defs><rect width="100%" height="100%" fill="url(#grid)"/>${edges}${nodes}</svg>`;
+}
+
+function archifyViews(project, lang, type) {
+  const zh = lang === "zh";
+  if (type === "sequence") return [
+    { id: "prepare", label: zh ? "准备上下文" : "Prepare context", focus: ["user", "entry", "loop"], note: zh ? "入口把用户目标变成模型可见状态。" : "The entrypoint turns the user goal into model-visible state." },
+    { id: "sample", label: zh ? "模型与工具" : "Model and tools", focus: ["loop", "model", "policy", "tools"], note: zh ? "采样、审批与真实副作用发生在同一条链上。" : "Sampling, approval, and side effects share one chain." },
+    { id: "persist", label: zh ? "持久化与续跑" : "Persist and resume", focus: ["tools", "store", "loop"], note: zh ? "结果落账后再决定继续、重试或结束。" : "After the receipt is written, decide whether to continue, retry, or stop." }
+  ];
+  if (type === "capability") return [
+    { id: "core", label: zh ? "核心闭环" : "Core loop", focus: ["entry", "loop", "provider", "tools"], note: zh ? "先看任务如何流过主循环、模型和工具。" : "Start with the task crossing loop, model, and tools." },
+    { id: "governance", label: zh ? "治理边界" : "Governance", focus: ["security", "tools", "store"], note: zh ? "能力、策略、隔离和审计是四个不同层次。" : "Capability, policy, isolation, and audit are separate layers." },
+    { id: "scale", label: zh ? "扩展与协作" : "Extensions and collaboration", focus: ["extensions", "agents", "context"], note: zh ? "连接器、子 Agent 与恢复机制决定可扩展性。" : "Connectors, sub-agents, and recovery define extensibility." }
+  ];
+  return [
+    { id: "main-path", label: zh ? "主执行路径" : "Main execution path", focus: ["entry", "loop", "provider", "tools", "store"], note: zh ? "从入口到模型、工具与持久化的主路径。" : "From entry to model, tools, and persistence." },
+    { id: "governance", label: zh ? "治理边界" : "Governance boundary", focus: ["loop", "tools", "security", "store"], note: zh ? "审批、隔离、执行与审计如何闭环。" : "How approval, isolation, execution, and audit close the loop." },
+    { id: "ecosystem", label: zh ? "扩展与协作" : "Extensions and collaboration", focus: ["context", "extensions", "agents", "loop"], note: zh ? "上下文、连接器与子 Agent 如何接入主循环。" : "How context, connectors, and sub-agents plug into the loop." }
+  ];
+}
+
+function archifyDiagram(project, lang, type) {
+  const legacyType = type === "capability" ? "architecture" : type;
+  const legacyFile = path.join(siteRoot, "legacy", "diagrams", `${project.slug}-${legacyType}.html`);
+  const normalizeTheme = (html) => html
+    .replace(/(<html\b[^>]*data-theme=")dark("[^>]*>)/, '$1light$2')
+    .replace(/window\.matchMedia\('\(prefers-color-scheme: light\)'\)\.matches \? 'light' : 'dark'/g, "true ? 'light' : 'dark'");
+  // Keep one canonical copy of each reviewed legacy Archify artifact.  The
+  // project-local URL is a tiny light-first wrapper, so iframes and direct
+  // links still land on the full guided reader without duplicating ~600 KB of
+  // inline CSS/JS for every language and diagram slot.
+  if (project.legacy && fs.existsSync(legacyFile)) {
+    const target = `../../../../legacy/diagrams/${project.slug}-${legacyType}.html?theme=light`;
+    const title = `${project.name} · ${legacyType}`;
+    return `<!doctype html><html lang="${lang === "zh" ? "zh-CN" : "en"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0;url=${target}"><title>${esc(title)}</title></head><body data-archify-wrapper="true"><p>ARCHIFY-READY · ${esc(title)}</p><p><a href="${target}">Open the full guided Archify map ↗</a></p></body></html>`;
+  }
+  const templateFile = path.join(siteRoot, "legacy", "diagrams", `goose-${legacyType}.html`);
+  if (!fs.existsSync(templateFile)) return richDiagram(project, lang, type);
+  let html = fs.readFileSync(templateFile, "utf8");
+  const title = lang === "zh"
+    ? `${project.name} · ${type === "architecture" ? "Harness 架构" : type === "sequence" ? "单轮技术链路" : "能力与风险边界"}`
+    : `${project.name} · ${type === "architecture" ? "Harness architecture" : type === "sequence" ? "Turn sequence" : "Capability and boundaries"}`;
+  html = html.replace(/<h1>[^<]*<\/h1>/, `<h1>${esc(title)}</h1>`).replace(/<p class="subtitle">[^<]*<\/p>/, `<p class="subtitle">${esc(lang === "zh" ? `基于固定提交 ${project.commit.slice(0, 8)} 的源码证据图` : `Source evidence map from pinned commit ${project.commit.slice(0, 8)}`)}</p>`);
+  html = html.replace(/(<script id="archify-guided-views-data"[^>]*>)[\s\S]*?(<\/script>)/, `$1${JSON.stringify(archifyViews(project, lang, type))}$2`);
+  const evidence = `<script id="archify-source-evidence-data" type="application/json">${JSON.stringify(archifyEvidence(project, lang))}</script>`;
+  if (html.includes("id=\"archify-source-evidence-data\"")) html = html.replace(/<script id="archify-source-evidence-data"[^>]*>[\s\S]*?<\/script>/, evidence);
+  else html = html.replace(/(<script id="archify-guided-views-data"[^>]*>[\s\S]*?<\/script>)/, `$1\n    ${evidence}`);
+  const diagramStart = html.indexOf('<div class="diagram-container"');
+  const svgStart = html.indexOf("<svg ", diagramStart);
+  const svgEnd = html.indexOf("</svg>", svgStart) + 6;
+  if (diagramStart >= 0 && svgStart >= 0 && svgEnd > svgStart) html = `${html.slice(0, svgStart)}${archifySvg(project, lang, type)}${html.slice(svgEnd)}`;
+  html = html.replace(/<title>Goose · [^<]*<\/title>/, `<title>${esc(title)}</title>`)
+    .replace(/(<title id="archify-diagram-title">)[\s\S]*?(<\/title>)/, `$1${esc(title)}$2`)
+    .replace(/(<desc id="archify-diagram-description">)[\s\S]*?(<\/desc>)/, `$1${esc(lang === "zh" ? "固定提交源码证据图" : "Pinned source evidence map")}$2`)
+    .replace(/<html lang="[^"]*"/, `<html lang="${lang === "zh" ? "zh-CN" : "en"}"`);
+  return normalizeTheme(html);
+}
+
 function analysis(project, lang) {
   const file = path.join(siteRoot, "projects", project.slug, lang, "analysis.html");
   const cards = chapterDefs.map((chapter, index) => {
@@ -464,6 +673,18 @@ function chapterPage(project, lang, chapter, index) {
   return pageShell({ title: `${project.name} · M${chapter.number} · ${chapter.title[lang]}`, description: chapter.question[lang], lang, project, current: `ch${chapter.number}-${chapter.id}`, body });
 }
 
+function chapterDeepDive(project, lang, chapter, findings) {
+  const labels = lang === "zh"
+    ? [["ENTRY", "入口 / 注册", "先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。"], ["STATE", "状态 / 投影", "再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。"], ["EFFECT", "操作 / 事务", "把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。"], ["RECOVERY", "失败 / 恢复", "最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。"]]
+    : [["ENTRY", "Entry / registration", "Locate who creates the run, registers capabilities, and turns input into state."], ["STATE", "State / projection", "Find ownership of sessions, context, queues, or projections; UI copy is not state."], ["EFFECT", "Operation / transaction", "Separate model output, tool effects, policy checks, and receipts."], ["RECOVERY", "Failure / recovery", "Trace retry, compaction, cancellation, rollback, persistence, or human takeover."]];
+  const cards = labels.map(([kicker, title, copy], index) => {
+    const finding = findings[index] || findings[findings.length - 1];
+    const citation = finding?.citation;
+    return `<article class="mechanism-card"><span>${kicker}</span><h3>${title}</h3><p>${esc(copy)}</p><blockquote>${esc(finding?.fact || finding?.plain || text(project, lang, "lesson"))}</blockquote>${citation ? `<a href="${esc(sourceUrlAtCommit(project, citation.path, citation.start, citation.end, citation.commit || project.commit))}" target="_blank" rel="noreferrer">${esc(citation.path)}:${citation.start}–${citation.end} ↗</a>` : ""}</article>`;
+  }).join("");
+  return `<section class="mechanism-panel"><div class="mechanism-kicker">${esc(chapter.id.toUpperCase())} · ${lang === "zh" ? "四个实现问题" : "FOUR IMPLEMENTATION QUESTIONS"}</div><div class="mechanism-grid">${cards}</div></section>`;
+}
+
 function richChapterPage(project, lang, chapter, index) {
   const file = path.join(siteRoot, "projects", project.slug, lang, "tutorial", `ch${chapter.number}-${chapter.id}.html`);
   const next = chapterDefs[index + 1];
@@ -477,7 +698,7 @@ function richChapterPage(project, lang, chapter, index) {
   const exercise = lang === "zh"
     ? "把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。"
     : "Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.";
-  const body = `<section class="chapter-hero"><p class="eyebrow">M${chapter.number} · ${esc(project.name)} · ${esc(project.commit.slice(0, 12))}</p><h1>${esc(chapter.title[lang])}</h1><p class="lede">${esc(chapter.question[lang])}</p><div class="chapter-meta"><span>${lang === "zh" ? `第 ${index + 1} / ${chapterDefs.length} 章` : `Chapter ${index + 1} / ${chapterDefs.length}`}</span><span>${findings.length} ${lang === "zh" ? "条源码 finding" : "source findings"}</span><span>${esc(project.branch)}</span></div></section>${videoBlock}<section class="lesson prose"><div class="lesson-route"><span>${lang === "zh" ? "本章路线" : "ROUTE"}</span><b>${lang === "zh" ? "问题" : "Question"}</b><i>→</i><b>${lang === "zh" ? "比喻" : "Analogy"}</b><i>→</i><b>${lang === "zh" ? "多条源码证据" : "Evidence board"}</b><i>→</i><b>${lang === "zh" ? "交互图" : "Map"}</b><i>→</i><b>${lang === "zh" ? "练习" : "Exercise"}</b></div><div class="callout"><b>${lang === "zh" ? "先用一个生活比喻" : "Start with a concrete analogy"}</b><p>${esc(analogies[lang][chapter.id])}</p></div><h2>${lang === "zh" ? "先回答本章问题" : "Answer the chapter question first"}</h2><p>${esc(chapter.question[lang])} ${esc(text(project, lang, "lesson"))}</p><h2>${lang === "zh" ? `本章证据板：${findings.length} 条 finding` : `Evidence board: ${findings.length} findings`}</h2><p>${lang === "zh" ? "不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。" : "Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source."}</p><div class="finding-stack">${evidenceBoard}</div><h2>${lang === "zh" ? "把证据放回全链路" : "Place the evidence on the full chain"}</h2><div class="flow-strip"><span>${lang === "zh" ? "输入 / 事件" : "Input / event"}</span><i>→</i><span>${lang === "zh" ? "规则 / 状态" : "Rules / state"}</span><i>→</i><span>${lang === "zh" ? "模型 / 工具" : "Model / tool"}</span><i>→</i><span>${lang === "zh" ? "回执 / 持久化" : "Receipt / persistence"}</span><i>→</i><span>${lang === "zh" ? "恢复 / 下一步" : "Recovery / next"}</span></div><iframe class="diagram-frame diagram-frame-rich" src="${esc(rel(file, diagramFile))}" title="${esc(project.name)} ${esc(diagramName)}" loading="lazy"></iframe><h2>${lang === "zh" ? "小白练习：不要只会复述" : "Exercise: do more than repeat"}</h2><div class="exercise"><p>${esc(exercise)}</p><details><summary>${lang === "zh" ? "查看提示" : "Show hint"}</summary><ul><li>${lang === "zh" ? "先找输入和状态，不要先找函数名。" : "Find inputs and state before function names."}</li><li>${lang === "zh" ? "把 policy / approval / sandbox 分开写。" : "Keep policy, approval, and sandbox separate."}</li><li>${lang === "zh" ? "如果引用来自历史账本，记得查看卡片里的历史 commit 标识。" : "If a claim comes from a historical ledger, check the historical commit marker on the card."}</li></ul></details></div></section><footer class="chapter-footer"><a href="${prev ? esc(`ch${prev.number}-${prev.id}.html`) : esc("index.html")}">← ${prev ? esc(prev.title[lang]) : lang === "zh" ? "课程目录" : "Course index"}</a><a href="${next ? esc(`ch${next.number}-${next.id}.html`) : esc("index.html")}">${next ? esc(next.title[lang]) : lang === "zh" ? "回到课程目录" : "Course index"} →</a></footer>`;
+  const body = `<section class="chapter-hero"><p class="eyebrow">M${chapter.number} · ${esc(project.name)} · ${esc(project.commit.slice(0, 12))}</p><h1>${esc(chapter.title[lang])}</h1><p class="lede">${esc(chapter.question[lang])}</p><div class="chapter-meta"><span>${lang === "zh" ? `第 ${index + 1} / ${chapterDefs.length} 章` : `Chapter ${index + 1} / ${chapterDefs.length}`}</span><span>${findings.length} ${lang === "zh" ? "条源码 finding" : "source findings"}</span><span>${esc(project.branch)}</span></div></section>${videoBlock}<section class="lesson prose"><div class="lesson-route"><span>${lang === "zh" ? "本章路线" : "ROUTE"}</span><b>${lang === "zh" ? "问题" : "Question"}</b><i>→</i><b>${lang === "zh" ? "比喻" : "Analogy"}</b><i>→</i><b>${lang === "zh" ? "多条源码证据" : "Evidence board"}</b><i>→</i><b>${lang === "zh" ? "四问" : "Four questions"}</b><i>→</i><b>${lang === "zh" ? "交互图" : "Map"}</b><i>→</i><b>${lang === "zh" ? "练习" : "Exercise"}</b></div><div class="callout"><b>${lang === "zh" ? "先用一个生活比喻" : "Start with a concrete analogy"}</b><p>${esc(analogies[lang][chapter.id])}</p></div><h2>${lang === "zh" ? "先回答本章问题" : "Answer the chapter question first"}</h2><p>${esc(chapter.question[lang])} ${esc(text(project, lang, "lesson"))}</p><h2>${lang === "zh" ? `本章证据板：${findings.length} 条 finding` : `Evidence board: ${findings.length} findings`}</h2><p>${lang === "zh" ? "不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。" : "Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source."}</p><div class="finding-stack">${evidenceBoard}</div><h2>${lang === "zh" ? "四问：从代码追到执行语义" : "Four questions: from code to execution semantics"}</h2>${chapterDeepDive(project, lang, chapter, findings)}<h2>${lang === "zh" ? "把证据放回全链路" : "Place the evidence on the full chain"}</h2><div class="flow-strip"><span>${lang === "zh" ? "输入 / 事件" : "Input / event"}</span><i>→</i><span>${lang === "zh" ? "规则 / 状态" : "Rules / state"}</span><i>→</i><span>${lang === "zh" ? "模型 / 工具" : "Model / tool"}</span><i>→</i><span>${lang === "zh" ? "回执 / 持久化" : "Receipt / persistence"}</span><i>→</i><span>${lang === "zh" ? "恢复 / 下一步" : "Recovery / next"}</span></div><iframe class="diagram-frame diagram-frame-rich" src="${esc(rel(file, diagramFile))}" title="${esc(project.name)} ${esc(diagramName)}" loading="lazy"></iframe><h2>${lang === "zh" ? "小白练习：不要只会复述" : "Exercise: do more than repeat"}</h2><div class="exercise"><p>${esc(exercise)}</p><details><summary>${lang === "zh" ? "查看提示" : "Show hint"}</summary><ul><li>${lang === "zh" ? "先找输入和状态，不要先找函数名。" : "Find inputs and state before function names."}</li><li>${lang === "zh" ? "把 policy / approval / sandbox 分开写。" : "Keep policy, approval, and sandbox separate."}</li><li>${lang === "zh" ? "如果引用来自历史账本，记得查看卡片里的历史 commit 标识。" : "If a claim comes from a historical ledger, check the historical commit marker on the card."}</li></ul></details></div></section><footer class="chapter-footer"><a href="${prev ? esc(`ch${prev.number}-${prev.id}.html`) : esc("index.html")}">← ${prev ? esc(prev.title[lang]) : lang === "zh" ? "课程目录" : "Course index"}</a><a href="${next ? esc(`ch${next.number}-${next.id}.html`) : esc("index.html")}">${next ? esc(next.title[lang]) : lang === "zh" ? "回到课程目录" : "Course index"} →</a></footer>`;
   return pageShell({ title: `${project.name} · M${chapter.number} · ${chapter.title[lang]}`, description: chapter.question[lang], lang, project, current: `ch${chapter.number}-${chapter.id}`, body });
 }
 
@@ -491,6 +712,55 @@ function tutorialIndex(project, lang) {
 function matrixDimensionText(project, lang, dimension, fallback) {
   const finding = projectFindings(project, lang).find((item) => item.dimension === dimension);
   return finding?.plain || finding?.fact || dimensionNotes[project.slug]?.[lang]?.[dimension] || fallback;
+}
+
+const scenarioDefs = [
+  { id: "local-secure", zh: "本地优先 / 安全编码", en: "Local-first secure coding", hintZh: "优先看真实沙箱、权限边界、审批与恢复", hintEn: "Prioritise real sandboxing, permission boundaries, approval, and recovery", dims: ["execution", "security", "recovery"], words: ["sandbox", "permission", "local", "desktop", "approval"] },
+  { id: "enterprise-mcp", zh: "企业 MCP / 插件平台", en: "Enterprise MCP / plugin platform", hintZh: "需要连接器生命周期、配置治理和可审计扩展", hintEn: "Need connector lifecycle, configuration governance, and auditable extensions", dims: ["connectors", "instructions", "security"], words: ["mcp", "plugin", "connector", "oauth", "skill"] },
+  { id: "long-repo", zh: "长仓库 / 长上下文迁移", en: "Long-repo / long-context migration", hintZh: "看检索、压缩、预算、快照和重建性", hintEn: "Look for retrieval, compaction, budgets, snapshots, and reconstruction", dims: ["modelContext", "observability", "recovery"], words: ["context", "memory", "compact", "repo", "retrieval", "token"] },
+  { id: "ci-release", zh: "Headless CI / 发布流水线", en: "Headless CI / release pipeline", hintZh: "看队列、幂等、trace、失败回执和无人值守入口", hintEn: "Look for queues, idempotence, traces, failure receipts, and headless entry", dims: ["loop", "observability", "execution"], words: ["ci", "headless", "job", "queue", "trace", "workflow"] },
+  { id: "multi-agent", zh: "多 Agent / 并行协作", en: "Multi-agent / parallel collaboration", hintZh: "看子会话、深度、预算、取消、合并和交付物", hintEn: "Look for child sessions, depth, budgets, cancellation, merge, and artifacts", dims: ["collaboration", "loop", "observability"], words: ["agent", "workforce", "sub-agent", "parallel", "swarm", "task"] },
+  { id: "ui-desktop", zh: "桌面 UI / 可视化工作台", en: "Desktop UI / visual workbench", hintZh: "看 UI 状态投影、会话路由、浏览器边界和可观测性", hintEn: "Look for UI projections, session routing, browser boundaries, and observability", dims: ["architecture", "connectors", "observability"], words: ["desktop", "electron", "ui", "browser", "workspace"] },
+  { id: "minimal-core", zh: "轻量 CLI / 个人开发", en: "Minimal CLI / individual developer", hintZh: "看入口简单度、工具注册成本和可替换模型层", hintEn: "Look for entry simplicity, tool registration cost, and replaceable model seams", dims: ["architecture", "loop", "tools"], words: ["cli", "terminal", "simple", "minimal", "pair"] }
+];
+
+function scenarioScore(project, lang, scenario) {
+  const findings = projectFindings(project, lang);
+  const dims = new Set(findings.map((finding) => finding.dimension));
+  const blob = `${project.kind} ${project[lang]?.thesis || ""} ${(project[lang]?.strengths || []).join(" ")} ${(project[lang]?.limits || []).join(" ")}`.toLowerCase();
+  let score = 2.35;
+  for (const dimension of scenario.dims) if (dims.has(dimension)) score += 0.42;
+  for (const word of scenario.words) if (blob.includes(word.toLowerCase())) score += 0.22;
+  if (scenario.id === "local-secure" && /sandbox|permission|approval|landlock|seatbelt/.test(blob)) score += 0.55;
+  if (scenario.id === "multi-agent" && /sub.?agent|workforce|swarm|parallel|delegat/.test(blob)) score += 0.6;
+  if (scenario.id === "ui-desktop" && /desktop|electron|browser|workspace|ui/.test(blob)) score += 0.6;
+  if (scenario.id === "long-repo" && /context|memory|compact|retrieval|repo|token/.test(blob)) score += 0.55;
+  if (scenario.id === "ci-release" && /ci|headless|job|queue|workflow|trace/.test(blob)) score += 0.52;
+  if (scenario.id === "enterprise-mcp" && /mcp|plugin|connector|oauth|skill/.test(blob)) score += 0.5;
+  const penalty = (project[lang]?.limits || []).join(" ").toLowerCase();
+  if (scenario.id === "local-secure" && /no sandbox|depends on environment|not.*sandbox|安全边界.*配置/.test(penalty)) score -= 0.45;
+  if (scenario.id === "multi-agent" && /single|没有.*子|not.*multi|单 agent/.test(penalty)) score -= 0.3;
+  if (scenario.id === "ci-release" && /desktop only|ui only|人工/.test(penalty)) score -= 0.3;
+  return Math.max(1, Math.min(5, Math.round(score * 10) / 10));
+}
+
+function scenarioComparison(projectsForPage, lang) {
+  const score = (project, scenario) => scenarioScore(project, lang, scenario);
+  const rows = scenarioDefs.map((scenario) => {
+    const ranked = projectsForPage.map((project) => ({ project, value: score(project, scenario) })).sort((a, b) => b.value - a.value || a.project.name.localeCompare(b.project.name));
+    const cells = ranked.length ? projectsForPage.map((project) => {
+      const value = score(project, scenario);
+      const level = Math.max(1, Math.min(5, Math.round(value)));
+      return `<td class="score-${level}" title="${esc(`${project.name}: ${value}/5`)}"><span>${value.toFixed(1)}</span></td>`;
+    }).join("") : "";
+    const winners = ranked.slice(0, 3).map(({ project, value }, index) => `<li><b>${index + 1}</b><a href="../projects/${project.slug}/${lang}/analysis.html">${esc(project.name)}</a><span>${value.toFixed(1)} / 5</span></li>`).join("");
+    return { scenario, ranked, cells, winners };
+  });
+  const head = projectsForPage.map((project) => `<th scope="col"><span>${esc(project.name)}</span></th>`).join("");
+  const heatmap = rows.map(({ scenario, cells }) => `<tr><th scope="row"><b>${esc(scenario[lang])}</b><small>${esc(scenario[lang === "zh" ? "hintZh" : "hintEn"])}</small></th>${cells}</tr>`).join("");
+  const bars = rows.map(({ scenario, winners }) => `<article class="scenario-card"><header><span>${esc(scenario.id.toUpperCase())}</span><h3>${esc(scenario[lang])}</h3><p>${esc(scenario[lang === "zh" ? "hintZh" : "hintEn"])}</p></header><ol>${winners}</ol></article>`).join("");
+  const legend = lang === "zh" ? "评分是源码证据覆盖、项目定位、优劣势文本与可复核 finding 的启发式合成，不是跑分；先用它筛选路线，再进入项目页看行号。" : "Scores are a heuristic synthesis of evidence coverage, project positioning, strengths, limits, and findings—not a benchmark. Use them to narrow a route, then inspect line-level evidence.";
+  return `<section class="prose scenario-panel" id="scenarios"><div class="section-head"><span>02 · SCENARIO EVALUATION</span><h2>${lang === "zh" ? "不要问谁最好：先问哪条路线适合你的场景" : "Do not ask which is best; ask which route fits the scene"}</h2><p class="atlas-matrix-intro">${esc(legend)}</p></div><div class="scenario-legend"><span class="score-1">1 · 弱</span><span class="score-2">2 · 有限</span><span class="score-3">3 · 可用</span><span class="score-4">4 · 强</span><span class="score-5">5 · 重点候选</span></div><div class="scenario-wrap" tabindex="0"><table class="scenario-table"><thead><tr><th scope="col">${lang === "zh" ? "场景 / Agent" : "Scenario / Agent"}</th>${head}</tr></thead><tbody>${heatmap}</tbody></table></div><div class="scenario-cards">${bars}</div></section>`;
 }
 
 function indexPageDetailed(lang) {
@@ -528,6 +798,7 @@ function indexPageDetailed(lang) {
     ["01", "Entry / goal", "Confirm task, scope, and acceptance"], ["02", "ContextPack", "Retrieve, rank, compact, budget"], ["03", "Execution capsule", "Isolate worktree, browser, CI, secrets"], ["04", "Gate + trace", "Approval, audit, replay, failure exits"], ["05", "Collaborative artifact", "Sub-agents return verifiable work"], ["06", "Knowledge writeback", "FAQ, postmortem, reuse signals"]
   ];
   const blueprint = blueprintData.map(([number, heading, copy]) => "<div class=\"blueprint-step\"><span>" + number + "</span><b>" + esc(heading) + "</b><p>" + esc(copy) + "</p></div>").join("");
+  const scenarioSection = scenarioComparison(projects, lang);
   const heroCopy = lang === "zh" ? "每个项目都有单页技术分析、10 章小白教程、固定提交源码链接、架构/时序/能力图和源码证据板。所有结论从可定位的源码或明确标注日期的 finding 账本开始，而不是从 README 猜出来。" : "Every project has a single-page analysis, a ten-chapter beginner course, pinned-source links, architecture/sequence/capability maps, and a source evidence board. Claims start from locatable code or an explicitly dated finding ledger, not README guesses.";
   const hero = "<section class=\"atlas-hero\"><p class=\"eyebrow\">OPEN-SOURCE AGENT HARNESS ATLAS · " + (lang === "zh" ? "独立重建版" : "INDEPENDENT REBUILD") + "</p><h1>" + (lang === "zh" ? projectCount + " 个开源 Harness，<em>逐层读懂</em>" : projectCount + " open harnesses,<br><em>read layer by layer</em>") + "</h1><p class=\"lede\">" + heroCopy + "</p><div class=\"atlas-metrics\"><span><b>" + projectCount + "</b>" + (lang === "zh" ? "项目" : "projects") + "</span><span><b>" + chapterCount + "</b>" + (lang === "zh" ? "章节 / 语言" : "chapters / language") + "</span><span><b>" + mapCount + "</b>" + (lang === "zh" ? "交互图" : "interactive maps") + "</span><span><b>HEAD</b>" + (lang === "zh" ? "版本锁定" : "pinned") + "</span></div></section>";
   const method = "<section class=\"prose atlas-intro\"><div class=\"section-head\"><span>METHOD</span><h2>" + (lang === "zh" ? "先看版本，再看调用链" : "Version first, call chain second") + "</h2></div><p>" + (lang === "zh" ? "每次项目更新都可能改变功能，所以本合集把 branch、commit、提交时间和 GitHub 行号写在页面上。教程中的‘它支持什么’必须能回到文件和行号；‘适合我们怎么借鉴’则单独标成迁移判断。横向矩阵用于定位路线，单项目报告用于逐条复核源码。" : "Every update can change behavior, so each page records branch, commit, date, and line ranges. What it supports must return to a file and line; how to borrow it is kept as a separate migration judgment. The matrix locates a route; the project report replays the code.") + "</p></section>";
@@ -538,7 +809,7 @@ function indexPageDetailed(lang) {
   const matrixHeaderMarkup = matrixHeaders.map((heading) => "<th scope=\"col\">" + heading + "</th>").join("");
   const matrixSection = "<section class=\"matrix prose\" id=\"matrix\"><div class=\"section-head\"><span>03 · IMPLEMENTATION MATRIX</span><h2>" + (lang === "zh" ? "十四种以上实现路径，逐维对照" : "Implementation paths, dimension by dimension") + "</h2><p class=\"atlas-matrix-intro\">" + (lang === "zh" ? "横向滚动查看。每个单元格是该项目对应维度的源码 finding 压缩摘要；点击 Agent 名称进入带固定提交、源码摘录和交互图的完整报告。" : "Scroll horizontally. Each cell compresses a source finding for that dimension; click the agent name for the full report with pinned excerpts and interactive maps.") + "</p></div><div class=\"matrix-wrap\" tabindex=\"0\" aria-label=\"" + (lang === "zh" ? "可横向滚动的实现对照表" : "Horizontally scrollable implementation matrix") + "\"><table class=\"comparison-matrix\"><thead><tr>" + matrixHeaderMarkup + "</tr></thead><tbody>" + matrix + "</tbody></table></div></section>";
   const footer = "<footer class=\"site-footer\"><span>Superkimi/awesome-harness · " + (lang === "zh" ? "独立项目" : "independent project") + "</span><a href=\"" + (lang === "zh" ? "../en/index.html" : "../zh/index.html") + "\">" + (lang === "zh" ? "English version →" : "中文版 →") + "</a></footer>";
-  return pageShell({ title: lang === "zh" ? "Awesome Harness · 开源 Agent Harness 教程合集" : "Awesome Harness · Open-source agent harness atlas", description: lang === "zh" ? projectCount + " 个开源 Agent Harness 的双语技术分析与章节教程" : "Bilingual technical analyses and chapter courses for " + projectCount + " open-source agent harnesses", lang, body: hero + method + synthesisSection + blueprintSection + projectSection + matrixSection + footer, atlasPage: true });
+  return pageShell({ title: lang === "zh" ? "Awesome Harness · 开源 Agent Harness 教程合集" : "Awesome Harness · Open-source agent harness atlas", description: lang === "zh" ? projectCount + " 个开源 Agent Harness 的双语技术分析与章节教程" : "Bilingual technical analyses and chapter courses for " + projectCount + " open-source agent harnesses", lang, body: hero + method + synthesisSection + blueprintSection + scenarioSection + projectSection + matrixSection + footer, atlasPage: true });
 }
 
 function indexPage(lang) {
@@ -559,11 +830,12 @@ const supplementalCss = `.dimensions{background:rgba(226,216,193,.26)}.dimension
 const richCss = `.report-hero-v2{padding:58px clamp(24px,7vw,120px) 46px;background:linear-gradient(135deg,rgba(226,216,193,.54),rgba(246,241,227,.2));border-bottom:1px solid var(--ink)}.hero-topline,.chapter-kicker,.finding-meta,.finding-code-head{display:flex;justify-content:space-between;gap:15px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.hero-index{color:var(--red);font:12px "SFMono-Regular",monospace;letter-spacing:.18em}.hero-thesis{max-width:950px;font-size:20px;color:#4d4b43}.hero-tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}.hero-tags span{padding:5px 9px;border:1px solid var(--line);border-radius:2px;color:var(--muted);font:9px "SFMono-Regular",monospace}.snapshot-card{padding:20px;border:1px solid var(--ink);background:rgba(246,241,227,.74);box-shadow:var(--shadow)}.snapshot-card dl{margin:0;display:grid;gap:11px}.snapshot-card dl div{display:grid;gap:2px;border-bottom:1px solid var(--line);padding-bottom:8px}.snapshot-card dt{color:var(--red);font:9px "SFMono-Regular",monospace;text-transform:uppercase}.snapshot-card dd{margin:0;color:var(--ink);font:12px "SFMono-Regular",monospace;overflow-wrap:anywhere}.snapshot-card code{font-size:10px}.hero-actions{display:flex;flex-wrap:wrap;gap:18px;margin-top:30px}.hero-actions a{color:var(--red);font:10px "SFMono-Regular",monospace;border-bottom:1px solid var(--red);padding-bottom:3px}.chapter{padding:62px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto}.chapter h2,.evidence-chapter h2{margin:10px 0 18px;color:var(--ink);font:400 clamp(31px,4.3vw,58px)/1.1 Georgia,serif;letter-spacing:-.035em}.chapter-deck{max-width:920px;color:var(--muted);font-size:16px}.executive-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.thesis-card{min-height:145px;border:1px solid var(--line);padding:17px;background:rgba(246,241,227,.62)}.thesis-card.risk-tone{border-color:var(--red)}.thesis-card>span{color:var(--red);font:9px "SFMono-Regular",monospace}.thesis-card p{margin:13px 0 0;color:var(--ink);font-size:16px}.method-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.method-grid>div{border-top:2px solid var(--ink);padding-top:13px}.method-grid span{color:var(--red);font:10px "SFMono-Regular",monospace}.method-grid p{margin:9px 0;color:var(--muted);font-size:13px}.diagram-stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.diagram-figure{margin:0;min-width:0;border:1px solid var(--line);background:rgba(246,241,227,.42)}.diagram-figure figcaption{display:grid;grid-template-columns:1fr auto;gap:6px;padding:13px 15px;border-bottom:1px solid var(--line)}.diagram-figure figcaption span{grid-column:1/-1;color:var(--red);font:9px "SFMono-Regular",monospace}.diagram-figure figcaption b{color:var(--ink);font:17px Georgia,serif}.diagram-figure figcaption a{color:var(--red);font:9px "SFMono-Regular",monospace}.diagram-figure>p{padding:0 15px;color:var(--muted);font-size:12px;min-height:45px}.diagram-figure iframe{display:block;width:100%;height:520px;border:0;border-top:1px solid var(--line);background:#07111f}.coverage-table{display:grid;gap:0;border-top:1px solid var(--line)}.coverage-row{display:grid;grid-template-columns:minmax(170px,1.1fr) 100px 90px 2.2fr;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.coverage-row>span{color:var(--ink);font-weight:600}.coverage-row>b{justify-self:start;padding:2px 7px;border:1px solid var(--line);font:9px "SFMono-Regular",monospace}.coverage-row>em{color:var(--red);font:9px "SFMono-Regular",monospace;font-style:normal}.coverage-row>p{margin:0;color:var(--muted);font-size:12px}.status-verified{color:#087f69}.status-partial,.status-inferred{color:#a98236}.status-missing{color:var(--red)}.evidence-chapter{padding:62px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto}.chapter-rule{display:flex;justify-content:flex-end;border-top:2px solid var(--ink);padding-top:7px}.chapter-rule span{color:var(--red);font:12px monospace}.finding-stack{display:grid;gap:18px}.finding-card{border:1px solid var(--ink);background:rgba(246,241,227,.72);box-shadow:var(--shadow)}.finding-card>header{display:flex;gap:14px;align-items:flex-start;padding:14px 17px;border-bottom:1px solid var(--line)}.finding-index{color:var(--red);font:14px monospace;min-width:27px}.finding-card h3{margin:0;color:var(--ink);font:600 20px/1.3 Georgia,serif}.finding-meta{justify-content:flex-start;flex-wrap:wrap;letter-spacing:0}.finding-meta b,.finding-meta span{font:9px monospace}.finding-meta b{color:#087f69}.finding-meta span{color:var(--muted);border-left:1px solid var(--line);padding-left:7px}.finding-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.02fr)}.finding-copy{padding:17px}.finding-copy section{margin-bottom:13px}.finding-copy section>span,.finding-caveat>span{color:var(--red);font:9px monospace;letter-spacing:.08em}.finding-copy p{margin:5px 0;color:var(--text);font-size:14px}.finding-impact{padding:10px;border-left:2px solid var(--gold);background:rgba(235,227,209,.42)}.finding-caveat{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}.finding-caveat ul{margin:6px 0;padding-left:17px;color:var(--muted);font-size:12px}.finding-source-note{display:block;margin-top:9px;color:var(--muted);font:9px/1.5 monospace}.finding-source-note a{color:var(--red)}.finding-code{min-width:0;background:#172e47;color:#ede5d4}.finding-code-head{padding:9px 13px;border-bottom:1px solid #536a7c}.finding-code-head span{overflow-wrap:anywhere}.finding-code-head a{color:#c4d1d8;white-space:nowrap}.finding-code pre{margin:0;padding:14px;max-height:370px;overflow:auto;font:10px/1.55 "SFMono-Regular",monospace}.reference-note{background:rgba(226,216,193,.34)}.report-footer{display:flex;justify-content:space-between;gap:20px;padding:28px clamp(24px,7vw,120px) 42px;background:var(--ink);color:var(--paper);font:10px monospace}.report-footer nav{display:flex;gap:17px}.report-footer a{color:var(--paper)}.matrix-synthesis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.synthesis-card{border-top:2px solid var(--ink);padding:14px 0}.synthesis-card span{color:var(--red);font:9px monospace}.synthesis-card h3{margin:6px 0;color:var(--ink);font:400 21px Georgia,serif}.synthesis-card p{margin:0;color:var(--muted);font-size:13px}.blueprint{display:grid;grid-template-columns:repeat(6,1fr);gap:0;border:1px solid var(--ink);background:rgba(246,241,227,.5)}.blueprint-step{position:relative;padding:15px 11px;border-right:1px solid var(--line)}.blueprint-step:last-child{border-right:0}.blueprint-step span{display:block;color:var(--red);font:9px monospace}.blueprint-step b{display:block;margin:7px 0;color:var(--ink);font-size:14px}.blueprint-step p{margin:0;color:var(--muted);font-size:11px;line-height:1.5}.atlas-matrix-intro{max-width:980px;color:var(--muted);font-size:15px}@media(max-width:1100px){.executive-grid{grid-template-columns:repeat(2,1fr)}.diagram-stack{grid-template-columns:1fr}.diagram-figure iframe{height:560px}.blueprint{grid-template-columns:repeat(3,1fr)}.blueprint-step:nth-child(3){border-right:0}.blueprint-step:nth-child(-n+3){border-bottom:1px solid var(--line)}}@media(max-width:760px){.report-hero-v2{padding:42px 18px}.chapter,.evidence-chapter{padding:45px 18px}.executive-grid,.method-grid,.finding-grid,.matrix-synthesis{grid-template-columns:1fr}.coverage-row{grid-template-columns:1fr 85px 65px}.coverage-row>p{grid-column:1/-1}.blueprint{grid-template-columns:1fr 1fr}.blueprint-step:nth-child(3){border-right:1px solid var(--line)}.blueprint-step:nth-child(2n){border-right:0}.blueprint-step:nth-child(-n+4){border-bottom:1px solid var(--line)}.diagram-figure iframe{height:480px}.hero-actions{gap:12px}}`;
 
 const legacyCss = `.legacy-note{background:rgba(226,216,193,.34)}.legacy-report-link{display:inline-block;margin-top:12px;padding:10px 14px;border:1px solid var(--ink);color:var(--red);font:10px "SFMono-Regular",monospace}`;
+const detailCss = `.line-guide{margin:18px 0 12px;padding-top:14px;border-top:1px solid var(--line)}.line-guide>span{display:block;color:var(--red);font:9px "SFMono-Regular",monospace;letter-spacing:.08em}.line-guide ol{display:grid;gap:8px;margin:9px 0 0;padding:0;list-style:none}.line-guide li{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:start}.line-guide li>code{padding:3px 5px;border:1px solid var(--line);color:var(--red);font:10px "SFMono-Regular",monospace}.line-guide li b{display:block;color:var(--ink);font-size:12px}.line-guide li p{margin:2px 0 0;color:var(--muted);font-size:11px;line-height:1.55}.current-source{margin-top:14px;border:1px solid #536a7c;background:#172e47;color:#ede5d4}.current-source summary{cursor:pointer;padding:9px 13px;color:#c4d1d8;font:9px "SFMono-Regular",monospace}.current-source .finding-code-head{border-top:1px solid #536a7c}.current-source pre{max-height:330px}.finding-card.compact .finding-code pre{max-height:460px}.finding-card.compact .finding-copy{padding-bottom:20px}.scenario-panel{background:rgba(226,216,193,.22)}.scenario-legend{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0;font:10px "SFMono-Regular",monospace}.scenario-legend span{padding:5px 8px;border:1px solid var(--line)}.scenario-wrap{overflow:auto;border:1px solid var(--ink);box-shadow:var(--shadow)}.scenario-table{border-collapse:collapse;min-width:2450px;width:2450px;table-layout:fixed;font-size:11px}.scenario-table th,.scenario-table td{padding:10px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);text-align:center}.scenario-table thead th{position:sticky;top:0;z-index:2;background:var(--ink);color:var(--paper);font:9px "SFMono-Regular",monospace;writing-mode:vertical-rl;transform:rotate(180deg);height:150px;white-space:nowrap}.scenario-table thead th:first-child{left:0;z-index:4;writing-mode:horizontal-tb;transform:none;min-width:230px;width:230px}.scenario-table tbody th{position:sticky;left:0;z-index:3;background:var(--paper2);text-align:left;min-width:230px;width:230px}.scenario-table tbody th b{display:block;color:var(--ink);font-size:13px}.scenario-table tbody th small{display:block;margin-top:3px;color:var(--muted);font:9px/1.4 "SFMono-Regular",monospace}.scenario-table td{width:85px;min-width:85px;height:50px}.scenario-table td span{display:inline-grid;place-items:center;width:34px;height:25px;border:1px solid currentColor;font:10px "SFMono-Regular",monospace}.score-1{color:#a54a35;background:rgba(165,74,53,.08)}.score-2{color:#a98236;background:rgba(169,130,54,.1)}.score-3{color:#6e7d70;background:rgba(110,125,112,.1)}.score-4{color:#087f69;background:rgba(8,127,105,.12)}.score-5{color:#18385f;background:rgba(24,56,95,.15)}.scenario-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:20px}.scenario-card{border:1px solid var(--line);padding:15px;background:rgba(246,241,227,.58)}.scenario-card header>span{color:var(--red);font:9px monospace}.scenario-card h3{margin:5px 0;color:var(--ink);font:400 21px Georgia,serif}.scenario-card p{margin:0;color:var(--muted);font-size:12px}.scenario-card ol{display:grid;gap:7px;margin:14px 0 0;padding:0;list-style:none}.scenario-card li{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;border-top:1px solid var(--line);padding-top:7px;font:11px "SFMono-Regular",monospace}.scenario-card li>b{color:var(--red)}.scenario-card li a{color:var(--ink)}.scenario-card li span{color:var(--red)}.diagram-figure iframe,.diagram-frame{background:#f5f1e6}.mechanism-panel{margin:24px 0 8px;padding:18px 0;border-top:2px solid var(--ink)}.mechanism-kicker{color:var(--red);font:9px "SFMono-Regular",monospace;letter-spacing:.1em}.mechanism-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}.mechanism-card{border:1px solid var(--line);padding:13px;background:rgba(246,241,227,.55)}.mechanism-card>span{color:var(--red);font:9px monospace}.mechanism-card h3{margin:6px 0;color:var(--ink);font-size:16px}.mechanism-card p{margin:0;color:var(--muted);font-size:11px;line-height:1.55}.mechanism-card blockquote{margin:11px 0;padding:8px 9px;border-left:2px solid var(--gold);color:var(--text);font-size:12px;line-height:1.55}.mechanism-card a{color:var(--red);font:9px monospace;overflow-wrap:anywhere}@media(max-width:1100px){.mechanism-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.scenario-cards,.mechanism-grid{grid-template-columns:1fr}.scenario-table{min-width:2200px;width:2200px}.scenario-table thead th:first-child,.scenario-table tbody th{min-width:190px;width:190px}}`;
 
 const js = `const bar=document.getElementById('reading-progress');const update=()=>{const max=document.documentElement.scrollHeight-innerHeight;bar&&(bar.style.width=(max?scrollY/max*100:0)+'%')};addEventListener('scroll',update,{passive:true});addEventListener('load',update);update();document.querySelector('[data-menu]')?.addEventListener('click',()=>document.querySelector('[data-side]')?.classList.toggle('open'));`;
 
 const matrixCss = ".matrix-wrap{position:relative;max-height:78vh;overflow:auto;overscroll-behavior:contain}.comparison-matrix{min-width:2600px!important;width:2600px!important;table-layout:fixed}.comparison-matrix thead{position:sticky;top:0;z-index:5}.comparison-matrix thead th{position:static;min-width:205px}.comparison-matrix thead th:first-child{position:sticky;left:0;z-index:7;min-width:245px}.comparison-matrix tbody th{position:sticky;left:0;z-index:3;min-width:245px;background:var(--paper2);box-shadow:7px 0 0 rgba(24,56,95,.04)}.comparison-matrix tbody th a{color:var(--ink)}.comparison-matrix td{min-width:205px;font-size:12px;line-height:1.55}.comparison-matrix td strong{color:var(--ink)}.comparison-matrix small{display:block;margin-top:5px;color:var(--muted);font:9px \"SFMono-Regular\",monospace}.comparison-matrix code{font:9px \"SFMono-Regular\",monospace}.matrix-wrap:focus{outline:2px solid var(--red);outline-offset:3px}@media(max-width:760px){.matrix-wrap{max-height:70vh}.comparison-matrix{min-width:2450px!important;width:2450px!important}.comparison-matrix thead th,.comparison-matrix tbody th,.comparison-matrix td{min-width:190px}.comparison-matrix thead th:first-child,.comparison-matrix tbody th{min-width:220px}}";
-write(path.join(siteRoot, "assets/harness.css"), css + supplementalCss + richCss + matrixCss + legacyCss);
+write(path.join(siteRoot, "assets/harness.css"), css + supplementalCss + richCss + matrixCss + legacyCss + detailCss);
 write(path.join(siteRoot, "assets/harness.js"), js);
 write(path.join(siteRoot, "zh/index.html"), indexPageDetailed("zh"));
 write(path.join(siteRoot, "en/index.html"), indexPageDetailed("en"));
@@ -575,7 +847,7 @@ for (const project of projects) {
     write(path.join(projectRoot, "analysis.html"), richAnalysis(project, lang));
     write(path.join(projectRoot, "tutorial/index.html"), tutorialIndex(project, lang));
     for (const [index, chapterDef] of chapterDefs.entries()) write(path.join(projectRoot, "tutorial", `ch${chapterDef.number}-${chapterDef.id}.html`), richChapterPage(project, lang, chapterDef, index));
-    for (const type of ["architecture", "sequence", "capability"]) write(path.join(projectRoot, "diagrams", `${type}.html`), richDiagram(project, lang, type));
+    for (const type of ["architecture", "sequence", "capability"]) write(path.join(projectRoot, "diagrams", `${type}.html`), archifyDiagram(project, lang, type));
   }
 }
 

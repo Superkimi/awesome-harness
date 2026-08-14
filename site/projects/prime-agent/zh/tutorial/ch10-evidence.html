@@ -1,1 +1,422 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="哪些是源码事实，哪些是推断，哪些风险必须补？"><title>Prime Agent · M10 · 证据与取舍：把源码结论带回自研</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch10-evidence.html">中</a><a href="../../en/tutorial/ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="active" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · Prime Agent · 7787f07415d8</p><h1>证据与取舍：把源码结论带回自研</h1><p class="lede">哪些是源码事实，哪些是推断，哪些风险必须补？</p><div class="chapter-meta"><span>第 10 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M10</span><b>Prime Agent · M10 · 证据与取舍：把源码结论带回自研</b></div><div class="video-links"><a href="../../../../videos/prime-agent/ch10-evidence.mp4" data-video-status="published">MP4</a><a href="../../../../videos/prime-agent/ch10-evidence.srt" data-video-status="published">SRT</a><em>7787f07415d8</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>源码审计像验桥：图纸是声明，测试是承重，恢复演练才说明断电后能不能回来。</p></div><h2>先回答本章问题</h2><p>哪些是源码事实，哪些是推断，哪些风险必须补？ Prime Agent 把“模型怎么流式回答、什么时候执行工具、用户插话后是否继续”抽成一个不依赖 TUI 的小内核，上层入口只负责喂配置和消费事件。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="prime-persistence-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · SessionManager 用带 parentId 的 JSONL 树表达分支、压缩和扩展状态</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SessionEntry 包含 message、compaction、branch_summary、custom、session_state、agent_status 等类型；SessionHeader 保存 version、cwd、parentSession、rlmDepth 和 git context。</p></section><section><span>白话解释</span><p>会话文件不是一条只能向后追加的聊天记录，而是一棵可导航的树；扩展可以持久化自己的 entry，又不会把内部状态强塞给模型。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>要支持 fork、resume、compaction 和子 Agent，持久化格式需要 parent link、版本号和“不进入 LLM context”的 entry 类型。</p></section><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/session-manager.ts:33–54</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>当前 session version 和 content entry 类型。</code></pre></div></div></article><article class="finding-card compact" id="prime-persistence-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>02 · Context 重建沿 parent tree，并把 compaction summary 放在 retained messages 前</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>buildSessionContext 从 leaf 沿 parentId 回溯再 reverse，找到 compaction 后把 summary message 与 retainedMessages 放在前面，再追加 compaction 之后的消息；同时恢复 model、thinking level 和 service tier。</p></section><section><span>白话解释</span><p>从任意分支恢复时，模型看到的是“摘要→保留的旧消息→新分支”，UI 还可以知道真实的树边界。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>恢复逻辑应是持久化格式的一部分，而不是 UI 临时拼接；压缩和分支要共享同一 ancestry traversal。</p></section><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L472-L535" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">packages/coding-agent/src/core/session-manager.ts:33–54 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/session-manager.ts:472–535</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L472-L535" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>leaf 到 root 的 tree traversal 与 setting 恢复。</code></pre></div></div></article><article class="finding-card compact" id="prime-persistence-003" data-finding-dimension="observability"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>03 · 写盘采用临时文件 rename，普通 entry 采用 append-only</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>_rewriteFile 将完整 JSONL 写入带随机名的临时文件后 rename；_persist 在已有 assistant 后追加一行，尚未有 assistant 时暂缓非状态 entry，避免半成品会话。</p></section><section><span>白话解释</span><p>完整重写时不会留下半个 JSONL；常规消息又不必每次重写整个文件，兼顾可靠性与成本。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>会话持久化要显式处理“第一条 assistant 尚未出现”的预模型状态，并用原子替换防崩溃损坏。</p></section><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L1345-L1364" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">packages/coding-agent/src/core/session-manager.ts:33–54 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/session-manager.ts:1345–1364</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L1345-L1364" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>临时文件、metadata 和原子 rename。</code></pre></div></div></article><article class="finding-card compact" id="prime-observe-001" data-finding-dimension="observability"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>04 · Agent events 覆盖 agent、turn、message 和 tool execution 四层</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>AgentEvent 类型至少包括 agent_start/end、turn_start/end、message_start/update/end、tool_execution_start/update/end；AgentSession 还扩展 compaction、RLM child update 等宿主事件。</p></section><section><span>白话解释</span><p>UI 可以画出模型流式文本、工具进度和每个 turn 的边界，而不是只能等最终字符串。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>观测模型应把 lifecycle、partial output、tool artifact 和终态分层，便于 replay 与故障定位。</p></section><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L399-L421" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">packages/coding-agent/src/core/session-manager.ts:33–54 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/types.ts:399–421</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L399-L421" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>agent/turn/message/tool event union。</code></pre></div></div></article><article class="finding-card compact" id="prime-maturity-001" data-finding-dimension="recovery"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>recovery</span></div><h3>05 · 测试布局覆盖 agent、session、daemon、RLM、MCP 与 telemetry</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>coding-agent test 目录包含 acp-rlm-subagents、daemon runtime lease、daemon supervisor eviction/side-question、agent-session tree/concurrent、MCP/auth、telemetry、exec、kernel startup 等契约测试。</p></section><section><span>白话解释</span><p>项目没有只测“模型能回答一句话”，而是把长会话、后台 worker、子 Agent 和工具执行拆成可回归的测试文件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>建设自研 harness 时应把恢复、并发、权限和观测作为一等测试维度，而不是上线后再补。</p></section><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/test/acp-rlm-subagents.test.ts#L1-L12" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">packages/coding-agent/src/core/session-manager.ts:33–54 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/test/acp-rlm-subagents.test.ts:1–12</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/test/acp-rlm-subagents.test.ts#L1-L12" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>ACP/RLM 子 Agent 测试入口。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Prime Agent architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← 协作：子 Agent 与工作流</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="哪些是源码事实，哪些是推断，哪些风险必须补？"><title>Prime Agent · M10 · 证据与取舍：把源码结论带回自研</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch10-evidence.html">中</a><a href="../../en/tutorial/ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="active" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · Prime Agent · 7787f07415d8</p><h1>证据与取舍：把源码结论带回自研</h1><p class="lede">哪些是源码事实，哪些是推断，哪些风险必须补？</p><div class="chapter-meta"><span>第 10 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M10</span><b>Prime Agent · M10 · 证据与取舍：把源码结论带回自研</b></div><div class="video-links"><a href="../../../../videos/prime-agent/ch10-evidence.mp4" data-video-status="published">MP4</a><a href="../../../../videos/prime-agent/ch10-evidence.srt" data-video-status="published">SRT</a><em>7787f07415d8</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>源码审计像验桥：图纸是声明，测试是承重，恢复演练才说明断电后能不能回来。</p></div><h2>先回答本章问题</h2><p>哪些是源码事实，哪些是推断，哪些风险必须补？ Prime Agent 把“模型怎么流式回答、什么时候执行工具、用户插话后是否继续”抽成一个不依赖 TUI 的小内核，上层入口只负责喂配置和消费事件。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="prime-persistence-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · SessionManager 用带 parentId 的 JSONL 树表达分支、压缩和扩展状态</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SessionEntry 包含 message、compaction、branch_summary、custom、session_state、agent_status 等类型；SessionHeader 保存 version、cwd、parentSession、rlmDepth 和 git context。</p></section><section><span>白话解释</span><p>会话文件不是一条只能向后追加的聊天记录，而是一棵可导航的树；扩展可以持久化自己的 entry，又不会把内部状态强塞给模型。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>要支持 fork、resume、compaction 和子 Agent，持久化格式需要 parent link、版本号和“不进入 LLM context”的 entry 类型。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>33–42</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>43–54</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/session-manager.ts:33–54</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   33  export const CURRENT_SESSION_VERSION = 3;
+   34  const SESSION_LIST_SEARCH_TEXT_MAX_CHARS = 64 * 1024;
+   35  const SESSION_LIST_PARSE_MAX_LINE_CHARS = 1024 * 1024;
+   36  const SESSION_LIST_LARGE_MESSAGE_PREVIEW_MAX_CHARS = 256;
+   37  const SESSION_STREAMING_LOAD_THRESHOLD_BYTES = 128 * 1024 * 1024;
+   38  const SESSION_ASYNC_PARSE_YIELD_BYTES = 4 * 1024 * 1024;
+   39
+   40  // Entry types that can represent user intent (vs. daemon bookkeeping like
+   41  // session_state/agent_status/git_state/child_usage_attributed). Used by
+   42  // hasUserContent to decide whether a message-less draft is safe to discard.
+   43  const CONTENT_ENTRY_TYPES = new Set([
+   44  	&quot;message&quot;,
+   45  	&quot;custom_message&quot;,
+   46  	&quot;custom&quot;,
+   47  	&quot;model_change&quot;,
+   48  	&quot;thinking_level_change&quot;,
+   49  	&quot;service_tier_change&quot;,
+   50  	&quot;session_info&quot;,
+   51  	&quot;label&quot;,
+   52  	&quot;compaction&quot;,
+   53  	&quot;branch_summary&quot;,
+   54  ]);
+   55
+   56  function realpathIfPresent(path: string): string {
+   57  	try {
+   58  		return realpathSync(path);
+   59  	} catch (error) {
+   60  		if ((error as NodeJS.ErrnoException).code === &quot;ENOENT&quot;) return path;
+   61  		throw error;
+   62  	}
+   63  }
+   64
+   65  function statMetadataIfPresent(path: string): { mode: number; uid: number; gid: number } | undefined {
+   66  	try {
+   67  		const { mode, uid, gid } = statSync(path);
+   68  		return { mode: mode &amp; 0o777, uid, gid };
+   69  	} catch (error) {
+   70  		if ((error as NodeJS.ErrnoException).code === &quot;ENOENT&quot;) return undefined;
+   71  		throw error;
+   72  	}
+   73  }
+   74
+   75  export interface SessionHeader {
+   76  	type: &quot;session&quot;;
+   77  	version?: number; // v1 sessions don&#39;t have this
+   78  	id: string;
+   79  	timestamp: string;
+   80  	cwd: string;
+   81  	parentSession?: string;
+   82  	/** RLM spawn depth. Optional for backward compatibility. Forks preserve the source depth. */
+   83  	rlmDepth?: number;
+   84  	git?: GitContext;
+   85  }
+   86
+   87  export interface NewSessionOptions {
+   88  	id?: string;
+   89  	parentSession?: string;
+   90  	/** Explicit RLM spawn depth. An explicitly undefined value suppresses parent derivation. */
+   91  	rlmDepth?: number;
+   92  }
+   93
+   94  export type SessionPersistListener = (sessionFile: string) =&gt; void;
+   95
+   96  export interface SessionEntryBase {
+   97  	type: string;
+   98  	id: string;
+   99  	parentId: string | null;
+  100  	timestamp: string;
+  101  }
+  102
+  103  export interface SessionMessageEntry extends SessionEntryBase {
+  104  	type: &quot;message&quot;;
+  105  	message: AgentMessage;
+  106  }
+  107
+  108  type AssistantSessionMessageEntry = SessionMessageEntry &amp; { message: AssistantMessage };
+  109
+  110  export interface ThinkingLevelChangeEntry extends SessionEntryBase {
+  111  	type: &quot;thinking_level_change&quot;;
+  112  	thinkingLevel: string;
+  113  }
+  114
+  115  export interface ServiceTierChangeEntry extends SessionEntryBase {
+  116  	type: &quot;service_tier_change&quot;;
+  117  	serviceTier: ServiceTier;
+  118  }
+  119
+  120  export interface ModelChangeEntry extends SessionEntryBase {
+  121  	type: &quot;model_change&quot;;
+  122  	provider: string;
+  123  	modelId: string;
+  124  }
+  125</code></pre></div></div></article><article class="finding-card compact" id="prime-persistence-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>02 · Context 重建沿 parent tree，并把 compaction summary 放在 retained messages 前</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>buildSessionContext 从 leaf 沿 parentId 回溯再 reverse，找到 compaction 后把 summary message 与 retainedMessages 放在前面，再追加 compaction 之后的消息；同时恢复 model、thinking level 和 service tier。</p></section><section><span>白话解释</span><p>从任意分支恢复时，模型看到的是“摘要→保留的旧消息→新分支”，UI 还可以知道真实的树边界。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>恢复逻辑应是持久化格式的一部分，而不是 UI 临时拼接；压缩和分支要共享同一 ancestry traversal。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>472–502</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>503–535</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L472-L535" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/session-manager.ts:472–535</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L472-L535" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  472  /**
+  473   * Build the session context from entries using tree traversal.
+  474   * If leafId is provided, walks from that entry to root.
+  475   * Handles compaction and branch summaries along the path.
+  476   */
+  477  export function buildSessionContext(
+  478  	entries: SessionEntry[],
+  479  	leafId?: string | null,
+  480  	byId?: Map&lt;string, SessionEntry&gt;,
+  481  ): SessionContext {
+  482  	// Build uuid index if not available
+  483  	if (!byId) {
+  484  		byId = new Map&lt;string, SessionEntry&gt;();
+  485  		for (const entry of entries) {
+  486  			byId.set(entry.id, entry);
+  487  		}
+  488  	}
+  489
+  490  	// Find leaf
+  491  	let leaf: SessionEntry | undefined;
+  492  	if (leafId === null) {
+  493  		// Explicitly null - return no messages (navigated to before first entry)
+  494  		return { messages: [], thinkingLevel: &quot;off&quot;, serviceTier: &quot;default&quot;, model: null };
+  495  	}
+  496  	if (leafId) {
+  497  		leaf = byId.get(leafId);
+  498  	}
+  499  	if (!leaf) {
+  500  		// Fallback to last entry (when leafId is undefined)
+  501  		leaf = entries[entries.length - 1];
+  502  	}
+  503
+  504  	if (!leaf) {
+  505  		return { messages: [], thinkingLevel: &quot;off&quot;, serviceTier: &quot;default&quot;, model: null };
+  506  	}
+  507
+  508  	// push+reverse, not unshift-per-entry: unshift is O(n), making this O(n^2) on long sessions.
+  509  	const path: SessionEntry[] = [];
+  510  	let current: SessionEntry | undefined = leaf;
+  511  	while (current) {
+  512  		path.push(current);
+  513  		current = current.parentId ? byId.get(current.parentId) : undefined;
+  514  	}
+  515  	path.reverse();
+  516
+  517  	// Extract settings and find compaction
+  518  	let thinkingLevel = &quot;off&quot;;
+  519  	let serviceTier: ServiceTier = &quot;default&quot;;
+  520  	let model: { provider: string; modelId: string } | null = null;
+  521  	let compaction: CompactionEntry | null = null;
+  522
+  523  	for (const entry of path) {
+  524  		if (entry.type === &quot;thinking_level_change&quot;) {
+  525  			thinkingLevel = entry.thinkingLevel;
+  526  		} else if (entry.type === &quot;service_tier_change&quot;) {
+  527  			serviceTier = entry.serviceTier;
+  528  		} else if (entry.type === &quot;model_change&quot;) {
+  529  			model = { provider: entry.provider, modelId: entry.modelId };
+  530  		} else if (entry.type === &quot;message&quot; &amp;&amp; entry.message.role === &quot;assistant&quot;) {
+  531  			model = { provider: entry.message.provider, modelId: entry.message.model };
+  532  		} else if (entry.type === &quot;compaction&quot;) {
+  533  			compaction = entry;
+  534  		}
+  535  	}
+  536
+  537  	// Build messages and collect corresponding entries
+  538  	// When there&#39;s a compaction, model context remains summary-first while the
+  539  	// summary records where clients should present it among retained messages.
+  540  	const messages: AgentMessage[] = [];
+  541
+  542  	const appendMessage = (entry: SessionEntry, target = messages) =&gt; {
+  543  		if (entry.type === &quot;message&quot;) {
+  544  			target.push(entry.message);
+  545  		} else if (entry.type === &quot;custom_message&quot;) {
+  546  			target.push(
+  547  				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
+  548  			);
+  549  		} else if (entry.type === &quot;branch_summary&quot; &amp;&amp; entry.summary) {
+  550  			target.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
+  551  		}
+  552  	};
+  553
+  554  	if (compaction) {
+  555  		// Find compaction index in path
+  556  		const compactionIdx = path.findIndex((e) =&gt; e.type === &quot;compaction&quot; &amp;&amp; e.id === compaction.id);
+  557
+  558  		// Collect kept messages (before compaction, starting from firstKeptEntryId).
+  559  		// The context remains summary-first for the model; retainedMessageCount records
+  560  		// the exact chronological presentation boundary for clients.
+  561  		const retainedMessages: AgentMessage[] = [];
+  562  		let foundFirstKept = false;
+  563  		for (let i = 0; i &lt; compactionIdx; i++) {
+  564  			const entry = path[i];
+  565  			if (entry.id === compaction.firstKeptEntryId) {
+  566  				foundFirstKept = true;
+  567  			}
+  568  			if (foundFirstKept) {
+  569  				appendMessage(entry, retainedMessages);
+  570  			}
+  571  		}
+  572
+  573  		messages.push(
+  574  			createCompactionSummaryMessage(
+  575  				compaction.summary,
+  576  				compaction.tokensBefore,
+  577  				compaction.timestamp,
+  578  				compaction.customInstructions,
+  579  				retainedMessages.length,
+  580  			),
+  581  			...retainedMessages,
+  582  		);
+  583
+  584  		// Emit messages after compaction
+  585  		for (let i = compactionIdx + 1; i &lt; path.length; i++) {
+  586  			const entry = path[i];
+  587  			appendMessage(entry);
+  588  		}
+  589  	} else {
+  590  		// No compaction - emit all messages, handle branch summaries and custom messages
+  591  		for (const entry of path) {
+  592  			appendMessage(entry);
+  593  		}
+  594  	}
+  595
+  596  	return { messages, thinkingLevel, serviceTier, model };
+  597  }
+  598
+  599  /**
+  600   * Compute the default session directory for a cwd.
+  601   * Returns the configured session root.
+  602   */
+  603  export function getDefaultSessionDir(_cwd: string, agentDir: string = getDefaultAgentDir()): string {
+  604  	const sessionDir = getSessionsDir(agentDir);
+  605  	if (!existsSync(sessionDir)) {
+  606  		mkdirSync(sessionDir, { recursive: true });</code></pre></div></div></article><article class="finding-card compact" id="prime-persistence-003" data-finding-dimension="observability"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>03 · 写盘采用临时文件 rename，普通 entry 采用 append-only</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>_rewriteFile 将完整 JSONL 写入带随机名的临时文件后 rename；_persist 在已有 assistant 后追加一行，尚未有 assistant 时暂缓非状态 entry，避免半成品会话。</p></section><section><span>白话解释</span><p>完整重写时不会留下半个 JSONL；常规消息又不必每次重写整个文件，兼顾可靠性与成本。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>会话持久化要显式处理“第一条 assistant 尚未出现”的预模型状态，并用原子替换防崩溃损坏。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1345–1353</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1354–1364</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L1345-L1364" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/session-manager.ts:1345–1364</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L1345-L1364" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1345  	private _rewriteFile(): void {
+ 1346  		if (!this.persist || !this.sessionFile) return;
+ 1347  		const content = `${this.fileEntries.map((e) =&gt; JSON.stringify(e)).join(&quot;\n&quot;)}\n`;
+ 1348  		const targetPath = realpathIfPresent(this.sessionFile);
+ 1349  		const directory = dirname(targetPath);
+ 1350  		mkdirSync(directory, { recursive: true });
+ 1351  		const tempPath = join(directory, `.${basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`);
+ 1352  		try {
+ 1353  			const metadata = statMetadataIfPresent(targetPath);
+ 1354  			writeFileSync(tempPath, content, metadata === undefined ? undefined : { mode: metadata.mode });
+ 1355  			if (metadata !== undefined) {
+ 1356  				chownSync(tempPath, metadata.uid, metadata.gid);
+ 1357  				chmodSync(tempPath, metadata.mode);
+ 1358  			}
+ 1359  			renameSync(tempPath, targetPath);
+ 1360  		} finally {
+ 1361  			rmSync(tempPath, { force: true });
+ 1362  		}
+ 1363  		this._notifyPersistListeners();
+ 1364  	}
+ 1365
+ 1366  	private _notifyPersistListeners(): void {
+ 1367  		if (!this.sessionFile) {
+ 1368  			return;
+ 1369  		}
+ 1370  		for (const listener of this.persistListeners) {
+ 1371  			try {
+ 1372  				listener(this.sessionFile);
+ 1373  			} catch {
+ 1374  				// Persistence observers must not break session writes.
+ 1375  			}
+ 1376  		}
+ 1377  	}
+ 1378
+ 1379  	onPersist(listener: SessionPersistListener): () =&gt; void {
+ 1380  		this.persistListeners.add(listener);
+ 1381  		return () =&gt; {
+ 1382  			this.persistListeners.delete(listener);
+ 1383  		};
+ 1384  	}
+ 1385
+ 1386  	isPersisted(): boolean {
+ 1387  		return this.persist;
+ 1388  	}
+ 1389
+ 1390  	getCwd(): string {
+ 1391  		return this.cwd;
+ 1392  	}
+ 1393
+ 1394  	getSessionDir(): string {
+ 1395  		return this.sessionDir;
+ 1396  	}
+ 1397
+ 1398  	getSessionId(): string {
+ 1399  		return this.sessionId;
+ 1400  	}
+ 1401
+ 1402  	getSessionFile(): string | undefined {
+ 1403  		return this.sessionFile;
+ 1404  	}
+ 1405
+ 1406  	materializeSessionFile(sessionDir?: string): string {
+ 1407  		if (this.sessionFile) {
+ 1408  			return this.sessionFile;
+ 1409  		}
+ 1410  		const dir = sessionDir ?? (this.sessionDir || getDefaultSessionDir(this.cwd));
+ 1411  		if (!existsSync(dir)) {
+ 1412  			mkdirSync(dir, { recursive: true });
+ 1413  		}
+ 1414  		const previousHeader = this.getHeader();
+ 1415  		const target = createUniqueSessionFileTarget(dir);
+ 1416  		this.sessionDir = dir;
+ 1417  		this.sessionId = target.sessionId;
+ 1418  		this.sessionFile = target.sessionFile;
+ 1419  		this.persist = true;
+ 1420  		const timestamp = new Date().toISOString();
+ 1421  		const git = captureGitContext(this.cwd) ?? undefined;
+ 1422  		const header: SessionHeader = {
+ 1423  			type: &quot;session&quot;,
+ 1424  			version: CURRENT_SESSION_VERSION,
+ 1425  			id: this.sessionId,
+ 1426  			timestamp,
+ 1427  			cwd: this.cwd,
+ 1428  			parentSession: previousHeader?.parentSession,
+ 1429  			rlmDepth: resolveSessionRlmDepth(previousHeader ?? {}, target.sessionFile),
+ 1430  			git,
+ 1431  		};
+ 1432  		this.fileEntries = [header, ...this.getEntries()];
+ 1433  		this._rewriteFile();
+ 1434  		this.flushed = true;
+ 1435  		return this.sessionFile;</code></pre></div></div></article><article class="finding-card compact" id="prime-observe-001" data-finding-dimension="observability"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>04 · Agent events 覆盖 agent、turn、message 和 tool execution 四层</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>AgentEvent 类型至少包括 agent_start/end、turn_start/end、message_start/update/end、tool_execution_start/update/end；AgentSession 还扩展 compaction、RLM child update 等宿主事件。</p></section><section><span>白话解释</span><p>UI 可以画出模型流式文本、工具进度和每个 turn 的边界，而不是只能等最终字符串。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>观测模型应把 lifecycle、partial output、tool artifact 和终态分层，便于 replay 与故障定位。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>399–409</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>410–421</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L399-L421" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/types.ts:399–421</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L399-L421" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  399  /**
+  400   * Events emitted by the Agent for UI updates.
+  401   *
+  402   * `agent_end` is the last event emitted for a run, but awaited `Agent.subscribe()`
+  403   * listeners for that event are still part of run settlement. The agent becomes
+  404   * idle only after those listeners finish.
+  405   */
+  406  export type AgentEvent =
+  407  	// Agent lifecycle
+  408  	| { type: &quot;agent_start&quot; }
+  409  	| { type: &quot;agent_end&quot;; messages: AgentMessage[] }
+  410  	// Turn lifecycle - a turn is one assistant response + any tool calls/results
+  411  	| { type: &quot;turn_start&quot; }
+  412  	| { type: &quot;turn_end&quot;; message: AgentMessage; toolResults: ToolResultMessage[] }
+  413  	// Message lifecycle - emitted for user, assistant, and toolResult messages
+  414  	| { type: &quot;message_start&quot;; message: AgentMessage }
+  415  	// Only emitted for assistant messages during streaming
+  416  	| { type: &quot;message_update&quot;; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
+  417  	| { type: &quot;message_end&quot;; message: AgentMessage }
+  418  	// Tool execution lifecycle
+  419  	| { type: &quot;tool_execution_start&quot;; toolCallId: string; toolName: string; args: any }
+  420  	| { type: &quot;tool_execution_update&quot;; toolCallId: string; toolName: string; args: any; partialResult: any }
+  421  	| { type: &quot;tool_execution_end&quot;; toolCallId: string; toolName: string; result: any; isError: boolean };
+  422</code></pre></div></div></article><article class="finding-card compact" id="prime-maturity-001" data-finding-dimension="recovery"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>recovery</span></div><h3>05 · 测试布局覆盖 agent、session、daemon、RLM、MCP 与 telemetry</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>coding-agent test 目录包含 acp-rlm-subagents、daemon runtime lease、daemon supervisor eviction/side-question、agent-session tree/concurrent、MCP/auth、telemetry、exec、kernel startup 等契约测试。</p></section><section><span>白话解释</span><p>项目没有只测“模型能回答一句话”，而是把长会话、后台 worker、子 Agent 和工具执行拆成可回归的测试文件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>建设自研 harness 时应把恢复、并发、权限和观测作为一等测试维度，而不是上线后再补。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–5</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>6–12</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/test/acp-rlm-subagents.test.ts#L1-L12" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/test/acp-rlm-subagents.test.ts:1–12</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/test/acp-rlm-subagents.test.ts#L1-L12" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  import { mkdirSync, rmSync } from &quot;node:fs&quot;;
+    2  import { tmpdir } from &quot;node:os&quot;;
+    3  import { join } from &quot;node:path&quot;;
+    4  import * as acp from &quot;@agentclientprotocol/sdk&quot;;
+    5  import { Agent } from &quot;@earendil-works/pi-agent-core&quot;;
+    6  import {
+    7  	type AssistantMessage,
+    8  	type Context,
+    9  	createAssistantMessageEventStream,
+   10  	getModel,
+   11  	type TextContent,
+   12  	type Usage,
+   13  } from &quot;@earendil-works/pi-ai&quot;;
+   14  import { afterEach, beforeEach, describe, expect, it } from &quot;vitest&quot;;
+   15  import { AgentSession } from &quot;../src/core/agent-session.js&quot;;
+   16  import type { AgentSessionRuntime } from &quot;../src/core/agent-session-runtime.js&quot;;
+   17  import { AuthStorage } from &quot;../src/core/auth-storage.js&quot;;
+   18  import { convertToLlm } from &quot;../src/core/messages.js&quot;;
+   19  import { ModelRegistry } from &quot;../src/core/model-registry.js&quot;;
+   20  import { SessionManager } from &quot;../src/core/session-manager.js&quot;;
+   21  import { SettingsManager } from &quot;../src/core/settings-manager.js&quot;;
+   22  import { PRIME_AGENT_META_NAMESPACE } from &quot;../src/modes/acp/acp-meta.js&quot;;
+   23  import { runAcpModeWithConnection } from &quot;../src/modes/acp/index.js&quot;;
+   24  import { InProcessAgentConnection } from &quot;../src/modes/agent-connection/in-process-agent-connection.js&quot;;
+   25  import { createTestResourceLoader } from &quot;./utilities.js&quot;;
+   26
+   27  const model = getModel(&quot;anthropic&quot;, &quot;claude-sonnet-4-5&quot;)!;
+   28
+   29  function userText(context: Context): string {
+   30  	const last = context.messages.at(-1);
+   31  	if (!last || last.role !== &quot;user&quot;) return &quot;&quot;;
+   32  	if (typeof last.content === &quot;string&quot;) return last.content;
+   33  	return last.content
+   34  		.filter((block): block is TextContent =&gt; block.type === &quot;text&quot;)
+   35  		.map((block) =&gt; block.text)
+   36  		.join(&quot;\n&quot;);
+   37  }
+   38
+   39  function usage(input = 7, output = 3): Usage {
+   40  	return {
+   41  		input,
+   42  		output,
+   43  		cacheRead: 0,
+   44  		cacheWrite: 0,
+   45  		totalTokens: input + output,
+   46  		cost: { input, output, cacheRead: 0, cacheWrite: 0, total: input + output },
+   47  	};
+   48  }
+   49
+   50  function streamAnswer(text: string): ReturnType&lt;typeof createAssistantMessageEventStream&gt; {
+   51  	const stream = createAssistantMessageEventStream();
+   52  	queueMicrotask(() =&gt; {
+   53  		const message: AssistantMessage = {
+   54  			role: &quot;assistant&quot;,
+   55  			content: [{ type: &quot;text&quot;, text }],
+   56  			api: model.api,
+   57  			provider: model.provider,
+   58  			model: model.id,
+   59  			usage: usage(),
+   60  			stopReason: &quot;stop&quot;,
+   61  			timestamp: Date.now(),
+   62  		};
+   63  		stream.push({ type: &quot;done&quot;, reason: &quot;stop&quot;, message });
+   64  	});
+   65  	return stream;
+   66  }
+   67
+   68  /**
+   69   * Proves RLM subagent activity reaches an ACP client.
+   70   *
+   71   * Uses real AgentSession instances with a stubbed stream function (no API key,
+   72   * no network) so subagent spawn is genuine rather than mocked at the mapper.
+   73   */
+   74
+   75  function runtimeHostFor(session: AgentSession): AgentSessionRuntime {
+   76  	return {
+   77  		session,
+   78  		setRebindSession() {},
+   79  		setBeforeSessionInvalidate() {},
+   80  		async dispose() {},
+   81  	} as unknown as AgentSessionRuntime;
+   82  }
+   83</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">EVIDENCE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>SessionEntry 包含 message、compaction、branch_summary、custom、session_state、agent_status 等类型；SessionHeader 保存 version、cwd、parentSession、rlmDepth 和 git context。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L33-L54" target="_blank" rel="noreferrer">packages/coding-agent/src/core/session-manager.ts:33–54 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>buildSessionContext 从 leaf 沿 parentId 回溯再 reverse，找到 compaction 后把 summary message 与 retainedMessages 放在前面，再追加 compaction 之后的消息；同时恢复 model、thinking level 和 service tier。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L472-L535" target="_blank" rel="noreferrer">packages/coding-agent/src/core/session-manager.ts:472–535 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>_rewriteFile 将完整 JSONL 写入带随机名的临时文件后 rename；_persist 在已有 assistant 后追加一行，尚未有 assistant 时暂缓非状态 entry，避免半成品会话。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/session-manager.ts#L1345-L1364" target="_blank" rel="noreferrer">packages/coding-agent/src/core/session-manager.ts:1345–1364 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>AgentEvent 类型至少包括 agent_start/end、turn_start/end、message_start/update/end、tool_execution_start/update/end；AgentSession 还扩展 compaction、RLM child update 等宿主事件。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L399-L421" target="_blank" rel="noreferrer">packages/agent/src/types.ts:399–421 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Prime Agent architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← 协作：子 Agent 与工作流</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

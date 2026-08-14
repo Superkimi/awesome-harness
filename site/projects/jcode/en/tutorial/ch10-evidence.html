@@ -1,1 +1,1011 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Which claims are facts, inferences, and risks to address?"><title>JCode · M10 · Evidence and trade-offs: bringing lessons home</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">JCode · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch10-evidence.html">中</a><a href="ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>JCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="active" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">master<br>71fa60c4dc87</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · JCode · 71fa60c4dc87</p><h1>Evidence and trade-offs: bringing lessons home</h1><p class="lede">Which claims are facts, inferences, and risks to address?</p><div class="chapter-meta"><span>Chapter 10 / 10</span><span>4 source findings</span><span>master</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M10</span><b>JCode · M10 · 证据与取舍：把源码结论带回自研</b></div><div class="video-links"><a href="../../../../videos/jcode/ch10-evidence.mp4" data-video-status="published">MP4</a><a href="../../../../videos/jcode/ch10-evidence.srt" data-video-status="published">SRT</a><em>71fa60c4dc87</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Source review is bridge inspection: a diagram is a claim, tests are load checks, and recovery drills prove the return path.</p></div><h2>Answer the chapter question first</h2><p>Which claims are facts, inferences, and risks to address? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="jcode-persist-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · Session 用完整 snapshot 加 append-only JSONL journal</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>save 比较 metadata/vector dirty state：需要全量时 checkpoint snapshot 并删 journal，否则只追加 messages/env snapshots/memory injections/replay events delta；journal 超上限或 append 失败再回退 snapshot。</p></section><section><span>PLAIN LANGUAGE</span><p>平时只往流水账追加新变化，偶尔把整本账重抄成快照；这样频繁保存不会每次重写全部历史。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>兼顾耐久与 I/O；多写者必须依靠更上层会话所有权避免交错 append。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/session/persistence.rs:307–395</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>dirty 判定、delta journal、checkpoint threshold。</code></pre></div></div></article><article class="finding-card compact" id="jcode-persist-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>02 · 损坏 journal 跳过坏行、挽救 glued entries，并在下次保存自愈</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>replay 不在首个 parse error 停止，而是继续后续行；对 torn append 与下一条粘在同一行的情况扫描结构起点并 stream-parse。发现腐坏后备份 corrupt.jsonl，强制下次 checkpoint 把已挽救状态固化。</p></section><section><span>PLAIN LANGUAGE</span><p>流水账中间坏一行，不会把后面所有对话一起判死；能捞的条目先捞出来，再重写一本干净快照。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长会话恢复质量高，且保留法证副本。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L26-L128" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">crates/jcode-base/src/session/persistence.rs:307–395 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/session/persistence.rs:26–128</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L26-L128" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>torn/glued salvage 与继续 replay。</code></pre></div></div></article><article class="finding-card compact" id="jcode-observe-001" data-finding-dimension="observability"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>03 · 观测覆盖结构化 lifecycle、实时 session metrics 与可选择遥测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具/MCP/Swarm/Session/Provider 路径记录带 session/message/tool id、latency、bytes、状态的结构化事件；独立 lock-free-ish session registry 维护 60 秒 token churn、turns 和 last activity。匿名 telemetry 默认启用，可用 JCODE_NO_TELEMETRY、DO_NOT_TRACK 或 marker 关闭；prompt/transcript 内容分享另行显式 opt-in。</p></section><section><span>PLAIN LANGUAGE</span><p>本地能看每个工人最近是否真在干活、花了多少 token、工具跑多久；发往服务端的匿名统计能关闭，而对话内容默认不发。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>可观测维度很丰富；隐私评审需同时检查 usage telemetry、content-sharing 和 sponsor provenance 三条数据面。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/tool/mod.rs#L603-L638" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">crates/jcode-base/src/session/persistence.rs:307–395 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/tool/mod.rs:603–638</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/tool/mod.rs#L603-L638" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>tool lifecycle 与 telemetry。</code></pre></div></div></article><article class="finding-card compact" id="jcode-maturity-001" data-finding-dimension="observability"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>observability</span></div><h3>04 · 关键故障边界有源码级回归测试，许可证为 MIT</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>仓库对 compaction restore/hard threshold、mid-stream rollback、session journal corruption、MCP management、hook gate、Swarm prompt/assignment/report-back 和 tool schema 等关键路径有测试；LICENSE 为 MIT。</p></section><section><span>PLAIN LANGUAGE</span><p>不只是代码注释说“应该安全”：断流、损坏账本、深度协作契约等都有回归用例钉住。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>成熟度高，但 1,198 个 Rust 文件的系统仍需 CI 测试矩阵覆盖多 Provider、三平台和远程 daemon。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/compaction_tests.rs#L388-L451" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">crates/jcode-base/src/session/persistence.rs:307–395 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/compaction_tests.rs:388–451</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/compaction_tests.rs#L388-L451" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>95% hard-compaction guard。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="JCode architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← Collaboration: sub-agents and workflows</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Which claims are facts, inferences, and risks to address?"><title>JCode · M10 · Evidence and trade-offs: bringing lessons home</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">JCode · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch10-evidence.html">中</a><a href="ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>JCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="active" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">master<br>71fa60c4dc87</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · JCode · 71fa60c4dc87</p><h1>Evidence and trade-offs: bringing lessons home</h1><p class="lede">Which claims are facts, inferences, and risks to address?</p><div class="chapter-meta"><span>Chapter 10 / 10</span><span>4 source findings</span><span>master</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M10</span><b>JCode · M10 · 证据与取舍：把源码结论带回自研</b></div><div class="video-links"><a href="../../../../videos/jcode/ch10-evidence.mp4" data-video-status="published">MP4</a><a href="../../../../videos/jcode/ch10-evidence.srt" data-video-status="published">SRT</a><em>71fa60c4dc87</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Source review is bridge inspection: a diagram is a claim, tests are load checks, and recovery drills prove the return path.</p></div><h2>Answer the chapter question first</h2><p>Which claims are facts, inferences, and risks to address? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="jcode-persist-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · Session 用完整 snapshot 加 append-only JSONL journal</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>save 比较 metadata/vector dirty state：需要全量时 checkpoint snapshot 并删 journal，否则只追加 messages/env snapshots/memory injections/replay events delta；journal 超上限或 append 失败再回退 snapshot。</p></section><section><span>PLAIN LANGUAGE</span><p>平时只往流水账追加新变化，偶尔把整本账重抄成快照；这样频繁保存不会每次重写全部历史。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>兼顾耐久与 I/O；多写者必须依靠更上层会话所有权避免交错 append。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>307–350</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>351–395</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/session/persistence.rs:307–395</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  307      pub fn save(&amp;mut self) -&gt; Result&lt;()&gt; {
+  308          self.updated_at = Utc::now();
+  309          let path = session_path(&amp;self.id)?;
+  310          let journal_path = session_journal_path_from_snapshot(&amp;path);
+  311          let start = std::time::Instant::now();
+  312          let snapshot_bytes_before = file_len_or_zero(&amp;path);
+  313          let journal_bytes_before = file_len_or_zero(&amp;journal_path);
+  314          let current_meta = self.journal_meta();
+  315          let metadata_needs_snapshot = self
+  316              .persist_state
+  317              .last_meta
+  318              .as_ref()
+  319              .is_some_and(|prev| metadata_requires_snapshot(prev, &amp;current_meta));
+  320          let vectors_need_snapshot = !self.persist_state.snapshot_exists
+  321              || self.persist_state.messages_mode == PersistVectorMode::Full
+  322              || self.persist_state.env_snapshots_mode == PersistVectorMode::Full
+  323              || self.persist_state.memory_injections_mode == PersistVectorMode::Full
+  324              || self.persist_state.replay_events_mode == PersistVectorMode::Full
+  325              || self.messages.len() &lt; self.persist_state.messages_len
+  326              || self.env_snapshots.len() &lt; self.persist_state.env_snapshots_len
+  327              || self.memory_injections.len() &lt; self.persist_state.memory_injections_len
+  328              || self.replay_events.len() &lt; self.persist_state.replay_events_len;
+  329
+  330          let delta_messages = self
+  331              .messages
+  332              .len()
+  333              .saturating_sub(self.persist_state.messages_len);
+  334          let delta_env_snapshots = self
+  335              .env_snapshots
+  336              .len()
+  337              .saturating_sub(self.persist_state.env_snapshots_len);
+  338          let delta_memory_injections = self
+  339              .memory_injections
+  340              .len()
+  341              .saturating_sub(self.persist_state.memory_injections_len);
+  342          let delta_replay_events = self
+  343              .replay_events
+  344              .len()
+  345              .saturating_sub(self.persist_state.replay_events_len);
+  346          let (
+  347              result,
+  348              save_mode,
+  349              entry_build_ms,
+  350              append_ms,
+  351              journal_stat_ms,
+  352              checkpoint_ms,
+  353              journal_bytes_after,
+  354          ) = if metadata_needs_snapshot || vectors_need_snapshot {
+  355              let checkpoint_start = Instant::now();
+  356              let result = self.checkpoint_snapshot(&amp;path, &amp;journal_path);
+  357              let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+  358              let journal_bytes_after = file_len_or_zero(&amp;journal_path);
+  359              (
+  360                  result,
+  361                  &quot;snapshot&quot;,
+  362                  0,
+  363                  0,
+  364                  0,
+  365                  checkpoint_ms,
+  366                  journal_bytes_after,
+  367              )
+  368          } else {
+  369              let entry_build_start = Instant::now();
+  370              let entry = SessionJournalEntry {
+  371                  meta: current_meta.clone(),
+  372                  append_messages: self.messages[self.persist_state.messages_len..].to_vec(),
+  373                  append_env_snapshots: self.env_snapshots[self.persist_state.env_snapshots_len..]
+  374                      .to_vec(),
+  375                  append_memory_injections: self.memory_injections
+  376                      [self.persist_state.memory_injections_len..]
+  377                      .to_vec(),
+  378                  append_replay_events: self.replay_events[self.persist_state.replay_events_len..]
+  379                      .to_vec(),
+  380              };
+  381              let entry_build_ms = entry_build_start.elapsed().as_millis();
+  382              let append_start = Instant::now();
+  383              let append_result = storage::append_json_line_fast(&amp;journal_path, &amp;entry);
+  384              let append_ms = append_start.elapsed().as_millis();
+  385              match append_result {
+  386                  Ok(()) =&gt; {
+  387                      self.reset_persist_state(true);
+  388                      let journal_stat_start = Instant::now();
+  389                      let journal_bytes_after = file_len_or_zero(&amp;journal_path);
+  390                      let journal_stat_ms = journal_stat_start.elapsed().as_millis();
+  391                      if journal_bytes_after &gt; MAX_SESSION_JOURNAL_BYTES {
+  392                          let checkpoint_start = Instant::now();
+  393                          let result = self.checkpoint_snapshot(&amp;path, &amp;journal_path);
+  394                          let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+  395                          let journal_bytes_after = file_len_or_zero(&amp;journal_path);
+  396                          (
+  397                              result,
+  398                              &quot;append+checkpoint&quot;,
+  399                              entry_build_ms,
+  400                              append_ms,
+  401                              journal_stat_ms,
+  402                              checkpoint_ms,
+  403                              journal_bytes_after,
+  404                          )
+  405                      } else {
+  406                          (
+  407                              Ok(()),
+  408                              &quot;append&quot;,
+  409                              entry_build_ms,
+  410                              append_ms,
+  411                              journal_stat_ms,
+  412                              0,
+  413                              journal_bytes_after,
+  414                          )
+  415                      }
+  416                  }
+  417                  Err(err) =&gt; {
+  418                      crate::logging::warn(&amp;format!(
+  419                          &quot;Session journal append failed for {} ({}); checkpointing full snapshot&quot;,
+  420                          self.id, err
+  421                      ));
+  422                      let checkpoint_start = Instant::now();
+  423                      let result = self.checkpoint_snapshot(&amp;path, &amp;journal_path);
+  424                      let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+  425                      let journal_bytes_after = file_len_or_zero(&amp;journal_path);
+  426                      (
+  427                          result,
+  428                          &quot;append_failed_fallback_snapshot&quot;,
+  429                          entry_build_ms,
+  430                          append_ms,
+  431                          0,
+  432                          checkpoint_ms,
+  433                          journal_bytes_after,
+  434                      )
+  435                  }
+  436              }
+  437          };
+  438          let elapsed = start.elapsed();
+  439          let snapshot_bytes_after = file_len_or_zero(&amp;path);
+  440          let result_ok = result.is_ok();
+  441          if elapsed.as_millis() &gt; 50 {
+  442              crate::logging::info(&amp;format!(
+  443                  &quot;Session save slow: total={:.0}ms mode={} metadata_snapshot={} vectors_snapshot={} entry_build={}ms append={}ms journal_stat={}ms checkpoint={}ms messages={} delta_messages={} delta_env_snapshots={} delta_memory_injections={} delta_replay_events={} snapshot_bytes_before={} journal_bytes_before={} journal_bytes_after={}&quot;,
+  444                  elapsed.as_secs_f64() * 1000.0,
+  445                  save_mode,
+  446                  metadata_needs_snapshot,
+  447                  vectors_need_snapshot,
+  448                  entry_build_ms,
+  449                  append_ms,
+  450                  journal_stat_ms,
+  451                  checkpoint_ms,
+  452                  self.messages.len(),
+  453                  delta_messages,
+  454                  delta_env_snapshots,
+  455                  delta_memory_injections,
+  456                  delta_replay_events,
+  457                  snapshot_bytes_before,
+  458                  journal_bytes_before,
+  459                  journal_bytes_after,
+  460              ));
+  461          }
+  462          let mut fields = vec![
+  463              (&quot;phase&quot;, &quot;save_done&quot;.to_string()),
+  464              (&quot;session_id&quot;, self.id.clone()),
+  465              (&quot;path&quot;, path.display().to_string()),
+  466              (&quot;status&quot;, format!(&quot;{:?}&quot;, self.status)),</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/jcode-base/src/session/persistence.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  307      /// This intentionally skips heavyweight transcript vectors so the remote
+  308      /// client can paint quickly while the server performs the authoritative
+  309      /// session restore + history bootstrap.
+  310      pub fn load_startup_stub(session_id: &amp;str) -&gt; Result&lt;Self&gt; {
+  311          let path = session_path(session_id)?;
+  312          let reader = BufReader::new(std::fs::File::open(&amp;path)?);
+  313          let stub: SessionStartupStub = serde_json::from_reader(reader)?;
+  314          Ok(Self::session_from_startup_stub(stub))
+  315      }
+  316
+  317      pub fn load_for_remote_startup(session_id: &amp;str) -&gt; Result&lt;Self&gt; {
+  318          let path = session_path(session_id)?;
+  319          let load_start = Instant::now();
+  320          let snapshot_bytes = file_len_or_zero(&amp;path);
+  321          let snapshot_start = Instant::now();
+  322          let reader = BufReader::new(std::fs::File::open(&amp;path)?);
+  323          let snapshot: RemoteStartupSessionSnapshot = serde_json::from_reader(reader)?;
+  324          let snapshot_ms = snapshot_start.elapsed().as_millis();
+  325          let mut session = Self::session_from_remote_startup_snapshot(snapshot);
+  326          let journal_path = session_journal_path_from_snapshot(&amp;path);
+  327          let journal_bytes = file_len_or_zero(&amp;journal_path);
+  328          let journal_start = Instant::now();
+  329          let mut journal_entries = 0usize;
+  330          replay_journal_lines(&amp;journal_path, |entry| {
+  331              journal_entries += 1;
+  332              session.apply_journal_meta(entry.meta);
+  333              session.messages.extend(entry.append_messages);
+  334              session.replay_events.extend(entry.append_replay_events);
+  335          })?;
+  336          let journal_ms = journal_start.elapsed().as_millis();
+  337          let finalize_start = Instant::now();
+  338          session.reset_persist_state(path.exists());
+  339          session.reset_provider_messages_cache();
+  340          session.mark_memory_profile_dirty();
+  341          let finalize_ms = finalize_start.elapsed().as_millis();
+  342          crate::logging::info(&amp;format!(
+  343              &quot;[TIMING] remote_startup_load: session={}, snapshot={}ms, journal={}ms, finalize={}ms, snapshot_bytes={}, journal_bytes={}, journal_entries={}, messages={}, total={}ms&quot;,
+  344              session.id,
+  345              snapshot_ms,
+  346              journal_ms,
+  347              finalize_ms,
+  348              snapshot_bytes,
+  349              journal_bytes,
+  350              journal_entries,
+  351              session.messages.len(),
+  352              load_start.elapsed().as_millis(),
+  353          ));
+  354          crate::logging::event_info(
+  355              &quot;SESSION_PERSISTENCE&quot;,
+  356              vec![
+  357                  (&quot;phase&quot;, &quot;remote_startup_load_done&quot;.to_string()),
+  358                  (&quot;session_id&quot;, session.id.clone()),
+  359                  (&quot;path&quot;, path.display().to_string()),
+  360                  (&quot;status&quot;, format!(&quot;{:?}&quot;, session.status)),
+  361                  (&quot;messages&quot;, session.messages.len().to_string()),
+  362                  (&quot;snapshot_bytes&quot;, snapshot_bytes.to_string()),
+  363                  (&quot;journal_bytes&quot;, journal_bytes.to_string()),
+  364                  (&quot;journal_entries&quot;, journal_entries.to_string()),
+  365                  (&quot;snapshot_ms&quot;, snapshot_ms.to_string()),
+  366                  (&quot;journal_ms&quot;, journal_ms.to_string()),
+  367                  (&quot;finalize_ms&quot;, finalize_ms.to_string()),
+  368                  (&quot;elapsed_ms&quot;, load_start.elapsed().as_millis().to_string()),
+  369              ],
+  370          );
+  371          Ok(session)
+  372      }
+  373
+  374      pub fn save(&amp;mut self) -&gt; Result&lt;()&gt; {
+  375          self.updated_at = Utc::now();
+  376          let path = session_path(&amp;self.id)?;
+  377          let journal_path = session_journal_path_from_snapshot(&amp;path);
+  378          let start = std::time::Instant::now();
+  379          let snapshot_bytes_before = file_len_or_zero(&amp;path);
+  380          let journal_bytes_before = file_len_or_zero(&amp;journal_path);
+  381          let current_meta = self.journal_meta();
+  382          let metadata_needs_snapshot = self
+  383              .persist_state
+  384              .last_meta
+  385              .as_ref()
+  386              .is_some_and(|prev| metadata_requires_snapshot(prev, &amp;current_meta));
+  387          let vectors_need_snapshot = !self.persist_state.snapshot_exists
+  388              || self.persist_state.messages_mode == PersistVectorMode::Full
+  389              || self.persist_state.env_snapshots_mode == PersistVectorMode::Full
+  390              || self.persist_state.memory_injections_mode == PersistVectorMode::Full
+  391              || self.persist_state.replay_events_mode == PersistVectorMode::Full
+  392              || self.messages.len() &lt; self.persist_state.messages_len
+  393              || self.env_snapshots.len() &lt; self.persist_state.env_snapshots_len
+  394              || self.memory_injections.len() &lt; self.persist_state.memory_injections_len
+  395              || self.replay_events.len() &lt; self.persist_state.replay_events_len;
+  396
+  397          let delta_messages = self
+  398              .messages
+  399              .len()
+  400              .saturating_sub(self.persist_state.messages_len);
+  401          let delta_env_snapshots = self
+  402              .env_snapshots
+  403              .len()
+  404              .saturating_sub(self.persist_state.env_snapshots_len);
+  405          let delta_memory_injections = self
+  406              .memory_injections
+  407              .len()
+  408              .saturating_sub(self.persist_state.memory_injections_len);
+  409          let delta_replay_events = self
+  410              .replay_events
+  411              .len()
+  412              .saturating_sub(self.persist_state.replay_events_len);
+  413          let (
+  414              result,
+  415              save_mode,
+  416              entry_build_ms,
+  417              append_ms,
+  418              journal_stat_ms,
+  419              checkpoint_ms,
+  420              journal_bytes_after,
+  421          ) = if metadata_needs_snapshot || vectors_need_snapshot {
+  422              let checkpoint_start = Instant::now();
+  423              let result = self.checkpoint_snapshot(&amp;path, &amp;journal_path);
+  424              let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+  425              let journal_bytes_after = file_len_or_zero(&amp;journal_path);
+  426              (
+  427                  result,
+  428                  &quot;snapshot&quot;,
+  429                  0,
+  430                  0,
+  431                  0,
+  432                  checkpoint_ms,
+  433                  journal_bytes_after,
+  434              )
+  435          } else {
+  436              let entry_build_start = Instant::now();
+  437              let entry = SessionJournalEntry {
+  438                  meta: current_meta.clone(),
+  439                  append_messages: self.messages[self.persist_state.messages_len..].to_vec(),
+  440                  append_env_snapshots: self.env_snapshots[self.persist_state.env_snapshots_len..]
+  441                      .to_vec(),
+  442                  append_memory_injections: self.memory_injections
+  443                      [self.persist_state.memory_injections_len..]
+  444                      .to_vec(),
+  445                  append_replay_events: self.replay_events[self.persist_state.replay_events_len..]
+  446                      .to_vec(),
+  447              };
+  448              let entry_build_ms = entry_build_start.elapsed().as_millis();
+  449              let append_start = Instant::now();
+  450              let append_result = storage::append_json_line_fast(&amp;journal_path, &amp;entry);
+  451              let append_ms = append_start.elapsed().as_millis();
+  452              match append_result {
+  453                  Ok(()) =&gt; {
+  454                      self.reset_persist_state(true);
+  455                      let journal_stat_start = Instant::now();
+  456                      let journal_bytes_after = file_len_or_zero(&amp;journal_path);
+  457                      let journal_stat_ms = journal_stat_start.elapsed().as_millis();
+  458                      if journal_bytes_after &gt; MAX_SESSION_JOURNAL_BYTES {
+  459                          let checkpoint_start = Instant::now();
+  460                          let result = self.checkpoint_snapshot(&amp;path, &amp;journal_path);
+  461                          let checkpoint_ms = checkpoint_start.elapsed().as_millis();
+  462                          let journal_bytes_after = file_len_or_zero(&amp;journal_path);
+  463                          (
+  464                              result,
+  465                              &quot;append+checkpoint&quot;,
+  466                              entry_build_ms,</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-persist-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>02 · 损坏 journal 跳过坏行、挽救 glued entries，并在下次保存自愈</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>replay 不在首个 parse error 停止，而是继续后续行；对 torn append 与下一条粘在同一行的情况扫描结构起点并 stream-parse。发现腐坏后备份 corrupt.jsonl，强制下次 checkpoint 把已挽救状态固化。</p></section><section><span>PLAIN LANGUAGE</span><p>流水账中间坏一行，不会把后面所有对话一起判死；能捞的条目先捞出来，再重写一本干净快照。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长会话恢复质量高，且保留法证副本。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>26–76</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>77–128</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L26-L128" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/session/persistence.rs:26–128</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L26-L128" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   26  /// Attempt to recover complete entries from a journal line that failed the
+   27  /// strict one-entry-per-line parse.
+   28  ///
+   29  /// If a writer died mid-append (torn line without a trailing newline), the
+   30  /// next successful append starts writing on the same line, producing
+   31  /// `&lt;torn json&gt;&lt;complete entry json&gt;\n` or `&lt;entry json&gt;&lt;entry json&gt;\n`.
+   32  /// Serialized entries always begin with `{&quot;meta&quot;:` (struct field order), so
+   33  /// scan for candidate starts and stream-parse consecutive complete entries
+   34  /// from the first position that yields any.
+   35  fn salvage_glued_journal_entries(line: &amp;str, mut apply: impl FnMut(SessionJournalEntry)) -&gt; usize {
+   36      const ENTRY_START: &amp;str = &quot;{\&quot;meta\&quot;:&quot;;
+   37      let mut salvaged = 0usize;
+   38      let mut search_from = 0usize;
+   39      while let Some(rel) = line
+   40          .get(search_from..)
+   41          .and_then(|rest| rest.find(ENTRY_START))
+   42      {
+   43          let candidate_start = search_from + rel;
+   44          let mut stream = serde_json::Deserializer::from_str(&amp;line[candidate_start..])
+   45              .into_iter::&lt;SessionJournalEntry&gt;();
+   46          let mut parsed = Vec::new();
+   47          for item in &amp;mut stream {
+   48              match item {
+   49                  Ok(entry) =&gt; parsed.push(entry),
+   50                  Err(_) =&gt; break,
+   51              }
+   52          }
+   53          if !parsed.is_empty() {
+   54              salvaged += parsed.len();
+   55              for entry in parsed {
+   56                  apply(entry);
+   57              }
+   58              break;
+   59          }
+   60          search_from = candidate_start + ENTRY_START.len();
+   61      }
+   62      salvaged
+   63  }
+   64
+   65  /// Replay every parseable entry from a session journal, tolerating corrupt
+   66  /// lines instead of truncating the transcript at the first bad byte.
+   67  ///
+   68  /// Journals are append-only JSONL written by `append_json_line_fast`. A crash,
+   69  /// full disk, or (historically) interleaved multi-write appends can leave a
+   70  /// torn or glued line behind. The old replay loop stopped at the first parse
+   71  /// failure, silently dropping every later entry, which surfaced as &quot;my last
+   72  /// prompt is missing&quot; after resuming a long session. Skipping only the bad
+   73  /// line preserves the rest of the transcript; per-entry `meta` snapshots make
+   74  /// later entries self-sufficient for metadata, and appended messages after a
+   75  /// gap are far better than losing the whole tail.
+   76  fn replay_journal_lines(
+   77      journal_path: &amp;Path,
+   78      mut apply: impl FnMut(SessionJournalEntry),
+   79  ) -&gt; Result&lt;JournalReplayStats&gt; {
+   80      let mut stats = JournalReplayStats::default();
+   81      if !journal_path.exists() {
+   82          return Ok(stats);
+   83      }
+   84
+   85      let file = std::fs::File::open(journal_path)?;
+   86      let reader = BufReader::new(file);
+   87      for (line_idx, line) in reader.lines().enumerate() {
+   88          let line = line?;
+   89          let trimmed = line.trim();
+   90          if trimmed.is_empty() {
+   91              continue;
+   92          }
+   93          match serde_json::from_str::&lt;SessionJournalEntry&gt;(trimmed) {
+   94              Ok(entry) =&gt; {
+   95                  stats.entries += 1;
+   96                  apply(entry);
+   97              }
+   98              Err(err) =&gt; {
+   99                  stats.skipped_lines += 1;
+  100                  let salvaged = salvage_glued_journal_entries(trimmed, &amp;mut apply);
+  101                  stats.entries += salvaged;
+  102                  stats.salvaged_entries += salvaged;
+  103                  crate::logging::warn(&amp;format!(
+  104                      &quot;Session journal parse failed at {} line {} ({}); salvaged {} glued entr{} and continuing replay&quot;,
+  105                      journal_path.display(),
+  106                      line_idx + 1,
+  107                      err,
+  108                      salvaged,
+  109                      if salvaged == 1 { &quot;y&quot; } else { &quot;ies&quot; }
+  110                  ));
+  111              }
+  112          }
+  113      }
+  114
+  115      if stats.is_corrupt() {
+  116          crate::logging::event_warn(
+  117              &quot;SESSION_PERSISTENCE&quot;,
+  118              vec![
+  119                  (&quot;phase&quot;, &quot;journal_replay_corruption&quot;.to_string()),
+  120                  (&quot;path&quot;, journal_path.display().to_string()),
+  121                  (&quot;entries_replayed&quot;, stats.entries.to_string()),
+  122                  (&quot;lines_skipped&quot;, stats.skipped_lines.to_string()),
+  123                  (&quot;entries_salvaged&quot;, stats.salvaged_entries.to_string()),
+  124              ],
+  125          );
+  126      }
+  127
+  128      Ok(stats)
+  129  }
+  130
+  131  impl Session {
+  132      fn apply_journal_entry(&amp;mut self, entry: SessionJournalEntry) {
+  133          self.apply_journal_meta(entry.meta);
+  134          self.messages.extend(entry.append_messages);
+  135          self.env_snapshots.extend(entry.append_env_snapshots);
+  136          self.memory_injections
+  137              .extend(entry.append_memory_injections);
+  138          self.replay_events.extend(entry.append_replay_events);
+  139          self.mark_memory_profile_dirty();
+  140      }
+  141
+  142      fn checkpoint_snapshot(&amp;mut self, snapshot_path: &amp;Path, journal_path: &amp;Path) -&gt; Result&lt;()&gt; {
+  143          storage::write_json_fast(snapshot_path, self)?;
+  144          if journal_path.exists() {
+  145              let _ = std::fs::remove_file(journal_path);
+  146          }
+  147          self.reset_persist_state(true);
+  148          Ok(())
+  149      }
+  150
+  151      /// After replaying a journal that contained unparseable lines, force the
+  152      /// next `save()` to checkpoint a full snapshot (which deletes the corrupt
+  153      /// journal) so the salvaged in-memory state becomes durable and the bad
+  154      /// lines can never be replayed again. A best-effort copy of the corrupt
+  155      /// journal is kept next to it for forensics.
+  156      fn schedule_checkpoint_after_corrupt_journal(&amp;mut self, journal_path: &amp;Path) {
+  157          self.mark_messages_full_dirty();
+  158          let backup_path = journal_path.with_extension(&quot;corrupt.jsonl&quot;);
+  159          if let Err(err) = std::fs::copy(journal_path, &amp;backup_path) {
+  160              crate::logging::warn(&amp;format!(
+  161                  &quot;Failed to back up corrupt session journal {} to {}: {}&quot;,
+  162                  journal_path.display(),
+  163                  backup_path.display(),
+  164                  err
+  165              ));
+  166          }
+  167          crate::logging::warn(&amp;format!(
+  168              &quot;Session {} journal {} contained corrupt lines; next save will checkpoint a full snapshot (backup at {})&quot;,
+  169              self.id,
+  170              journal_path.display(),
+  171              backup_path.display()
+  172          ));
+  173      }
+  174
+  175      pub fn load_from_path(path: &amp;Path) -&gt; Result&lt;Self&gt; {
+  176          let load_start = Instant::now();
+  177          let snapshot_bytes = file_len_or_zero(path);
+  178          let snapshot_start = Instant::now();
+  179          let mut session: Session = storage::read_json(path)?;
+  180          let snapshot_ms = snapshot_start.elapsed().as_millis();
+  181          let journal_path = session_journal_path_from_snapshot(path);
+  182          let journal_bytes = file_len_or_zero(&amp;journal_path);
+  183          let journal_start = Instant::now();
+  184          let replay_stats = replay_journal_lines(&amp;journal_path, |entry| {
+  185              session.apply_journal_entry(entry);
+  186          })?;
+  187          let journal_entries = replay_stats.entries;
+  188          let journal_ms = journal_start.elapsed().as_millis();
+  189          let finalize_start = Instant::now();
+  190          session.reset_persist_state(path.exists());
+  191          session.reset_provider_messages_cache();
+  192          session.mark_memory_profile_dirty();
+  193          if replay_stats.is_corrupt() {
+  194              session.schedule_checkpoint_after_corrupt_journal(&amp;journal_path);
+  195          }
+  196          let finalize_ms = finalize_start.elapsed().as_millis();
+  197          crate::logging::info(&amp;format!(
+  198              &quot;[TIMING] session_load: session={}, snapshot={}ms, journal={}ms, finalize={}ms, snapshot_bytes={}, journal_bytes={}, journal_entries={}, messages={}, env_snapshots={}, replay_events={}, total={}ms&quot;,
+  199              session.id,</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/jcode-base/src/session/persistence.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-base/src/session/persistence.rs#L26-L128" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   26  /// Attempt to recover complete entries from a journal line that failed the
+   27  /// strict one-entry-per-line parse.
+   28  ///
+   29  /// If a writer died mid-append (torn line without a trailing newline), the
+   30  /// next successful append starts writing on the same line, producing
+   31  /// `&lt;torn json&gt;&lt;complete entry json&gt;\n` or `&lt;entry json&gt;&lt;entry json&gt;\n`.
+   32  /// Serialized entries always begin with `{&quot;meta&quot;:` (struct field order), so
+   33  /// scan for candidate starts and stream-parse consecutive complete entries
+   34  /// from the first position that yields any.
+   35  fn salvage_glued_journal_entries(line: &amp;str, mut apply: impl FnMut(SessionJournalEntry)) -&gt; usize {
+   36      const ENTRY_START: &amp;str = &quot;{\&quot;meta\&quot;:&quot;;
+   37      let mut salvaged = 0usize;
+   38      let mut search_from = 0usize;
+   39      while let Some(rel) = line
+   40          .get(search_from..)
+   41          .and_then(|rest| rest.find(ENTRY_START))
+   42      {
+   43          let candidate_start = search_from + rel;
+   44          let mut stream = serde_json::Deserializer::from_str(&amp;line[candidate_start..])
+   45              .into_iter::&lt;SessionJournalEntry&gt;();
+   46          let mut parsed = Vec::new();
+   47          for item in &amp;mut stream {
+   48              match item {
+   49                  Ok(entry) =&gt; parsed.push(entry),
+   50                  Err(_) =&gt; break,
+   51              }
+   52          }
+   53          if !parsed.is_empty() {
+   54              salvaged += parsed.len();
+   55              for entry in parsed {
+   56                  apply(entry);
+   57              }
+   58              break;
+   59          }
+   60          search_from = candidate_start + ENTRY_START.len();
+   61      }
+   62      salvaged
+   63  }
+   64
+   65  /// Replay every parseable entry from a session journal, tolerating corrupt
+   66  /// lines instead of truncating the transcript at the first bad byte.
+   67  ///
+   68  /// Journals are append-only JSONL written by `append_json_line_fast`. A crash,
+   69  /// full disk, or (historically) interleaved multi-write appends can leave a
+   70  /// torn or glued line behind. The old replay loop stopped at the first parse
+   71  /// failure, silently dropping every later entry, which surfaced as &quot;my last
+   72  /// prompt is missing&quot; after resuming a long session. Skipping only the bad
+   73  /// line preserves the rest of the transcript; per-entry `meta` snapshots make
+   74  /// later entries self-sufficient for metadata, and appended messages after a
+   75  /// gap are far better than losing the whole tail.
+   76  fn replay_journal_lines(
+   77      journal_path: &amp;Path,
+   78      mut apply: impl FnMut(SessionJournalEntry),
+   79  ) -&gt; Result&lt;JournalReplayStats&gt; {
+   80      let mut stats = JournalReplayStats::default();
+   81      if !journal_path.exists() {
+   82          return Ok(stats);
+   83      }
+   84
+   85      let file = std::fs::File::open(journal_path)?;
+   86      let reader = BufReader::new(file);
+   87      for (line_idx, line) in reader.lines().enumerate() {
+   88          let line = line?;
+   89          let trimmed = line.trim();
+   90          if trimmed.is_empty() {
+   91              continue;
+   92          }
+   93          match serde_json::from_str::&lt;SessionJournalEntry&gt;(trimmed) {
+   94              Ok(entry) =&gt; {
+   95                  stats.entries += 1;
+   96                  apply(entry);
+   97              }
+   98              Err(err) =&gt; {
+   99                  stats.skipped_lines += 1;
+  100                  let salvaged = salvage_glued_journal_entries(trimmed, &amp;mut apply);
+  101                  stats.entries += salvaged;
+  102                  stats.salvaged_entries += salvaged;
+  103                  crate::logging::warn(&amp;format!(
+  104                      &quot;Session journal parse failed at {} line {} ({}); salvaged {} glued entr{} and continuing replay&quot;,
+  105                      journal_path.display(),
+  106                      line_idx + 1,
+  107                      err,
+  108                      salvaged,
+  109                      if salvaged == 1 { &quot;y&quot; } else { &quot;ies&quot; }
+  110                  ));
+  111              }
+  112          }
+  113      }
+  114
+  115      if stats.is_corrupt() {
+  116          crate::logging::event_warn(
+  117              &quot;SESSION_PERSISTENCE&quot;,
+  118              vec![
+  119                  (&quot;phase&quot;, &quot;journal_replay_corruption&quot;.to_string()),
+  120                  (&quot;path&quot;, journal_path.display().to_string()),
+  121                  (&quot;entries_replayed&quot;, stats.entries.to_string()),
+  122                  (&quot;lines_skipped&quot;, stats.skipped_lines.to_string()),
+  123                  (&quot;entries_salvaged&quot;, stats.salvaged_entries.to_string()),
+  124              ],
+  125          );
+  126      }
+  127
+  128      Ok(stats)
+  129  }
+  130
+  131  impl Session {
+  132      fn pre_wipe_backup_path(path: &amp;Path, timestamp: i64) -&gt; PathBuf {
+  133          let file_name = path
+  134              .file_name()
+  135              .map(|name| name.to_string_lossy())
+  136              .unwrap_or_default();
+  137          path.with_file_name(format!(&quot;{file_name}.pre-wipe-{timestamp}.bak&quot;))
+  138      }
+  139
+  140      /// Preserve the last durable transcript before an empty in-memory session
+  141      /// can replace it. This is deliberately best-effort: the hard rejection in
+  142      /// `checkpoint_snapshot` is what prevents data loss, while these copies make
+  143      /// recovery possible if another caller ever bypasses that invariant.
+  144      fn guard_snapshot_shrink(&amp;self, snapshot_path: &amp;Path, journal_path: &amp;Path) {
+  145          const MIN_TRANSCRIPT_SNAPSHOT_BYTES: u64 = 4 * 1024;
+  146
+  147          if !self.messages.is_empty()
+  148              || file_len_or_zero(snapshot_path) &lt;= MIN_TRANSCRIPT_SNAPSHOT_BYTES
+  149          {
+  150              return;
+  151          }
+  152
+  153          let timestamp = Utc::now().timestamp_millis();
+  154          let snapshot_backup = Self::pre_wipe_backup_path(snapshot_path, timestamp);
+  155          let journal_backup = Self::pre_wipe_backup_path(journal_path, timestamp);
+  156          let mut backup_errors = Vec::new();
+  157
+  158          if let Err(err) = std::fs::copy(snapshot_path, &amp;snapshot_backup) {
+  159              backup_errors.push(format!(&quot;snapshot {}: {err}&quot;, snapshot_backup.display()));
+  160          }
+  161          if journal_path.exists()
+  162              &amp;&amp; let Err(err) = std::fs::copy(journal_path, &amp;journal_backup)
+  163          {
+  164              backup_errors.push(format!(&quot;journal {}: {err}&quot;, journal_backup.display()));
+  165          }
+  166
+  167          let fields = vec![
+  168              (&quot;phase&quot;, &quot;pre_wipe_backup&quot;.to_string()),
+  169              (&quot;session_id&quot;, self.id.clone()),
+  170              (&quot;snapshot_path&quot;, snapshot_path.display().to_string()),
+  171              (&quot;snapshot_backup&quot;, snapshot_backup.display().to_string()),
+  172              (&quot;journal_backup&quot;, journal_backup.display().to_string()),
+  173              (&quot;errors&quot;, backup_errors.join(&quot;; &quot;)),
+  174          ];
+  175          crate::logging::event_warn(&quot;SESSION_PERSISTENCE&quot;, fields);
+  176      }
+  177
+  178      fn apply_journal_entry(&amp;mut self, entry: SessionJournalEntry) {
+  179          self.apply_journal_meta(entry.meta);
+  180          self.messages.extend(entry.append_messages);
+  181          self.env_snapshots.extend(entry.append_env_snapshots);
+  182          self.memory_injections
+  183              .extend(entry.append_memory_injections);
+  184          self.replay_events.extend(entry.append_replay_events);
+  185          self.mark_memory_profile_dirty();
+  186      }
+  187
+  188      fn checkpoint_snapshot(&amp;mut self, snapshot_path: &amp;Path, journal_path: &amp;Path) -&gt; Result&lt;()&gt; {
+  189          let destructive_empty_checkpoint = self.messages.is_empty()
+  190              &amp;&amp; self.persist_state.messages_len &gt; 0
+  191              &amp;&amp; snapshot_path.exists();
+  192          if destructive_empty_checkpoint {
+  193              self.guard_snapshot_shrink(snapshot_path, journal_path);
+  194              bail!(
+  195                  &quot;refusing to replace non-empty persisted transcript for session {} with an empty checkpoint&quot;,
+  196                  self.id
+  197              );
+  198          }
+  199          self.guard_snapshot_shrink(snapshot_path, journal_path);</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-observe-001" data-finding-dimension="observability"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>03 · 观测覆盖结构化 lifecycle、实时 session metrics 与可选择遥测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具/MCP/Swarm/Session/Provider 路径记录带 session/message/tool id、latency、bytes、状态的结构化事件；独立 lock-free-ish session registry 维护 60 秒 token churn、turns 和 last activity。匿名 telemetry 默认启用，可用 JCODE_NO_TELEMETRY、DO_NOT_TRACK 或 marker 关闭；prompt/transcript 内容分享另行显式 opt-in。</p></section><section><span>PLAIN LANGUAGE</span><p>本地能看每个工人最近是否真在干活、花了多少 token、工具跑多久；发往服务端的匿名统计能关闭，而对话内容默认不发。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>可观测维度很丰富；隐私评审需同时检查 usage telemetry、content-sharing 和 sponsor provenance 三条数据面。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>603–619</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>620–638</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/tool/mod.rs#L603-L638" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-app-core/src/tool/mod.rs:603–638</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/tool/mod.rs#L603-L638" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  603          crate::logging::event_info(
+  604              &quot;TOOL_LIFECYCLE&quot;,
+  605              Self::tool_lifecycle_fields(&quot;start&quot;, name, resolved_name, &amp;input, &amp;ctx),
+  606          );
+  607
+  608          let started_at = std::time::Instant::now();
+  609          let result = tool.execute(input.clone(), ctx.clone()).await;
+  610          let latency_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+  611
+  612          crate::telemetry::record_tool_execution(resolved_name, &amp;input, result.is_ok(), latency_ms);
+  613          Self::fire_post_tool_hook(resolved_name, &amp;ctx, &amp;result, latency_ms);
+  614
+  615          let mut output = match result {
+  616              Ok(output) =&gt; output,
+  617              Err(error) =&gt; {
+  618                  let mut fields =
+  619                      Self::tool_lifecycle_fields(&quot;error&quot;, name, resolved_name, &amp;input, &amp;ctx);
+  620                  fields.push((&quot;elapsed_ms&quot;.to_string(), latency_ms.to_string()));
+  621                  fields.push((&quot;error&quot;.to_string(), crate::util::format_error_chain(&amp;error)));
+  622                  crate::logging::event_warn(&quot;TOOL_LIFECYCLE&quot;, fields);
+  623                  return Err(error);
+  624              }
+  625          };
+  626
+  627          // Context overflow guard: check if this output would push us over the limit
+  628          output = self.guard_context_overflow(name, output).await;
+  629
+  630          let mut fields = Self::tool_lifecycle_fields(&quot;done&quot;, name, resolved_name, &amp;input, &amp;ctx);
+  631          fields.push((&quot;elapsed_ms&quot;.to_string(), latency_ms.to_string()));
+  632          fields.push((&quot;output_bytes&quot;.to_string(), output.output.len().to_string()));
+  633          fields.push((
+  634              &quot;output_chars&quot;.to_string(),
+  635              output.output.chars().count().to_string(),
+  636          ));
+  637          fields.push((&quot;image_count&quot;.to_string(), output.images.len().to_string()));
+  638          crate::logging::event_info(&quot;TOOL_LIFECYCLE&quot;, fields);
+  639
+  640          Ok(output)
+  641      }
+  642
+  643      /// Check if a tool output would overflow the context window and truncate if needed.
+  644      /// Returns the (possibly truncated) output.
+  645      async fn guard_context_overflow(&amp;self, tool_name: &amp;str, output: ToolOutput) -&gt; ToolOutput {
+  646          let compaction = self.compaction.read().await;
+  647          let budget = compaction.token_budget();
+  648          if budget == 0 {
+  649              return output;
+  650          }
+  651
+  652          let current_tokens = compaction.effective_token_count();
+  653          let output_tokens = Self::estimate_tokens(&amp;output.output);
+  654
+  655          // Check 1: Would adding this output push us over the safety threshold?
+  656          let projected = current_tokens + output_tokens;
+  657          let threshold_tokens = (budget as f32 * Self::CONTEXT_GUARD_THRESHOLD) as usize;
+  658
+  659          // Check 2: Is this single output unreasonably large relative to budget?
+  660          let single_max_tokens = (budget as f32 * Self::SINGLE_OUTPUT_MAX_FRACTION) as usize;
+  661
+  662          let needs_truncation = projected &gt; threshold_tokens || output_tokens &gt; single_max_tokens;
+  663
+  664          if !needs_truncation {
+  665              return output;
+  666          }
+  667
+  668          // Calculate how many tokens we can afford for this output
+  669          let remaining = if current_tokens &lt; threshold_tokens {
+  670              threshold_tokens - current_tokens
+  671          } else {
+  672              // Already over threshold — allow a small amount for the error message
+  673              budget / 50 // ~2% of budget for the truncation notice
+  674          };
+  675          let max_tokens = remaining.min(single_max_tokens);
+  676
+  677          // Convert token limit back to approximate character limit
+  678          let max_chars = max_tokens * 4;
+  679
+  680          if output.output.len() &lt;= max_chars {
+  681              return output;
+  682          }
+  683
+  684          crate::logging::info(&amp;format!(
+  685              &quot;Context guard: truncating {} output from ~{}k to ~{}k tokens \
+  686               (context: {}k/{}k, {:.0}% used)&quot;,
+  687              tool_name,
+  688              output_tokens / 1000,
+  689              max_tokens / 1000,
+  690              current_tokens / 1000,
+  691              budget / 1000,
+  692              (current_tokens as f32 / budget as f32) * 100.0,
+  693          ));
+  694
+  695          // Truncate the output, keeping the beginning (usually most relevant)
+  696          let truncated = if max_chars &gt; 200 {
+  697              // Keep beginning of output + truncation notice
+  698              let kept = &amp;output.output[..output.output.floor_char_boundary(max_chars - 150)];
+  699              format!(
+  700                  &quot;{}\n\n⚠️ OUTPUT TRUNCATED: This tool output was {:.0}k tokens which would \
+  701                   exceed the context window ({:.0}k/{}k tokens used, {}k budget). \
+  702                   Only the first ~{:.0}k tokens are shown. Use more targeted queries \
+  703                   (e.g., smaller line ranges, specific grep patterns) to get the content \
+  704                   you need without exceeding context limits.&quot;,
+  705                  kept,
+  706                  output_tokens as f32 / 1000.0,
+  707                  current_tokens as f32 / 1000.0,
+  708                  budget / 1000,
+  709                  budget / 1000,</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/jcode-app-core/src/tool/mod.rs · 71fa60c4dc87</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/tool/mod.rs#L603-L638" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  603      ///
+  604      /// It has one job: make the price legible and the retry obvious. The caller
+  605      /// gets the exact cost, what would survive truncation, the cheap fixes, and
+  606      /// the exact flag to pass if they really want the whole thing.
+  607      fn oversized_output_refusal(
+  608          output_tokens: usize,
+  609          affordable_tokens: usize,
+  610          current_tokens: usize,
+  611          budget: usize,
+  612      ) -&gt; String {
+  613          let percent_of_budget = if budget &gt; 0 {
+  614              (output_tokens as f32 / budget as f32) * 100.0
+  615          } else {
+  616              0.0
+  617          };
+  618          format!(
+  619              &quot;⚠️ OUTPUT WITHHELD: this result is ~{output}k tokens ({percent:.0}% of the \
+  620               {budget}k context budget, of which {used}k is already used), so it was not \
+  621               returned. Nothing was added to the context except this message.\n\n\
+  622               Narrow the request first: add or tighten `path`, `glob`, or `type`, set \
+  623               `max_files`/`max_regions`, use `paths_only` when you only need locations, or \
+  624               read a specific line range. A targeted query is almost always the better \
+  625               answer than a truncated dump.\n\n\
+  626               If you genuinely need this output and accept the token cost, repeat the same \
+  627               call with `\&quot;accept_large_output\&quot;: true`. That returns the first ~{affordable}k \
+  628               tokens and permanently spends them from this session&#39;s context.&quot;,
+  629              output = output_tokens as f32 / 1000.0,
+  630              percent = percent_of_budget,
+  631              budget = budget / 1000,
+  632              used = current_tokens / 1000,
+  633              affordable = affordable_tokens as f32 / 1000.0,
+  634          )
+  635      }
+  636
+  637      /// Execute a tool by name
+  638      pub async fn execute(&amp;self, name: &amp;str, input: Value, ctx: ToolContext) -&gt; Result&lt;ToolOutput&gt; {
+  639          // Mark this call in-flight for the whole execution so the missing
+  640          // tool-output repair paths do not mistake a slow tool for an
+  641          // interrupted one and inject a duplicate synthetic result. See
+  642          // `tool::inflight`.
+  643          let _in_flight = inflight::mark_tool_in_flight(&amp;ctx.tool_call_id);
+  644          let tools = self.tools.read().await;
+  645          let resolved_name = Self::resolve_tool_name(name);
+  646          if let Some(policy) = session_tool_policy(&amp;ctx.session_id) {
+  647              if let Some(allowed) = policy.allowed_tools.as_ref()
+  648                  &amp;&amp; !tool_name_is_allowed(allowed, resolved_name)
+  649              {
+  650                  return Err(anyhow::anyhow!(&quot;Tool &#39;{}&#39; is not allowed&quot;, resolved_name));
+  651              }
+  652              if tool_name_is_disabled(&amp;policy.disabled_tools, resolved_name) {
+  653                  return Err(anyhow::anyhow!(&quot;Tool &#39;{}&#39; is disabled&quot;, resolved_name));
+  654              }
+  655          }
+  656          let tool = match tools.get(resolved_name) {
+  657              Some(tool) =&gt; tool.clone(),
+  658              None =&gt; {
+  659                  // List available tools so the model can recover instead of
+  660                  // spiraling through hallucinated names like &quot;ToolSearch&quot; (#104).
+  661                  let mut available: Vec&lt;&amp;str&gt; = tools.keys().map(|k| k.as_str()).collect();
+  662                  available.sort_unstable();
+  663                  let suggestions = Self::closest_tool_names(name, &amp;available);
+  664                  let mut msg = format!(&quot;Unknown tool: {name}.&quot;);
+  665                  if !suggestions.is_empty() {
+  666                      msg.push_str(&amp;format!(&quot; Did you mean: {}?&quot;, suggestions.join(&quot;, &quot;)));
+  667                  }
+  668                  msg.push_str(&amp;format!(&quot; Available tools: {}.&quot;, available.join(&quot;, &quot;)));
+  669                  return Err(anyhow::anyhow!(msg));
+  670              }
+  671          };
+  672
+  673          // Drop the lock before executing
+  674          drop(tools);
+  675
+  676          // User-configured pre_tool gate: external policy hook that can block
+  677          // this call (exit 2). Skipped entirely when not configured.
+  678          if crate::hooks::hook_configured(&quot;pre_tool&quot;) {
+  679              let input_json = input.to_string();
+  680              let working_dir = ctx
+  681                  .working_dir
+  682                  .as_ref()
+  683                  .map(|dir| dir.display().to_string());
+  684              let decision = crate::hooks::run_pre_tool_gate(
+  685                  &amp;ctx.session_id,
+  686                  working_dir.as_deref(),
+  687                  resolved_name,
+  688                  &amp;input_json,
+  689              )
+  690              .await;
+  691              if let crate::hooks::GateDecision::Block { reason } = decision {
+  692                  let mut fields =
+  693                      Self::tool_lifecycle_fields(&quot;blocked&quot;, name, resolved_name, &amp;input, &amp;ctx);
+  694                  fields.push((&quot;block_reason&quot;.to_string(), reason.clone()));
+  695                  crate::logging::event_warn(&quot;TOOL_LIFECYCLE&quot;, fields);
+  696                  return Err(anyhow::anyhow!(
+  697                      &quot;Tool call blocked by pre_tool hook: {reason}&quot;
+  698                  ));
+  699              }
+  700          }
+  701
+  702          crate::logging::event_info(
+  703              &quot;TOOL_LIFECYCLE&quot;,
+  704              Self::tool_lifecycle_fields(&quot;start&quot;, name, resolved_name, &amp;input, &amp;ctx),
+  705          );
+  706
+  707          let started_at = std::time::Instant::now();
+  708          let result = tool.execute(input.clone(), ctx.clone()).await;
+  709          let latency_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;</code></pre></details></div></div></article><article class="finding-card compact" id="jcode-maturity-001" data-finding-dimension="observability"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>observability</span></div><h3>04 · 关键故障边界有源码级回归测试，许可证为 MIT</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>仓库对 compaction restore/hard threshold、mid-stream rollback、session journal corruption、MCP management、hook gate、Swarm prompt/assignment/report-back 和 tool schema 等关键路径有测试；LICENSE 为 MIT。</p></section><section><span>PLAIN LANGUAGE</span><p>不只是代码注释说“应该安全”：断流、损坏账本、深度协作契约等都有回归用例钉住。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>成熟度高，但 1,198 个 Rust 文件的系统仍需 CI 测试矩阵覆盖多 Provider、三平台和远程 daemon。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>388–418</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>419–451</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 119301ac9d60 · <a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/compaction_tests.rs#L388-L451" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/jcode-base/src/compaction_tests.rs:388–451</span><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/compaction_tests.rs#L388-L451" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  388  async fn test_guard_at_95_triggers_hard_compact() {
+  389      let mut manager = CompactionManager::new().with_budget(1_000);
+  390      let mut messages = Vec::new();
+  391      for i in 0..20 {
+  392          messages.push(make_text_message(
+  393              Role::User,
+  394              &amp;format!(&quot;message {} with padding {}&quot;, i, &quot;x&quot;.repeat(50)),
+  395          ));
+  396          manager.notify_message_added();
+  397      }
+  398      // 96% usage — above critical threshold
+  399      manager.update_observed_input_tokens(960);
+  400
+  401      let provider: Arc&lt;dyn Provider&gt; = Arc::new(MockSummaryProvider);
+  402      let action = manager.ensure_context_fits(&amp;messages, provider);
+  403      assert!(
+  404          matches!(action, CompactionAction::HardCompacted(_)),
+  405          &quot;SHOULD hard-compact at 96%&quot;
+  406      );
+  407      assert!(
+  408          manager.compacted_count &gt; 0,
+  409          &quot;compacted_count should increase after hard compact&quot;
+  410      );
+  411      assert!(
+  412          manager.active_summary.is_some(),
+  413          &quot;should have an emergency summary&quot;
+  414      );
+  415  }
+  416
+  417  #[tokio::test]
+  418  async fn test_guard_at_100_percent_drops_messages() {
+  419      let mut manager = CompactionManager::new().with_budget(1_000);
+  420      let mut messages = Vec::new();
+  421      for i in 0..30 {
+  422          messages.push(make_text_message(
+  423              Role::User,
+  424              &amp;format!(&quot;turn {} content {}&quot;, i, &quot;y&quot;.repeat(80)),
+  425          ));
+  426          manager.notify_message_added();
+  427      }
+  428      // Over 100% — simulates the exact bug scenario
+  429      manager.update_observed_input_tokens(1_050);
+  430
+  431      let provider: Arc&lt;dyn Provider&gt; = Arc::new(MockSummaryProvider);
+  432      let action = manager.ensure_context_fits(&amp;messages, provider);
+  433      assert!(
+  434          matches!(action, CompactionAction::HardCompacted(_)),
+  435          &quot;MUST hard-compact when over 100%&quot;
+  436      );
+  437
+  438      let api_messages = manager.messages_for_api_with(&amp;messages);
+  439      assert!(
+  440          api_messages.len() &lt; messages.len(),
+  441          &quot;API messages should be fewer after hard compact&quot;
+  442      );
+  443      // First message should be the emergency summary
+  444      match &amp;api_messages[0].content[0] {
+  445          ContentBlock::Text { text, .. } =&gt; {
+  446              assert!(text.contains(&quot;Previous Conversation Summary&quot;));
+  447              assert!(text.contains(&quot;Emergency compaction&quot;));
+  448          }
+  449          _ =&gt; panic!(&quot;expected text summary block&quot;),
+  450      }
+  451  }
+  452
+  453  // ── hard_compact_with edge cases ────────────────────────────────
+  454
+  455  #[test]
+  456  fn test_hard_compact_too_few_messages() {
+  457      let mut manager = CompactionManager::new().with_budget(100);
+  458      let messages = vec![
+  459          make_text_message(Role::User, &quot;hello&quot;),
+  460          make_text_message(Role::Assistant, &quot;hi&quot;),
+  461      ];
+  462      manager.notify_message_added();
+  463      manager.notify_message_added();
+  464
+  465      let result = manager.hard_compact_with(&amp;messages);
+  466      assert!(
+  467          result.is_err(),
+  468          &quot;should fail with only 2 messages (MIN_TURNS_TO_KEEP)&quot;
+  469      );
+  470  }
+  471
+  472  #[test]
+  473  fn test_hard_compact_preserves_recent_turns() {
+  474      let mut manager = CompactionManager::new().with_budget(1_000);
+  475      let mut messages = Vec::new();
+  476      for i in 0..25 {
+  477          messages.push(make_text_message(Role::User, &amp;format!(&quot;turn {}&quot;, i)));
+  478          manager.notify_message_added();
+  479      }
+  480      manager.update_observed_input_tokens(950);
+  481
+  482      let dropped = manager
+  483          .hard_compact_with(&amp;messages)
+  484          .expect(&quot;should compact&quot;);
+  485      assert!(dropped &gt; 0, &quot;should drop some messages&quot;);
+  486      assert!(dropped &lt; 25, &quot;should not drop ALL messages&quot;);
+  487
+  488      let api_messages = manager.messages_for_api_with(&amp;messages);
+  489      // Should have summary + recent turns
+  490      assert!(
+  491          api_messages.len() &gt;= 2,
+  492          &quot;should keep at least MIN_TURNS_TO_KEEP + summary&quot;
+  493      );
+  494      assert!(
+  495          api_messages.len() &lt;= 15,
+  496          &quot;should have dropped a significant number&quot;
+  497      );
+  498  }
+  499
+  500  // ── safe_compaction_cutoff: tool call/result pair integrity ─────────
+  501
+  502  #[test]
+  503  fn test_safe_cutoff_preserves_tool_pairs() {
+  504      // Messages: [user, assistant(tool_use), user(tool_result), assistant, user]
+  505      // If cutoff tries to split between tool_use and tool_result, it should back up
+  506      let messages = vec![
+  507          make_text_message(Role::User, &quot;do something&quot;),
+  508          Message {
+  509              role: Role::Assistant,
+  510              content: vec![ContentBlock::ToolUse {
+  511                  id: &quot;tool_1&quot;.to_string(),
+  512                  name: &quot;bash&quot;.to_string(),
+  513                  input: serde_json::json!({&quot;command&quot;: &quot;ls&quot;}),
+  514                  thought_signature: None,
+  515              }],
+  516              timestamp: None,
+  517              tool_duration_ms: None,
+  518          },
+  519          Message {
+  520              role: Role::User,
+  521              content: vec![ContentBlock::ToolResult {
+  522                  tool_use_id: &quot;tool_1&quot;.to_string(),</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">EVIDENCE · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>save 比较 metadata/vector dirty state：需要全量时 checkpoint snapshot 并删 journal，否则只追加 messages/env snapshots/memory injections/replay events delta；journal 超上限或 append 失败再回退 snapshot。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L307-L395" target="_blank" rel="noreferrer">crates/jcode-base/src/session/persistence.rs:307–395 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>replay 不在首个 parse error 停止，而是继续后续行；对 torn append 与下一条粘在同一行的情况扫描结构起点并 stream-parse。发现腐坏后备份 corrupt.jsonl，强制下次 checkpoint 把已挽救状态固化。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/session/persistence.rs#L26-L128" target="_blank" rel="noreferrer">crates/jcode-base/src/session/persistence.rs:26–128 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>工具/MCP/Swarm/Session/Provider 路径记录带 session/message/tool id、latency、bytes、状态的结构化事件；独立 lock-free-ish session registry 维护 60 秒 token churn、turns 和 last activity。匿名 telemetry 默认启用，可用 JCODE_NO_TELEMETRY、DO_NOT_TRACK 或 marker 关闭；prompt/transcript 内容分享另行显式 opt-in。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-app-core/src/tool/mod.rs#L603-L638" target="_blank" rel="noreferrer">crates/jcode-app-core/src/tool/mod.rs:603–638 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>仓库对 compaction restore/hard threshold、mid-stream rollback、session journal corruption、MCP management、hook gate、Swarm prompt/assignment/report-back 和 tool schema 等关键路径有测试；LICENSE 为 MIT。</blockquote><a href="https://github.com/1jehuang/jcode/blob/119301ac9d605fc4c50e88dc347a783901e54b73/crates/jcode-base/src/compaction_tests.rs#L388-L451" target="_blank" rel="noreferrer">crates/jcode-base/src/compaction_tests.rs:388–451 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="JCode architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← Collaboration: sub-agents and workflows</a><a href="index.html">Course index →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

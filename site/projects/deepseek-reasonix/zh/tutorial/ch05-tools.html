@@ -1,1 +1,1135 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="工具声明、参数、执行和回执在哪里发生？"><title>DeepSeek-Reasonix · M05 · 工具：Agent 的手脚怎样被注册</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch05-tools.html">中</a><a href="../../en/tutorial/ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="active" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>工具：Agent 的手脚怎样被注册</h1><p class="lede">工具声明、参数、执行和回执在哪里发生？</p><div class="chapter-meta"><span>第 5 / 10 章</span><span>4 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>DeepSeek-Reasonix · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch05-tools.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>工具像机场跑道：模型拿到登机牌还不够，注册、权限、参数、执行和回执要逐关通过。</p></div><h2>先回答本章问题</h2><p>工具声明、参数、执行和回执在哪里发生？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 每个工具调用固定经过 parse→policy→prepare→finish 四阶段</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>executeOne 为一个调用创建 toolCallPlan，先解析 canonical tool 并应用重复成功/失败和 stale-anchor guard，再做 Plan/proxy/delivery/recovery/permission，随后获取 lease/写 claim、运行 hooks 和 preview，最后 Execute、记录 receipt、运行 post hooks 并截断结果。</p></section><section><span>白话解释</span><p>模型只递交一张工单；真正执行前会先确认工具身份、是否允许、是否会改文件、是否拿到写锁和快照，执行后还要把回执写回账本。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>工具扩展点要落在统一 pipeline 中，不能让某个 MCP 或别名工具绕过审批、锁、证据和输出预算。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:20–80</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>toolCallPlan 字段与四阶段执行。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · use_capability 代理会先解析真实 MCP 目标，再重新做 Plan 与安全判断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>proxy resolver 在权限、hooks 和 evidence 之前把 provider-visible call 映射到真实 target/name/args；解析后的目标会再次检查 Plan safety，Plan 中只有已授权、非 destructive 的 MCP 可走 planner trusted path，普通 writer 或未授权 MCP 被阻断。</p></section><section><span>白话解释</span><p>模型看到的是一个稳定的“能力入口”，但系统不会因为套了一层代理就放过真实目标；拆包后还要重新验一次。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>统一 capability proxy 能保持 prompt schema 稳定，但必须做 resolution 后的第二次安全判定和审计双回执。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L153-L269" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">internal/agent/execute_one.go:20–80 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:153–269</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L153-L269" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>proxy resolve、provider transcript 保持原名与 resolved target Plan re-check。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · Delivery 模式把验收标准变成 host-enforced tool policy</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Delivery gates 拒绝会遮蔽 verifier exit code、混合 mutation+verification、opaque inline interpreter 的 Bash；state-changing call 之前必须完成 todo_write 并有 active canonical todo。permission 和 Auto Guard 通过后才获取 workspace write lease，hooks/preview 仍在 Execute 前发生。</p></section><section><span>白话解释</span><p>交付模式不接受“我顺便跑了个检查并 echo $?”这种无法审计的成功；先列验收清单，改完后单独验证，再签收。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>这是一种把“完成定义”放入执行器的强约束，比只在 system prompt 里提醒可靠。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L272-L312" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">internal/agent/execute_one.go:20–80 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:272–312</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L272-L312" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>Delivery 的验证、混合命令、inline interpreter 与 todo gates。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-tools-004" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 执行结果会同时写证据账本、hooks 和恢复观测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>finishToolExecution 在真实 target 执行后写入 model-visible receipt 和 proxy target receipt，记录 output bytes/todo 状态，触发 PostToolUse 或 failure hook、Auto Guard observation，再统一截断回模型的输出。</p></section><section><span>白话解释</span><p>工具成功不等于只把一段字符串塞回聊天：系统还保存“谁调用了谁、是否真的产出、哪个 todo 前进了、恢复守卫看到什么”。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>审计与恢复需要结构化 receipt，而不是从自然语言最终答案里猜发生过什么。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L552-L654" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">internal/agent/execute_one.go:20–80 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:552–654</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L552-L654" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>Execute、reader intent、evidence receipt、hooks、recovery observation 与截断。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="DeepSeek-Reasonix sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← 模型与消息：流式结果如何进入状态</a><a href="ch06-context.html">上下文：长任务怎样不丢重点 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="工具声明、参数、执行和回执在哪里发生？"><title>DeepSeek-Reasonix · M05 · 工具：Agent 的手脚怎样被注册</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch05-tools.html">中</a><a href="../../en/tutorial/ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="active" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>工具：Agent 的手脚怎样被注册</h1><p class="lede">工具声明、参数、执行和回执在哪里发生？</p><div class="chapter-meta"><span>第 5 / 10 章</span><span>4 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>DeepSeek-Reasonix · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch05-tools.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>工具像机场跑道：模型拿到登机牌还不够，注册、权限、参数、执行和回执要逐关通过。</p></div><h2>先回答本章问题</h2><p>工具声明、参数、执行和回执在哪里发生？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：4 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 每个工具调用固定经过 parse→policy→prepare→finish 四阶段</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>executeOne 为一个调用创建 toolCallPlan，先解析 canonical tool 并应用重复成功/失败和 stale-anchor guard，再做 Plan/proxy/delivery/recovery/permission，随后获取 lease/写 claim、运行 hooks 和 preview，最后 Execute、记录 receipt、运行 post hooks 并截断结果。</p></section><section><span>白话解释</span><p>模型只递交一张工单；真正执行前会先确认工具身份、是否允许、是否会改文件、是否拿到写锁和快照，执行后还要把回执写回账本。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>工具扩展点要落在统一 pipeline 中，不能让某个 MCP 或别名工具绕过审批、锁、证据和输出预算。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>20–49</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>50–80</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:20–80</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   20  // toolCallPlan holds the resolved, policy-checked state for one tool call.
+   21  // Package-private; not shared across goroutines beyond the single executeOne
+   22  // invocation that owns it.
+   23  type toolCallPlan struct {
+   24  	call          provider.ToolCall
+   25  	tool          tool.Tool
+   26  	canonicalName string
+   27
+   28  	permName     string
+   29  	permArgs     json.RawMessage
+   30  	execTool     tool.Tool
+   31  	execArgs     json.RawMessage
+   32  	evidenceName string
+   33  	evidenceArgs json.RawMessage
+   34  	readOnly     bool
+   35
+   36  	resolved     tool.ResolvedCall
+   37  	resolvedMeta *tool.ResolvedCall
+   38
+   39  	mutates                   bool
+   40  	verification              bool
+   41  	planTransition            bool
+   42  	planBefore                string
+   43  	planAfter                 string
+   44  	planReplacementAuthorized bool
+   45  	recoveryGen               uint64
+   46
+   47  	runTool            tool.Tool
+   48  	runArgs            json.RawMessage
+   49  	cctx               context.Context
+   50  	releaseParentWrite func()
+   51  }
+   52
+   53  // executeOne runs a single tool call. It is pure with respect to the event sink
+   54  // — the caller emits ToolDispatch/ToolResult — so it is safe to invoke from
+   55  // parallel goroutines. Stages: parse → policy → prepare → finish.
+   56  func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out toolOutcome) {
+   57  	plan := &amp;toolCallPlan{call: call}
+   58  	defer func() {
+   59  		if plan.releaseParentWrite != nil {
+   60  			plan.releaseParentWrite()
+   61  		}
+   62  		if plan.resolvedMeta == nil {
+   63  			return
+   64  		}
+   65  		out.resolved = true
+   66  		out.resolvedName = plan.resolvedMeta.TargetName
+   67  		out.capabilityID = plan.resolvedMeta.CapabilityID
+   68  		out.resolvedReadOnly = plan.resolvedMeta.ReadOnly
+   69  	}()
+   70
+   71  	if blocked, early := a.parseToolCall(plan); early {
+   72  		return blocked
+   73  	}
+   74  	if blocked, early := a.resolveToolPolicy(ctx, plan); early {
+   75  		return blocked
+   76  	}
+   77  	if blocked, early := a.prepareToolExecution(ctx, plan); early {
+   78  		return blocked
+   79  	}
+   80  	return a.finishToolExecution(ctx, plan)
+   81  }
+   82
+   83  // parseToolCall resolves the canonical tool, rejects ambiguity/unknown tools,
+   84  // and applies repeat-success and stale-anchor guards.
+   85  func (a *Agent) parseToolCall(plan *toolCallPlan) (toolOutcome, bool) {
+   86  	t, canonicalName, ambiguous := a.tools.ResolveCall(plan.call.Name)
+   87  	if len(ambiguous) &gt; 0 {
+   88  		msg := fmt.Sprintf(&quot;ambiguous MCP tool reference %q; use one of: %s&quot;, plan.call.Name, strings.Join(ambiguous, &quot;, &quot;))
+   89  		return toolOutcome{
+   90  			output: &quot;error: &quot; + msg,
+   91  			errMsg: msg,
+   92  		}, true
+   93  	}
+   94  	if t == nil {
+   95  		if server, ok := completedMCPConnect(a.tools, plan.call.Name); ok {
+   96  			return toolOutcome{
+   97  				output: fmt.Sprintf(&quot;MCP server %q is connected; its real tools are now available&quot;, server),
+   98  			}, true
+   99  		}
+  100  		return toolOutcome{
+  101  			output: fmt.Sprintf(&quot;error: unknown tool %q&quot;, plan.call.Name),
+  102  			errMsg: fmt.Sprintf(&quot;unknown tool %q&quot;, plan.call.Name),
+  103  		}, true
+  104  	}
+  105  	if out, blocked := a.repeatedSuccessBlock(plan.call, t); blocked {
+  106  		return toolOutcome{
+  107  			output:  out,
+  108  			blocked: true,
+  109  			errMsg:  loopGuardBlockErrMsg,
+  110  		}, true
+  111  	}
+  112  	if out, blocked := a.repeatedFailureBlock(plan.call, t); blocked {
+  113  		return toolOutcome{
+  114  			output:  out,
+  115  			blocked: true,
+  116  			errMsg:  loopGuardBlockErrMsg,
+  117  		}, true
+  118  	}
+  119  	if out, blocked := a.staleAnchorEditBlock(plan.call); blocked {
+  120  		return toolOutcome{
+  121  			output:  out,
+  122  			blocked: true,
+  123  			errMsg:  &quot;blocked: fresh read required&quot;,
+  124  		}, true
+  125  	}
+  126  	plan.tool = t
+  127  	plan.canonicalName = canonicalName
+  128  	plan.permName = canonicalName
+  129  	plan.permArgs = json.RawMessage(plan.call.Arguments)
+  130  	plan.execTool = t
+  131  	plan.execArgs = json.RawMessage(plan.call.Arguments)
+  132  	plan.evidenceName = canonicalName
+  133  	plan.evidenceArgs = json.RawMessage(plan.call.Arguments)
+  134  	plan.readOnly = t.ReadOnly()
+  135  	return toolOutcome{}, false
+  136  }
+  137
+  138  // resolveToolPolicy applies Plan mode, proxy resolution, delivery gates, Auto
+  139  // Guard, and permission checks. Permission must complete before any write lease.
+  140  func (a *Agent) resolveToolPolicy(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+  141  	if blocked, early := a.applyPlanModeAndProxy(ctx, plan); early {
+  142  		return blocked, true
+  143  	}
+  144  	if blocked, early := a.applyDeliveryPolicyGates(plan); early {
+  145  		return blocked, true
+  146  	}
+  147  	if blocked, early := a.applyRecoveryAndPermission(ctx, plan); early {
+  148  		return blocked, true
+  149  	}
+  150  	return toolOutcome{}, false
+  151  }</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/execute_one.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   20
+   21  // executeOne runs a single tool call. It is pure with respect to the event sink
+   22  // — the caller emits ToolDispatch/ToolResult — so it is safe to invoke from
+   23  // parallel goroutines. Stages: parse → policy → prepare → finish.
+   24  func (a *Agent) executeOne(ctx context.Context, turn *turnRuntime, call provider.ToolCall) (out toolOutcome) {
+   25  	ctx = a.withAgentContext(ctx)
+   26  	plan := &amp;toolCallPlan{call: call}
+   27  	defer func() {
+   28  		if plan.mutationObserved &amp;&amp; !plan.mutationAfterDone {
+   29  			a.observeAfterMutation(plan)
+   30  		}
+   31  		if plan.releaseMutationWrite != nil {
+   32  			plan.releaseMutationWrite()
+   33  		}
+   34  		if plan.releaseParentWrite != nil {
+   35  			plan.releaseParentWrite()
+   36  		}
+   37  		if plan.resolvedMeta == nil {
+   38  			return
+   39  		}
+   40  		out.resolved = true
+   41  		out.resolvedName = plan.resolvedMeta.TargetName
+   42  		out.capabilityID = plan.resolvedMeta.CapabilityID
+   43  		out.resolvedReadOnly = plan.resolvedMeta.ReadOnly
+   44  	}()
+   45  	defer finalizeWorkspaceMutationOutcome(&amp;out, plan)
+   46
+   47  	if blocked, early := a.parseToolCall(ctx, plan); early {
+   48  		return blocked
+   49  	}
+   50  	// tool.before: extensions rule on the parsed call before any policy or
+   51  	// permission check. A valid replacement is re-parsed so every later stage
+   52  	// sees the call that will actually execute.
+   53  	if blocked, early := a.interceptToolBefore(ctx, plan); early {
+   54  		return blocked
+   55  	}
+   56  	if blocked, early := a.resolveToolPolicy(ctx, turn, plan); early {
+   57  		return blocked
+   58  	}
+   59  	if blocked, early := a.prepareToolExecution(ctx, plan); early {
+   60  		return blocked
+   61  	}
+   62  	return a.finishToolExecution(ctx, plan)
+   63  }
+   64
+   65  // parseToolCall resolves the canonical tool, rejects ambiguity/unknown tools,
+   66  // and applies repeat-success and stale-anchor guards.
+   67  func (a *Agent) parseToolCall(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+   68  	t, canonicalName, ambiguous := a.svc.tools.ResolveCall(plan.call.Name)
+   69  	if len(ambiguous) &gt; 0 {
+   70  		msg := fmt.Sprintf(&quot;ambiguous MCP tool reference %q; use one of: %s&quot;, plan.call.Name, strings.Join(ambiguous, &quot;, &quot;))
+   71  		return toolOutcome{
+   72  			output: &quot;error: &quot; + msg,
+   73  			errMsg: msg,
+   74  		}, true
+   75  	}
+   76  	if t == nil {
+   77  		if server, ok := completedMCPConnect(a.svc.tools, plan.call.Name); ok {
+   78  			return toolOutcome{
+   79  				output: fmt.Sprintf(&quot;MCP server %q is connected; its real tools are now available&quot;, server),
+   80  			}, true
+   81  		}
+   82  		return toolOutcome{
+   83  			output: fmt.Sprintf(&quot;error: unknown tool %q&quot;, plan.call.Name),
+   84  			errMsg: fmt.Sprintf(&quot;unknown tool %q&quot;, plan.call.Name),
+   85  		}, true
+   86  	}
+   87  	if out, blocked := a.repeatedSuccessBlock(plan.call, t); blocked {
+   88  		return toolOutcome{
+   89  			output:  out,
+   90  			blocked: true,
+   91  			errMsg:  loopGuardBlockErrMsg,
+   92  		}, true
+   93  	}
+   94  	if out, blocked := a.repeatedFailureBlock(ctx, plan.call, t); blocked {
+   95  		return toolOutcome{
+   96  			output:  out,
+   97  			blocked: true,
+   98  			errMsg:  loopGuardBlockErrMsg,
+   99  		}, true
+  100  	}
+  101  	if out, blocked := a.staleAnchorEditBlock(plan.call); blocked {
+  102  		return toolOutcome{
+  103  			output:  out,
+  104  			blocked: true,
+  105  			errMsg:  &quot;blocked: fresh read required&quot;,
+  106  		}, true
+  107  	}
+  108  	plan.tool = t
+  109  	plan.canonicalName = canonicalName
+  110  	plan.permName = canonicalName
+  111  	plan.permArgs = json.RawMessage(plan.call.Arguments)
+  112  	plan.execTool = t
+  113  	plan.execArgs = json.RawMessage(plan.call.Arguments)
+  114  	plan.evidenceName = canonicalName
+  115  	plan.evidenceArgs = json.RawMessage(plan.call.Arguments)
+  116  	plan.readOnly = t.ReadOnly()
+  117  	if canonicalName == &quot;bash&quot; {
+  118  		var permissionReader bool
+  119  		plan.effects, permissionReader = evidence.ClassifyBashToolCall(plan.execArgs)
+  120  		if permissionReader {
+  121  			// Bash is schema-level writer-capable, but the host can resolve a
+  122  			// concrete invocation to read-only after parsing its arguments. Carry
+  123  			// that fact through permission, mutation accounting, evidence, and the
+  124  			// refreshed local tool receipt without changing the provider schema.
+  125  			plan.readOnly = true
+  126  			plan.resolvedMeta = &amp;tool.ResolvedCall{TargetName: canonicalName, ReadOnly: true}
+  127  		}
+  128  	} else {
+  129  		plan.effects = evidence.ClassifyToolCall(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
+  130  	}
+  131  	return toolOutcome{}, false
+  132  }
+  133
+  134  // resolveToolPolicy applies Plan mode, proxy resolution, delivery gates, Auto
+  135  // Guard, and permission checks. Permission must complete before any write lease.
+  136  func (a *Agent) resolveToolPolicy(ctx context.Context, turn *turnRuntime, plan *toolCallPlan) (toolOutcome, bool) {
+  137  	if blocked, early := a.applyPlanModeAndProxy(ctx, plan); early {
+  138  		return blocked, true
+  139  	}
+  140  	if blocked, early := a.applyContextualToolGate(ctx, plan); early {
+  141  		return blocked, true
+  142  	}
+  143  	if blocked, early := a.applyDeliveryPolicyGates(turn, plan); early {
+  144  		return blocked, true
+  145  	}
+  146  	// After proxy resolution, re-apply the batch mutation barrier using the
+  147  	// real target classification. Provider-visible proxies such as
+  148  	// use_capability advertise ReadOnly()==true before resolution and would
+  149  	// otherwise slip past the pre-run skip pass.
+  150  	if blocked, early := a.applyMutationDependencyBarrier(plan); early {
+  151  		return blocked, true</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · use_capability 代理会先解析真实 MCP 目标，再重新做 Plan 与安全判断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>proxy resolver 在权限、hooks 和 evidence 之前把 provider-visible call 映射到真实 target/name/args；解析后的目标会再次检查 Plan safety，Plan 中只有已授权、非 destructive 的 MCP 可走 planner trusted path，普通 writer 或未授权 MCP 被阻断。</p></section><section><span>白话解释</span><p>模型看到的是一个稳定的“能力入口”，但系统不会因为套了一层代理就放过真实目标；拆包后还要重新验一次。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>统一 capability proxy 能保持 prompt schema 稳定，但必须做 resolution 后的第二次安全判定和审计双回执。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>153–210</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>211–269</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L153-L269" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:153–269</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L153-L269" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  153  // applyPlanModeAndProxy handles initial Plan mode, proxy resolution / skip path,
+  154  // resolved-target Plan re-check, and MCP Plan availability.
+  155  func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+  156  	t := plan.tool
+  157  	call := plan.call
+  158  	if a.planMode.Load() {
+  159  		// Translate the tool&#39;s optional plan-mode self-report into the policy&#39;s
+  160  		// tri-state. Mirrors the t.(tool.Previewer) assertion precedent below.
+  161  		safety := planmode.PlanSafetyUnknown
+  162  		if c, ok := t.(tool.PlanModeClassifier); ok {
+  163  			if c.PlanModeSafe() {
+  164  				safety = planmode.PlanSafetySafe
+  165  			} else {
+  166  				safety = planmode.PlanSafetyUnsafe
+  167  			}
+  168  		}
+  169  		if decision := a.planModeDecision(plan.canonicalName, t.ReadOnly(), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+  170  			return toolOutcome{
+  171  				output:  decision.Message,
+  172  				blocked: true,
+  173  				errMsg:  &quot;blocked: tool is unavailable during planning&quot;,
+  174  			}, true
+  175  		}
+  176  	}
+  177  	// Resolve proxy tools (use_capability) to the real MCP target before
+  178  	// permission, hooks, and evidence. Provider transcript keeps call.Name.
+  179  	if resolver, ok := t.(tool.CallResolver); ok {
+  180  		rc, rerr := resolver.ResolveCall(ctx, json.RawMessage(call.Arguments))
+  181  		if rerr != nil {
+  182  			return toolOutcome{
+  183  				output: fmt.Sprintf(&quot;error: %v&quot;, rerr),
+  184  				errMsg: firstLine(rerr.Error()),
+  185  			}, true
+  186  		}
+  187  		plan.resolved = rc
+  188  		plan.resolvedMeta = &amp;plan.resolved
+  189  		if rc.TargetName != &quot;&quot; {
+  190  			plan.permName = rc.TargetName
+  191  			plan.evidenceName = rc.TargetName
+  192  		}
+  193  		if len(rc.Args) &gt; 0 {
+  194  			plan.permArgs = rc.Args
+  195  			plan.evidenceArgs = rc.Args
+  196  			plan.execArgs = rc.Args
+  197  		}
+  198  		if rc.Target != nil {
+  199  			plan.execTool = rc.Target
+  200  		}
+  201  		plan.readOnly = rc.ReadOnly
+  202  		if outcome, blocked := a.readOnlyExecutionBlock(t, &amp;rc); blocked {
+  203  			return outcome, true
+  204  		}
+  205  		if rc.Commit != nil {
+  206  			if err := rc.Commit(); err != nil {
+  207  				return toolOutcome{
+  208  					output: fmt.Sprintf(&quot;error: %v&quot;, err),
+  209  					errMsg: firstLine(err.Error()),
+  210  				}, true
+  211  			}
+  212  		}
+  213  		if rc.SkipExecute {
+  214  			// Resolution completed without target execution; still record a meta receipt.
+  215  			// A connected mcp-server call completes during resolution by listing
+  216  			// its live tools, so account for that successful call here too.
+  217  			if rc.ProxyAction == &quot;call&quot; &amp;&amp; !rc.Unavailable {
+  218  				a.noteCapabilityInvocation(call.Name, json.RawMessage(call.Arguments), nil)
+  219  			}
+  220  			result := rc.Result
+  221  			if a.evidence != nil {
+  222  				// inspect/decline are not mutations; unavailable call targets are not success.
+  223  				success := !rc.Unavailable
+  224  				rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), success, true)
+  225  				a.evidence.Record(rec)
+  226  			}
+  227  			if rc.Unavailable {
+  228  				return toolOutcome{output: result, errMsg: firstLine(rc.UnavailableReason)}, true
+  229  			}
+  230  			body, truncMsg := truncateToolOutput(result)
+  231  			return toolOutcome{output: body, truncated: truncMsg != &quot;&quot;, truncMsg: truncMsg}, true
+  232  		}
+  233  	} else if outcome, blocked := a.readOnlyExecutionBlock(t, nil); blocked {
+  234  		return outcome, true
+  235  	}
+  236
+  237  	// A proxy resolution can point at a target with an explicit planning-phase
+  238  	// opt-out even though the proxy itself has none. Re-check the resolved target
+  239  	// before its ordinary permission and sandbox path.
+  240  	if plan.resolved.TargetName != &quot;&quot; &amp;&amp; a.planMode.Load() {
+  241  		safety := planmode.PlanSafetyUnknown
+  242  		if c, ok := plan.execTool.(tool.PlanModeClassifier); ok {
+  243  			if c.PlanModeSafe() {
+  244  				safety = planmode.PlanSafetySafe
+  245  			} else {
+  246  				safety = planmode.PlanSafetyUnsafe
+  247  			}
+  248  		}
+  249  		if decision := a.planModeDecision(plan.permName, plan.resolved.ReadOnly, safety, plan.permArgs); decision.Blocked {
+  250  			return toolOutcome{
+  251  				output:  decision.Message,
+  252  				blocked: true,
+  253  				errMsg:  &quot;blocked: tool is unavailable during planning&quot;,
+  254  			}, true
+  255  		}
+  256  	}
+  257  	plannerTrustedMCP := a.plannerMCPExecution &amp;&amp; isMCPExecutionTarget(plan.execTool, plan.permName) &amp;&amp; mcpServerAuthorized(plan.execTool) &amp;&amp; !mcpDestructiveHint(plan.execTool)
+  258  	if a.planMode.Load() &amp;&amp; isMCPExecutionTarget(plan.execTool, plan.permName) &amp;&amp; !plannerTrustedMCP &amp;&amp; (!plan.readOnly || !mcpServerAuthorized(plan.execTool) || mcpDestructiveHint(plan.execTool)) {
+  259  		reason := &quot;writer/destructive target&quot;
+  260  		if plan.readOnly &amp;&amp; !mcpServerAuthorized(plan.execTool) {
+  261  			reason = &quot;reader from an unauthorized server&quot;
+  262  		}
+  263  		return toolOutcome{
+  264  			output:  fmt.Sprintf(&quot;blocked: MCP %s %q is unavailable during Plan mode; finish or exit Plan mode before requesting this call&quot;, reason, plan.permName),
+  265  			blocked: true,
+  266  			errMsg:  &quot;blocked: MCP target is unavailable during planning&quot;,
+  267  		}, true
+  268  	}
+  269  	return toolOutcome{}, false
+  270  }
+  271
+  272  // applyDeliveryPolicyGates enforces delivery-profile bash and criteria rules and
+  273  // classifies whether the call mutates workspace state.
+  274  func (a *Agent) applyDeliveryPolicyGates(plan *toolCallPlan) (toolOutcome, bool) {
+  275  	if a.deliveryProfile &amp;&amp; plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.BashToolCallMasksVerificationExit(plan.evidenceArgs) {
+  276  		return toolOutcome{
+  277  			output:  &quot;blocked: the trailing echo/printf of $? masks the verifier&#39;s exit status, so this command would look successful even when the check failed. Run the verifier or read-only extraction pipeline by itself and let its exit status be the tool result; for example: tail ... | head ... | node --check -&quot;,
+  278  			blocked: true,
+  279  			errMsg:  &quot;blocked: verification exit status masked&quot;,
+  280  		}, true
+  281  	}
+  282  	if a.deliveryProfile &amp;&amp; plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.BashToolCallMixesMutationAndVerification(plan.evidenceArgs) {
+  283  		return toolOutcome{
+  284  			output:  &quot;blocked: this command mixes a verification check with a segment that may write state. Run the state-changing preparation separately while a todo is in_progress, then run a read-only verification command. For generated input, prefer a host-recognized read-only pipeline into the verifier (for example: tail ... | head ... | node --check -) instead of writing a temporary file.&quot;,
+  285  			blocked: true,
+  286  			errMsg:  &quot;blocked: mixed mutation and verification command&quot;,
+  287  		}, true
+  288  	}
+  289  	if a.deliveryProfile &amp;&amp; plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.BashToolCallUsesOpaqueInlineInterpreter(plan.evidenceArgs) {
+  290  		return toolOutcome{
+  291  			output:  &quot;blocked: delivery mode cannot audit inline interpreter source such as node -e or python -c, so executing it would become an opaque mutation and invalidate prior verification. For inspection, use read_file/grep or another host-proven read-only command. For validation, use a conventional verifier such as node --check, a project test/check/lint command, or a read-only extraction pipeline into the verifier. For an intentional state change, use a file tool or a script file under the current in_progress todo. &quot; + evidence.VerificationCommandSummary(),
+  292  			blocked: true,
+  293  			errMsg:  &quot;blocked: opaque inline interpreter command&quot;,
+  294  		}, true
+  295  	}
+  296
+  297  	plan.mutates = evidence.ToolCallMutates(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
+  298  	if a.deliveryProfile &amp;&amp; evidence.ToolCallRequiresDeliveryCriteria(plan.evidenceName, plan.evidenceArgs, plan.readOnly) &amp;&amp; !a.deliveryCriteriaEstablished {
+  299  		return toolOutcome{
+  300  			output:  &quot;blocked: delivery-first mode requires acceptance criteria before state-changing work. Call todo_write with a concrete, verifiable task list, then retry this tool call.&quot;,
+  301  			blocked: true,
+  302  			errMsg:  &quot;blocked: delivery acceptance criteria required&quot;,
+  303  		}, true
+  304  	}
+  305  	if a.deliveryProfile &amp;&amp; plan.mutates &amp;&amp; !a.hasActiveCanonicalTodo() {
+  306  		return toolOutcome{
+  307  			output:  &quot;blocked: delivery-first mode requires every state change to belong to the current in_progress todo. Preserve the completed todo prefix, append a concrete new item if more work was discovered, mark that item in_progress with todo_write, then retry this mutation.&quot;,
+  308  			blocked: true,
+  309  			errMsg:  &quot;blocked: active delivery todo required&quot;,
+  310  		}, true
+  311  	}
+  312  	return toolOutcome{}, false
+  313  }
+  314
+  315  // applyRecoveryAndPermission runs Auto Guard then ordinary permission. Neither
+  316  // acquires a write lease; that happens only after permission in prepare.
+  317  func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+  318  	// Auto Guard: after resolution/mutation classification, before
+  319  	// permission approval and workspace write-lock acquisition, so a waiting
+  320  	// recovery card never holds a write lease. Consult on mutations,
+  321  	// verification, plan transitions, and again for every tool once an Episode
+  322  	// is exhausted so host-proven read-only diagnosis can remain available while
+  323  	// further execution is quarantined. Ask/Yolo still bypass inside the gate.
+  324  	plan.verification = plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(plan.evidenceArgs))
+  325  	plan.planTransition, plan.planBefore, plan.planAfter = a.recoveryPlanTransition(plan.evidenceName, plan.evidenceArgs)
+  326  	episodeStopped := false
+  327  	if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
+  328  		plan.recoveryGen = ctrl.Generation()
+  329  		episodeStopped = ctrl.EpisodeStopped(a.recoveryTaskID)
+  330  	}
+  331  	if a.recoveryGate != nil &amp;&amp; (plan.mutates || plan.verification || plan.planTransition || episodeStopped) {
+  332  		subject := recoverySubject(plan.evidenceName, plan.evidenceArgs)
+  333  		if plan.planTransition {
+  334  			subject = &quot;Update the active execution plan&quot;
+  335  		}
+  336  		preview := strings.TrimSpace(plan.call.Diff)
+  337  		if preview == &quot;&quot; {
+  338  			preview = subject
+  339  		}
+  340  		if plan.planTransition {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/execute_one.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/execute_one.go#L153-L269" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  153  	if blocked, early := a.applyRecoveryAndPermission(ctx, plan); early {
+  154  		return blocked, true
+  155  	}
+  156  	return toolOutcome{}, false
+  157  }
+  158
+  159  func (a *Agent) applyContextualToolGate(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+  160  	if plan == nil || plan.tool == nil {
+  161  		return toolOutcome{}, false
+  162  	}
+  163  	if outcome, blocked := contextualToolGateOutcome(ctx, plan.tool, plan.canonicalName); blocked {
+  164  		return outcome, true
+  165  	}
+  166  	if plan.execTool != nil {
+  167  		if outcome, blocked := contextualToolGateOutcome(ctx, plan.execTool, plan.permName); blocked {
+  168  			return outcome, true
+  169  		}
+  170  	}
+  171  	return toolOutcome{}, false
+  172  }
+  173
+  174  func contextualToolGateOutcome(ctx context.Context, target tool.Tool, name string) (toolOutcome, bool) {
+  175  	contextual, ok := target.(tool.ContextualTool)
+  176  	if !ok || contextual.ProviderVisible(ctx) {
+  177  		return toolOutcome{}, false
+  178  	}
+  179  	msg := fmt.Sprintf(&quot;blocked: tool %q is unavailable in the current workflow context&quot;, name)
+  180  	switch name {
+  181  	case &quot;update_goal&quot;:
+  182  		msg = &quot;update_goal is only available while an active goal turn is running — no goal state was changed&quot;
+  183  	case &quot;complete_step&quot;:
+  184  		msg = &quot;blocked: complete_step is only available after plan approval. While planning, keep task state with todo_write and present the plan for user approval.&quot;
+  185  	case &quot;bash_output&quot;, &quot;wait&quot;, &quot;kill_shell&quot;:
+  186  		msg = &quot;background jobs are not available in this context&quot;
+  187  	}
+  188  	return toolOutcome{output: msg, blocked: true, errMsg: firstLine(msg)}, true
+  189  }
+  190
+  191  // applyMutationDependencyBarrier blocks later mutations and verifications in the
+  192  // same provider batch after an earlier modification failed. Host-proven
+  193  // read-only diagnosis (resolved ReadOnly with no verification classification)
+  194  // still runs.
+  195  func (a *Agent) applyMutationDependencyBarrier(plan *toolCallPlan) (toolOutcome, bool) {
+  196  	if a == nil || plan == nil {
+  197  		return toolOutcome{}, false
+  198  	}
+  199  	cause := a.mutationDependencyBarrier.Load()
+  200  	if cause == nil {
+  201  		return toolOutcome{}, false
+  202  	}
+  203  	verification := plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(plan.evidenceArgs))
+  204  	if !plan.effects.StateMutation &amp;&amp; !verification {
+  205  		return toolOutcome{}, false
+  206  	}
+  207  	msg := cause.message()
+  208  	var ex *tool.ShellExecution
+  209  	// Structured shell metadata only for bash cards; other tools keep plain text.
+  210  	if plan.evidenceName == &quot;bash&quot; || plan.call.Name == &quot;bash&quot; {
+  211  		ex = shellPreflightExecution(plan, verification)
+  212  		if ex != nil {
+  213  			ex.FailurePhase = tool.ShellPhaseDependency
+  214  			ex.State = tool.ShellStateNotRun
+  215  			ex.MutationRisk = tool.ShellMutationNotStarted
+  216  			if verification {
+  217  				ex.Verification = tool.ShellVerificationNotRun
+  218  			}
+  219  		}
+  220  	}
+  221  	return toolOutcome{
+  222  		output:    msg,
+  223  		blocked:   true,
+  224  		errMsg:    firstLine(msg),
+  225  		execution: ex,
+  226  	}, true
+  227  }
+  228
+  229  // applyPlanModeAndProxy handles initial Plan mode, proxy resolution / skip path,
+  230  // resolved-target Plan re-check, and MCP Plan availability.
+  231  func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+  232  	t := plan.tool
+  233  	call := plan.call
+  234  	if a.planMode.Load() {
+  235  		// Translate the tool&#39;s optional plan-mode self-report into the policy&#39;s
+  236  		// tri-state. Mirrors the t.(tool.Previewer) assertion precedent below.
+  237  		safety := planmode.PlanSafetyUnknown
+  238  		if c, ok := t.(tool.PlanModeClassifier); ok {
+  239  			if c.PlanModeSafe() {
+  240  				safety = planmode.PlanSafetySafe
+  241  			} else {
+  242  				safety = planmode.PlanSafetyUnsafe
+  243  			}
+  244  		}
+  245  		if decision := a.planModeDecision(plan.canonicalName, t.ReadOnly(), safety, json.RawMessage(call.Arguments)); decision.Blocked {
+  246  			return toolOutcome{
+  247  				output:  decision.Message,
+  248  				blocked: true,
+  249  				errMsg:  &quot;blocked: tool is unavailable during planning&quot;,
+  250  			}, true
+  251  		}
+  252  	}
+  253  	// Resolve proxy tools (use_capability) to the real MCP target before
+  254  	// permission, hooks, and evidence. Provider transcript keeps call.Name.
+  255  	if resolver, ok := t.(tool.CallResolver); ok {
+  256  		rc, rerr := resolver.ResolveCall(ctx, json.RawMessage(call.Arguments))
+  257  		if rerr != nil {
+  258  			return toolOutcome{
+  259  				output: fmt.Sprintf(&quot;error: %v&quot;, rerr),
+  260  				errMsg: firstLine(rerr.Error()),
+  261  			}, true
+  262  		}
+  263  		plan.resolved = rc
+  264  		plan.resolvedMeta = &amp;plan.resolved
+  265  		if rc.TargetName != &quot;&quot; {
+  266  			plan.permName = rc.TargetName
+  267  			plan.evidenceName = rc.TargetName
+  268  		}
+  269  		if len(rc.Args) &gt; 0 {
+  270  			plan.permArgs = rc.Args
+  271  			plan.evidenceArgs = rc.Args
+  272  			plan.execArgs = rc.Args
+  273  		}
+  274  		if rc.Target != nil {
+  275  			plan.execTool = rc.Target
+  276  		}
+  277  		if outcome, blocked := contextualToolGateOutcome(ctx, plan.execTool, plan.permName); blocked {
+  278  			return outcome, true
+  279  		}
+  280  		plan.readOnly = rc.ReadOnly
+  281  		plan.classifyEffects()
+  282  		if outcome, blocked := a.readOnlyExecutionBlock(t, &amp;rc); blocked {
+  283  			return outcome, true
+  284  		}
+  285  		if rc.Commit != nil {
+  286  			if err := rc.Commit(); err != nil {
+  287  				return toolOutcome{
+  288  					output: fmt.Sprintf(&quot;error: %v&quot;, err),
+  289  					errMsg: firstLine(err.Error()),
+  290  				}, true
+  291  			}
+  292  		}
+  293  		if rc.SkipExecute {
+  294  			// Resolution completed without target execution; still record a meta receipt.
+  295  			// A connected mcp-server call completes during resolution by listing
+  296  			// its live tools, so account for that successful call here too.
+  297  			if rc.ProxyAction == &quot;call&quot; &amp;&amp; !rc.Unavailable {
+  298  				a.noteCapabilityInvocation(call.Name, json.RawMessage(call.Arguments), nil)
+  299  			}
+  300  			result := rc.Result
+  301  			if a.task.ledger != nil {
+  302  				// inspect/decline are not mutations; unavailable call targets are not success.
+  303  				success := !rc.Unavailable
+  304  				rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), success, true)
+  305  				a.task.ledger.Record(rec)
+  306  			}
+  307  			if rc.Unavailable {
+  308  				return toolOutcome{output: result, errMsg: firstLine(rc.UnavailableReason)}, true
+  309  			}
+  310  			body, truncMsg := truncateToolOutputFor(result, plan.call.Name, plan.call.ID)
+  311  			out := toolOutcome{output: body, truncated: truncMsg != &quot;&quot;, truncMsg: truncMsg}
+  312  			if truncMsg != &quot;&quot; {
+  313  				out.rawOutput = result
+  314  			}
+  315  			return out, true
+  316  		}
+  317  	} else if outcome, blocked := a.readOnlyExecutionBlock(t, nil); blocked {
+  318  		return outcome, true
+  319  	}
+  320
+  321  	// A proxy resolution can point at a target with an explicit planning-phase
+  322  	// opt-out even though the proxy itself has none. Re-check the resolved target
+  323  	// before its ordinary permission and sandbox path.
+  324  	if plan.resolved.TargetName != &quot;&quot; &amp;&amp; a.planMode.Load() {
+  325  		safety := planmode.PlanSafetyUnknown
+  326  		if c, ok := plan.execTool.(tool.PlanModeClassifier); ok {
+  327  			if c.PlanModeSafe() {
+  328  				safety = planmode.PlanSafetySafe
+  329  			} else {
+  330  				safety = planmode.PlanSafetyUnsafe
+  331  			}
+  332  		}
+  333  		if decision := a.planModeDecision(plan.permName, plan.resolved.ReadOnly, safety, plan.permArgs); decision.Blocked {
+  334  			return toolOutcome{
+  335  				output:  decision.Message,
+  336  				blocked: true,
+  337  				errMsg:  &quot;blocked: tool is unavailable during planning&quot;,
+  338  			}, true
+  339  		}
+  340  	}</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · Delivery 模式把验收标准变成 host-enforced tool policy</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Delivery gates 拒绝会遮蔽 verifier exit code、混合 mutation+verification、opaque inline interpreter 的 Bash；state-changing call 之前必须完成 todo_write 并有 active canonical todo。permission 和 Auto Guard 通过后才获取 workspace write lease，hooks/preview 仍在 Execute 前发生。</p></section><section><span>白话解释</span><p>交付模式不接受“我顺便跑了个检查并 echo $?”这种无法审计的成功；先列验收清单，改完后单独验证，再签收。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>这是一种把“完成定义”放入执行器的强约束，比只在 system prompt 里提醒可靠。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>272–291</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>292–312</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L272-L312" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:272–312</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L272-L312" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  272  // applyDeliveryPolicyGates enforces delivery-profile bash and criteria rules and
+  273  // classifies whether the call mutates workspace state.
+  274  func (a *Agent) applyDeliveryPolicyGates(plan *toolCallPlan) (toolOutcome, bool) {
+  275  	if a.deliveryProfile &amp;&amp; plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.BashToolCallMasksVerificationExit(plan.evidenceArgs) {
+  276  		return toolOutcome{
+  277  			output:  &quot;blocked: the trailing echo/printf of $? masks the verifier&#39;s exit status, so this command would look successful even when the check failed. Run the verifier or read-only extraction pipeline by itself and let its exit status be the tool result; for example: tail ... | head ... | node --check -&quot;,
+  278  			blocked: true,
+  279  			errMsg:  &quot;blocked: verification exit status masked&quot;,
+  280  		}, true
+  281  	}
+  282  	if a.deliveryProfile &amp;&amp; plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.BashToolCallMixesMutationAndVerification(plan.evidenceArgs) {
+  283  		return toolOutcome{
+  284  			output:  &quot;blocked: this command mixes a verification check with a segment that may write state. Run the state-changing preparation separately while a todo is in_progress, then run a read-only verification command. For generated input, prefer a host-recognized read-only pipeline into the verifier (for example: tail ... | head ... | node --check -) instead of writing a temporary file.&quot;,
+  285  			blocked: true,
+  286  			errMsg:  &quot;blocked: mixed mutation and verification command&quot;,
+  287  		}, true
+  288  	}
+  289  	if a.deliveryProfile &amp;&amp; plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.BashToolCallUsesOpaqueInlineInterpreter(plan.evidenceArgs) {
+  290  		return toolOutcome{
+  291  			output:  &quot;blocked: delivery mode cannot audit inline interpreter source such as node -e or python -c, so executing it would become an opaque mutation and invalidate prior verification. For inspection, use read_file/grep or another host-proven read-only command. For validation, use a conventional verifier such as node --check, a project test/check/lint command, or a read-only extraction pipeline into the verifier. For an intentional state change, use a file tool or a script file under the current in_progress todo. &quot; + evidence.VerificationCommandSummary(),
+  292  			blocked: true,
+  293  			errMsg:  &quot;blocked: opaque inline interpreter command&quot;,
+  294  		}, true
+  295  	}
+  296
+  297  	plan.mutates = evidence.ToolCallMutates(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
+  298  	if a.deliveryProfile &amp;&amp; evidence.ToolCallRequiresDeliveryCriteria(plan.evidenceName, plan.evidenceArgs, plan.readOnly) &amp;&amp; !a.deliveryCriteriaEstablished {
+  299  		return toolOutcome{
+  300  			output:  &quot;blocked: delivery-first mode requires acceptance criteria before state-changing work. Call todo_write with a concrete, verifiable task list, then retry this tool call.&quot;,
+  301  			blocked: true,
+  302  			errMsg:  &quot;blocked: delivery acceptance criteria required&quot;,
+  303  		}, true
+  304  	}
+  305  	if a.deliveryProfile &amp;&amp; plan.mutates &amp;&amp; !a.hasActiveCanonicalTodo() {
+  306  		return toolOutcome{
+  307  			output:  &quot;blocked: delivery-first mode requires every state change to belong to the current in_progress todo. Preserve the completed todo prefix, append a concrete new item if more work was discovered, mark that item in_progress with todo_write, then retry this mutation.&quot;,
+  308  			blocked: true,
+  309  			errMsg:  &quot;blocked: active delivery todo required&quot;,
+  310  		}, true
+  311  	}
+  312  	return toolOutcome{}, false
+  313  }
+  314
+  315  // applyRecoveryAndPermission runs Auto Guard then ordinary permission. Neither
+  316  // acquires a write lease; that happens only after permission in prepare.
+  317  func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+  318  	// Auto Guard: after resolution/mutation classification, before
+  319  	// permission approval and workspace write-lock acquisition, so a waiting
+  320  	// recovery card never holds a write lease. Consult on mutations,
+  321  	// verification, plan transitions, and again for every tool once an Episode
+  322  	// is exhausted so host-proven read-only diagnosis can remain available while
+  323  	// further execution is quarantined. Ask/Yolo still bypass inside the gate.
+  324  	plan.verification = plan.evidenceName == &quot;bash&quot; &amp;&amp; evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(plan.evidenceArgs))
+  325  	plan.planTransition, plan.planBefore, plan.planAfter = a.recoveryPlanTransition(plan.evidenceName, plan.evidenceArgs)
+  326  	episodeStopped := false
+  327  	if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
+  328  		plan.recoveryGen = ctrl.Generation()
+  329  		episodeStopped = ctrl.EpisodeStopped(a.recoveryTaskID)
+  330  	}
+  331  	if a.recoveryGate != nil &amp;&amp; (plan.mutates || plan.verification || plan.planTransition || episodeStopped) {
+  332  		subject := recoverySubject(plan.evidenceName, plan.evidenceArgs)
+  333  		if plan.planTransition {
+  334  			subject = &quot;Update the active execution plan&quot;
+  335  		}
+  336  		preview := strings.TrimSpace(plan.call.Diff)
+  337  		if preview == &quot;&quot; {
+  338  			preview = subject
+  339  		}
+  340  		if plan.planTransition {
+  341  			preview = plan.planAfter
+  342  		}
+  343  		episodeID := &quot;&quot;
+  344  		if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
+  345  			episodeID = ctrl.EpisodeID()
+  346  		}
+  347  		dec, rerr := a.recoveryGate.BeforeMutation(ctx, RecoveryProposal{
+  348  			AgentID:        a.recoveryAgentID,
+  349  			TaskID:         a.recoveryTaskID,
+  350  			TaskScopeID:    recoveryTaskScopeID(a.deliveryScopeID, a.recoveryRunSeq.Load()),
+  351  			EpisodeID:      episodeID,
+  352  			TaskSummary:    a.recoveryTaskSummary,
+  353  			Tool:           plan.evidenceName,
+  354  			Args:           plan.evidenceArgs,
+  355  			Subject:        subject,
+  356  			Preview:        preview,
+  357  			ReadOnly:       plan.readOnly,
+  358  			Mutates:        plan.mutates,
+  359  			Verification:   plan.verification,
+  360  			PlanTransition: plan.planTransition,
+  361  			PlanBefore:     plan.planBefore,
+  362  			PlanAfter:      plan.planAfter,
+  363  		})
+  364  		if dec.Generation != 0 {
+  365  			plan.recoveryGen = dec.Generation
+  366  		}
+  367  		if rerr != nil &amp;&amp; !dec.Blocked {
+  368  			return toolOutcome{
+  369  				output:             fmt.Sprintf(&quot;blocked: Auto Guard error: %v&quot;, rerr),
+  370  				blocked:            true,
+  371  				errMsg:             &quot;blocked: Auto Guard error&quot;,
+  372  				recoveryGeneration: plan.recoveryGen,
+  373  			}, true
+  374  		}
+  375  		if dec.Blocked || !dec.Allow {
+  376  			msg := strings.TrimSpace(dec.Message)
+  377  			if msg == &quot;&quot; {
+  378  				msg = &quot;blocked: Auto Guard declined this mutation&quot;
+  379  			}
+  380  			if !strings.HasPrefix(msg, &quot;blocked:&quot;) {
+  381  				msg = &quot;blocked: &quot; + msg
+  382  			}
+  383  			return toolOutcome{</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/execute_one.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/execute_one.go#L272-L312" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  272  			plan.execArgs = rc.Args
+  273  		}
+  274  		if rc.Target != nil {
+  275  			plan.execTool = rc.Target
+  276  		}
+  277  		if outcome, blocked := contextualToolGateOutcome(ctx, plan.execTool, plan.permName); blocked {
+  278  			return outcome, true
+  279  		}
+  280  		plan.readOnly = rc.ReadOnly
+  281  		plan.classifyEffects()
+  282  		if outcome, blocked := a.readOnlyExecutionBlock(t, &amp;rc); blocked {
+  283  			return outcome, true
+  284  		}
+  285  		if rc.Commit != nil {
+  286  			if err := rc.Commit(); err != nil {
+  287  				return toolOutcome{
+  288  					output: fmt.Sprintf(&quot;error: %v&quot;, err),
+  289  					errMsg: firstLine(err.Error()),
+  290  				}, true
+  291  			}
+  292  		}
+  293  		if rc.SkipExecute {
+  294  			// Resolution completed without target execution; still record a meta receipt.
+  295  			// A connected mcp-server call completes during resolution by listing
+  296  			// its live tools, so account for that successful call here too.
+  297  			if rc.ProxyAction == &quot;call&quot; &amp;&amp; !rc.Unavailable {
+  298  				a.noteCapabilityInvocation(call.Name, json.RawMessage(call.Arguments), nil)
+  299  			}
+  300  			result := rc.Result
+  301  			if a.task.ledger != nil {
+  302  				// inspect/decline are not mutations; unavailable call targets are not success.
+  303  				success := !rc.Unavailable
+  304  				rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), success, true)
+  305  				a.task.ledger.Record(rec)
+  306  			}
+  307  			if rc.Unavailable {
+  308  				return toolOutcome{output: result, errMsg: firstLine(rc.UnavailableReason)}, true
+  309  			}
+  310  			body, truncMsg := truncateToolOutputFor(result, plan.call.Name, plan.call.ID)
+  311  			out := toolOutcome{output: body, truncated: truncMsg != &quot;&quot;, truncMsg: truncMsg}
+  312  			if truncMsg != &quot;&quot; {
+  313  				out.rawOutput = result
+  314  			}
+  315  			return out, true
+  316  		}
+  317  	} else if outcome, blocked := a.readOnlyExecutionBlock(t, nil); blocked {
+  318  		return outcome, true
+  319  	}
+  320
+  321  	// A proxy resolution can point at a target with an explicit planning-phase
+  322  	// opt-out even though the proxy itself has none. Re-check the resolved target
+  323  	// before its ordinary permission and sandbox path.
+  324  	if plan.resolved.TargetName != &quot;&quot; &amp;&amp; a.planMode.Load() {
+  325  		safety := planmode.PlanSafetyUnknown
+  326  		if c, ok := plan.execTool.(tool.PlanModeClassifier); ok {
+  327  			if c.PlanModeSafe() {
+  328  				safety = planmode.PlanSafetySafe
+  329  			} else {
+  330  				safety = planmode.PlanSafetyUnsafe
+  331  			}
+  332  		}
+  333  		if decision := a.planModeDecision(plan.permName, plan.resolved.ReadOnly, safety, plan.permArgs); decision.Blocked {
+  334  			return toolOutcome{
+  335  				output:  decision.Message,
+  336  				blocked: true,
+  337  				errMsg:  &quot;blocked: tool is unavailable during planning&quot;,
+  338  			}, true
+  339  		}
+  340  	}
+  341  	plannerTrustedMCP := a.plannerMCPExecution &amp;&amp; isMCPExecutionTarget(plan.execTool, plan.permName) &amp;&amp; mcpServerAuthorized(plan.execTool) &amp;&amp; !mcpDestructiveHint(plan.execTool)
+  342  	if a.planMode.Load() &amp;&amp; isMCPExecutionTarget(plan.execTool, plan.permName) &amp;&amp; !plannerTrustedMCP &amp;&amp; (!plan.readOnly || !mcpServerAuthorized(plan.execTool) || mcpDestructiveHint(plan.execTool)) {
+  343  		reason := &quot;writer/destructive target&quot;
+  344  		if plan.readOnly &amp;&amp; !mcpServerAuthorized(plan.execTool) {
+  345  			reason = &quot;reader from an unauthorized server&quot;
+  346  		}
+  347  		return toolOutcome{
+  348  			output:  fmt.Sprintf(&quot;blocked: MCP %s %q is unavailable during Plan mode; finish or exit Plan mode before requesting this call&quot;, reason, plan.permName),
+  349  			blocked: true,
+  350  			errMsg:  &quot;blocked: MCP target is unavailable during planning&quot;,
+  351  		}, true
+  352  	}
+  353  	return toolOutcome{}, false
+  354  }
+  355
+  356  // applyDeliveryPolicyGates enforces global deterministic shell contracts plus
+  357  // delivery-profile-only criteria rules, and classifies mutation/verification.
+  358  func (a *Agent) applyDeliveryPolicyGates(turn *turnRuntime, plan *toolCallPlan) (toolOutcome, bool) {
+  359  	// Global deterministic shell contract (ordinary + Delivery). PowerShell 5.1
+  360  	// &amp;&amp;/|| is enforced inside the bash tool itself so descriptor and error text
+  361  	// stay shell-accurate; the agent layers apply command-shape protections.
+  362  	// Delivery keeps its longer recovery copy so existing delivery guidance tests
+  363  	// and model recovery prompts stay stable.
+  364  	//
+  365  	// Ordinary mode blocks only shapes where a later segment can actually hide an
+  366  	// earlier failure. Delivery keeps the broader classifier because a mutation
+  367  	// invalidates the verification receipt even when the exit status is honest.
+  368  	// Without that split, `go build ./... &amp;&amp; go test ./...`, `npm install &amp;&amp;
+  369  	// npm test`, and every other short-circuit chain would be rejected for every
+  370  	// user, though bash already reports the failing step&#39;s status for them.
+  371  	if plan.evidenceName == &quot;bash&quot; {
+  372  		if evidence.BashToolCallMasksVerificationExit(plan.evidenceArgs) {
+  373  			msg := evidence.ShellContractPreflightMessage(&quot;mask_exit&quot;)
+  374  			if a.deliveryProfile {
+  375  				msg = &quot;blocked: the trailing echo/printf of $? masks the verifier&#39;s exit status, so this command would look successful even when the check failed. Run the verifier or read-only extraction pipeline by itself and let its exit status be the tool result; for example: tail ... | head ... | node --check -&quot;
+  376  			}
+  377  			return toolOutcome{
+  378  				output:    msg,
+  379  				blocked:   true,
+  380  				errMsg:    &quot;blocked: verification exit status masked&quot;,
+  381  				execution: shellPreflightExecution(plan, true),
+  382  			}, true
+  383  		}</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-tools-004" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 执行结果会同时写证据账本、hooks 和恢复观测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>finishToolExecution 在真实 target 执行后写入 model-visible receipt 和 proxy target receipt，记录 output bytes/todo 状态，触发 PostToolUse 或 failure hook、Auto Guard observation，再统一截断回模型的输出。</p></section><section><span>白话解释</span><p>工具成功不等于只把一段字符串塞回聊天：系统还保存“谁调用了谁、是否真的产出、哪个 todo 前进了、恢复守卫看到什么”。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>审计与恢复需要结构化 receipt，而不是从自然语言最终答案里猜发生过什么。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>552–602</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>603–654</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L552-L654" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/execute_one.go:552–654</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L552-L654" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  552  // finishToolExecution performs the concrete Execute, records evidence, runs
+  553  // post hooks and recovery observation, and truncates the model-facing result.
+  554  func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) toolOutcome {
+  555  	cctx := plan.cctx
+  556  	runTool := plan.runTool
+  557  	runArgs := plan.runArgs
+  558  	call := plan.call
+  559  	t := plan.tool
+  560  	readOnly := plan.readOnly
+  561  	permName := plan.permName
+  562  	permArgs := plan.permArgs
+  563  	evidenceName := plan.evidenceName
+  564  	evidenceArgs := plan.evidenceArgs
+  565  	mutates := plan.mutates
+  566  	recoveryGen := plan.recoveryGen
+  567
+  568  	var result string
+  569  	var images []string
+  570  	var err error
+  571  	// A call that was authorized under reader classification carries that
+  572  	// basis into dispatch: the MCP execution layer re-verifies it linearizably
+  573  	// against server authorization and live safety metadata, and refuses to
+  574  	// promote it into a writer lane if reclassification landed after the gate.
+  575  	if readOnly &amp;&amp; isInstalledMCPTool(runTool) &amp;&amp; mcpServerAuthorized(runTool) &amp;&amp; !mcpDestructiveHint(runTool) {
+  576  		cctx = tool.WithReaderExecutionIntent(cctx)
+  577  	}
+  578  	// Planner-trusted MCP: authorized + non-destructive, even without
+  579  	// readOnlyHint. Final dispatch re-checks live authorization/destructiveHint.
+  580  	if a.plannerMCPExecution &amp;&amp; isMCPExecutionTarget(runTool, permName) &amp;&amp; mcpServerAuthorized(runTool) &amp;&amp; !mcpDestructiveHint(runTool) {
+  581  		cctx = tool.WithNonDestructiveMCPExecutionIntent(cctx)
+  582  	}
+  583  	if it, ok := runTool.(tool.ImageTool); ok {
+  584  		result, images, err = it.ExecuteWithImages(cctx, runArgs)
+  585  	} else {
+  586  		result, err = runTool.Execute(cctx, runArgs)
+  587  	}
+  588  	if a.evidence != nil {
+  589  		// Always record the model-visible call for audit, then the real target
+  590  		// attributes for mutation/read classification when they differ.
+  591  		if call.Name == &quot;complete_step&quot; {
+  592  			rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly())
+  593  			a.evidence.Record(rec)
+  594  			if err == nil {
+  595  				a.advanceCanonicalTodo(rec.Step)
+  596  			}
+  597  		} else if evidenceName != call.Name {
+  598  			// Proxy: meta receipt (non-mutation) + real target receipt.
+  599  			a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, true))
+  600  			rec := evidence.ReceiptFromToolCall(evidenceName, evidenceArgs, err == nil, readOnly)
+  601  			rec.OutputBytes = len(strings.TrimSpace(result))
+  602  			a.evidence.Record(rec)
+  603  		} else {
+  604  			rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly())
+  605  			rec.OutputBytes = len(strings.TrimSpace(result))
+  606  			a.evidence.Record(rec)
+  607  			if err == nil &amp;&amp; call.Name == &quot;todo_write&quot; {
+  608  				a.setTodoState(rec.Todos)
+  609  				if len(rec.Todos) &gt; 0 {
+  610  					a.deliveryCriteriaEstablished = true
+  611  				}
+  612  			}
+  613  		}
+  614  	}
+  615  	// Track skill/capability outcomes for Delivery gates.
+  616  	a.noteCapabilityInvocation(call.Name, json.RawMessage(call.Arguments), err)
+  617  	// Success and failure hooks observe the result after the tool ran. Use the
+  618  	// real target name for proxied tools.
+  619  	if a.hooks != nil {
+  620  		if err != nil {
+  621  			a.hooks.PostToolUseFailure(ctx, permName, permArgs, result, err)
+  622  		} else {
+  623  			a.hooks.PostToolUse(ctx, permName, permArgs, result)
+  624  		}
+  625  	}
+  626  	if a.recoveryGate != nil {
+  627  		a.observeRecoveryResult(ctx, evidenceName, evidenceArgs, readOnly, mutates, result, err, false, false, recoveryGen)
+  628  	}
+  629  	if err != nil {
+  630  		detail := result
+  631  		// Malformed-args failures are a transient model JSON glitch (e.g. options
+  632  		// written as [&quot;a&quot;:&quot;b&quot;] → &quot;invalid character &#39;:&#39; after array element&quot;). The
+  633  		// args can&#39;t be safely re-parsed, but echoing the tool&#39;s schema makes the
+  634  		// retry land valid instead of repeating the same broken shape.
+  635  		if !json.Valid([]byte(call.Arguments)) {
+  636  			detail = strings.TrimRight(detail, &quot;\n&quot;) + &quot;\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n&quot; + string(t.Schema())
+  637  		}
+  638  		a.recordRepeatFailure(call, t, err)
+  639  		body, truncMsg := truncateToolOutput(fmt.Sprintf(&quot;error: %v\n%s&quot;, err, detail))
+  640  		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != &quot;&quot;, truncMsg: truncMsg, recoveryGeneration: recoveryGen}
+  641  	}
+  642  	if mutates {
+  643  		a.clearRepeatFailuresAfterMutation(evidenceName, evidenceArgs, readOnly)
+  644  	}
+  645  	a.recordRepeatSuccess(call, t)
+  646  	// A foreground `task` sub-agent just finished — its result is the final answer.
+  647  	// (A backgrounded one returns a &quot;Started…&quot; string and stops later in a job, so
+  648  	// it doesn&#39;t fire here.) SubagentStop lets a hook react to delegated work.
+  649  	if a.hooks != nil &amp;&amp; call.Name == &quot;task&quot; &amp;&amp; !isBackgroundTaskCall(call.Arguments) {
+  650  		a.hooks.SubagentStop(ctx, result)
+  651  	}
+  652  	body, truncMsg := truncateToolOutput(result)
+  653  	return toolOutcome{output: body, images: images, truncated: truncMsg != &quot;&quot;, truncMsg: truncMsg, recoveryGeneration: recoveryGen}
+  654  }
+  655</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/execute_one.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/execute_one.go#L552-L654" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  552  func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
+  553  	policyArgs := plan.permArgs
+  554  	if len(plan.resolved.Args) &gt; 0 {
+  555  		policyArgs = plan.resolved.Args
+  556  	}
+  557  	if outcome, blocked := a.taskPolicyToolGate(plan, policyArgs); blocked {
+  558  		return outcome, true
+  559  	}
+  560  	// Acquire after permission is granted but before PreToolUse: hooks are user
+  561  	// shell code and can themselves change the workspace. This keeps readers
+  562  	// concurrent and avoids holding the workspace during an approval prompt while
+  563  	// still covering every write-side action that follows authorization.
+  564  	// Lazy workspace lease on the first real writer for every role setting.
+  565  	if plan.effects.WorkspaceMutation &amp;&amp; a.svc.workspaceLease != nil {
+  566  		if err := a.svc.workspaceLease.AcquireWrite(ctx); err != nil {
+  567  			return toolOutcome{
+  568  				output:  fmt.Sprintf(&quot;blocked: the workspace did not become available for writing: %v&quot;, err),
+  569  				blocked: true,
+  570  				errMsg:  &quot;blocked: workspace write lease unavailable&quot;,
+  571  			}, true
+  572  		}
+  573  	}
+  574  	// Resolve the concrete execution target before hooks. A proxy may carry a
+  575  	// different target/name/argument set than the provider-visible call.
+  576  	plan.runTool = plan.execTool
+  577  	plan.runArgs = plan.execArgs
+  578  	if plan.resolved.Target != nil {
+  579  		plan.runTool = plan.resolved.Target
+  580  		plan.runArgs = plan.resolved.Args
+  581  		if len(plan.runArgs) == 0 {
+  582  			plan.runArgs = json.RawMessage(`{}`)
+  583  		}
+  584  	}
+  585  	// Hold the parent claim before PreToolUse: hooks are user shell code and may
+  586  	// mutate the same workspace. The reservation remains live through hooks,
+  587  	// checkpointing, and the concrete Execute call, closing both hook-side and
+  588  	// check-before-write TOCTOU windows. Dynamic Economy/MCP tools are covered
+  589  	// here after registry lookup without schema-changing wrappers.
+  590  	// executeOne defers plan.releaseParentWrite so every return path releases.
+  591  	if releaseParentWrite, perr := a.reserveParentWrite(plan.runTool, plan.runArgs, !plan.effects.WorkspaceMutation); perr != nil {
+  592  		return toolOutcome{
+  593  			output:  &quot;blocked: &quot; + perr.Error(),
+  594  			blocked: true,
+  595  			errMsg:  &quot;blocked: write path claimed by background subagent&quot;,
+  596  		}, true
+  597  	} else if releaseParentWrite != nil {
+  598  		plan.releaseParentWrite = releaseParentWrite
+  599  	}
+  600  	// Acquire the checkpoint barrier before preimage capture and any hook. It is
+  601  	// held through post hooks and AfterMutation so rewind cannot interleave with
+  602  	// writer-side user code.
+  603  	if plan.effects.WorkspaceMutation &amp;&amp; a.svc.mutationObserver != nil &amp;&amp; a.svc.mutationObserver.Store() != nil {
+  604  		barrier := a.svc.mutationObserver.Store().Barrier()
+  605  		if err := barrier.EnterWrite(); err != nil {
+  606  			return toolOutcome{output: &quot;blocked: &quot; + err.Error(), blocked: true, errMsg: &quot;blocked: mutation barrier unavailable&quot;}, true
+  607  		}
+  608  		plan.releaseMutationWrite = barrier.ExitWrite
+  609  	}
+  610  	// Checkpoint the file this writer is about to change before PreToolUse.
+  611  	// A hook may mutate and then block the call, so the deferred AfterMutation
+  612  	// still finalizes the fingerprint on every return path. Built-in
+  613  	// Previewers get precise paths (complete coverage). Bash / opaque MCP
+  614  	// writers record explicit coverage gaps instead of guessing targets.
+  615  	if plan.effects.WorkspaceMutation {
+  616  		a.observeBeforeMutation(ctx, plan)
+  617  		plan.mutationObserved = plan.mutationPath != &quot;&quot;
+  618  		if toolHooksMayMutateWorkspace(a.svc.hooks) &amp;&amp; a.svc.mutationObserver != nil {
+  619  			a.svc.mutationObserver.RecordGap(checkpoint.CoverageGap{Reason: checkpoint.GapHookWrite, Tool: plan.evidenceName, Detail: &quot;tool hook may write paths that are not declared by the tool&quot;})
+  620  		}
+  621  	}
+  622  	// Proxy tools fire hooks against the real MCP target name and arguments.
+  623  	if a.svc.hooks != nil {
+  624  		if block, msg := a.svc.hooks.PreToolUse(ctx, plan.permName, plan.permArgs); block {
+  625  			if msg == &quot;&quot; {
+  626  				msg = &quot;blocked by a PreToolUse hook&quot;
+  627  			}
+  628  			return toolOutcome{
+  629  				output:  &quot;blocked: &quot; + msg,
+  630  				blocked: true,
+  631  				errMsg:  &quot;blocked by PreToolUse hook&quot;,
+  632  			}, true
+  633  		}
+  634  	}
+  635  	cctx := tool.WithContextCompressor(withCallContext(ctx, plan.call.ID, a.svc.sink, a.svc.asker, a.planMode.Load()), a)
+  636  	cctx = WithSubagentDepth(cctx, a.subagentDepth)
+  637  	if a.task.ledger != nil {
+  638  		cctx = evidence.WithLedger(cctx, a.task.ledger)
+  639  		cctx = evidence.WithSessionMessages(cctx, a.sess.conversation.Snapshot)
+  640  		if a.deliveryProfile {
+  641  			cctx = evidence.WithDeliveryProfile(cctx)
+  642  		}
+  643  	}
+  644  	if !a.planMode.Load() {
+  645  		cctx = a.withContractState(cctx)
+  646  	}
+  647  	if plan.planReplacementAuthorized {
+  648  		cctx = tool.WithPlanReplacementAuthorization(cctx)
+  649  	}
+  650  	if len(a.projectChecks) &gt; 0 {
+  651  		cctx = instruction.WithChecks(cctx, a.projectChecks)
+  652  	}
+  653  	if a.svc.jobs != nil {
+  654  		cctx = jobs.WithManager(cctx, a.svc.jobs)
+  655  	}
+  656  	if a.svc.sandboxEscape != nil {
+  657  		cctx = sandbox.WithEscapeApprover(cctx, a.svc.sandboxEscape)
+  658  	}
+  659  	if a.svc.configWrite != nil {
+  660  		cctx = tool.WithConfigWriteApprover(cctx, a.svc.configWrite)
+  661  	}
+  662  	if v := a.responseLanguage.Load(); v != nil {
+  663  		if lang, ok := v.(string); ok {
+  664  			cctx = WithResponseLanguagePreference(cctx, lang)
+  665  		}
+  666  	}
+  667  	if v := a.reasoningLanguage.Load(); v != nil {
+  668  		if lang, ok := v.(string); ok {
+  669  			cctx = WithReasoningLanguagePreference(cctx, lang)
+  670  		}
+  671  	}
+  672  	if a.svc.memQueue != nil {
+  673  		cctx = memory.WithQueue(cctx, a.svc.memQueue)
+  674  	}
+  675  	callID := plan.call.ID
+  676  	cctx = tool.WithProgress(cctx, func(chunk string) {
+  677  		a.svc.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
+  678  	})
+  679  	plan.cctx = cctx
+  680  	return toolOutcome{}, false
+  681  }
+  682
+  683  type toolMutationHookReporter interface {
+  684  	ToolMutationHooksEnabled() bool
+  685  }
+  686
+  687  func toolHooksMayMutateWorkspace(hooks ToolHooks) bool {
+  688  	if hooks == nil {
+  689  		return false
+  690  	}
+  691  	if reporter, ok := hooks.(toolMutationHookReporter); ok {
+  692  		return reporter.ToolMutationHooksEnabled()
+  693  	}
+  694  	// Custom ToolHooks implementations predate the capability report. Preserve
+  695  	// conservative coverage for them because their callbacks may write files.
+  696  	return true
+  697  }
+  698
+  699  // finishToolExecution performs the concrete Execute, records evidence, runs
+  700  // post hooks and recovery observation, and truncates the model-facing result.
+  701  func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) toolOutcome {
+  702  	plan.executed = true
+  703  	cctx := plan.cctx
+  704  	runTool := plan.runTool
+  705  	runArgs := plan.runArgs
+  706  	call := plan.call
+  707  	t := plan.tool
+  708  	readOnly := plan.readOnly
+  709  	permName := plan.permName
+  710  	permArgs := plan.permArgs
+  711  	evidenceName := plan.evidenceName
+  712  	evidenceArgs := plan.evidenceArgs
+  713  	mutates := plan.effects.StateMutation
+  714  	recoveryGen := plan.recoveryGen
+  715
+  716  	var result string
+  717  	var images []string
+  718  	var err error
+  719  	// A call that was authorized under reader classification carries that
+  720  	// basis into dispatch: the MCP execution layer re-verifies it linearizably
+  721  	// against server authorization and live safety metadata, and refuses to
+  722  	// promote it into a writer lane if reclassification landed after the gate.
+  723  	if readOnly &amp;&amp; isInstalledMCPTool(runTool) &amp;&amp; mcpServerAuthorized(runTool) &amp;&amp; !mcpDestructiveHint(runTool) {
+  724  		cctx = tool.WithReaderExecutionIntent(cctx)
+  725  	}</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">TOOLS · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>executeOne 为一个调用创建 toolCallPlan，先解析 canonical tool 并应用重复成功/失败和 stale-anchor guard，再做 Plan/proxy/delivery/recovery/permission，随后获取 lease/写 claim、运行 hooks 和 preview，最后 Execute、记录 receipt、运行 post hooks 并截断结果。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L20-L80" target="_blank" rel="noreferrer">internal/agent/execute_one.go:20–80 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>proxy resolver 在权限、hooks 和 evidence 之前把 provider-visible call 映射到真实 target/name/args；解析后的目标会再次检查 Plan safety，Plan 中只有已授权、非 destructive 的 MCP 可走 planner trusted path，普通 writer 或未授权 MCP 被阻断。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L153-L269" target="_blank" rel="noreferrer">internal/agent/execute_one.go:153–269 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>Delivery gates 拒绝会遮蔽 verifier exit code、混合 mutation+verification、opaque inline interpreter 的 Bash；state-changing call 之前必须完成 todo_write 并有 active canonical todo。permission 和 Auto Guard 通过后才获取 workspace write lease，hooks/preview 仍在 Execute 前发生。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L272-L312" target="_blank" rel="noreferrer">internal/agent/execute_one.go:272–312 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>finishToolExecution 在真实 target 执行后写入 model-visible receipt 和 proxy target receipt，记录 output bytes/todo 状态，触发 PostToolUse 或 failure hook、Auto Guard observation，再统一截断回模型的输出。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/execute_one.go#L552-L654" target="_blank" rel="noreferrer">internal/agent/execute_one.go:552–654 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="DeepSeek-Reasonix sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← 模型与消息：流式结果如何进入状态</a><a href="ch06-context.html">上下文：长任务怎样不丢重点 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

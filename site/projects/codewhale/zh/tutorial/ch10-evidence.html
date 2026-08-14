@@ -1,1 +1,916 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="哪些是源码事实，哪些是推断，哪些风险必须补？"><title>CodeWhale · M10 · 证据与取舍：把源码结论带回自研</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch10-evidence.html">中</a><a href="../../en/tutorial/ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="active" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · CodeWhale · cfc2f2b13c07</p><h1>证据与取舍：把源码结论带回自研</h1><p class="lede">哪些是源码事实，哪些是推断，哪些风险必须补？</p><div class="chapter-meta"><span>第 10 / 10 章</span><span>6 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M10</span><b>CodeWhale · M10 · 证据与取舍：把源码结论带回自研</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch10-evidence.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch10-evidence.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>源码审计像验桥：图纸是声明，测试是承重，恢复演练才说明断电后能不能回来。</p></div><h2>先回答本章问题</h2><p>哪些是源码事实，哪些是推断，哪些风险必须补？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-persistence-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · Session 保存是原子写，恢复会校验 schema 并修复 tool history</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SessionManager 限制最多 50 个 session，保存路径先校验 id，再通过 temp+fsync+rename 原子写；in-flight turn 有按 session 分离的 checkpoint。load_session 拒绝未来 schema，并调用 repair_tool_call_pairs 修复 persisted tool call/result 配对。</p></section><section><span>白话解释</span><p>进程崩溃时不会留下半个 JSON；下一次加载也不会把孤儿 tool result 原样塞回 provider。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>会话持久化要把 atomicity、schema compatibility、crash checkpoint 和 history repair 作为一条恢复链。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/session_manager.rs:26–40</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>session/queue schema 与 50 条保留上限。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-persistence-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>02 · StateStore 用 SQLite 做投影，同时保留 append-only session index 和树状消息关系</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>StateStore 由长连接 SQLite 与 append-only JSONL index 组成，开启 WAL、foreign_keys 和 5 秒 busy_timeout；schema 记录 threads、dynamic tools、messages、checkpoints、jobs，消息用 parent_entry_id/current_leaf_id 支持 fork，goal usage/continuation 以原子 SQL 累加。</p></section><section><span>白话解释</span><p>数据库负责查询和并发，JSONL 保留轻量索引；消息不是一条不可分叉的数组，而是带父节点和当前叶子的树。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>企业 Harness 可以用 SQLite 做 projection，但要保留事件/索引事实源和可重建的消息拓扑。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/state/src/lib.rs#L262-L338" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">crates/tui/src/session_manager.rs:26–40 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/state/src/lib.rs:262–338</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/state/src/lib.rs#L262-L338" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>SQLite + JSONL、WAL、busy timeout、foreign keys。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-persistence-003" data-finding-dimension="observability"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>03 · side-git 快照保护用户仓库且把失败当成安全网降级</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>snapshot 模块在每轮前后写入独立 side git，始终显式传 --git-dir 与 --work-tree，默认最多 50 个快照；首次初始化有 2GB/20 万条目估算上限，side repo 超过 500MB 会 prune 到约 400MB；git 缺失、磁盘满或只读时快照失败只记录 warning，turn 继续。</p></section><section><span>白话解释</span><p>CodeWhale 不碰用户自己的 .git，而是另存一份可 restore 的工作区历史；它是回滚保险，不是发布 gate。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>恢复能力应与 Agent 正确性解耦：快照失败要可见，但不能在错误处理里把会话一起打死。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/snapshot/mod.rs#L1-L34" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">crates/tui/src/session_manager.rs:26–40 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/snapshot/mod.rs:1–34</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/snapshot/mod.rs#L1-L34" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>pre/post turn side git 与 non-fatal failure model。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-observe-001" data-finding-dimension="observability"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>04 · 事件类型区分流式内容、工具生命周期和冻结路由/计费 receipt</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Event 定义 Message/Thinking delta、ToolCallStarted/Heartbeat/Complete、TurnStarted、ToolRequestSnapshot、RouteDispatched、TurnComplete；TurnRoute 保存 provider identity/model/base_url/billing product，RouteBillingEnvelope 只在真正发到 wire 时出现。</p></section><section><span>白话解释</span><p>UI 可以实时显示思考和工具，但计费不会拿“计划使用的模型”冒充“实际发出的请求”；路由事实在 dispatch 边界冻结。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可观测事件要区分 planned、started、dispatched、completed 四个时间点，尤其是成本和身份。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/events.rs#L19-L105" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">crates/tui/src/session_manager.rs:26–40 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/events.rs:19–105</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/events.rs#L19-L105" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>TurnRoute 与 billing envelope 的冻结语义。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-observe-002" data-finding-dimension="observability"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>05 · 后台子 Agent 的用量按 owner lease 归属，记录有界且不会因 parent 结束丢账</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>cost_status 为每个 runtime owner 注册同步 sink，子 Agent 通过 cloned RuntimeUsageLease 保持 owner 存活；journal 每 owner 最多保留固定记录数并统计 dropped_records，parent terminal 只有在所有 child lease drop 后才清理。</p></section><section><span>白话解释</span><p>父 Agent 已经显示完成，但后台 worker 还在花 token 时，账仍记在正确 owner 下；不会因为 mailbox 关闭就把成本丢掉。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多 Agent 成本和 trace 需要独立于 UI mailbox 的 owner scope 与 lease 生命周期。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/cost_status.rs#L629-L659" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">crates/tui/src/session_manager.rs:26–40 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/cost_status.rs:629–659</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/cost_status.rs#L629-L659" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>owner-scoped usage journal 与有界记录。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-maturity-001" data-finding-dimension="recovery"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>recovery</span></div><h3>06 · 关键治理模块都有契约测试，但测试覆盖不等于运行时强制全开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>仓库为 compaction、bwrap、execution_envelope、plugins、MCP、Skills、subagent 和 core engine 提供独立测试模块；测试能证明设计意图和回归约束，不能证明用户一定启用了 OS sandbox、插件或某个 provider。</p></section><section><span>白话解释</span><p>源码里不仅有实现，也有大量“规则不能被改坏”的测试；但测试通过只说明代码在测试场景下遵守规则，不能替代生产环境 capability 检查。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>评测体系应把单元/契约测试、真实 sandbox probe、provider replay 和端到端交付演练分开统计。</p></section><div class="finding-caveat"><span>边界 / 风险</span><ul><li>本账本未执行全量 cargo test；这里只记录仓库中可定位的测试实现。</li><li>部分测试包含在超大模块底部，报告代码摘录会按行号折叠。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/compaction.rs#L2135-L2148" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">crates/tui/src/session_manager.rs:26–40 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/compaction.rs:2135–2148</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/compaction.rs#L2135-L2148" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>compaction tests module。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="CodeWhale architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← 协作：子 Agent 与工作流</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="哪些是源码事实，哪些是推断，哪些风险必须补？"><title>CodeWhale · M10 · 证据与取舍：把源码结论带回自研</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch10-evidence.html">中</a><a href="../../en/tutorial/ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="active" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · CodeWhale · cfc2f2b13c07</p><h1>证据与取舍：把源码结论带回自研</h1><p class="lede">哪些是源码事实，哪些是推断，哪些风险必须补？</p><div class="chapter-meta"><span>第 10 / 10 章</span><span>6 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M10</span><b>CodeWhale · M10 · 证据与取舍：把源码结论带回自研</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch10-evidence.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch10-evidence.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>源码审计像验桥：图纸是声明，测试是承重，恢复演练才说明断电后能不能回来。</p></div><h2>先回答本章问题</h2><p>哪些是源码事实，哪些是推断，哪些风险必须补？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：6 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-persistence-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · Session 保存是原子写，恢复会校验 schema 并修复 tool history</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SessionManager 限制最多 50 个 session，保存路径先校验 id，再通过 temp+fsync+rename 原子写；in-flight turn 有按 session 分离的 checkpoint。load_session 拒绝未来 schema，并调用 repair_tool_call_pairs 修复 persisted tool call/result 配对。</p></section><section><span>白话解释</span><p>进程崩溃时不会留下半个 JSON；下一次加载也不会把孤儿 tool result 原样塞回 provider。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>会话持久化要把 atomicity、schema compatibility、crash checkpoint 和 history repair 作为一条恢复链。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>26–32</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>33–40</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/session_manager.rs:26–40</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   26  /// Maximum number of sessions to retain
+   27  const MAX_SESSIONS: usize = 50;
+   28  /// Maximum session title length, in `char`s. Matches the bound the session
+   29  /// picker&#39;s rename prompt has always enforced.
+   30  pub const MAX_SESSION_TITLE_CHARS: usize = 100;
+   31  const WORK_GRAPH_IMPORT_ARCHIVE_DIR: &amp;str = &quot;.work-graph-import-archive&quot;;
+   32  const CURRENT_SESSION_SCHEMA_VERSION: u32 = 1;
+   33  const CURRENT_QUEUE_SCHEMA_VERSION: u32 = 1;
+   34
+   35  const fn default_session_schema_version() -&gt; u32 {
+   36      CURRENT_SESSION_SCHEMA_VERSION
+   37  }
+   38
+   39  const fn default_queue_schema_version() -&gt; u32 {
+   40      CURRENT_QUEUE_SCHEMA_VERSION
+   41  }
+   42
+   43  fn normalize_managed_dir(path: PathBuf) -&gt; std::io::Result&lt;PathBuf&gt; {
+   44      if path.as_os_str().is_empty() {
+   45          return Err(std::io::Error::new(
+   46              std::io::ErrorKind::InvalidInput,
+   47              &quot;managed directory path cannot be empty&quot;,
+   48          ));
+   49      }
+   50      if path.components().any(|component| {
+   51          matches!(
+   52              component,
+   53              Component::ParentDir | Component::Prefix(_) | Component::RootDir
+   54          )
+   55      }) &amp;&amp; path.is_relative()
+   56      {
+   57          return Err(std::io::Error::new(
+   58              std::io::ErrorKind::InvalidInput,
+   59              &quot;managed directory path cannot contain traversal components&quot;,
+   60          ));
+   61      }
+   62      if path.is_absolute() {
+   63          return Ok(path);
+   64      }
+   65      std::env::current_dir().map(|cwd| cwd.join(path))
+   66  }
+   67
+   68  /// Persisted queued message for offline/degraded mode.
+   69  #[derive(Debug, Clone, Serialize, Deserialize)]
+   70  pub struct QueuedSessionMessage {
+   71      pub display: String,
+   72      #[serde(default)]
+   73      pub skill_instruction: Option&lt;String&gt;,
+   74      #[serde(default)]
+   75      pub skill_provenance: Option&lt;crate::plugins::types::PluginAuthority&gt;,
+   76  }
+   77
+   78  /// Persisted queue state for recovery after restart/crash.
+   79  #[derive(Debug, Clone, Serialize, Deserialize)]
+   80  pub struct OfflineQueueState {
+   81      #[serde(default = &quot;default_queue_schema_version&quot;)]
+   82      pub schema_version: u32,
+   83      /// Session ID this queue belongs to. Queue is only restored when
+   84      /// resuming the same session to prevent stale messages leaking into new chats.
+   85      #[serde(default)]
+   86      pub session_id: Option&lt;String&gt;,
+   87      #[serde(default)]
+   88      pub messages: Vec&lt;QueuedSessionMessage&gt;,
+   89      #[serde(default)]
+   90      pub draft: Option&lt;QueuedSessionMessage&gt;,
+   91  }
+   92
+   93  impl Default for OfflineQueueState {
+   94      fn default() -&gt; Self {
+   95          Self {
+   96              schema_version: CURRENT_QUEUE_SCHEMA_VERSION,
+   97              session_id: None,
+   98              messages: Vec::new(),
+   99              draft: None,
+  100          }
+  101      }
+  102  }
+  103
+  104  /// Durable context-reference metadata attached to a user message.
+  105  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+  106  pub struct SessionContextReference {
+  107      pub message_index: usize,
+  108      pub reference: ContextReference,
+  109  }
+  110
+  111  /// Session metadata stored with each saved session</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/session_manager.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   26
+   27  /// Maximum number of sessions to retain
+   28  const MAX_SESSIONS: usize = 50;
+   29  /// Maximum session title length, in `char`s. Matches the bound the session
+   30  /// picker&#39;s rename prompt has always enforced.
+   31  pub const MAX_SESSION_TITLE_CHARS: usize = 100;
+   32  const WORK_GRAPH_IMPORT_ARCHIVE_DIR: &amp;str = &quot;.work-graph-import-archive&quot;;
+   33  const CURRENT_SESSION_SCHEMA_VERSION: u32 = 1;
+   34  const CURRENT_QUEUE_SCHEMA_VERSION: u32 = 1;
+   35
+   36  const fn default_session_schema_version() -&gt; u32 {
+   37      CURRENT_SESSION_SCHEMA_VERSION
+   38  }
+   39
+   40  const fn default_queue_schema_version() -&gt; u32 {
+   41      CURRENT_QUEUE_SCHEMA_VERSION
+   42  }
+   43
+   44  fn normalize_managed_dir(path: PathBuf) -&gt; std::io::Result&lt;PathBuf&gt; {
+   45      if path.as_os_str().is_empty() {
+   46          return Err(std::io::Error::new(
+   47              std::io::ErrorKind::InvalidInput,
+   48              &quot;managed directory path cannot be empty&quot;,
+   49          ));
+   50      }
+   51      if path.components().any(|component| {
+   52          matches!(
+   53              component,
+   54              Component::ParentDir | Component::Prefix(_) | Component::RootDir
+   55          )
+   56      }) &amp;&amp; path.is_relative()
+   57      {
+   58          return Err(std::io::Error::new(
+   59              std::io::ErrorKind::InvalidInput,
+   60              &quot;managed directory path cannot contain traversal components&quot;,
+   61          ));
+   62      }
+   63      if path.is_absolute() {
+   64          return Ok(path);
+   65      }
+   66      std::env::current_dir().map(|cwd| cwd.join(path))
+   67  }
+   68
+   69  /// Persisted queued message for offline/degraded mode.
+   70  #[derive(Debug, Clone, Serialize, Deserialize)]
+   71  pub struct QueuedSessionMessage {
+   72      pub display: String,
+   73      #[serde(default)]
+   74      pub skill_instruction: Option&lt;String&gt;,
+   75      #[serde(default)]
+   76      pub skill_provenance: Option&lt;crate::plugins::types::PluginAuthority&gt;,
+   77  }
+   78
+   79  /// Persisted queue state for recovery after restart/crash.
+   80  #[derive(Debug, Clone, Serialize, Deserialize)]
+   81  pub struct OfflineQueueState {
+   82      #[serde(default = &quot;default_queue_schema_version&quot;)]
+   83      pub schema_version: u32,
+   84      /// Session ID this queue belongs to. Queue is only restored when
+   85      /// resuming the same session to prevent stale messages leaking into new chats.
+   86      #[serde(default)]
+   87      pub session_id: Option&lt;String&gt;,
+   88      #[serde(default)]
+   89      pub messages: Vec&lt;QueuedSessionMessage&gt;,
+   90      #[serde(default)]
+   91      pub draft: Option&lt;QueuedSessionMessage&gt;,
+   92  }
+   93
+   94  /// Result of explicitly repairing a persisted session for process resume.
+   95  ///
+   96  /// Normal snapshot reads must not infer that an unmatched tool call crashed:
+   97  /// an embedding host can persist and inspect a session while that tool is
+   98  /// still running. Hosts should use [`SessionManager::load_session_snapshot`]
+   99  /// during normal operation and reserve this recovery path for a known process
+  100  /// or engine restart.
+  101  #[derive(Debug, Clone)]
+  102  pub struct SessionRecovery {
+  103      pub session: SavedSession,
+  104      pub changed: bool,
+  105      pub repaired_call_count: usize,
+  106      pub duplicate_result_count: usize,
+  107      pub orphan_result_count: usize,
+  108  }
+  109
+  110  impl Default for OfflineQueueState {
+  111      fn default() -&gt; Self {</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-persistence-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>02 · StateStore 用 SQLite 做投影，同时保留 append-only session index 和树状消息关系</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>StateStore 由长连接 SQLite 与 append-only JSONL index 组成，开启 WAL、foreign_keys 和 5 秒 busy_timeout；schema 记录 threads、dynamic tools、messages、checkpoints、jobs，消息用 parent_entry_id/current_leaf_id 支持 fork，goal usage/continuation 以原子 SQL 累加。</p></section><section><span>白话解释</span><p>数据库负责查询和并发，JSONL 保留轻量索引；消息不是一条不可分叉的数组，而是带父节点和当前叶子的树。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>企业 Harness 可以用 SQLite 做 projection，但要保留事件/索引事实源和可重建的消息拓扑。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>262–299</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>300–338</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/state/src/lib.rs#L262-L338" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/state/src/lib.rs:262–338</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/state/src/lib.rs#L262-L338" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  262  /// Persistent storage for conversation threads, messages, checkpoints, and jobs.
+  263  ///
+  264  /// Backed by a SQLite database and an append-only JSONL session index file.
+  265  /// The database schema is automatically initialized and migrated on [`open`](Self::open).
+  266  #[derive(Debug, Clone)]
+  267  pub struct StateStore {
+  268      db_path: PathBuf,
+  269      session_index_path: PathBuf,
+  270      // Single long-lived connection shared by all clones. SQLite pragmas are
+  271      // per-connection, so opening once in `open` and applying them there keeps
+  272      // every operation consistent without re-opening the database per call.
+  273      conn: Arc&lt;Mutex&lt;Connection&gt;&gt;,
+  274  }
+  275
+  276  impl StateStore {
+  277      /// Open (or create) a state store at the given database path.
+  278      ///
+  279      /// If `path` is `None`, the default location (`~/.codewhale/state.db`, with
+  280      /// `~/.deepseek/state.db` as a legacy fallback) is used.
+  281      /// The database schema is created automatically if it does not exist.
+  282      pub fn open(path: Option&lt;PathBuf&gt;) -&gt; Result&lt;Self&gt; {
+  283          let db_path = path.unwrap_or_else(default_state_db_path);
+  284          let session_index_path = db_path
+  285              .parent()
+  286              .unwrap_or_else(|| Path::new(&quot;.&quot;))
+  287              .join(&quot;session_index.jsonl&quot;);
+  288          if let Some(parent) = db_path.parent() {
+  289              fs::create_dir_all(parent).with_context(|| {
+  290                  format!(&quot;failed to create state directory {}&quot;, parent.display())
+  291              })?;
+  292          }
+  293          let conn = Connection::open(&amp;db_path)
+  294              .with_context(|| format!(&quot;failed to open state db {}&quot;, db_path.display()))?;
+  295          Self::configure_connection(&amp;conn, &amp;db_path)?;
+  296          Self::init_schema(&amp;conn)?;
+  297          Ok(Self {
+  298              db_path,
+  299              session_index_path,
+  300              conn: Arc::new(Mutex::new(conn)),
+  301          })
+  302      }
+  303
+  304      /// Apply connection-level SQLite settings that must hold for every open.
+  305      ///
+  306      /// Enables WAL so readers and writers from concurrent CodeWhale processes
+  307      /// do not block each other as aggressively as the default rollback journal,
+  308      /// and sets a multi-second busy timeout so a second process retries on
+  309      /// `SQLITE_BUSY` instead of failing immediately (issue #4734).
+  310      fn configure_connection(conn: &amp;Connection, db_path: &amp;Path) -&gt; Result&lt;()&gt; {
+  311          // Install our wait policy before touching database-level settings or
+  312          // schema. Connection::open may currently provide a dependency default,
+  313          // but StateStore must not rely on that incidental behavior.
+  314          conn.busy_timeout(std::time::Duration::from_secs(5))
+  315              .with_context(|| format!(&quot;failed to set busy_timeout for {}&quot;, db_path.display()))?;
+  316          conn.pragma_update(None, &quot;foreign_keys&quot;, &quot;ON&quot;)
+  317              .with_context(|| format!(&quot;failed to enable foreign keys for {}&quot;, db_path.display()))?;
+  318
+  319          // WAL persists in the database header, so established stores need no
+  320          // write-like journal transition on every process start. Fresh or
+  321          // explicitly downgraded stores still transition once, and we verify
+  322          // SQLite accepted the requested mode instead of silently retaining the
+  323          // previous one (for example on an unsupported VFS).
+  324          let journal_mode: String = conn
+  325              .pragma_query_value(None, &quot;journal_mode&quot;, |row| row.get(0))
+  326              .with_context(|| format!(&quot;failed to read journal mode for {}&quot;, db_path.display()))?;
+  327          if !journal_mode.eq_ignore_ascii_case(&quot;wal&quot;) {
+  328              let configured_mode: String = conn
+  329                  .pragma_update_and_check(None, &quot;journal_mode&quot;, &quot;WAL&quot;, |row| row.get(0))
+  330                  .with_context(|| format!(&quot;failed to enable WAL for {}&quot;, db_path.display()))?;
+  331              if !configured_mode.eq_ignore_ascii_case(&quot;wal&quot;) {
+  332                  anyhow::bail!(
+  333                      &quot;failed to enable WAL for {}: SQLite retained journal mode {configured_mode}&quot;,
+  334                      db_path.display()
+  335                  );
+  336              }
+  337          }
+  338          Ok(())
+  339      }
+  340
+  341      /// Returns the filesystem path of the underlying SQLite database.
+  342      pub fn db_path(&amp;self) -&gt; &amp;Path {
+  343          &amp;self.db_path
+  344      }
+  345
+  346      fn conn(&amp;self) -&gt; Result&lt;MutexGuard&lt;&#39;_, Connection&gt;&gt; {
+  347          // Poisoning means a panic mid-operation; any open transaction was
+  348          // rolled back when it dropped, but surface the condition rather than
+  349          // silently continuing on a connection whose state we can&#39;t vouch for.
+  350          self.conn
+  351              .lock()
+  352              .map_err(|_| anyhow::anyhow!(&quot;state db connection mutex poisoned&quot;))
+  353      }
+  354
+  355      fn init_schema(conn: &amp;Connection) -&gt; Result&lt;()&gt; {
+  356          let mut user_version: u32 = conn.query_row(&quot;PRAGMA user_version;&quot;, [], |row| row.get(0))?;
+  357          if user_version == 0 {
+  358              conn.execute_batch(
+  359                  r#&quot;
+  360                  BEGIN;
+  361                  CREATE TABLE IF NOT EXISTS threads (
+  362                      id TEXT PRIMARY KEY,
+  363                      rollout_path TEXT,
+  364                      preview TEXT NOT NULL,
+  365                      ephemeral INTEGER NOT NULL,
+  366                      model_provider TEXT NOT NULL,
+  367                      created_at INTEGER NOT NULL,
+  368                      updated_at INTEGER NOT NULL,
+  369                      status TEXT NOT NULL,
+  370                      path TEXT,
+  371                      cwd TEXT NOT NULL,
+  372                      cli_version TEXT NOT NULL,
+  373                      source TEXT NOT NULL,
+  374                      title TEXT,
+  375                      sandbox_policy TEXT,
+  376                      approval_mode TEXT,
+  377                      archived INTEGER NOT NULL DEFAULT 0,
+  378                      archived_at INTEGER,
+  379                      git_sha TEXT,
+  380                      git_branch TEXT,
+  381                      git_origin_url TEXT,
+  382                      memory_mode TEXT
+  383                  );
+  384                  CREATE INDEX IF NOT EXISTS idx_threads_updated_at ON threads(updated_at DESC);
+  385                  CREATE INDEX IF NOT EXISTS idx_threads_archived_at ON threads(archived_at DESC);
+  386                  CREATE INDEX IF NOT EXISTS idx_threads_archived_updated ON threads(archived, updated_at DESC);
+  387
+  388                  CREATE TABLE IF NOT EXISTS thread_dynamic_tools (
+  389                      thread_id TEXT NOT NULL,
+  390                      position INTEGER NOT NULL,
+  391                      name TEXT NOT NULL,
+  392                      description TEXT,
+  393                      input_schema TEXT NOT NULL,
+  394                      PRIMARY KEY (thread_id, position),
+  395                      FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE
+  396                  );
+  397
+  398                  CREATE TABLE IF NOT EXISTS messages (
+  399                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+  400                      thread_id TEXT NOT NULL,
+  401                      role TEXT NOT NULL,
+  402                      content TEXT NOT NULL,
+  403                      item_json TEXT,
+  404                      created_at INTEGER NOT NULL,
+  405                      FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE
+  406                  );
+  407                  CREATE INDEX IF NOT EXISTS idx_messages_thread_created_at ON messages(thread_id, created_at ASC);
+  408
+  409                  CREATE TABLE IF NOT EXISTS checkpoints (</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/state/src/lib.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/state/src/lib.rs#L262-L338" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  262  /// Persistent storage for conversation threads, messages, checkpoints, and jobs.
+  263  ///
+  264  /// Backed by a SQLite database and an append-only JSONL session index file.
+  265  /// The database schema is automatically initialized and migrated on [`open`](Self::open).
+  266  #[derive(Debug, Clone)]
+  267  pub struct StateStore {
+  268      db_path: PathBuf,
+  269      session_index_path: PathBuf,
+  270      // Single long-lived connection shared by all clones. SQLite pragmas are
+  271      // per-connection, so opening once in `open` and applying them there keeps
+  272      // every operation consistent without re-opening the database per call.
+  273      conn: Arc&lt;Mutex&lt;Connection&gt;&gt;,
+  274  }
+  275
+  276  impl StateStore {
+  277      /// Open (or create) a state store at the given database path.
+  278      ///
+  279      /// If `path` is `None`, the default location (`~/.codewhale/state.db`, with
+  280      /// `~/.deepseek/state.db` as a legacy fallback) is used.
+  281      /// The database schema is created automatically if it does not exist.
+  282      pub fn open(path: Option&lt;PathBuf&gt;) -&gt; Result&lt;Self&gt; {
+  283          let db_path = path.unwrap_or_else(default_state_db_path);
+  284          let session_index_path = db_path
+  285              .parent()
+  286              .unwrap_or_else(|| Path::new(&quot;.&quot;))
+  287              .join(&quot;session_index.jsonl&quot;);
+  288          if let Some(parent) = db_path.parent() {
+  289              fs::create_dir_all(parent).with_context(|| {
+  290                  format!(&quot;failed to create state directory {}&quot;, parent.display())
+  291              })?;
+  292          }
+  293          let conn = Connection::open(&amp;db_path)
+  294              .with_context(|| format!(&quot;failed to open state db {}&quot;, db_path.display()))?;
+  295          Self::configure_connection(&amp;conn, &amp;db_path)?;
+  296          Self::init_schema(&amp;conn)?;
+  297          Ok(Self {
+  298              db_path,
+  299              session_index_path,
+  300              conn: Arc::new(Mutex::new(conn)),
+  301          })
+  302      }
+  303
+  304      /// Apply connection-level SQLite settings that must hold for every open.
+  305      ///
+  306      /// Enables WAL so readers and writers from concurrent CodeWhale processes
+  307      /// do not block each other as aggressively as the default rollback journal,
+  308      /// and sets a multi-second busy timeout so a second process retries on
+  309      /// `SQLITE_BUSY` instead of failing immediately (issue #4734).
+  310      fn configure_connection(conn: &amp;Connection, db_path: &amp;Path) -&gt; Result&lt;()&gt; {
+  311          // Install our wait policy before touching database-level settings or
+  312          // schema. Connection::open may currently provide a dependency default,
+  313          // but StateStore must not rely on that incidental behavior.
+  314          conn.busy_timeout(std::time::Duration::from_secs(5))
+  315              .with_context(|| format!(&quot;failed to set busy_timeout for {}&quot;, db_path.display()))?;
+  316          conn.pragma_update(None, &quot;foreign_keys&quot;, &quot;ON&quot;)
+  317              .with_context(|| format!(&quot;failed to enable foreign keys for {}&quot;, db_path.display()))?;
+  318
+  319          // WAL persists in the database header, so established stores need no
+  320          // write-like journal transition on every process start. Fresh or
+  321          // explicitly downgraded stores still transition once, and we verify
+  322          // SQLite accepted the requested mode instead of silently retaining the
+  323          // previous one (for example on an unsupported VFS).
+  324          let journal_mode: String = conn
+  325              .pragma_query_value(None, &quot;journal_mode&quot;, |row| row.get(0))
+  326              .with_context(|| format!(&quot;failed to read journal mode for {}&quot;, db_path.display()))?;
+  327          if !journal_mode.eq_ignore_ascii_case(&quot;wal&quot;) {
+  328              let configured_mode: String = conn
+  329                  .pragma_update_and_check(None, &quot;journal_mode&quot;, &quot;WAL&quot;, |row| row.get(0))
+  330                  .with_context(|| format!(&quot;failed to enable WAL for {}&quot;, db_path.display()))?;
+  331              if !configured_mode.eq_ignore_ascii_case(&quot;wal&quot;) {
+  332                  anyhow::bail!(
+  333                      &quot;failed to enable WAL for {}: SQLite retained journal mode {configured_mode}&quot;,
+  334                      db_path.display()
+  335                  );
+  336              }
+  337          }
+  338          Ok(())
+  339      }
+  340
+  341      /// Returns the filesystem path of the underlying SQLite database.
+  342      pub fn db_path(&amp;self) -&gt; &amp;Path {
+  343          &amp;self.db_path
+  344      }
+  345
+  346      fn conn(&amp;self) -&gt; Result&lt;MutexGuard&lt;&#39;_, Connection&gt;&gt; {
+  347          // Poisoning means a panic mid-operation; any open transaction was
+  348          // rolled back when it dropped, but surface the condition rather than
+  349          // silently continuing on a connection whose state we can&#39;t vouch for.
+  350          self.conn
+  351              .lock()
+  352              .map_err(|_| anyhow::anyhow!(&quot;state db connection mutex poisoned&quot;))
+  353      }
+  354
+  355      fn init_schema(conn: &amp;Connection) -&gt; Result&lt;()&gt; {
+  356          let mut user_version: u32 = conn.query_row(&quot;PRAGMA user_version;&quot;, [], |row| row.get(0))?;
+  357          if user_version == 0 {
+  358              // Guard each ALTER: a database restored with a v0 header (or
+  359              // stamped by a racing process that crashed before setting
+  360              // user_version) can already carry these columns, and an
+  361              // unguarded ADD COLUMN aborts the whole open with
+  362              // &quot;duplicate column name&quot;.
+  363              let add_parent_entry_id = if column_exists(conn, &quot;messages&quot;, &quot;parent_entry_id&quot;)? {
+  364                  &quot;&quot;
+  365              } else {
+  366                  &quot;ALTER TABLE messages ADD COLUMN parent_entry_id INTEGER NULL;&quot;
+  367              };
+  368              let add_current_leaf_id = if column_exists(conn, &quot;threads&quot;, &quot;current_leaf_id&quot;)? {
+  369                  &quot;&quot;
+  370              } else {
+  371                  &quot;ALTER TABLE threads ADD COLUMN current_leaf_id INTEGER NULL;&quot;
+  372              };
+  373              conn.execute_batch(&amp;format!(
+  374                  r#&quot;
+  375                  BEGIN;
+  376                  CREATE TABLE IF NOT EXISTS threads (
+  377                      id TEXT PRIMARY KEY,
+  378                      rollout_path TEXT,
+  379                      preview TEXT NOT NULL,
+  380                      ephemeral INTEGER NOT NULL,
+  381                      model_provider TEXT NOT NULL,
+  382                      created_at INTEGER NOT NULL,
+  383                      updated_at INTEGER NOT NULL,
+  384                      status TEXT NOT NULL,
+  385                      path TEXT,
+  386                      cwd TEXT NOT NULL,
+  387                      cli_version TEXT NOT NULL,
+  388                      source TEXT NOT NULL,
+  389                      title TEXT,
+  390                      sandbox_policy TEXT,
+  391                      approval_mode TEXT,
+  392                      archived INTEGER NOT NULL DEFAULT 0,
+  393                      archived_at INTEGER,
+  394                      git_sha TEXT,
+  395                      git_branch TEXT,
+  396                      git_origin_url TEXT,
+  397                      memory_mode TEXT
+  398                  );
+  399                  CREATE INDEX IF NOT EXISTS idx_threads_updated_at ON threads(updated_at DESC);
+  400                  CREATE INDEX IF NOT EXISTS idx_threads_archived_at ON threads(archived_at DESC);
+  401                  CREATE INDEX IF NOT EXISTS idx_threads_archived_updated ON threads(archived, updated_at DESC);
+  402
+  403                  CREATE TABLE IF NOT EXISTS thread_dynamic_tools (
+  404                      thread_id TEXT NOT NULL,
+  405                      position INTEGER NOT NULL,
+  406                      name TEXT NOT NULL,
+  407                      description TEXT,
+  408                      input_schema TEXT NOT NULL,
+  409                      PRIMARY KEY (thread_id, position),</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-persistence-003" data-finding-dimension="observability"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>03 · side-git 快照保护用户仓库且把失败当成安全网降级</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>snapshot 模块在每轮前后写入独立 side git，始终显式传 --git-dir 与 --work-tree，默认最多 50 个快照；首次初始化有 2GB/20 万条目估算上限，side repo 超过 500MB 会 prune 到约 400MB；git 缺失、磁盘满或只读时快照失败只记录 warning，turn 继续。</p></section><section><span>白话解释</span><p>CodeWhale 不碰用户自己的 .git，而是另存一份可 restore 的工作区历史；它是回滚保险，不是发布 gate。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>恢复能力应与 Agent 正确性解耦：快照失败要可见，但不能在错误处理里把会话一起打死。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–16</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>17–34</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/snapshot/mod.rs#L1-L34" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/snapshot/mod.rs:1–34</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/snapshot/mod.rs#L1-L34" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  //! Workspace snapshots — pre/post-turn safety net.
+    2  //!
+    3  //! Each turn the engine takes a `pre-turn:&lt;seq&gt;` snapshot of the user&#39;s
+    4  //! workspace into a side git repo at
+    5  //! `~/.deepseek/snapshots/&lt;project_hash&gt;/&lt;worktree_hash&gt;/.git`, then a
+    6  //! matching `post-turn:&lt;seq&gt;` snapshot when the turn finishes. Users
+    7  //! can roll back via `/restore N` (slash command) or, when the model
+    8  //! recognises an &quot;undo my last edit&quot; intent, the `revert_turn` tool.
+    9  //!
+   10  //! ## Why a side repo?
+   11  //!
+   12  //! - The user&#39;s own `.git` is never touched. `--git-dir` and
+   13  //!   `--work-tree` are *always* set together when we shell out to git;
+   14  //!   that single invariant is what keeps snapshots and the user&#39;s repo
+   15  //!   completely independent.
+   16  //! - Workspaces without git still get snapshots.
+   17  //! - `git`&#39;s own deduplication (object packfiles) keeps the disk
+   18  //!   footprint tractable — typical 100 MB workspace × 12 turns ≈ 1.2 GB
+   19  //!   uncompressed but git&#39;s content-addressed storage usually brings
+   20  //!   that down 10-30×. We mitigate further with:
+   21  //!     - 7-day default retention (`session_manager` prunes at session
+   22  //!       start via [`prune::prune_older_than`]).
+   23  //!     - `gc.auto = 0` on the side repo (we don&#39;t want background gcs
+   24  //!       firing mid-turn) plus an explicit `git gc --prune=now` after
+   25  //!       prune.
+   26  //!     - Startup cleanup for stale `tmp_pack_*` files left by interrupted
+   27  //!       git pack operations.
+   28  //!
+   29  //! ## Failure model
+   30  //!
+   31  //! Pre/post-turn snapshot calls are **non-fatal**. If `git` is missing,
+   32  //! the disk is full, or the workspace is on a read-only filesystem, the
+   33  //! turn proceeds and the engine logs a warning. The snapshot is a
+   34  //! safety net, not a correctness gate.
+   35
+   36  pub mod paths;
+   37  pub mod prune;
+   38  pub mod repo;
+   39
+   40  #[allow(unused_imports)]
+   41  pub use paths::{snapshot_dir_for, snapshot_git_dir};
+   42  pub use prune::{DEFAULT_MAX_AGE, prune_older_than};
+   43
+   44  /// Maximum snapshots kept per workspace side-repo. Oldest are pruned
+   45  /// after each new snapshot to cap disk usage (#1112).
+   46  pub const DEFAULT_MAX_SNAPSHOTS: usize = 50;
+   47  #[allow(unused_imports)]
+   48  pub use repo::{
+   49      DEFAULT_MAX_WORKSPACE_BYTES_FOR_SNAPSHOT, Snapshot, SnapshotId, SnapshotRepo,
+   50      estimate_workspace_size_bounded,
+   51  };
+   52</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/snapshot/mod.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/snapshot/mod.rs#L1-L34" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    1  //! Workspace snapshots — pre/post-turn safety net.
+    2  //!
+    3  //! Each turn the engine takes a `pre-turn:&lt;seq&gt;` snapshot of the user&#39;s
+    4  //! workspace into a side git repo at
+    5  //! `~/.deepseek/snapshots/&lt;project_hash&gt;/&lt;worktree_hash&gt;/.git`, then a
+    6  //! matching `post-turn:&lt;seq&gt;` snapshot when the turn finishes. Users
+    7  //! can roll back via `/restore N` (slash command) or, when the model
+    8  //! recognises an &quot;undo my last edit&quot; intent, the `revert_turn` tool.
+    9  //!
+   10  //! ## Why a side repo?
+   11  //!
+   12  //! - The user&#39;s own `.git` is never touched. `--git-dir` and
+   13  //!   `--work-tree` are *always* set together when we shell out to git;
+   14  //!   that single invariant is what keeps snapshots and the user&#39;s repo
+   15  //!   completely independent.
+   16  //! - Workspaces without git still get snapshots.
+   17  //! - `git`&#39;s own deduplication (object packfiles) keeps the disk
+   18  //!   footprint tractable — typical 100 MB workspace × 12 turns ≈ 1.2 GB
+   19  //!   uncompressed but git&#39;s content-addressed storage usually brings
+   20  //!   that down 10-30×. We mitigate further with:
+   21  //!     - 7-day default retention (`session_manager` prunes at session
+   22  //!       start via [`prune::prune_older_than`]).
+   23  //!     - `gc.auto = 0` on the side repo (we don&#39;t want background gcs
+   24  //!       firing mid-turn) plus an explicit `git gc --prune=now` after
+   25  //!       prune.
+   26  //!     - Startup cleanup for stale `tmp_pack_*` files left by interrupted
+   27  //!       git pack operations.
+   28  //!
+   29  //! ## Failure model
+   30  //!
+   31  //! Pre/post-turn snapshot calls are **non-fatal**. If `git` is missing,
+   32  //! the disk is full, or the workspace is on a read-only filesystem, the
+   33  //! turn proceeds and the engine logs a warning. The snapshot is a
+   34  //! safety net, not a correctness gate.
+   35  //!
+   36  //! Workspaces over the configured size cap (`[snapshots] max_workspace_gb`,
+   37  //! default 2 GB of non-excluded content) skip snapshot init entirely. That
+   38  //! disable is intentionally loud: the operator is told once that undo is off
+   39  //! for the workspace, with the opt-in knobs (raise the cap, or set
+   40  //! `max_workspace_gb = 0` to disable the size gate). Scoped snapshot roots are
+   41  //! not yet a first-class config; the practical opt-in today is the cap override.
+   42
+   43  pub mod paths;
+   44  pub mod prune;
+   45  pub mod repo;
+   46
+   47  #[allow(unused_imports)]
+   48  pub use paths::{snapshot_dir_for, snapshot_git_dir};
+   49  pub use prune::{DEFAULT_MAX_AGE, prune_older_than};
+   50
+   51  /// Maximum snapshots kept per workspace side-repo. Oldest are pruned
+   52  /// after each new snapshot to cap disk usage (#1112).
+   53  pub const DEFAULT_MAX_SNAPSHOTS: usize = 50;
+   54  #[allow(unused_imports)]
+   55  pub use repo::{
+   56      DEFAULT_MAX_WORKSPACE_BYTES_FOR_SNAPSHOT, Snapshot, SnapshotId, SnapshotRepo,
+   57      estimate_workspace_size_bounded,
+   58  };
+   59</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-observe-001" data-finding-dimension="observability"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>04 · 事件类型区分流式内容、工具生命周期和冻结路由/计费 receipt</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Event 定义 Message/Thinking delta、ToolCallStarted/Heartbeat/Complete、TurnStarted、ToolRequestSnapshot、RouteDispatched、TurnComplete；TurnRoute 保存 provider identity/model/base_url/billing product，RouteBillingEnvelope 只在真正发到 wire 时出现。</p></section><section><span>白话解释</span><p>UI 可以实时显示思考和工具，但计费不会拿“计划使用的模型”冒充“实际发出的请求”；路由事实在 dispatch 边界冻结。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可观测事件要区分 planned、started、dispatched、completed 四个时间点，尤其是成本和身份。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>19–61</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>62–105</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/events.rs#L19-L105" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/events.rs:19–105</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/events.rs#L19-L105" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   19  /// Final status for a turn.
+   20  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   21  pub enum TurnOutcomeStatus {
+   22      Completed,
+   23      Interrupted,
+   24      Failed,
+   25  }
+   26
+   27  /// Provider/model route resolved for a model-backed turn.
+   28  ///
+   29  /// Emitted at `RouteDispatched` so hosts retain provenance until the matching
+   30  /// `TurnComplete` without relying on mutable global selection state. Non-model
+   31  /// turns such as composer `!` shell commands use no route.
+   32  #[derive(Debug, Clone, PartialEq, Eq)]
+   33  pub struct TurnRoute {
+   34      pub provider: ApiProvider,
+   35      /// Exact non-secret configured route key. Named custom providers all map
+   36      /// to [`ApiProvider::Custom`], so the enum alone is not provenance.
+   37      pub provider_identity: String,
+   38      pub model: String,
+   39      pub auto_model: bool,
+   40      /// Secret-free proof of the endpoint and credential generation the turn&#39;s
+   41      /// client was *installed* on, minted from that client rather than re-read
+   42      /// from config later.
+   43      ///
+   44      /// Hosts that dispatch follow-up work derived from this turn&#39;s context must
+   45      /// authorize it against this receipt: config is mutable and web config
+   46      /// events are drained ahead of engine events, so anything a host resolves
+   47      /// while handling `TurnStarted` may already describe a different route.
+   48      /// `None` when no concrete client was installed (injected-client engines,
+   49      /// or a client that failed to construct).
+   50      pub receipt: Option&lt;crate::route_receipt::TurnRouteReceipt&gt;,
+   51      /// Billing evidence for the request that was actually put on the wire.
+   52      ///
+   53      /// `None` at `TurnStarted`: a lifecycle start is not a dispatch, and a
+   54      /// route that has not been sent has no billing time, no metering surface,
+   55      /// and no endpoint to attest. Populated exactly once, at the wire
+   56      /// boundary, and delivered on `RouteDispatched`. Consumers that price a
+   57      /// turn must treat `None` as *unknown*, never as a zero-cost turn.
+   58      pub billing: Option&lt;RouteBillingEnvelope&gt;,
+   59      /// Endpoint this turn&#39;s client was frozen against, verbatim.
+   60      ///
+   61      /// [`crate::route_receipt::TurnRouteReceipt`] deliberately keeps only a
+   62      /// redacted endpoint identity, which billing cannot classify from, so the
+   63      /// non-secret URL travels here. Captured from the resolved route candidate
+   64      /// at the client-freeze boundary, before any ambient selection state can
+   65      /// move. Empty only when no endpoint was captured, which bills Unknown
+   66      /// rather than guessing.
+   67      pub base_url: String,
+   68      /// Credential/pay-mode product truth captured from the route-scoped config
+   69      /// at the same instant.
+   70      ///
+   71      /// Together with `provider_identity` and `base_url` this is a complete
+   72      /// [`crate::route_billing::DispatchedReceipt`]: every fact billing needs,
+   73      /// frozen at the client-freeze boundary. Consumers must classify from
+   74      /// these fields and must never re-read an ambient `Config` after the turn
+   75      /// starts — by `TurnComplete` a provider switch, an auto-router hop, or a
+   76      /// `/provider` change can have moved it elsewhere.
+   77      pub billing_product: crate::route_billing::RouteProduct,
+   78  }
+   79
+   80  /// Dispatch-time billing evidence. Separate from [`TurnRoute`] so the type
+   81  /// system — not a convention — enforces that no caller can read a billing
+   82  /// surface, endpoint fingerprint, or dispatch instant off a route that was
+   83  /// only *planned*.
+   84  ///
+   85  /// This is deliberately *not* the same thing as the classification receipt
+   86  /// carried by [`TurnRoute::base_url`] / [`TurnRoute::billing_product`], and
+   87  /// the two are not merged. They are captured at different instants and answer
+   88  /// different questions:
+   89  ///
+   90  /// - `base_url` + `billing_product` + `provider_identity` are frozen at the
+   91  ///   **client-freeze** boundary and answer *which route is this and how does
+   92  ///   it bill* — a [`crate::route_billing::DispatchedReceipt`]. They must be
+   93  ///   readable from `TurnStarted` onward so a child turn arriving mid-flight
+   94  ///   can be billed against the parent&#39;s frozen route.
+   95  /// - This envelope is stamped at the **wire** boundary and answers *what was
+   96  ///   actually put on the wire, when*. A planned-but-unsent route has no
+   97  ///   metering surface and no dispatch instant, so it must be structurally
+   98  ///   absent rather than defaulted.
+   99  #[derive(Debug, Clone, PartialEq, Eq)]
+  100  pub struct RouteBillingEnvelope {
+  101      pub billing_surface: Option&lt;String&gt;,
+  102      pub endpoint_fingerprint: Option&lt;String&gt;,
+  103      pub billing_mode: crate::cost_status::RouteBillingMode,
+  104      pub dispatched_at: DateTime&lt;Utc&gt;,
+  105  }
+  106
+  107  impl TurnRoute {
+  108      /// Priceable envelope for this route, or `None` when the route was never
+  109      /// dispatched. Deliberately not a `Default`-filled envelope: an undispatched
+  110      /// route has no cost, and &quot;no cost&quot; is not &quot;zero cost&quot;.
+  111      #[must_use]
+  112      pub fn cost_envelope(&amp;self) -&gt; Option&lt;crate::cost_status::EffectiveRouteEnvelope&gt; {
+  113          let billing = self.billing.as_ref()?;
+  114          Some(crate::cost_status::EffectiveRouteEnvelope {
+  115              provider: self.provider,
+  116              provider_identity: self.provider_identity.clone(),
+  117              model: self.model.clone(),
+  118              billing_surface: billing.billing_surface.clone(),
+  119              endpoint_fingerprint: billing.endpoint_fingerprint.clone(),
+  120              billing_mode: billing.billing_mode,
+  121              dispatched_at: billing.dispatched_at,
+  122          })
+  123      }
+  124  }
+  125
+  126  /// Structured lifecycle metadata paired with a human-readable
+  127  /// [`Event::AgentProgress`] message.
+  128  ///
+  129  /// Producers own this classification. UI consumers may bound the display
+  130  /// message, but must never recover lifecycle state by parsing it.
+  131  #[derive(Debug, Clone, PartialEq, Eq)]
+  132  pub struct AgentProgressEventMeta {
+  133      pub worker_status: AgentWorkerStatus,
+  134      pub step: Option&lt;u32&gt;,
+  135      /// Canonical action/tool name. Presentation aliases are applied by the UI
+  136      /// when it creates the bounded current-activity projection.
+  137      pub tool_name: Option&lt;String&gt;,
+  138  }
+  139
+  140  impl AgentProgressEventMeta {
+  141      #[must_use]
+  142      pub const fn new(worker_status: AgentWorkerStatus) -&gt; Self {
+  143          Self {
+  144              worker_status,
+  145              step: None,
+  146              tool_name: None,
+  147          }
+  148      }
+  149
+  150      #[must_use]
+  151      pub const fn with_step(mut self, step: u32) -&gt; Self {
+  152          self.step = Some(step);
+  153          self
+  154      }
+  155
+  156      #[must_use]
+  157      pub fn with_tool(mut self, tool_name: impl Into&lt;String&gt;) -&gt; Self {
+  158          self.tool_name = Some(tool_name.into());
+  159          self
+  160      }
+  161  }
+  162
+  163  /// Events emitted by the engine to update the UI.
+  164  #[derive(Debug, Clone)]
+  165  pub enum Event {
+  166      // === Streaming Events ===
+  167      /// A new message block has started
+  168      MessageStarted {
+  169          #[allow(dead_code)]
+  170          index: usize,
+  171      },
+  172
+  173      /// Incremental text content delta
+  174      MessageDelta {
+  175          #[allow(dead_code)]
+  176          index: usize,</code></pre></div></div></article><article class="finding-card compact" id="codewhale-observe-002" data-finding-dimension="observability"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>05 · 后台子 Agent 的用量按 owner lease 归属，记录有界且不会因 parent 结束丢账</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>cost_status 为每个 runtime owner 注册同步 sink，子 Agent 通过 cloned RuntimeUsageLease 保持 owner 存活；journal 每 owner 最多保留固定记录数并统计 dropped_records，parent terminal 只有在所有 child lease drop 后才清理。</p></section><section><span>白话解释</span><p>父 Agent 已经显示完成，但后台 worker 还在花 token 时，账仍记在正确 owner 下；不会因为 mailbox 关闭就把成本丢掉。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多 Agent 成本和 trace 需要独立于 UI mailbox 的 owner scope 与 lease 生命周期。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>629–643</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>644–659</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/cost_status.rs#L629-L659" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/cost_status.rs:629–659</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/cost_status.rs#L629-L659" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  629  fn record_runtime_usage(
+  630      owner: &amp;str,
+  631      source_id: &amp;str,
+  632      route: &amp;EffectiveRouteEnvelope,
+  633      usage: &amp;Usage,
+  634  ) {
+  635      let owner = owner.trim();
+  636      if owner.is_empty() {
+  637          return;
+  638      }
+  639      let record = RuntimeUsageRecord {
+  640          source_id: source_id.to_string(),
+  641          usage: EffectiveRouteUsage {
+  642              route: route.sanitized_for_persistence(),
+  643              usage: usage.clone(),
+  644          },
+  645      };
+  646      let sink =
+  647          with_runtime_usage_sinks(|sinks| sinks.get(owner).map(|entry| Arc::clone(&amp;entry.sink)));
+  648      if sink.is_some_and(|sink| sink(record.clone())) {
+  649          return;
+  650      }
+  651      with_runtime_usage_journal_mut(|journal| {
+  652          let owner_journal = journal.entry(owner.to_string()).or_default();
+  653          if owner_journal.records.len() == MAX_RUNTIME_USAGE_RECORDS_PER_OWNER {
+  654              owner_journal.records.pop_front();
+  655              owner_journal.dropped_records = owner_journal.dropped_records.saturating_add(1);
+  656          }
+  657          owner_journal.records.push_back(record);
+  658      });
+  659  }
+  660
+  661  /// Install a synchronous durability sink for one active runtime turn.
+  662  /// Compaction calls invoke this before they return to the engine, so a process
+  663  /// crash cannot erase already-reported usage from an in-memory journal.
+  664  pub(crate) fn register_runtime_usage_sink(owner: &amp;str, sink: RuntimeUsageSink) {
+  665      let owner = owner.trim();
+  666      if owner.is_empty() {
+  667          return;
+  668      }
+  669      with_runtime_usage_sinks(|sinks| {
+  670          sinks.insert(
+  671              owner.to_string(),
+  672              RuntimeUsageSinkEntry {
+  673                  sink,
+  674                  leases: 0,
+  675                  terminal: false,
+  676              },
+  677          );
+  678      });
+  679  }
+  680
+  681  /// Acquire an owner lease for a root sub-agent runtime. Runtime clones inherit
+  682  /// the lease, so top-level detached children can outlive the parent mailbox
+  683  /// without losing their accounting path.
+  684  pub(crate) fn acquire_runtime_usage_lease(owner: &amp;str) -&gt; Option&lt;RuntimeUsageLease&gt; {
+  685      let owner = owner.trim();
+  686      if owner.is_empty() {
+  687          return None;
+  688      }
+  689      with_runtime_usage_sinks(|sinks| {
+  690          let entry = sinks.get_mut(owner)?;
+  691          entry.leases = entry.leases.saturating_add(1);
+  692          Some(RuntimeUsageLease {
+  693              owner: owner.to_string(),
+  694              active: true,
+  695          })
+  696      })
+  697  }
+  698
+  699  impl RuntimeUsageLease {
+  700      #[must_use]
+  701      pub(crate) fn owner(&amp;self) -&gt; &amp;str {
+  702          &amp;self.owner
+  703      }
+  704  }
+  705
+  706  impl Clone for RuntimeUsageLease {
+  707      fn clone(&amp;self) -&gt; Self {
+  708          if self.active {
+  709              let cloned = with_runtime_usage_sinks(|sinks| {
+  710                  sinks.get_mut(&amp;self.owner).map(|entry| {
+  711                      entry.leases = entry.leases.saturating_add(1);
+  712                  })
+  713              });
+  714              if cloned.is_some() {
+  715                  return Self {
+  716                      owner: self.owner.clone(),
+  717                      active: true,
+  718                  };
+  719              }
+  720          }
+  721          Self {
+  722              owner: self.owner.clone(),
+  723              active: false,
+  724          }
+  725      }
+  726  }
+  727
+  728  impl Drop for RuntimeUsageLease {
+  729      fn drop(&amp;mut self) {
+  730          if !self.active {</code></pre></div></div></article><article class="finding-card compact" id="codewhale-maturity-001" data-finding-dimension="recovery"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L3</b><span>fact</span><span>recovery</span></div><h3>06 · 关键治理模块都有契约测试，但测试覆盖不等于运行时强制全开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>仓库为 compaction、bwrap、execution_envelope、plugins、MCP、Skills、subagent 和 core engine 提供独立测试模块；测试能证明设计意图和回归约束，不能证明用户一定启用了 OS sandbox、插件或某个 provider。</p></section><section><span>白话解释</span><p>源码里不仅有实现，也有大量“规则不能被改坏”的测试；但测试通过只说明代码在测试场景下遵守规则，不能替代生产环境 capability 检查。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>评测体系应把单元/契约测试、真实 sandbox probe、provider replay 和端到端交付演练分开统计。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>2135–2140</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>2141–2148</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><div class="finding-caveat"><span>边界 / 风险</span><ul><li>本账本未执行全量 cargo test；这里只记录仓库中可定位的测试实现。</li><li>部分测试包含在超大模块底部，报告代码摘录会按行号折叠。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/compaction.rs#L2135-L2148" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/compaction.rs:2135–2148</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/compaction.rs#L2135-L2148" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 2135  mod tests {
+ 2136      use crate::models::{ImageUrlContent, Message};
+ 2137
+ 2138      #[test]
+ 2139      fn inline_image_estimates_nonzero_tokens() {
+ 2140          let msg = Message {
+ 2141              role: &quot;user&quot;.to_string(),
+ 2142              content: vec![ContentBlock::ImageUrl {
+ 2143                  image_url: ImageUrlContent {
+ 2144                      url: &quot;data:image/png;base64,AAAA&quot;.to_string(),
+ 2145                  },
+ 2146              }],
+ 2147          };
+ 2148          assert!(
+ 2149              estimate_tokens_for_message(&amp;msg, false) &gt;= IMAGE_TOKEN_ESTIMATE,
+ 2150              &quot;an inline image must not estimate to 0 tokens&quot;
+ 2151          );
+ 2152      }
+ 2153
+ 2154      use super::*;
+ 2155      use serde_json::json;
+ 2156
+ 2157      fn msg(role: &amp;str, text: &amp;str) -&gt; Message {
+ 2158          Message {
+ 2159              role: role.to_string(),
+ 2160              content: vec![ContentBlock::Text {
+ 2161                  text: text.to_string(),
+ 2162                  cache_control: None,
+ 2163              }],
+ 2164          }
+ 2165      }
+ 2166
+ 2167      fn tool_use(id: &amp;str, name: &amp;str, input: serde_json::Value) -&gt; Message {
+ 2168          Message {
+ 2169              role: &quot;assistant&quot;.to_string(),
+ 2170              content: vec![ContentBlock::ToolUse {
+ 2171                  id: id.to_string(),
+ 2172                  name: name.to_string(),
+ 2173                  input,
+ 2174                  caller: None,
+ 2175              }],
+ 2176          }
+ 2177      }
+ 2178
+ 2179      fn tool_result(id: &amp;str, content: &amp;str) -&gt; Message {
+ 2180          Message {
+ 2181              role: &quot;user&quot;.to_string(),
+ 2182              content: vec![ContentBlock::ToolResult {
+ 2183                  tool_use_id: id.to_string(),
+ 2184                  content: content.to_string(),
+ 2185                  is_error: None,
+ 2186                  content_blocks: None,
+ 2187              }],
+ 2188          }
+ 2189      }
+ 2190
+ 2191      #[test]
+ 2192      fn anchor_summary_section_is_empty_without_workspace_or_file() {
+ 2193          assert!(anchor_summary_section(None).is_empty());
+ 2194
+ 2195          let tmpdir = tempfile::TempDir::new().unwrap();
+ 2196          assert!(anchor_summary_section(Some(tmpdir.path())).is_empty());
+ 2197      }
+ 2198
+ 2199      #[test]
+ 2200      fn anchor_summary_section_parses_anchor_file_into_bullets() {
+ 2201          let tmpdir = tempfile::TempDir::new().unwrap();
+ 2202          let deepseek_dir = tmpdir.path().join(&quot;.deepseek&quot;);
+ 2203          std::fs::create_dir_all(&amp;deepseek_dir).unwrap();
+ 2204          std::fs::write(
+ 2205              deepseek_dir.join(&quot;anchors.md&quot;),
+ 2206              &quot;\n---\nDo not touch .ssh\n---\nStatus field is unreliable\n&quot;,
+ 2207          )
+ 2208          .unwrap();
+ 2209
+ 2210          let section = anchor_summary_section(Some(tmpdir.path()));
+ 2211
+ 2212          assert!(section.contains(&quot;## Pinned Facts (User Anchors)&quot;));
+ 2213          assert!(section.contains(&quot;- Do not touch .ssh\n&quot;));
+ 2214          assert!(section.contains(&quot;- Status field is unreliable\n&quot;));
+ 2215          assert!(!section.contains(&quot;\n---\nDo not touch&quot;));
+ 2216      }
+ 2217
+ 2218      #[test]
+ 2219      fn truncate_chars_respects_unicode_boundaries() {</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">EVIDENCE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>SessionManager 限制最多 50 个 session，保存路径先校验 id，再通过 temp+fsync+rename 原子写；in-flight turn 有按 session 分离的 checkpoint。load_session 拒绝未来 schema，并调用 repair_tool_call_pairs 修复 persisted tool call/result 配对。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/session_manager.rs#L26-L40" target="_blank" rel="noreferrer">crates/tui/src/session_manager.rs:26–40 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>StateStore 由长连接 SQLite 与 append-only JSONL index 组成，开启 WAL、foreign_keys 和 5 秒 busy_timeout；schema 记录 threads、dynamic tools、messages、checkpoints、jobs，消息用 parent_entry_id/current_leaf_id 支持 fork，goal usage/continuation 以原子 SQL 累加。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/state/src/lib.rs#L262-L338" target="_blank" rel="noreferrer">crates/state/src/lib.rs:262–338 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>snapshot 模块在每轮前后写入独立 side git，始终显式传 --git-dir 与 --work-tree，默认最多 50 个快照；首次初始化有 2GB/20 万条目估算上限，side repo 超过 500MB 会 prune 到约 400MB；git 缺失、磁盘满或只读时快照失败只记录 warning，turn 继续。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/snapshot/mod.rs#L1-L34" target="_blank" rel="noreferrer">crates/tui/src/snapshot/mod.rs:1–34 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>Event 定义 Message/Thinking delta、ToolCallStarted/Heartbeat/Complete、TurnStarted、ToolRequestSnapshot、RouteDispatched、TurnComplete；TurnRoute 保存 provider identity/model/base_url/billing product，RouteBillingEnvelope 只在真正发到 wire 时出现。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/events.rs#L19-L105" target="_blank" rel="noreferrer">crates/tui/src/core/events.rs:19–105 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="CodeWhale architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← 协作：子 Agent 与工作流</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

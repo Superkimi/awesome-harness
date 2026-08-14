@@ -1,1 +1,1135 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>OpenAI Codex · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · OpenAI Codex · 902bd9e06b3e</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>OpenAI Codex · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/codex/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch04-model.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 模型协议只保留 Responses API，但 Provider 端点与认证可扩展</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>WireApi 枚举只有 Responses，反序列化 chat 会报迁移错误；ModelProviderInfo 允许自定义 base URL、环境密钥、命令认证、AWS SigV4、headers、query 和重试。</p></section><section><span>白话解释</span><p>它允许换“接线地址和门禁方式”，但要求对方都说 Responses 这门语言；不是任意 Chat Completions 方言翻译器。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>兼容面更一致，第三方 Provider 必须实现 Responses 语义而非只暴露 chat/completions。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/model-provider-info/src/lib.rs:54–84</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>Responses-only wire API。</code></pre></div></div></article><article class="finding-card compact" id="codex-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 传输层同时支持 SSE 与可复用 WebSocket，并带 turn 粘性状态</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ModelClientSession 按 turn 创建，延迟缓存 Responses WebSocket 和 x-codex-turn-state；预热是 generate=false 的 v2 response.create，失败后由常规重试/回退处理。</p></section><section><span>白话解释</span><p>每轮对话尽量占用一条可复用的高速通道，还带着本轮路由票据；热身失败不会把整轮任务判死。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>交互延迟低，但 Provider 必须准确声明 WebSocket 能力，AWS 认证当前明确不能与 WebSocket 同开。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">codex-rs/model-provider-info/src/lib.rs:54–84 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/client.rs:1–24</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>turn-scoped WebSocket、预热与 fallback。</code></pre></div></div></article><article class="finding-card compact" id="codex-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 历史是带版本号的 Copy-on-Write 账本，不是随手拼接的消息数组</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ContextManager 用 Arc&lt;Vec&lt;ResponseItem&gt;&gt; 保存历史并维护 history_version、token info、reference context 和 world-state baseline；写入前过滤非 API item、截断并在取 prompt 时规范化。</p></section><section><span>白话解释</span><p>像有版本号的账本：读取者共享同一份快照，真要改时才复制，且每笔工具调用都要能对上回执。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>适合并发读取和回滚，也让 compaction、fork 与增量世界状态有明确一致性边界。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L38-L60" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">codex-rs/model-provider-info/src/lib.rs:54–84 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/context_manager/history.rs:38–60</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L38-L60" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>COW history 与版本/状态字段。</code></pre></div></div></article><article class="finding-card compact" id="codex-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · 上下文裁剪同时维护工具调用配对并计算多模态成本</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>remove_oldest_item 会同步移除对应 call/output 并清 world baseline；normalize 修复配对并过滤不支持的图像/音频，token 估算覆盖 reasoning、compaction、图像、音频和 encrypted content。</p></section><section><span>白话解释</span><p>剪历史不能只撕掉一页：工具问题和答案必须一起处理；图片、音频和加密内容也不能当作零体积。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文预算比纯文本字符计数可靠，降低 Provider 因协议不完整而拒绝请求的概率。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L189-L248" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">codex-rs/model-provider-info/src/lib.rs:54–84 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/context_manager/history.rs:189–248</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L189-L248" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>成对删除、替换和回滚。</code></pre></div></div></article><article class="finding-card compact" id="codex-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 本地压缩会自救：压缩请求自身超限时逐项删旧记录再重试</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>compact 使用模型生成摘要；若压缩调用本身超出窗口，就删除最老 item 及其配对继续尝试，成功后保留真实 user 消息、插入摘要前缀、推进窗口并重算 usage。</p></section><section><span>白话解释</span><p>连“请帮我整理行李”这句话都塞不进去时，它会先扔掉最旧且成对的票据，直到能完成整理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>长会话更耐用；源码也明确提示多次摘要会逐步降低准确性。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/compact.rs#L240-L318" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">codex-rs/model-provider-info/src/lib.rs:54–84 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/compact.rs:240–318</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/compact.rs#L240-L318" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>compact overflow 自救与重试。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="OpenAI Codex architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="模型输出、消息和错误如何被接住？"><title>OpenAI Codex · M04 · 模型与消息：流式结果如何进入状态</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch04-model.html">中</a><a href="../../en/tutorial/ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="active" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · OpenAI Codex · 902bd9e06b3e</p><h1>模型与消息：流式结果如何进入状态</h1><p class="lede">模型输出、消息和错误如何被接住？</p><div class="chapter-meta"><span>第 4 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>OpenAI Codex · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/codex/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch04-model.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>模型像电话另一端的同事；Harness 必须把一段段流式声音拼成有序的消息和动作。</p></div><h2>先回答本章问题</h2><p>模型输出、消息和错误如何被接住？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 模型协议只保留 Responses API，但 Provider 端点与认证可扩展</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>WireApi 枚举只有 Responses，反序列化 chat 会报迁移错误；ModelProviderInfo 允许自定义 base URL、环境密钥、命令认证、AWS SigV4、headers、query 和重试。</p></section><section><span>白话解释</span><p>它允许换“接线地址和门禁方式”，但要求对方都说 Responses 这门语言；不是任意 Chat Completions 方言翻译器。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>兼容面更一致，第三方 Provider 必须实现 Responses 语义而非只暴露 chat/completions。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>54–68</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>69–84</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/model-provider-info/src/lib.rs:54–84</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   54  /// Wire protocol that the provider speaks.
+   55  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
+   56  #[serde(rename_all = &quot;lowercase&quot;)]
+   57  pub enum WireApi {
+   58      /// The Responses API exposed by OpenAI at `/v1/responses`.
+   59      #[default]
+   60      Responses,
+   61  }
+   62
+   63  impl fmt::Display for WireApi {
+   64      fn fmt(&amp;self, f: &amp;mut fmt::Formatter&lt;&#39;_&gt;) -&gt; fmt::Result {
+   65          let value = match self {
+   66              Self::Responses =&gt; &quot;responses&quot;,
+   67          };
+   68          f.write_str(value)
+   69      }
+   70  }
+   71
+   72  impl&lt;&#39;de&gt; Deserialize&lt;&#39;de&gt; for WireApi {
+   73      fn deserialize&lt;D&gt;(deserializer: D) -&gt; Result&lt;Self, D::Error&gt;
+   74      where
+   75          D: serde::Deserializer&lt;&#39;de&gt;,
+   76      {
+   77          let value = String::deserialize(deserializer)?;
+   78          match value.as_str() {
+   79              &quot;responses&quot; =&gt; Ok(Self::Responses),
+   80              &quot;chat&quot; =&gt; Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
+   81              _ =&gt; Err(serde::de::Error::unknown_variant(&amp;value, &amp;[&quot;responses&quot;])),
+   82          }
+   83      }
+   84  }
+   85
+   86  /// Serializable representation of a provider definition.
+   87  #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, JsonSchema)]
+   88  #[schemars(deny_unknown_fields)]
+   89  pub struct ModelProviderInfo {
+   90      /// Friendly display name.
+   91      #[serde(default)]
+   92      pub name: String,
+   93      /// Base URL for the provider&#39;s OpenAI-compatible API.
+   94      pub base_url: Option&lt;String&gt;,
+   95      /// Environment variable that stores the user&#39;s API key for this provider.
+   96      pub env_key: Option&lt;String&gt;,
+   97
+   98      /// Optional instructions to help the user get a valid value for the
+   99      /// variable and set it.
+  100      pub env_key_instructions: Option&lt;String&gt;,
+  101      /// Value to use with `Authorization: Bearer &lt;token&gt;` header. Use of this
+  102      /// config is discouraged in favor of `env_key` for security reasons, but
+  103      /// this may be necessary when using this programmatically.
+  104      pub experimental_bearer_token: Option&lt;String&gt;,
+  105      /// Command-backed bearer-token configuration for this provider.
+  106      pub auth: Option&lt;ModelProviderAuthInfo&gt;,
+  107      /// AWS SigV4 auth configuration for this provider.
+  108      pub aws: Option&lt;ModelProviderAwsAuthInfo&gt;,
+  109      /// Which wire protocol this provider expects.
+  110      #[serde(default)]
+  111      pub wire_api: WireApi,
+  112      /// Optional query parameters to append to the base URL.
+  113      pub query_params: Option&lt;HashMap&lt;String, String&gt;&gt;,
+  114      /// Additional HTTP headers to include in requests to this provider where
+  115      /// the (key, value) pairs are the header name and value.
+  116      pub http_headers: Option&lt;HashMap&lt;String, String&gt;&gt;,
+  117      /// Optional HTTP headers to include in requests to this provider where the
+  118      /// (key, value) pairs are the header name and _environment variable_ whose
+  119      /// value should be used. If the environment variable is not set, or the
+  120      /// value is empty, the header will not be included in the request.
+  121      pub env_http_headers: Option&lt;HashMap&lt;String, String&gt;&gt;,
+  122      /// Maximum number of times to retry a failed HTTP request to this provider.
+  123      pub request_max_retries: Option&lt;u64&gt;,
+  124      /// Number of times to retry reconnecting a dropped streaming response before failing.
+  125      pub stream_max_retries: Option&lt;u64&gt;,
+  126      /// Idle timeout (in milliseconds) to wait for activity on a streaming response before treating
+  127      /// the connection as lost.
+  128      pub stream_idle_timeout_ms: Option&lt;u64&gt;,
+  129      /// Maximum time (in milliseconds) to wait for a websocket connection attempt before treating
+  130      /// it as failed.
+  131      pub websocket_connect_timeout_ms: Option&lt;u64&gt;,
+  132      /// Does this provider require an OpenAI API Key or ChatGPT login token? If true,
+  133      /// user is presented with login screen on first run, and login preference and token/key
+  134      /// are stored in auth.json. If false (which is the default), login screen is skipped,
+  135      /// and API key (if needed) comes from the &quot;env_key&quot; environment variable.
+  136      #[serde(default)]
+  137      pub requires_openai_auth: bool,
+  138      /// Whether this provider supports the Responses API WebSocket transport.
+  139      #[serde(default)]
+  140      pub supports_websockets: bool,
+  141      /// Whether this provider supports the standalone web-search endpoint.
+  142      #[serde(default)]
+  143      pub supports_standalone_web_search: bool,
+  144  }
+  145
+  146  /// AWS SigV4 auth configuration for a model provider.
+  147  #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+  148  #[schemars(deny_unknown_fields)]
+  149  pub struct ModelProviderAwsAuthInfo {
+  150      /// AWS profile name to use. When unset, the AWS SDK default chain decides.
+  151      pub profile: Option&lt;String&gt;,
+  152      /// AWS region to use for provider-specific endpoints.
+  153      pub region: Option&lt;String&gt;,
+  154  }
+  155</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/model-provider-info/src/lib.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   54  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
+   55  #[serde(rename_all = &quot;lowercase&quot;)]
+   56  pub enum WireApi {
+   57      /// The Responses API exposed by OpenAI at `/v1/responses`.
+   58      #[default]
+   59      Responses,
+   60  }
+   61
+   62  impl fmt::Display for WireApi {
+   63      fn fmt(&amp;self, f: &amp;mut fmt::Formatter&lt;&#39;_&gt;) -&gt; fmt::Result {
+   64          let value = match self {
+   65              Self::Responses =&gt; &quot;responses&quot;,
+   66          };
+   67          f.write_str(value)
+   68      }
+   69  }
+   70
+   71  impl&lt;&#39;de&gt; Deserialize&lt;&#39;de&gt; for WireApi {
+   72      fn deserialize&lt;D&gt;(deserializer: D) -&gt; Result&lt;Self, D::Error&gt;
+   73      where
+   74          D: serde::Deserializer&lt;&#39;de&gt;,
+   75      {
+   76          let value = String::deserialize(deserializer)?;
+   77          match value.as_str() {
+   78              &quot;responses&quot; =&gt; Ok(Self::Responses),
+   79              &quot;chat&quot; =&gt; Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
+   80              _ =&gt; Err(serde::de::Error::unknown_variant(&amp;value, &amp;[&quot;responses&quot;])),
+   81          }
+   82      }
+   83  }
+   84
+   85  /// Serializable representation of a provider definition.
+   86  #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, JsonSchema)]
+   87  #[schemars(deny_unknown_fields)]
+   88  pub struct ModelProviderInfo {
+   89      /// Friendly display name.
+   90      #[serde(default)]
+   91      pub name: String,
+   92      /// Base URL for the provider&#39;s OpenAI-compatible API.
+   93      pub base_url: Option&lt;String&gt;,
+   94      /// Environment variable that stores the user&#39;s API key for this provider.
+   95      pub env_key: Option&lt;String&gt;,
+   96
+   97      /// Optional instructions to help the user get a valid value for the
+   98      /// variable and set it.
+   99      pub env_key_instructions: Option&lt;String&gt;,
+  100      /// Value to use with `Authorization: Bearer &lt;token&gt;` header. Use of this
+  101      /// config is discouraged in favor of `env_key` for security reasons, but
+  102      /// this may be necessary when using this programmatically.
+  103      pub experimental_bearer_token: Option&lt;String&gt;,
+  104      /// Command-backed bearer-token configuration for this provider.
+  105      pub auth: Option&lt;ModelProviderAuthInfo&gt;,
+  106      /// AWS SigV4 auth configuration for this provider.
+  107      pub aws: Option&lt;ModelProviderAwsAuthInfo&gt;,
+  108      /// Which wire protocol this provider expects.
+  109      #[serde(default)]
+  110      pub wire_api: WireApi,
+  111      /// Optional query parameters to append to the base URL.
+  112      pub query_params: Option&lt;HashMap&lt;String, String&gt;&gt;,
+  113      /// Additional HTTP headers to include in requests to this provider where
+  114      /// the (key, value) pairs are the header name and value.
+  115      pub http_headers: Option&lt;HashMap&lt;String, String&gt;&gt;,
+  116      /// Optional HTTP headers to include in requests to this provider where the
+  117      /// (key, value) pairs are the header name and _environment variable_ whose
+  118      /// value should be used. If the environment variable is not set, or the
+  119      /// value is empty, the header will not be included in the request.
+  120      pub env_http_headers: Option&lt;HashMap&lt;String, String&gt;&gt;,
+  121      /// Maximum number of times to retry a failed HTTP request to this provider.
+  122      pub request_max_retries: Option&lt;u64&gt;,
+  123      /// Number of times to retry reconnecting a dropped streaming response before failing.
+  124      pub stream_max_retries: Option&lt;u64&gt;,
+  125      /// Idle timeout (in milliseconds) to wait for activity on a streaming response before treating
+  126      /// the connection as lost.
+  127      pub stream_idle_timeout_ms: Option&lt;u64&gt;,
+  128      /// Maximum time (in milliseconds) to wait for a websocket connection attempt before treating
+  129      /// it as failed.
+  130      pub websocket_connect_timeout_ms: Option&lt;u64&gt;,
+  131      /// Does this provider require an OpenAI API Key or ChatGPT login token? If true,
+  132      /// user is presented with login screen on first run, and login preference and token/key
+  133      /// are stored in auth.json. If false (which is the default), login screen is skipped,
+  134      /// and API key (if needed) comes from the &quot;env_key&quot; environment variable.
+  135      #[serde(default)]
+  136      pub requires_openai_auth: bool,
+  137      /// Whether this provider supports the Responses API WebSocket transport.
+  138      #[serde(default)]
+  139      pub supports_websockets: bool,
+  140      /// Whether this provider supports the standalone web-search endpoint.
+  141      #[serde(default)]
+  142      pub supports_standalone_web_search: bool,
+  143  }
+  144
+  145  /// AWS SigV4 auth configuration for a model provider.
+  146  #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+  147  #[schemars(deny_unknown_fields)]
+  148  pub struct ModelProviderAwsAuthInfo {
+  149      /// AWS profile name to use. When unset, the AWS SDK default chain decides.
+  150      pub profile: Option&lt;String&gt;,
+  151      /// AWS region to use for provider-specific endpoints.
+  152      pub region: Option&lt;String&gt;,
+  153  }
+  154
+  155  impl ModelProviderInfo {</code></pre></details></div></div></article><article class="finding-card compact" id="codex-provider-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 传输层同时支持 SSE 与可复用 WebSocket，并带 turn 粘性状态</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ModelClientSession 按 turn 创建，延迟缓存 Responses WebSocket 和 x-codex-turn-state；预热是 generate=false 的 v2 response.create，失败后由常规重试/回退处理。</p></section><section><span>白话解释</span><p>每轮对话尽量占用一条可复用的高速通道，还带着本轮路由票据；热身失败不会把整轮任务判死。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>交互延迟低，但 Provider 必须准确声明 WebSocket 能力，AWS 认证当前明确不能与 WebSocket 同开。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–11</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>12–24</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/client.rs:1–24</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  //! Session- and turn-scoped helpers for talking to model provider APIs.
+    2  //!
+    3  //! `ModelClient` is intended to live for the lifetime of a Codex session and holds the stable
+    4  //! configuration and state needed to talk to a provider (auth, provider selection, conversation id,
+    5  //! and transport fallback state).
+    6  //!
+    7  //! Per-turn settings (model selection, reasoning controls, telemetry context, and turn metadata)
+    8  //! are passed explicitly to streaming and unary methods so that the turn lifetime is visible at the
+    9  //! call site.
+   10  //!
+   11  //! A [`ModelClientSession`] is created per turn and is used to stream one or more Responses API
+   12  //! requests during that turn. It caches a Responses WebSocket connection (opened lazily) and stores
+   13  //! per-turn state such as the `x-codex-turn-state` token used for sticky routing.
+   14  //!
+   15  //! WebSocket prewarm is a v2-only `response.create` with `generate=false`; it waits for completion
+   16  //! so the next request can reuse the same connection and `previous_response_id`.
+   17  //!
+   18  //! Turn execution performs prewarm as a best-effort step before the first stream request so the
+   19  //! subsequent request can reuse the same connection.
+   20  //!
+   21  //! ## Retry-Budget Tradeoff
+   22  //!
+   23  //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
+   24  //! fails, normal stream retry/fallback logic handles recovery on the same turn.
+   25
+   26  use std::collections::HashMap;
+   27  use std::sync::Arc;
+   28  use std::sync::Mutex as StdMutex;
+   29  use std::sync::OnceLock;
+   30  use std::sync::atomic::AtomicBool;
+   31  use std::sync::atomic::Ordering;
+   32
+   33  use codex_api::AgentIdentityTelemetry;
+   34  use codex_api::ApiError;
+   35  use codex_api::AuthProvider;
+   36  use codex_api::CompactClient as ApiCompactClient;
+   37  use codex_api::CompactionInput as ApiCompactionInput;
+   38  use codex_api::Compression;
+   39  use codex_api::MemoriesClient as ApiMemoriesClient;
+   40  use codex_api::MemorySummarizeInput as ApiMemorySummarizeInput;
+   41  use codex_api::MemorySummarizeOutput as ApiMemorySummarizeOutput;
+   42  use codex_api::Provider as ApiProvider;
+   43  use codex_api::RawMemory as ApiRawMemory;
+   44  use codex_api::RealtimeCallClient as ApiRealtimeCallClient;
+   45  use codex_api::RealtimeSessionConfig as ApiRealtimeSessionConfig;
+   46  use codex_api::Reasoning;
+   47  use codex_api::ReasoningContext;
+   48  use codex_api::RequestTelemetry;
+   49  use codex_api::ReqwestTransport;
+   50  use codex_api::ResponseCreateWsRequest;
+   51  use codex_api::ResponsesApiRequest;
+   52  use codex_api::ResponsesClient as ApiResponsesClient;
+   53  use codex_api::ResponsesOptions as ApiResponsesOptions;
+   54  use codex_api::ResponsesWebsocketClient as ApiWebSocketResponsesClient;
+   55  use codex_api::ResponsesWebsocketConnection as ApiWebSocketConnection;
+   56  use codex_api::ResponsesWsRequest;
+   57  use codex_api::SharedAuthProvider;
+   58  use codex_api::SseTelemetry;
+   59  use codex_api::StreamOptions;
+   60  use codex_api::TransportError;
+   61  use codex_api::WebsocketTelemetry;
+   62  use codex_api::auth_header_telemetry;
+   63  use codex_api::build_session_headers;
+   64  use codex_api::create_text_param_for_request;
+   65  use codex_api::response_create_client_metadata;
+   66  use codex_http_client::ClientRouteClass;
+   67  use codex_http_client::HttpClientFactory;
+   68  use codex_login::AuthManager;
+   69  use codex_login::CodexAuth;
+   70  use codex_login::RefreshTokenError;
+   71  use codex_login::UnauthorizedRecovery;
+   72  use codex_login::default_client::add_originator_header;
+   73  use codex_login::default_client::create_client_for_route;
+   74  use codex_otel::SessionTelemetry;
+   75  use codex_otel::current_span_w3c_trace_context;
+   76  use codex_protocol::auth::AuthMode;
+   77
+   78  use codex_protocol::ThreadId;
+   79  use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+   80  use codex_protocol::config_types::Verbosity as VerbosityConfig;
+   81  use codex_protocol::models::ContentItem;
+   82  use codex_protocol::models::ResponseItem;
+   83  use codex_protocol::openai_models::ModelInfo;
+   84  use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+   85  use codex_protocol::protocol::InternalSessionSource;
+   86  use codex_protocol::protocol::SessionSource;
+   87  use codex_protocol::protocol::W3cTraceContext;
+   88  use codex_rollout_trace::CompactionTraceContext;
+   89  use codex_rollout_trace::InferenceTraceAttempt;
+   90  use codex_rollout_trace::InferenceTraceContext;
+   91  use codex_tools::create_tools_json_for_responses_api;
+   92  use codex_tools::create_tools_raw_json_for_responses_api;
+   93  use eventsource_stream::Event;
+   94  use eventsource_stream::EventStreamError;
+   95  use futures::StreamExt;</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/client.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/client.rs#L1-L24" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    1  //! Session- and turn-scoped helpers for talking to model provider APIs.
+    2  //!
+    3  //! `ModelClient` is intended to live for the lifetime of a Codex session and holds the stable
+    4  //! configuration and state needed to talk to a provider (auth, provider selection, conversation id,
+    5  //! and transport fallback state).
+    6  //!
+    7  //! Per-turn settings (model selection, reasoning controls, telemetry context, and turn metadata)
+    8  //! are passed explicitly to streaming and unary methods so that the turn lifetime is visible at the
+    9  //! call site.
+   10  //!
+   11  //! A [`ModelClientSession`] is created per turn and is used to stream one or more Responses API
+   12  //! requests during that turn. It caches a Responses WebSocket connection (opened lazily) and stores
+   13  //! per-turn state such as the `x-codex-turn-state` token used for sticky routing.
+   14  //!
+   15  //! WebSocket prewarm is a v2-only `response.create` with `generate=false`; it waits for completion
+   16  //! so the next request can reuse the same connection and `previous_response_id`.
+   17  //!
+   18  //! Turn execution performs prewarm as a best-effort step before the first stream request so the
+   19  //! subsequent request can reuse the same connection.
+   20  //!
+   21  //! ## Retry-Budget Tradeoff
+   22  //!
+   23  //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
+   24  //! fails, normal stream retry/fallback logic handles recovery on the same turn.
+   25
+   26  use std::collections::HashMap;
+   27  use std::sync::Arc;
+   28  use std::sync::Mutex as StdMutex;
+   29  use std::sync::OnceLock;
+   30  use std::sync::atomic::AtomicBool;
+   31  use std::sync::atomic::Ordering;
+   32
+   33  use codex_api::AgentIdentityTelemetry;
+   34  use codex_api::ApiError;
+   35  use codex_api::AuthProvider;
+   36  use codex_api::CompactClient as ApiCompactClient;
+   37  use codex_api::CompactionInput as ApiCompactionInput;
+   38  use codex_api::Compression;
+   39  use codex_api::MemoriesClient as ApiMemoriesClient;
+   40  use codex_api::MemorySummarizeInput as ApiMemorySummarizeInput;
+   41  use codex_api::MemorySummarizeOutput as ApiMemorySummarizeOutput;
+   42  use codex_api::Provider as ApiProvider;
+   43  use codex_api::RawMemory as ApiRawMemory;
+   44  use codex_api::RealtimeCallClient as ApiRealtimeCallClient;
+   45  use codex_api::RealtimeSessionConfig as ApiRealtimeSessionConfig;
+   46  use codex_api::Reasoning;
+   47  use codex_api::ReasoningContext;
+   48  use codex_api::RequestTelemetry;
+   49  use codex_api::ReqwestTransport;
+   50  use codex_api::ResponseCreateWsRequest;
+   51  use codex_api::ResponsesApiRequest;
+   52  use codex_api::ResponsesClient as ApiResponsesClient;
+   53  use codex_api::ResponsesOptions as ApiResponsesOptions;
+   54  use codex_api::ResponsesWebsocketClient as ApiWebSocketResponsesClient;
+   55  use codex_api::ResponsesWebsocketConnection as ApiWebSocketConnection;
+   56  use codex_api::ResponsesWsRequest;
+   57  use codex_api::SharedAuthProvider;
+   58  use codex_api::SseTelemetry;
+   59  use codex_api::StreamOptions;
+   60  use codex_api::TransportError;
+   61  use codex_api::WebsocketTelemetry;
+   62  use codex_api::auth_header_telemetry;
+   63  use codex_api::build_session_headers;
+   64  use codex_api::create_text_param_for_request;
+   65  use codex_api::response_create_client_metadata;
+   66  use codex_http_client::ClientRouteClass;
+   67  use codex_http_client::HttpClientFactory;
+   68  use codex_login::AuthManager;
+   69  use codex_login::CodexAuth;
+   70  use codex_login::RefreshTokenError;
+   71  use codex_login::UnauthorizedRecovery;
+   72  use codex_login::default_client::add_originator_header;
+   73  use codex_login::default_client::create_client_for_route;
+   74  use codex_otel::SessionTelemetry;
+   75  use codex_otel::current_span_w3c_trace_context;
+   76  use codex_protocol::auth::AuthMode;
+   77
+   78  use codex_protocol::ThreadId;
+   79  use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+   80  use codex_protocol::config_types::Verbosity as VerbosityConfig;
+   81  use codex_protocol::models::ContentItem;
+   82  use codex_protocol::models::ResponseItem;
+   83  use codex_protocol::openai_models::ModelInfo;
+   84  use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+   85  use codex_protocol::protocol::InternalSessionSource;
+   86  use codex_protocol::protocol::SessionSource;
+   87  use codex_protocol::protocol::W3cTraceContext;
+   88  use codex_rollout_trace::CompactionTraceContext;
+   89  use codex_rollout_trace::InferenceTraceAttempt;
+   90  use codex_rollout_trace::InferenceTraceContext;
+   91  use codex_tools::create_tools_json_for_responses_api;
+   92  use codex_tools::create_tools_json_for_responses_lite;
+   93  use codex_tools::create_tools_raw_json_for_responses_api;
+   94  use eventsource_stream::Event;
+   95  use eventsource_stream::EventStreamError;</code></pre></details></div></div></article><article class="finding-card compact" id="codex-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 历史是带版本号的 Copy-on-Write 账本，不是随手拼接的消息数组</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ContextManager 用 Arc&lt;Vec&lt;ResponseItem&gt;&gt; 保存历史并维护 history_version、token info、reference context 和 world-state baseline；写入前过滤非 API item、截断并在取 prompt 时规范化。</p></section><section><span>白话解释</span><p>像有版本号的账本：读取者共享同一份快照，真要改时才复制，且每笔工具调用都要能对上回执。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>适合并发读取和回滚，也让 compaction、fork 与增量世界状态有明确一致性边界。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>38–48</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>49–60</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L38-L60" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/context_manager/history.rs:38–60</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L38-L60" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   38  /// Transcript of thread history
+   39  #[derive(Debug, Clone, Default)]
+   40  pub(crate) struct ContextManager {
+   41      /// The oldest items are at the beginning of the vector. Snapshots share the vector until a
+   42      /// caller needs to mutate it, avoiding deep copies for read-only history consumers.
+   43      items: Arc&lt;Vec&lt;ResponseItem&gt;&gt;,
+   44      /// Bumped whenever history is rewritten, such as compaction or rollback.
+   45      history_version: u64,
+   46      token_info: Option&lt;TokenUsageInfo&gt;,
+   47      /// Reference context snapshot used for diffing and producing model-visible
+   48      /// settings update items.
+   49      ///
+   50      /// This is the baseline for the next regular model turn, and may already
+   51      /// match the current turn after context updates are persisted.
+   52      ///
+   53      /// When this is `None`, settings diffing treats the next turn as having no
+   54      /// baseline and emits a full reinjection of context state. Rollback may
+   55      /// also clear this when it trims a mixed initial-context developer bundle
+   56      /// whose non-diff fragments no longer exist in the surviving history.
+   57      reference_context_item: Option&lt;TurnContextItem&gt;,
+   58      /// World state most recently appended to model-visible history.
+   59      world_state_baseline: Option&lt;WorldStateSnapshot&gt;,
+   60  }
+   61
+   62  impl ContextManager {
+   63      pub(crate) fn new() -&gt; Self {
+   64          Self {
+   65              items: Arc::new(Vec::new()),
+   66              history_version: 0,
+   67              token_info: TokenUsageInfo::new_or_append(
+   68                  &amp;None, &amp;None, /*model_context_window*/ None,
+   69              ),
+   70              reference_context_item: None,
+   71              world_state_baseline: None,
+   72          }
+   73      }
+   74
+   75      pub(crate) fn token_info(&amp;self) -&gt; Option&lt;TokenUsageInfo&gt; {
+   76          self.token_info.clone()
+   77      }
+   78
+   79      pub(crate) fn set_token_info(&amp;mut self, info: Option&lt;TokenUsageInfo&gt;) {
+   80          self.token_info = info;
+   81      }
+   82
+   83      pub(crate) fn set_reference_context_item(&amp;mut self, item: Option&lt;TurnContextItem&gt;) {
+   84          self.reference_context_item = item;
+   85      }
+   86
+   87      pub(crate) fn reference_context_item(&amp;self) -&gt; Option&lt;TurnContextItem&gt; {
+   88          self.reference_context_item.clone()
+   89      }
+   90
+   91      pub(crate) fn update_world_state(
+   92          &amp;mut self,
+   93          world_state: &amp;WorldState,
+   94      ) -&gt; (Vec&lt;Box&lt;dyn ContextualUserFragment&gt;&gt;, Option&lt;WorldStateItem&gt;) {
+   95          let snapshot = world_state.snapshot();
+   96          let fragments =
+   97              world_state.render_history_diff(self.world_state_baseline.as_ref(), &amp;self.items);
+   98          let rollout_item = self.world_state_baseline.as_ref().map_or_else(
+   99              || Some(WorldStateItem::full(snapshot.clone().into_value())),
+  100              |previous| {
+  101                  snapshot
+  102                      .merge_patch_from(previous)
+  103                      .map(WorldStateItem::patch)
+  104              },
+  105          );
+  106          self.world_state_baseline = Some(snapshot);
+  107          (fragments, rollout_item)
+  108      }
+  109
+  110      pub(crate) fn set_world_state_baseline(&amp;mut self, snapshot: WorldStateSnapshot) {
+  111          self.world_state_baseline = Some(snapshot);
+  112      }
+  113
+  114      pub(crate) fn set_token_usage_full(&amp;mut self, context_window: i64) {
+  115          match &amp;mut self.token_info {
+  116              Some(info) =&gt; info.fill_to_context_window(context_window),
+  117              None =&gt; {
+  118                  self.token_info = Some(TokenUsageInfo::full_context_window(context_window));
+  119              }
+  120          }
+  121      }
+  122
+  123      /// `items` is ordered from oldest to newest.
+  124      pub(crate) fn record_items&lt;I&gt;(&amp;mut self, items: I, policy: TruncationPolicy)
+  125      where
+  126          I: IntoIterator,
+  127          I::Item: std::ops::Deref&lt;Target = ResponseItem&gt;,
+  128      {
+  129          for item in items {
+  130              let item_ref = item.deref();
+  131              if !is_api_message(item_ref) {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/context_manager/history.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/context_manager/history.rs#L38-L60" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   38  use std::ops::Deref;
+   39  use std::sync::Arc;
+   40  use std::sync::LazyLock;
+   41
+   42  /// Transcript of thread history
+   43  #[derive(Debug, Clone, Default)]
+   44  pub(crate) struct ContextManager {
+   45      /// The oldest items are at the beginning of the vector. Snapshots share the vector until a
+   46      /// caller needs to mutate it, avoiding deep copies for read-only history consumers.
+   47      items: Arc&lt;Vec&lt;ResponseItemEnvelope&gt;&gt;,
+   48      /// Bumped whenever history is rewritten, such as compaction or rollback.
+   49      history_version: u64,
+   50      token_info: Option&lt;TokenUsageInfo&gt;,
+   51      /// Reference context snapshot used for diffing and producing model-visible
+   52      /// settings update items.
+   53      ///
+   54      /// This is the baseline for the next regular model turn, and may already
+   55      /// match the current turn after context updates are persisted.
+   56      ///
+   57      /// When this is `None`, settings diffing treats the next turn as having no
+   58      /// baseline and emits a full reinjection of context state. Rollback may
+   59      /// also clear this when it trims a mixed initial-context developer bundle
+   60      /// whose non-diff fragments no longer exist in the surviving history.
+   61      reference_context_item: Option&lt;TurnContextItem&gt;,
+   62      /// World state most recently appended to model-visible history.
+   63      world_state_baseline: Option&lt;WorldStateSnapshot&gt;,
+   64  }
+   65
+   66  impl ContextManager {
+   67      pub(crate) fn new() -&gt; Self {
+   68          Self {
+   69              items: Arc::new(Vec::new()),
+   70              history_version: 0,
+   71              token_info: TokenUsageInfo::new_or_append(
+   72                  &amp;None, &amp;None, /*model_context_window*/ None,
+   73              ),
+   74              reference_context_item: None,
+   75              world_state_baseline: None,
+   76          }
+   77      }
+   78
+   79      pub(crate) fn token_info(&amp;self) -&gt; Option&lt;TokenUsageInfo&gt; {
+   80          self.token_info.clone()
+   81      }
+   82
+   83      pub(crate) fn set_token_info(&amp;mut self, info: Option&lt;TokenUsageInfo&gt;) {
+   84          self.token_info = info;
+   85      }
+   86
+   87      pub(crate) fn set_reference_context_item(&amp;mut self, item: Option&lt;TurnContextItem&gt;) {
+   88          self.reference_context_item = item;
+   89      }
+   90
+   91      pub(crate) fn reference_context_item(&amp;self) -&gt; Option&lt;TurnContextItem&gt; {
+   92          self.reference_context_item.clone()
+   93      }
+   94
+   95      pub(crate) fn update_world_state(
+   96          &amp;mut self,
+   97          world_state: &amp;WorldState,
+   98      ) -&gt; (Vec&lt;Box&lt;dyn ContextualUserFragment&gt;&gt;, Option&lt;WorldStateItem&gt;) {
+   99          let snapshot = world_state.snapshot();
+  100          let fragments =
+  101              world_state.render_history_diff(self.world_state_baseline.as_ref(), self.raw_items());
+  102          let rollout_item = self.world_state_baseline.as_ref().map_or_else(
+  103              || Some(WorldStateItem::full(snapshot.clone().into_object())),
+  104              |previous| {
+  105                  snapshot
+  106                      .merge_patch_from(previous)
+  107                      .map(WorldStateItem::patch)
+  108              },
+  109          );
+  110          self.world_state_baseline = Some(snapshot);
+  111          (fragments, rollout_item)
+  112      }
+  113
+  114      pub(crate) fn set_world_state_baseline(&amp;mut self, snapshot: WorldStateSnapshot) {
+  115          self.world_state_baseline = Some(snapshot);
+  116      }
+  117
+  118      pub(crate) fn set_token_usage_full(&amp;mut self, context_window: i64) {
+  119          match &amp;mut self.token_info {
+  120              Some(info) =&gt; info.fill_to_context_window(context_window),
+  121              None =&gt; {
+  122                  self.token_info = Some(TokenUsageInfo::full_context_window(context_window));
+  123              }
+  124          }
+  125      }
+  126
+  127      /// `items` is ordered from oldest to newest.
+  128      pub(crate) fn record_items&lt;I&gt;(&amp;mut self, items: I, policy: TruncationPolicy)
+  129      where
+  130          I: IntoIterator,
+  131          I::Item: Deref&lt;Target = ResponseItem&gt;,</code></pre></details></div></div></article><article class="finding-card compact" id="codex-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · 上下文裁剪同时维护工具调用配对并计算多模态成本</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>remove_oldest_item 会同步移除对应 call/output 并清 world baseline；normalize 修复配对并过滤不支持的图像/音频，token 估算覆盖 reasoning、compaction、图像、音频和 encrypted content。</p></section><section><span>白话解释</span><p>剪历史不能只撕掉一页：工具问题和答案必须一起处理；图片、音频和加密内容也不能当作零体积。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文预算比纯文本字符计数可靠，降低 Provider 因协议不完整而拒绝请求的概率。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>189–217</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>218–248</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L189-L248" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/context_manager/history.rs:189–248</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L189-L248" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  189      pub(crate) fn remove_first_item(&amp;mut self) {
+  190          if !self.items.is_empty() {
+  191              // Remove the oldest item (front of the list). Items are ordered from
+  192              // oldest → newest, so index 0 is the first entry recorded.
+  193              let items = Arc::make_mut(&amp;mut self.items);
+  194              let removed = items.remove(0);
+  195              // If the removed item participates in a call/output pair, also remove
+  196              // its corresponding counterpart to keep the invariants intact without
+  197              // running a full normalization pass.
+  198              normalize::remove_corresponding_for(items, &amp;removed);
+  199              self.world_state_baseline = None;
+  200          }
+  201      }
+  202
+  203      pub(crate) fn replace(&amp;mut self, items: Vec&lt;ResponseItem&gt;) {
+  204          self.items = Arc::new(items);
+  205          self.history_version = self.history_version.saturating_add(1);
+  206          self.world_state_baseline = None;
+  207      }
+  208
+  209      /// Drop the last `num_turns` instruction turns from this history.
+  210      ///
+  211      /// Instruction turns are history messages that should behave like a new prompt boundary:
+  212      /// ordinary user messages and structured assistant inter-agent instructions.
+  213      ///
+  214      /// This mirrors thread-rollback semantics:
+  215      /// - `num_turns == 0` is a no-op
+  216      /// - if there are no user turns, this is a no-op
+  217      /// - if `num_turns` exceeds the number of user turns, all user turns are dropped while
+  218      ///   preserving any items that occurred before the first user message.
+  219      ///
+  220      /// If rollback trims a pre-turn developer message that mixes contextual fragments with
+  221      /// persistent developer text from `build_initial_context`, this also clears
+  222      /// `reference_context_item`. The surviving history no longer contains the full bundle that
+  223      /// established the prior baseline, so future turns must fall back to full reinjection instead
+  224      /// of diffing against stale state.
+  225      pub(crate) fn drop_last_n_user_turns(&amp;mut self, num_turns: u32) {
+  226          if num_turns == 0 {
+  227              return;
+  228          }
+  229
+  230          let snapshot = self.items.clone();
+  231          let user_positions = user_message_positions(&amp;snapshot);
+  232          let Some(&amp;first_instruction_turn_idx) = user_positions.first() else {
+  233              self.replace(Arc::unwrap_or_clone(snapshot));
+  234              return;
+  235          };
+  236
+  237          let n_from_end = usize::try_from(num_turns).unwrap_or(usize::MAX);
+  238          let mut cut_idx = if n_from_end &gt;= user_positions.len() {
+  239              first_instruction_turn_idx
+  240          } else {
+  241              user_positions[user_positions.len() - n_from_end]
+  242          };
+  243
+  244          cut_idx =
+  245              self.trim_pre_turn_context_updates(&amp;snapshot, first_instruction_turn_idx, cut_idx);
+  246
+  247          self.replace(snapshot[..cut_idx].to_vec());
+  248      }
+  249
+  250      pub(crate) fn update_token_info(
+  251          &amp;mut self,
+  252          usage: &amp;TokenUsage,
+  253          model_context_window: Option&lt;i64&gt;,
+  254      ) {
+  255          self.token_info = TokenUsageInfo::new_or_append(
+  256              &amp;self.token_info,
+  257              &amp;Some(usage.clone()),
+  258              model_context_window,
+  259          );
+  260      }
+  261
+  262      fn get_non_last_reasoning_items_tokens(&amp;self) -&gt; i64 {
+  263          // Get reasoning items excluding all the ones after the last instruction boundary.
+  264          let Some(last_user_index) = self.items.iter().rposition(is_user_turn_boundary) else {
+  265              return 0;
+  266          };
+  267
+  268          self.items
+  269              .iter()
+  270              .take(last_user_index)
+  271              .filter(|item| {
+  272                  matches!(
+  273                      item,
+  274                      ResponseItem::Reasoning {
+  275                          encrypted_content: Some(_),
+  276                          ..
+  277                      }
+  278                  )
+  279              })
+  280              .map(estimate_item_token_count)
+  281              .fold(0i64, i64::saturating_add)
+  282      }
+  283
+  284      // These are local items added after the most recent model-emitted item.
+  285      // They are not reflected in `last_token_usage.total_tokens`.
+  286      fn items_after_last_model_generated_item(&amp;self) -&gt; &amp;[ResponseItem] {
+  287          let start = self
+  288              .items
+  289              .iter()
+  290              .rposition(is_model_generated_item)
+  291              .map_or(self.items.len(), |index| index.saturating_add(1));
+  292          &amp;self.items[start..]
+  293      }
+  294
+  295      /// When true, the server already accounted for past reasoning tokens and
+  296      /// the client should not re-estimate them.
+  297      pub(crate) fn get_total_token_usage(&amp;self, server_reasoning_included: bool) -&gt; i64 {
+  298          let last_tokens = self
+  299              .token_info
+  300              .as_ref()
+  301              .map(|info| info.last_token_usage.total_tokens)
+  302              .unwrap_or(0);
+  303          let items_after_last_model_generated_tokens = self
+  304              .items_after_last_model_generated_item()
+  305              .iter()
+  306              .map(estimate_item_token_count)
+  307              .fold(0i64, i64::saturating_add);
+  308          if server_reasoning_included {
+  309              last_tokens.saturating_add(items_after_last_model_generated_tokens)
+  310          } else {
+  311              last_tokens
+  312                  .saturating_add(self.get_non_last_reasoning_items_tokens())
+  313                  .saturating_add(items_after_last_model_generated_tokens)
+  314          }
+  315      }
+  316
+  317      pub(crate) fn estimated_tokens_after_last_model_generated_item(&amp;self) -&gt; i64 {
+  318          self.items_after_last_model_generated_item()
+  319              .iter()</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/context_manager/history.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/context_manager/history.rs#L189-L248" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  189      pub(crate) fn raw_items(
+  190          &amp;self,
+  191      ) -&gt; impl Clone + ExactSizeIterator&lt;Item = &amp;ResponseItem&gt; + DoubleEndedIterator {
+  192          self.items.iter().map(|envelope| &amp;envelope.item)
+  193      }
+  194
+  195      /// Returns annotated history items without cloning their response payloads.
+  196      pub(crate) fn annotated_items(&amp;self) -&gt; &amp;[ResponseItemEnvelope] {
+  197          &amp;self.items
+  198      }
+  199
+  200      /// Returns raw items in the history and consumes the snapshot.
+  201      pub(crate) fn into_raw_items(self) -&gt; Vec&lt;ResponseItem&gt; {
+  202          self.into_annotated_items()
+  203              .into_iter()
+  204              .map(ResponseItemEnvelope::into_item)
+  205              .collect()
+  206      }
+  207
+  208      /// Returns annotated history items and consumes the snapshot.
+  209      pub(crate) fn into_annotated_items(self) -&gt; Vec&lt;ResponseItemEnvelope&gt; {
+  210          Arc::unwrap_or_clone(self.items)
+  211      }
+  212
+  213      pub(crate) fn history_version(&amp;self) -&gt; u64 {
+  214          self.history_version
+  215      }
+  216
+  217      // Estimate token usage using byte-based heuristics from the truncation helpers.
+  218      // This is a coarse lower bound, not a tokenizer-accurate count.
+  219      pub(crate) fn estimate_token_count(&amp;self, turn_context: &amp;TurnContext) -&gt; Option&lt;i64&gt; {
+  220          let model_info = &amp;turn_context.model_info;
+  221          let personality = turn_context.personality.or(turn_context.config.personality);
+  222          let base_instructions = BaseInstructions {
+  223              text: model_info.get_model_instructions(personality),
+  224              provenance: None,
+  225          };
+  226          self.estimate_token_count_with_base_instructions(&amp;base_instructions)
+  227      }
+  228
+  229      pub(crate) fn estimate_token_count_with_base_instructions(
+  230          &amp;self,
+  231          base_instructions: &amp;BaseInstructions,
+  232      ) -&gt; Option&lt;i64&gt; {
+  233          let base_tokens =
+  234              i64::try_from(approx_token_count(&amp;base_instructions.text)).unwrap_or(i64::MAX);
+  235
+  236          let items_tokens = self
+  237              .items
+  238              .iter()
+  239              .map(|envelope| estimate_item_token_count(&amp;envelope.item))
+  240              .fold(0i64, i64::saturating_add);
+  241
+  242          Some(base_tokens.saturating_add(items_tokens))
+  243      }
+  244
+  245      pub(crate) fn remove_first_item(&amp;mut self) {
+  246          if !self.items.is_empty() {
+  247              // Remove the oldest item (front of the list). Items are ordered from
+  248              // oldest → newest, so index 0 is the first entry recorded.
+  249              let items = Arc::make_mut(&amp;mut self.items);
+  250              let removed = items.remove(0);
+  251              // If the removed item participates in a call/output pair, also remove
+  252              // its corresponding counterpart to keep the invariants intact without
+  253              // running a full normalization pass.
+  254              normalize::remove_corresponding_for(items, &amp;removed.item);
+  255              self.world_state_baseline = None;
+  256          }
+  257      }
+  258
+  259      #[cfg(test)]
+  260      pub(crate) fn replace(&amp;mut self, items: Vec&lt;ResponseItem&gt;) {
+  261          self.replace_annotated(items.into_iter().map(ResponseItemEnvelope::new).collect());
+  262      }
+  263
+  264      pub(crate) fn replace_annotated(&amp;mut self, items: Vec&lt;ResponseItemEnvelope&gt;) {
+  265          self.items = Arc::new(items);
+  266          self.history_version = self.history_version.saturating_add(1);
+  267          self.world_state_baseline = None;
+  268      }
+  269
+  270      /// Drop the last `num_turns` instruction turns from this history.
+  271      ///
+  272      /// Instruction turns are history messages that should behave like a new prompt boundary:
+  273      /// ordinary user messages and structured assistant inter-agent instructions.
+  274      ///
+  275      /// This mirrors thread-rollback semantics:
+  276      /// - `num_turns == 0` is a no-op
+  277      /// - if there are no user turns, this is a no-op
+  278      /// - if `num_turns` exceeds the number of user turns, all user turns are dropped while
+  279      ///   preserving any items that occurred before the first user message.
+  280      ///
+  281      /// If rollback trims a pre-turn developer message that mixes contextual fragments with
+  282      /// persistent developer text from `build_initial_context`, this also clears
+  283      /// `reference_context_item`. The surviving history no longer contains the full bundle that
+  284      /// established the prior baseline, so future turns must fall back to full reinjection instead
+  285      /// of diffing against stale state.
+  286      pub(crate) fn drop_last_n_user_turns(&amp;mut self, num_turns: u32) {
+  287          if num_turns == 0 {
+  288              return;
+  289          }
+  290
+  291          let snapshot = self.items.clone();
+  292          let user_positions = user_message_positions(&amp;snapshot);
+  293          let Some(&amp;first_instruction_turn_idx) = user_positions.first() else {
+  294              self.replace_annotated(Arc::unwrap_or_clone(snapshot));
+  295              return;
+  296          };
+  297
+  298          let n_from_end = usize::try_from(num_turns).unwrap_or(usize::MAX);
+  299          let mut cut_idx = if n_from_end &gt;= user_positions.len() {
+  300              first_instruction_turn_idx
+  301          } else {
+  302              user_positions[user_positions.len() - n_from_end]
+  303          };
+  304
+  305          cut_idx =
+  306              self.trim_pre_turn_context_updates(&amp;snapshot, first_instruction_turn_idx, cut_idx);
+  307
+  308          let mut retained_items = snapshot[..cut_idx].to_vec();
+  309          if cut_idx == first_instruction_turn_idx
+  310              &amp;&amp; let Some(first_turn_id) = snapshot[first_instruction_turn_idx].turn_id()
+  311          {
+  312              retained_items.retain_mut(|item| {
+  313                  if item.turn_id() == Some(first_turn_id)
+  314                      &amp;&amp; let ResponseItem::Message { role, content, .. } = &amp;mut item.item
+  315                      &amp;&amp; role == &quot;developer&quot;
+  316                  {
+  317                      content.retain(|content| {
+  318                          !matches!(
+  319                              content,</code></pre></details></div></div></article><article class="finding-card compact" id="codex-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 本地压缩会自救：压缩请求自身超限时逐项删旧记录再重试</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>compact 使用模型生成摘要；若压缩调用本身超出窗口，就删除最老 item 及其配对继续尝试，成功后保留真实 user 消息、插入摘要前缀、推进窗口并重算 usage。</p></section><section><span>白话解释</span><p>连“请帮我整理行李”这句话都塞不进去时，它会先扔掉最旧且成对的票据，直到能完成整理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>长会话更耐用；源码也明确提示多次摘要会逐步降低准确性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>240–278</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>279–318</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/compact.rs#L240-L318" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/compact.rs:240–318</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/compact.rs#L240-L318" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  240  async fn run_compact_task_inner_impl(
+  241      sess: Arc&lt;Session&gt;,
+  242      turn_context: Arc&lt;TurnContext&gt;,
+  243      input: Vec&lt;UserInput&gt;,
+  244      initial_context_injection: InitialContextInjection,
+  245      compaction_metadata: CompactionTurnMetadata,
+  246  ) -&gt; CodexResult&lt;String&gt; {
+  247      let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
+  248      sess.emit_turn_item_started(&amp;turn_context, &amp;compaction_item)
+  249          .await;
+  250      let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
+  251
+  252      let mut history = sess.clone_history().await;
+  253      history.record_items(
+  254          &amp;[initial_input_for_turn.into()],
+  255          turn_context.model_info.truncation_policy.into(),
+  256      );
+  257
+  258      let max_retries = turn_context.provider.info().stream_max_retries();
+  259      let mut retries = 0;
+  260      let mut client_session = sess.services.model_client.new_session();
+  261      // Reuse one client session so turn-scoped state (sticky routing, websocket incremental
+  262      // request tracking)
+  263      // survives retries within this compact turn.
+  264      let window_id = sess.current_window_id().await;
+  265      let responses_metadata = turn_context.turn_metadata_state.to_responses_metadata(
+  266          sess.installation_id.clone(),
+  267          window_id,
+  268          CodexResponsesRequestKind::Compaction(compaction_metadata),
+  269      );
+  270
+  271      loop {
+  272          // Clone is required because of the loop
+  273          let turn_input = history
+  274              .clone()
+  275              .for_prompt(&amp;turn_context.model_info.input_modalities);
+  276          let turn_input_len = turn_input.len();
+  277          let prompt = Prompt {
+  278              input: turn_input,
+  279              base_instructions: sess.get_base_instructions().await,
+  280              ..Default::default()
+  281          };
+  282          let attempt_result = drain_to_completed(
+  283              &amp;sess,
+  284              turn_context.as_ref(),
+  285              &amp;mut client_session,
+  286              &amp;responses_metadata,
+  287              &amp;prompt,
+  288          )
+  289          .await;
+  290
+  291          match attempt_result {
+  292              Ok(()) =&gt; {
+  293                  break;
+  294              }
+  295              Err(err)
+  296                  if matches!(
+  297                      err.details(),
+  298                      CodexErrorDetails::Interrupted | CodexErrorDetails::TurnAborted
+  299                  ) =&gt;
+  300              {
+  301                  return Err(err);
+  302              }
+  303              Err(e) if matches!(e.details(), CodexErrorDetails::SessionBudgetExceeded) =&gt; {
+  304                  sess.track_turn_codex_error(turn_context.as_ref(), &amp;e);
+  305                  let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+  306                  sess.send_event(&amp;turn_context, event).await;
+  307                  return Err(e);
+  308              }
+  309              Err(e) if matches!(e.details(), CodexErrorDetails::ContextWindowExceeded) =&gt; {
+  310                  if turn_input_len &gt; 1 {
+  311                      // Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact.
+  312                      error!(
+  313                          &quot;Context window exceeded while compacting; removing oldest history item. Error: {e}&quot;
+  314                      );
+  315                      history.remove_first_item();
+  316                      retries = 0;
+  317                      continue;
+  318                  }
+  319                  sess.set_total_tokens_full(turn_context.as_ref()).await;
+  320                  sess.track_turn_codex_error(turn_context.as_ref(), &amp;e);
+  321                  let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+  322                  sess.send_event(&amp;turn_context, event).await;
+  323                  return Err(e);
+  324              }
+  325              Err(e) =&gt; {
+  326                  if retries &lt; max_retries {
+  327                      retries += 1;
+  328                      let delay = backoff(retries);
+  329                      sess.notify_stream_error(
+  330                          turn_context.as_ref(),
+  331                          format!(&quot;Reconnecting... {retries}/{max_retries}&quot;),
+  332                          e,
+  333                      )
+  334                      .await;
+  335                      tokio::time::sleep(delay).await;
+  336                      continue;
+  337                  } else {
+  338                      sess.track_turn_codex_error(turn_context.as_ref(), &amp;e);
+  339                      let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+  340                      sess.send_event(&amp;turn_context, event).await;
+  341                      return Err(e);
+  342                  }
+  343              }
+  344          }
+  345      }
+  346
+  347      let history_snapshot = sess.clone_history().await;
+  348      let history_items = history_snapshot.raw_items();
+  349      let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
+  350      let summary_text = format!(&quot;{SUMMARY_PREFIX}\n{summary_suffix}&quot;);
+  351      let user_messages = collect_user_messages(history_items);
+  352
+  353      let mut new_history = build_compacted_history(Vec::new(), &amp;user_messages, &amp;summary_text);
+  354      if let Some(summary_item) = new_history.last_mut() {
+  355          // This replacement history skips `record_conversation_items`; only the appended summary
+  356          // belongs to this compaction turn.
+  357          summary_item.set_turn_id_if_missing(&amp;turn_context.sub_id);
+  358      }
+  359      let (window_number, window_ids) = sess.advance_auto_compact_window().await;
+  360
+  361      let (initial_context, world_state_baseline) =
+  362          build_compaction_initial_context(sess.as_ref(), &amp;initial_context_injection).await;
+  363      if !initial_context.is_empty() {
+  364          new_history =
+  365              insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
+  366      }
+  367      let reference_context_item = match initial_context_injection {
+  368          InitialContextInjection::DoNotInject =&gt; None,
+  369          InitialContextInjection::BeforeLastUserMessage { .. } =&gt; {
+  370              Some(turn_context.to_turn_context_item())
+  371          }
+  372      };
+  373      sess.replace_compacted_history(
+  374          new_history,
+  375          reference_context_item,
+  376          world_state_baseline,
+  377          CompactedHistoryMetadata {
+  378              message: summary_text,
+  379              window_number,
+  380              window_ids,
+  381          },
+  382      )
+  383      .await;
+  384      sess.recompute_token_usage(&amp;turn_context).await;
+  385
+  386      sess.emit_turn_item_completed(&amp;turn_context, compaction_item)
+  387          .await;
+  388      let warning = EventMsg::Warning(WarningEvent {
+  389          message: &quot;Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.&quot;.to_string(),</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/compact.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/compact.rs#L240-L318" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  240  async fn run_compact_task_inner_impl(
+  241      sess: Arc&lt;Session&gt;,
+  242      turn_context: Arc&lt;TurnContext&gt;,
+  243      input: Vec&lt;UserInput&gt;,
+  244      initial_context_injection: InitialContextInjection,
+  245      compaction_metadata: CompactionTurnMetadata,
+  246  ) -&gt; CodexResult&lt;String&gt; {
+  247      let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
+  248      sess.emit_turn_item_started(&amp;turn_context, &amp;compaction_item)
+  249          .await;
+  250      let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
+  251
+  252      let mut history = sess.clone_history().await;
+  253      history.record_items(
+  254          &amp;[initial_input_for_turn.into()],
+  255          turn_context.model_info.truncation_policy.into(),
+  256      );
+  257
+  258      let max_retries = turn_context.provider.info().stream_max_retries();
+  259      let mut retries = 0;
+  260      let mut client_session = sess.services.model_client.new_session();
+  261      // Reuse one client session so turn-scoped state (sticky routing, websocket incremental
+  262      // request tracking)
+  263      // survives retries within this compact turn.
+  264      let window_id = sess.current_window_id().await;
+  265      let responses_metadata = turn_context.turn_metadata_state.to_responses_metadata(
+  266          sess.installation_id.clone(),
+  267          window_id,
+  268          CodexResponsesRequestKind::Compaction(compaction_metadata),
+  269      );
+  270
+  271      loop {
+  272          // Clone is required because of the loop
+  273          let turn_input = history
+  274              .clone()
+  275              .for_prompt(&amp;turn_context.model_info.input_modalities);
+  276          let turn_input_len = turn_input.len();
+  277          let prompt = Prompt {
+  278              input: turn_input,
+  279              base_instructions: sess.get_base_instructions().await,
+  280              ..Default::default()
+  281          };
+  282          let attempt_result = drain_to_completed(
+  283              &amp;sess,
+  284              turn_context.as_ref(),
+  285              &amp;mut client_session,
+  286              &amp;responses_metadata,
+  287              &amp;prompt,
+  288          )
+  289          .await;
+  290
+  291          match attempt_result {
+  292              Ok(()) =&gt; {
+  293                  break;
+  294              }
+  295              Err(err)
+  296                  if matches!(
+  297                      err.details(),
+  298                      CodexErrorDetails::Interrupted | CodexErrorDetails::TurnAborted
+  299                  ) =&gt;
+  300              {
+  301                  return Err(err);
+  302              }
+  303              Err(e) if matches!(e.details(), CodexErrorDetails::SessionBudgetExceeded) =&gt; {
+  304                  sess.track_turn_codex_error(turn_context.as_ref(), &amp;e);
+  305                  let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+  306                  sess.send_event(&amp;turn_context, event).await;
+  307                  return Err(e);
+  308              }
+  309              Err(e) if matches!(e.details(), CodexErrorDetails::ContextWindowExceeded) =&gt; {
+  310                  if turn_input_len &gt; 1 {
+  311                      // Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact.
+  312                      error!(
+  313                          &quot;Context window exceeded while compacting; removing oldest history item. Error: {e}&quot;
+  314                      );
+  315                      history.remove_first_item();
+  316                      retries = 0;
+  317                      continue;
+  318                  }
+  319                  sess.set_total_tokens_full(turn_context.as_ref()).await;
+  320                  sess.track_turn_codex_error(turn_context.as_ref(), &amp;e);
+  321                  let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+  322                  sess.send_event(&amp;turn_context, event).await;
+  323                  return Err(e);
+  324              }
+  325              Err(e) =&gt; {
+  326                  if retries &lt; max_retries {
+  327                      retries += 1;
+  328                      let delay = backoff(retries);
+  329                      sess.notify_stream_error(
+  330                          turn_context.as_ref(),
+  331                          format!(&quot;Reconnecting... {retries}/{max_retries}&quot;),
+  332                          e,
+  333                      )
+  334                      .await;
+  335                      tokio::time::sleep(delay).await;
+  336                      continue;
+  337                  } else {
+  338                      sess.track_turn_codex_error(turn_context.as_ref(), &amp;e);
+  339                      let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
+  340                      sess.send_event(&amp;turn_context, event).await;
+  341                      return Err(e);
+  342                  }
+  343              }
+  344          }
+  345      }
+  346
+  347      let history_snapshot = sess.clone_history().await;
+  348      let history_items = history_snapshot.annotated_items();
+  349      let summary_suffix =
+  350          get_last_assistant_message_from_turn(history_snapshot.raw_items()).unwrap_or_default();
+  351      let summary_text = format!(&quot;{SUMMARY_PREFIX}\n{summary_suffix}&quot;);
+  352      let user_messages = collect_annotated_user_messages(history_items);
+  353
+  354      let mut new_history = build_compacted_history(Vec::new(), &amp;user_messages, &amp;summary_text);
+  355      if let Some(summary_item) = new_history.last_mut() {
+  356          // This replacement history skips `record_conversation_items`; only the appended summary
+  357          // belongs to this compaction turn.
+  358          summary_item.set_turn_id_if_missing(&amp;turn_context.sub_id);
+  359      }
+  360      let (window_number, window_ids) = sess.advance_auto_compact_window().await;
+  361
+  362      let (initial_context, world_state_baseline) =
+  363          build_compaction_initial_context(sess.as_ref(), &amp;initial_context_injection).await;
+  364      if !initial_context.is_empty() {
+  365          new_history =
+  366              insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
+  367      }
+  368      let reference_context_item = match initial_context_injection {
+  369          InitialContextInjection::DoNotInject =&gt; None,
+  370          InitialContextInjection::BeforeLastUserMessage { .. } =&gt; {
+  371              Some(turn_context.to_turn_context_item())
+  372          }
+  373      };
+  374      sess.replace_compacted_history(
+  375          new_history,
+  376          reference_context_item,
+  377          world_state_baseline,
+  378          CompactedHistoryMetadata {
+  379              message: summary_text,
+  380              window_number,
+  381              window_ids,
+  382          },
+  383      )
+  384      .await;
+  385      sess.recompute_token_usage(&amp;turn_context).await;
+  386
+  387      sess.emit_turn_item_completed(&amp;turn_context, compaction_item)
+  388          .await;
+  389      let warning = EventMsg::Warning(WarningEvent {</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>WireApi 枚举只有 Responses，反序列化 chat 会报迁移错误；ModelProviderInfo 允许自定义 base URL、环境密钥、命令认证、AWS SigV4、headers、query 和重试。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L54-L84" target="_blank" rel="noreferrer">codex-rs/model-provider-info/src/lib.rs:54–84 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>ModelClientSession 按 turn 创建，延迟缓存 Responses WebSocket 和 x-codex-turn-state；预热是 generate=false 的 v2 response.create，失败后由常规重试/回退处理。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24" target="_blank" rel="noreferrer">codex-rs/core/src/client.rs:1–24 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>ContextManager 用 Arc&lt;Vec&lt;ResponseItem&gt;&gt; 保存历史并维护 history_version、token info、reference context 和 world-state baseline；写入前过滤非 API item、截断并在取 prompt 时规范化。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L38-L60" target="_blank" rel="noreferrer">codex-rs/core/src/context_manager/history.rs:38–60 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>remove_oldest_item 会同步移除对应 call/output 并清 world baseline；normalize 修复配对并过滤不支持的图像/音频，token 估算覆盖 reasoning、compaction、图像、音频和 encrypted content。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L189-L248" target="_blank" rel="noreferrer">codex-rs/core/src/context_manager/history.rs:189–248 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="OpenAI Codex architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← 主循环：任务为什么会继续推进</a><a href="ch05-tools.html">工具：Agent 的手脚怎样被注册 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

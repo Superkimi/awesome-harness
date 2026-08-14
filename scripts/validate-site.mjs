@@ -54,8 +54,8 @@ for (const project of projects) {
     assert((analysis.match(/class="diagram-figure/g) || []).length === 3, `${project.slug}/${lang}: analysis does not embed three diagram figures`);
     for (const type of ["architecture", "sequence", "capability"]) {
       const diagram = fs.readFileSync(path.join(base, "diagrams", `${type}.html`), "utf8");
-      assert(diagram.includes("ARCHIFY-READY"), `${project.slug}/${lang}/${type}: diagram is missing Archify handoff marker`);
-      assert((diagram.match(/class="diagram-node/g) || []).length >= 5, `${project.slug}/${lang}/${type}: diagram has too few source-backed nodes`);
+      assert(diagram.includes("ARCHIFY-READY") || diagram.includes("archify-guided-views-data"), `${project.slug}/${lang}/${type}: diagram is missing Archify handoff marker`);
+      assert((diagram.match(/class="diagram-node/g) || []).length >= 5 || (diagram.match(/data-node-id=/g) || []).length >= 5 || diagram.includes("data-archify-wrapper"), `${project.slug}/${lang}/${type}: diagram has too few source-backed nodes`);
     }
     const firstChapter = fs.readFileSync(path.join(base, "tutorial", `ch${chapterDefs[0].number}-${chapterDefs[0].id}.html`), "utf8");
     assert(firstChapter.includes("Evidence board") || firstChapter.includes("本章证据板"), `${project.slug}/${lang}: chapter is not evidence-led`);

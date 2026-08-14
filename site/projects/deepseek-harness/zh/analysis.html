@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="DeepSeek Harness 把 Agent 做成 Cordis 插件树：模型、工具、会话日志、权限、沙箱、Skill、子 Agent 和 UI 都是可替换服务。它最值得研究的不是某个工具，而是‘模型可见的一切必须可从事件日志重建’这条硬约束。"><title>DeepSeek Harness · 深度源码分析</title><link rel="stylesheet" href="../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek Harness · 中文</span><nav><a href="../../../zh/index.html">总览</a><a href="analysis.html">技术分析</a><a href="tutorial/index.html">小白教程</a><a href="../zh/analysis.html">中</a><a href="../en/analysis.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek Harness</strong><small>Plugin-composed, event-sourced Coding Agent Harness</small></div><a class="active" href="analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="tutorial/ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="tutorial/ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="tutorial/ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="tutorial/ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="tutorial/ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="tutorial/ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="tutorial/ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="tutorial/ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="tutorial/ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="tutorial/ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>47f943859bef</div></aside><main><section class="report-hero-v2"><div class="hero-topline"><span>CODING AGENT HARNESS · SOURCE AUDIT</span><span>47f943859bef</span></div><div class="hero-grid"><div><div class="hero-index">DE</div><h1>DeepSeek Harness<br><em>从源码看 Harness</em></h1><p class="hero-thesis">DeepSeek Harness 把 Agent 做成 Cordis 插件树：模型、工具、会话日志、权限、沙箱、Skill、子 Agent 和 UI 都是可替换服务。它最值得研究的不是某个工具，而是‘模型可见的一切必须可从事件日志重建’这条硬约束。</p><div class="hero-tags"><span>TypeScript / Cordis / Node sandbox runners</span><span>Plugin-composed, event-sourced Coding Agent Harness</span><span>main</span></div></div><aside class="snapshot-card"><dl><div><dt>Repository</dt><dd>deepseek-ai/deepseek-harness</dd></div><div><dt>Commit</dt><dd><code>47f943859bef60e4160492346772ded9b24f765a</code></dd></div><div><dt>Findings</dt><dd>24</dd></div><div><dt>Citations</dt><dd>23</dd></div><div><dt>Coverage</dt><dd>12 维度</dd></div></dl></aside></div><div class="hero-actions"><a href="https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a" target="_blank" rel="noreferrer">固定源码快照 ↗</a><a href="tutorial/index.html">进入章节教程 →</a><a href="../../../zh/index.html#matrix">查看总览矩阵</a></div></section><section class="chapter executive-v2"><div class="chapter-kicker">EXECUTIVE READING</div><h2>先给结论，再进入源码</h2><div class="executive-grid"><div class="thesis-card"><span>核心机制</span><p>把 DeepSeek Harness 想成一棵可以热插拔的运行树：事件日志是黑匣子，Agent loop 是驾驶员，工具/模型/沙箱只是可以更换的部件。</p></div><div class="thesis-card"><span>证据规模</span><p>24 条 finding / 23 处引用</p></div><div class="thesis-card risk-tone"><span>主要边界</span><p>Cordis 插件数量巨大，真正理解一次请求需要跨 agent-loop、session、tools、llm、sandbox 多个 package</p></div><div class="thesis-card"><span>适用建设</span><p>插件、服务和事件把能力拆成可替换 seam，profile/bundle/patch 可以在启动时重组整棵运行树</p></div></div><div class="pros-cons"><div><h3>值得借鉴</h3><ul><li>插件、服务和事件把能力拆成可替换 seam，profile/bundle/patch 可以在启动时重组整棵运行树</li><li>turn/step、agent/*、tools/* 三类事件分工清楚，工具可以并行执行但结果仍按模型顺序提交</li><li>JSONL 会话日志、checkpoint、压缩、沙箱 runner 探测和 fail-closed 让恢复与隔离成为运行时能力</li></ul></div><div><h3>需要警惕</h3><ul><li>Cordis 插件数量巨大，真正理解一次请求需要跨 agent-loop、session、tools、llm、sandbox 多个 package</li><li>sandbox-local 依赖 bwrap/Landlock/Seatbelt/Windows ACL 等宿主能力；不可用时会拒绝执行，而不是自动退回裸进程</li><li>插件可组合性很强，但 profile/patch 的最终配置必须落盘并审计，否则实际启动树不容易从 UI 猜出</li></ul></div><div><h3>阅读方式</h3><ul><li>先看固定提交，再看调用链</li><li>事实、推断、风险分栏</li><li>每条 finding 可回到源码</li></ul></div></div></section><section class="chapter methodology"><div class="chapter-kicker">00 · METHOD</div><h2>研究口径：不是 README 摘要</h2><div class="method-grid"><div><span>README POLICY</span><p>README 只定位入口和产品命名；实现结论必须回到运行时代码、契约或测试。</p></div><div><span>FACT POLICY</span><p>L1 运行代码优先，L2 类型/事件契约补足，L3/L4 交叉验证，L5 推断单独标记。</p></div><div><span>SNAPSHOT</span><p>deepseek-ai/deepseek-harness @ 47f943859bef60e4160492346772ded9b24f765a · 24 findings · 23 citations</p></div></div></section><section class="chapter diagrams-v2"><div class="chapter-kicker">01 · TECHNICAL MAPS</div><h2>三张可交互技术图，而不是一个五节点占位图</h2><p class="chapter-deck">图中的节点来自 finding 的源码路径；点击节点可查看事实、固定提交和行号，搜索、缩放、主题切换均在图内完成。</p><div class="diagram-stack"><figure class="diagram-figure"><figcaption><span>FIGURE · ARCHITECTURE</span><b>分层架构与所有权</b><a href="diagrams/architecture.html">打开交互图 ↗</a></figcaption><p>入口、插件树、主循环、工具和状态事实源</p><iframe src="diagrams/architecture.html" title="分层架构与所有权" loading="lazy"></iframe></figure><figure class="diagram-figure"><figcaption><span>FIGURE · SEQUENCE</span><b>单轮执行时序</b><a href="diagrams/sequence.html">打开交互图 ↗</a></figcaption><p>从 inbox 到模型、工具、回写与恢复</p><iframe src="diagrams/sequence.html" title="单轮执行时序" loading="lazy"></iframe></figure><figure class="diagram-figure"><figcaption><span>FIGURE · CAPABILITY</span><b>能力与风险边界</b><a href="diagrams/capability.html">打开交互图 ↗</a></figcaption><p>哪些是能力、哪些是策略、哪些是隔离</p><iframe src="diagrams/capability.html" title="能力与风险边界" loading="lazy"></iframe></figure></div></section><section class="chapter coverage-v2"><div class="chapter-kicker">02 · COVERAGE MAP</div><h2>覆盖维度与证据等级</h2><div class="coverage-table"><div class="coverage-row"><span>架构与所有权</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>控制循环</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>模型与上下文</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>工具注册与执行</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>模型与上下文</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>执行环境与沙箱</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>连接器、插件与 MCP</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>安全、审批与权限</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>观测、日志与回放</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>协作与子 Agent</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>全部指令与扩展面</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>恢复、测试与取舍</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div></div></section><section class="chapter course-v2"><div class="chapter-kicker">03 · COURSE ROUTE</div><h2>十章教程不是摘要，而是源码阅读路线</h2><p class="chapter-deck">每章会从本项目的多个 finding 中挑出证据，先讲问题，再给比喻，然后把实现、边界、图谱和练习串起来。</p><div class="analysis-grid"><article class="analysis-card"><span>M01</span><h3>总览：先知道它解决什么问题</h3><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p><a href="tutorial/ch01-overview.html">进入本章 →</a><small>docs/architecture.md:8–58 · 2 条证据</small></article><article class="analysis-card"><span>M02</span><h3>架构：有哪些层，谁负责什么</h3><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p><a href="tutorial/ch02-architecture.html">进入本章 →</a><small>docs/architecture.md:8–58 · 2 条证据</small></article><article class="analysis-card"><span>M03</span><h3>主循环：任务为什么会继续推进</h3><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p><a href="tutorial/ch03-loop.html">进入本章 →</a><small>docs/architecture.md:8–58 · 3 条证据</small></article><article class="analysis-card"><span>M04</span><h3>模型与消息：流式结果如何进入状态</h3><p>页面可以实时显示半句话，但恢复时仍知道这句话由哪些小片段组成。</p><a href="tutorial/ch04-model.html">进入本章 →</a><small>packages/core/agent-loop/src/agent.ts:332–391 · 4 条证据</small></article><article class="analysis-card"><span>M05</span><h3>工具：Agent 的手脚怎样被注册</h3><p>能并行的读操作一起做，可能冲突的写操作排队做。</p><a href="tutorial/ch05-tools.html">进入本章 →</a><small>packages/core/agent-loop/src/tool-calls.ts:59–100 · 2 条证据</small></article><article class="analysis-card"><span>M06</span><h3>上下文：长任务怎样不丢重点</h3><p>页面可以实时显示半句话，但恢复时仍知道这句话由哪些小片段组成。</p><a href="tutorial/ch06-context.html">进入本章 →</a><small>packages/core/agent-loop/src/agent.ts:332–391 · 4 条证据</small></article><article class="analysis-card"><span>M07</span><h3>安全：审批、权限和边界</h3><p>问用户‘是否允许’不能替代限制命令能碰到哪些文件。</p><a href="tutorial/ch07-security.html">进入本章 →</a><small>packages/core/tools/src/index.ts:142–175 · 2 条证据</small></article><article class="analysis-card"><span>M08</span><h3>扩展：MCP、Skill、插件如何接入</h3><p>换一个 provider，不需要为每种工具复制一套逻辑。</p><a href="tutorial/ch08-ecosystem.html">进入本章 →</a><small>docs/architecture.md:99–142 · 2 条证据</small></article><article class="analysis-card"><span>M09</span><h3>协作：子 Agent 与工作流</h3><p>子 Agent 不是在主提示里假装成另一个角色，而是另开一本可恢复的工作账。</p><a href="tutorial/ch09-collaboration.html">进入本章 →</a><small>packages/subagent/subagent/src/child-agent.ts:1–120 · 2 条证据</small></article><article class="analysis-card"><span>M10</span><h3>证据与取舍：把源码结论带回自研</h3><p>恢复时不会把刚写到一半的会话误当成完整事实。</p><a href="tutorial/ch10-evidence.html">进入本章 →</a><small>packages/session/session-persistence-jsonl/src/index.ts:239–303 · 4 条证据</small></article></div></section><section class="evidence-chapter" id="dim-architecture"><div class="chapter-rule"><span>01</span></div><div class="chapter-kicker">DIMENSION · ARCHITECTURE</div><h2>架构与所有权</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-architecture-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>architecture</span></div><h3>01 · Cordis 把整个 Harness 组织成可重组插件树</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 把模型适配器、工具注册表、会话日志、沙箱和 Agent loop 都列为 Cordis 插件；profile 选择 bundle，bundle 提供 patch，启动时按层叠加。</p></section><section><span>白话解释</span><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研时应把可替换能力做成 service seam，并把最终启动配置打印出来。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L1-L27" target="_blank" rel="noreferrer">docs/architecture.md:1–27 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:8–58</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L8-L58" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    8
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="DeepSeek Harness 把 Agent 做成 Cordis 插件树：模型、工具、会话日志、权限、沙箱、Skill、子 Agent 和 UI 都是可替换服务。它最值得研究的不是某个工具，而是‘模型可见的一切必须可从事件日志重建’这条硬约束。"><title>DeepSeek Harness · 深度源码分析</title><link rel="stylesheet" href="../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek Harness · 中文</span><nav><a href="../../../zh/index.html">总览</a><a href="analysis.html">技术分析</a><a href="tutorial/index.html">小白教程</a><a href="../zh/analysis.html">中</a><a href="../en/analysis.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek Harness</strong><small>Plugin-composed, event-sourced Coding Agent Harness</small></div><a class="active" href="analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="tutorial/ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="tutorial/ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="tutorial/ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="tutorial/ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="tutorial/ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="tutorial/ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="tutorial/ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="tutorial/ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="tutorial/ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="tutorial/ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>47f943859bef</div></aside><main><section class="report-hero-v2"><div class="hero-topline"><span>CODING AGENT HARNESS · SOURCE AUDIT</span><span>47f943859bef</span></div><div class="hero-grid"><div><div class="hero-index">DE</div><h1>DeepSeek Harness<br><em>从源码看 Harness</em></h1><p class="hero-thesis">DeepSeek Harness 把 Agent 做成 Cordis 插件树：模型、工具、会话日志、权限、沙箱、Skill、子 Agent 和 UI 都是可替换服务。它最值得研究的不是某个工具，而是‘模型可见的一切必须可从事件日志重建’这条硬约束。</p><div class="hero-tags"><span>TypeScript / Cordis / Node sandbox runners</span><span>Plugin-composed, event-sourced Coding Agent Harness</span><span>main</span></div></div><aside class="snapshot-card"><dl><div><dt>Repository</dt><dd>deepseek-ai/deepseek-harness</dd></div><div><dt>Commit</dt><dd><code>47f943859bef60e4160492346772ded9b24f765a</code></dd></div><div><dt>Findings</dt><dd>24</dd></div><div><dt>Citations</dt><dd>23</dd></div><div><dt>Coverage</dt><dd>12 维度</dd></div></dl></aside></div><div class="hero-actions"><a href="https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a" target="_blank" rel="noreferrer">固定源码快照 ↗</a><a href="tutorial/index.html">进入章节教程 →</a><a href="../../../zh/index.html#matrix">查看总览矩阵</a></div></section><section class="chapter executive-v2"><div class="chapter-kicker">EXECUTIVE READING</div><h2>先给结论，再进入源码</h2><div class="executive-grid"><div class="thesis-card"><span>核心机制</span><p>把 DeepSeek Harness 想成一棵可以热插拔的运行树：事件日志是黑匣子，Agent loop 是驾驶员，工具/模型/沙箱只是可以更换的部件。</p></div><div class="thesis-card"><span>证据规模</span><p>24 条 finding / 23 处引用</p></div><div class="thesis-card risk-tone"><span>主要边界</span><p>Cordis 插件数量巨大，真正理解一次请求需要跨 agent-loop、session、tools、llm、sandbox 多个 package</p></div><div class="thesis-card"><span>适用建设</span><p>插件、服务和事件把能力拆成可替换 seam，profile/bundle/patch 可以在启动时重组整棵运行树</p></div></div><div class="pros-cons"><div><h3>值得借鉴</h3><ul><li>插件、服务和事件把能力拆成可替换 seam，profile/bundle/patch 可以在启动时重组整棵运行树</li><li>turn/step、agent/*、tools/* 三类事件分工清楚，工具可以并行执行但结果仍按模型顺序提交</li><li>JSONL 会话日志、checkpoint、压缩、沙箱 runner 探测和 fail-closed 让恢复与隔离成为运行时能力</li></ul></div><div><h3>需要警惕</h3><ul><li>Cordis 插件数量巨大，真正理解一次请求需要跨 agent-loop、session、tools、llm、sandbox 多个 package</li><li>sandbox-local 依赖 bwrap/Landlock/Seatbelt/Windows ACL 等宿主能力；不可用时会拒绝执行，而不是自动退回裸进程</li><li>插件可组合性很强，但 profile/patch 的最终配置必须落盘并审计，否则实际启动树不容易从 UI 猜出</li></ul></div><div><h3>阅读方式</h3><ul><li>先看固定提交，再看调用链</li><li>事实、推断、风险分栏</li><li>每条 finding 可回到源码</li></ul></div></div></section><section class="chapter methodology"><div class="chapter-kicker">00 · METHOD</div><h2>研究口径：不是 README 摘要</h2><div class="method-grid"><div><span>README POLICY</span><p>README 只定位入口和产品命名；实现结论必须回到运行时代码、契约或测试。</p></div><div><span>FACT POLICY</span><p>L1 运行代码优先，L2 类型/事件契约补足，L3/L4 交叉验证，L5 推断单独标记。</p></div><div><span>SNAPSHOT</span><p>deepseek-ai/deepseek-harness @ 47f943859bef60e4160492346772ded9b24f765a · 24 findings · 23 citations</p></div></div></section><section class="chapter diagrams-v2"><div class="chapter-kicker">01 · TECHNICAL MAPS</div><h2>三张可交互技术图，而不是一个五节点占位图</h2><p class="chapter-deck">图中的节点来自 finding 的源码路径；点击节点可查看事实、固定提交和行号，搜索、缩放、主题切换均在图内完成。</p><div class="diagram-stack"><figure class="diagram-figure"><figcaption><span>FIGURE · ARCHITECTURE</span><b>分层架构与所有权</b><a href="diagrams/architecture.html">打开交互图 ↗</a></figcaption><p>入口、插件树、主循环、工具和状态事实源</p><iframe src="diagrams/architecture.html" title="分层架构与所有权" loading="lazy"></iframe></figure><figure class="diagram-figure"><figcaption><span>FIGURE · SEQUENCE</span><b>单轮执行时序</b><a href="diagrams/sequence.html">打开交互图 ↗</a></figcaption><p>从 inbox 到模型、工具、回写与恢复</p><iframe src="diagrams/sequence.html" title="单轮执行时序" loading="lazy"></iframe></figure><figure class="diagram-figure"><figcaption><span>FIGURE · CAPABILITY</span><b>能力与风险边界</b><a href="diagrams/capability.html">打开交互图 ↗</a></figcaption><p>哪些是能力、哪些是策略、哪些是隔离</p><iframe src="diagrams/capability.html" title="能力与风险边界" loading="lazy"></iframe></figure></div></section><section class="chapter coverage-v2"><div class="chapter-kicker">02 · COVERAGE MAP</div><h2>覆盖维度与证据等级</h2><div class="coverage-table"><div class="coverage-row"><span>架构与所有权</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>控制循环</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>模型与上下文</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>工具注册与执行</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>模型与上下文</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>执行环境与沙箱</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>连接器、插件与 MCP</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>安全、审批与权限</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>观测、日志与回放</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>协作与子 Agent</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>全部指令与扩展面</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div><div class="coverage-row"><span>恢复、测试与取舍</span><b class="status-verified">verified</b><em>L1 / L2 / L4</em><p>已绑定固定提交源码锚点；点击下方 finding 逐条复核。</p></div></div></section><section class="chapter course-v2"><div class="chapter-kicker">03 · COURSE ROUTE</div><h2>十章教程不是摘要，而是源码阅读路线</h2><p class="chapter-deck">每章会从本项目的多个 finding 中挑出证据，先讲问题，再给比喻，然后把实现、边界、图谱和练习串起来。</p><div class="analysis-grid"><article class="analysis-card"><span>M01</span><h3>总览：先知道它解决什么问题</h3><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p><a href="tutorial/ch01-overview.html">进入本章 →</a><small>docs/architecture.md:8–58 · 4 条证据</small></article><article class="analysis-card"><span>M02</span><h3>架构：有哪些层，谁负责什么</h3><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p><a href="tutorial/ch02-architecture.html">进入本章 →</a><small>docs/architecture.md:8–58 · 2 条证据</small></article><article class="analysis-card"><span>M03</span><h3>主循环：任务为什么会继续推进</h3><p>一次用户任务不是一个请求，而是一串可以回放的工单。</p><a href="tutorial/ch03-loop.html">进入本章 →</a><small>packages/core/agent-loop/src/agent.ts:245–330 · 2 条证据</small></article><article class="analysis-card"><span>M04</span><h3>模型与消息：流式结果如何进入状态</h3><p>页面可以实时显示半句话，但恢复时仍知道这句话由哪些小片段组成。</p><a href="tutorial/ch04-model.html">进入本章 →</a><small>packages/core/agent-loop/src/agent.ts:332–391 · 4 条证据</small></article><article class="analysis-card"><span>M05</span><h3>工具：Agent 的手脚怎样被注册</h3><p>能并行的读操作一起做，可能冲突的写操作排队做。</p><a href="tutorial/ch05-tools.html">进入本章 →</a><small>packages/core/agent-loop/src/tool-calls.ts:59–100 · 2 条证据</small></article><article class="analysis-card"><span>M06</span><h3>上下文：长任务怎样不丢重点</h3><p>页面可以实时显示半句话，但恢复时仍知道这句话由哪些小片段组成。</p><a href="tutorial/ch06-context.html">进入本章 →</a><small>packages/core/agent-loop/src/agent.ts:332–391 · 4 条证据</small></article><article class="analysis-card"><span>M07</span><h3>安全：审批、权限和边界</h3><p>执行器拿到的不是原始命令，而是已经套上操作系统隔离参数的命令。</p><a href="tutorial/ch07-security.html">进入本章 →</a><small>packages/sandbox/sandbox-local/src/index.ts:150–186 · 4 条证据</small></article><article class="analysis-card"><span>M08</span><h3>扩展：MCP、Skill、插件如何接入</h3><p>换一个 provider，不需要为每种工具复制一套逻辑。</p><a href="tutorial/ch08-ecosystem.html">进入本章 →</a><small>docs/architecture.md:99–142 · 4 条证据</small></article><article class="analysis-card"><span>M09</span><h3>协作：子 Agent 与工作流</h3><p>子 Agent 不是在主提示里假装成另一个角色，而是另开一本可恢复的工作账。</p><a href="tutorial/ch09-collaboration.html">进入本章 →</a><small>packages/subagent/subagent/src/child-agent.ts:1–120 · 2 条证据</small></article><article class="analysis-card"><span>M10</span><h3>证据与取舍：把源码结论带回自研</h3><p>恢复时不会把刚写到一半的会话误当成完整事实。</p><a href="tutorial/ch10-evidence.html">进入本章 →</a><small>packages/session/session-persistence-jsonl/src/index.ts:239–303 · 4 条证据</small></article></div></section><section class="evidence-chapter" id="dim-architecture"><div class="chapter-rule"><span>01</span></div><div class="chapter-kicker">DIMENSION · ARCHITECTURE</div><h2>架构与所有权</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-architecture-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>architecture</span></div><h3>01 · Cordis 把整个 Harness 组织成可重组插件树</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 把模型适配器、工具注册表、会话日志、沙箱和 Agent loop 都列为 Cordis 插件；profile 选择 bundle，bundle 提供 patch，启动时按层叠加。</p></section><section><span>白话解释</span><p>不是一个巨大的 Agent 类里面塞满 if/else，而是一棵可以替换枝条的运行树。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研时应把可替换能力做成 service seam，并把最终启动配置打印出来。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>8–32</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>33–58</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:8–58</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L8-L58" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    8
     9  ## Cordis
    10
    11  [Cordis](cordis-primer.md) is the framework under dsh: plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so every part is replaceable from configuration.
@@ -48,7 +48,78 @@
    55  Events are the extension points, and picking the right domain is the first decision in most changes.
    56
    57  - **Session events** are durable facts appended to the log and broadcast through `session/event`. Use one when the fact must survive a reload.
-   58  - **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.</code></pre></div></div></article><article class="finding-card" id="dsh-architecture-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · Agent、Session、LLM 和工具通过 Context 服务互相连接</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>agent-loop 构造函数一次性创建 event dispatch、Inbox、Scope、RuntimeContextProjection，并把它们挂进 Cordis context。</p></section><section><span>白话解释</span><p>Agent 本身只负责驾驶，工具、日志和提示词从上下文里取，不直接互相 import。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>扩展点要围绕上下文服务设计，避免 UI 或单一 provider 侵入主循环。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L1-L27" target="_blank" rel="noreferrer">docs/architecture.md:1–27 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:63–97</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L63-L97" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   63  /** Drives one session through turn and step boundaries. */
+   58  - **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.
+   59  - **Capability events** attach policy and adapters to a seam (`fs/*`, `tools/*`, `telemetry/*`) without importing the loop.
+   60
+   61  The [event map](event-producer-consumer.md) lists every event&#39;s producers and consumers.
+   62
+   63  ## Turn flow
+   64
+   65  A **step** is one model request plus the tools it calls. A **turn** is zero or more steps: it opens before its first input is claimed and closes once nothing is owed.
+   66
+   67  ```text
+   68  turn/start
+   69    claim next-step input plus one queued message
+   70    assemble prompt sections + tool schemas
+   71    -&gt; agent/pre-step                   reject | enter(messages)
+   72       reject, or a first enter rewritten empty -&gt; close the turn with no step
+   73       step/start
+   74       append entered messages as user/message
+   75       derive model history from the log
+   76       agent/request -&gt; llm/stream -&gt; assistant/chunk* -&gt; assistant/message
+   77       tool/call* -&gt; tools/pre-execute -&gt; tools/execute -&gt; tools/post-execute -&gt; tool/result*
+   78       step/end
+   79       tools owe another request, or next-step input arrived -&gt; claim -&gt; next step
+   80    -&gt; agent/turn-stopping
+   81  turn/end
+   82  ```
+   83
+   84  `turn/*`, `step/*`, `user/message`, `assistant/*`, and `tool/*` are durable session events; the rest are live extension points across three domains. `agent/pre-step`, `agent/request`, `llm/stream`, and the three `tools/*` events are waterfalls, whose listeners must call `next()` to delegate; `agent/turn-stopping` is serial and has no `next()`.
+   85
+   86  Input reaches the driver through one inbox. Some messages wake it immediately; injected context waits in the inbox until another message does.
+   87
+   88  `agent/pre-step` decides what the model sees. Listeners may rewrite the claimed messages or reject them outright; a rejected or empty first claim still closes a durable turn that spent no step, so the log records the attempt. Each step reads the prompt sections and tool schemas that plugins registered.
+   89
+   90  Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
+   91
+   92  ## Session log
+   93
+   94  The session log is the source of the context the model sees. `deriveMessages()` projects model history from it, and raw `assistant/chunk` events preserve replay and UI fidelity. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
+   95
+   96  **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
+   97
+   98  ## Capability seams
+   99
+  100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
+  101
+  102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
+  103
+  104  ## Where new behavior goes
+  105
+  106  New behavior attaches to a documented extension point. Changing the loop itself updates this map.
+  107
+  108  | Goal | Mechanism |
+  109  |---|---|
+  110  | Add a model provider | register its adapter on `ctx.llm` |
+  111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |
+  119  | Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |
+  120  | Add model-facing context | call `agent.inject()`; it lands in the next admitted request |
+  121  | Add UI or editor integration | drive `ctx.agents` and render from `session/event` |
+  122  | Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |
+  123  | Add durable session state | extend `SessionEventMap`; render and replay from the log |
+  124  | Generate session titles | register the sole `ctx.sessionTitle` provider |
+  125  | Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |
+  126  | Fork a live session | `ctx.sessions.fork(source, boundary?, childSessionId?)` |
+  127  | Scope a registration to one agent | use that agent&#39;s `agent.ctx` |
+  128
+  129  The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [Chat nodes](cookbook/adding-a-conversation-node.md).</code></pre></div></div></article><article class="finding-card" id="dsh-architecture-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · Agent、Session、LLM 和工具通过 Context 服务互相连接</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>agent-loop 构造函数一次性创建 event dispatch、Inbox、Scope、RuntimeContextProjection，并把它们挂进 Cordis context。</p></section><section><span>白话解释</span><p>Agent 本身只负责驾驶，工具、日志和提示词从上下文里取，不直接互相 import。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>扩展点要围绕上下文服务设计，避免 UI 或单一 provider 侵入主循环。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>63–79</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>80–97</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:63–97</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L63-L97" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   63  /** Drives one session through turn and step boundaries. */
    64  export class ReactLoopAgent implements Agent {
    65    readonly inbox: Inbox
    66    private phase: Phase
@@ -82,7 +153,78 @@
    94      this.scope = createScope(loopCtx, this)
    95      this.ctx = this.scope.ctx.extend({ agent: this })
    96      this.runtimeContext = new RuntimeContextProjection(this.ctx, session)
-   97    }</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-loop"><div class="chapter-rule"><span>02</span></div><div class="chapter-kicker">DIMENSION · LOOP</div><h2>控制循环</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-loop-001" data-finding-dimension="loop"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>01 · 一个 turn 由多个 step 组成，并且每个边界都写入日志</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>turn() 先 append turn/start，再进入 preStep；每个 step 写 step/start、user/message、step/end，最后根据 turnEnds 写 turn/end。</p></section><section><span>白话解释</span><p>一次用户任务不是一个请求，而是一串可以回放的工单。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>不要只保存最终回答；状态机边界本身就是恢复和观测数据。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L8-L37" target="_blank" rel="noreferrer">packages/core/agent-loop/src/agent.ts:8–37 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:245–330</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L245-L330" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  245    /** Open one turn before claiming its first proposed step. */
+   97    }
+   98
+   99    get status(): AgentStatus {
+  100      return this.phase.kind === &#39;idle&#39; || this.phase.kind === &#39;maintenance&#39; ? &#39;idle&#39; : &#39;running&#39;
+  101    }
+  102
+  103    /** Commit a phase and publish its externally visible status transition. */
+  104    private setPhase(next: Phase): void {
+  105      const previousStatus = this.status
+  106      this.phase = next
+  107      const status = this.status
+  108      if (status !== previousStatus) {
+  109        this.dispatch.emit(&#39;agent/status&#39;, { status })
+  110      }
+  111    }
+  112
+  113    send(message: UserMessage, target: InboxTarget, wakeup: boolean): void {
+  114      // Waking input cannot join an aborted activity, so it starts the next turn.
+  115      // Captured before the insertion so a reentrant cancel from a splice observer cannot reclassify it.
+  116      const wakingAfterAbort = wakeup &amp;&amp; this.phase.kind !== &#39;idle&#39; &amp;&amp; this.phase.abort.signal.aborted
+  117      const resolvedTarget = wakingAfterAbort ? &#39;next-turn&#39; : target
+  118      this.inbox.splice(resolvedTarget, Infinity, 0, [message])
+  119      if (wakeup) this.wakeDriver(wakingAfterAbort)
+  120    }
+  121
+  122    followup(input: UserMessage): void {
+  123      this.send(input, &#39;next-turn&#39;, true)
+  124    }
+  125
+  126    steer(input: UserMessage): void {
+  127      this.send(input, &#39;next-step&#39;, true)
+  128    }
+  129
+  130    inject(input: UserMessage): void {
+  131      this.send(input, &#39;next-step&#39;, false)
+  132    }
+  133
+  134    cancel(cause: AgentCancelCause, options: CancelOptions = {}): void {
+  135      if (!options.keepInbox) {
+  136        this.inbox.clear()
+  137        if (this.phase.kind !== &#39;idle&#39;) this.phase.wakeRequested = false
+  138      }
+  139      if (this.phase.kind !== &#39;idle&#39;) this.phase.abort.abort(cause)
+  140    }
+  141
+  142    runMaintenance&lt;T&gt;(job: (signal: AbortSignal) =&gt; Promise&lt;T&gt;): Promise&lt;T&gt; {
+  143      if (this.phase.kind !== &#39;idle&#39;) throw new Error(`agent &quot;${this.id}&quot; already has active work`)
+  144      const done = Promise.withResolvers&lt;void&gt;()
+  145      const maintenance: Phase = {
+  146        kind: &#39;maintenance&#39;,
+  147        abort: new AbortController(),
+  148        lastTurn: this.phase.lastTurn,
+  149        wakeRequested: false,
+  150      }
+  151      this.setPhase(maintenance)
+  152      this.activityDone = done.promise
+  153      return (async () =&gt; {
+  154        try {
+  155          return await job(maintenance.abort.signal)
+  156        } finally {
+  157          this.setPhase({ kind: &#39;idle&#39;, lastTurn: maintenance.lastTurn })
+  158          if (maintenance.wakeRequested &amp;&amp; this.inbox.hasPending) this.wakeDriver()
+  159          done.resolve()
+  160        }
+  161      })()
+  162    }
+  163
+  164    /**
+  165     * Start one driver, or latch its wake behind maintenance or an aborted
+  166     * activity. A wake sent while idle always opens its turn boundary, even
+  167     * when its message was cleared; only a latched replay is suppressed when
+  168     * the queue no longer holds the wake.</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-loop"><div class="chapter-rule"><span>02</span></div><div class="chapter-kicker">DIMENSION · LOOP</div><h2>控制循环</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-loop-001" data-finding-dimension="loop"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>01 · 一个 turn 由多个 step 组成，并且每个边界都写入日志</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>turn() 先 append turn/start，再进入 preStep；每个 step 写 step/start、user/message、step/end，最后根据 turnEnds 写 turn/end。</p></section><section><span>白话解释</span><p>一次用户任务不是一个请求，而是一串可以回放的工单。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>不要只保存最终回答；状态机边界本身就是恢复和观测数据。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>245–286</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>287–330</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:245–330</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L245-L330" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  245    /** Open one turn before claiming its first proposed step. */
   246    private async turn(): Promise&lt;boolean&gt; {
   247      if (this.phase.kind !== &#39;running&#39;) {
   248        this.throwError(new Error(`agent &quot;${this.id}&quot;: turn without driver reservation`))
@@ -167,25 +309,9 @@
   327      phase.wakeRequested = false
   328      phase.step = 0
   329      return true
-  330    }</code></pre></div></div></article><article class="finding-card" id="dsh-loop-002" data-finding-dimension="loop"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>02 · pre-step 是可拦截的模型请求闸门</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>preStep 先 claim inbox，再组装 system prompt 与 runtime context，之后经过 agent/pre-step waterfall；监听器可以重写 messages 或 reject。</p></section><section><span>白话解释</span><p>模型还没收到请求前，插件可以补上下文，也可以明确说这一步不该执行。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>审批、计划、预算和动态上下文应放在模型请求前的明确 seam。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L8-L37" target="_blank" rel="noreferrer">packages/core/agent-loop/src/agent.ts:8–37 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:225–243</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L225-L243" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  225    private async preStep(target: InboxTarget, position: { turn: number; step: number }): Promise&lt;PreparedStep&gt; {
-  226      /* v8 ignore next -- private callers establish the running phase before proposing a step */
-  227      if (this.phase.kind !== &#39;running&#39;) throw new Error(`agent &quot;${this.id}&quot;: pre-step outside running phase`)
-  228      const signal = this.phase.abort.signal
-  229      const claimed = this.inbox.claim(target, position.turn)
-  230      const assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal))
-  231      signal.throwIfAborted()
-  232      const sections = renderContextSections(assembly)
-  233      const context = this.runtimeContext.project(joinContextSections(sections), sections)
-  234      const decision = await this.dispatch.waterfall(
-  235        &#39;agent/pre-step&#39;, { messages: claimed, ...position, signal },
-  236        (): Promise&lt;PreStepDecision&gt; =&gt; Promise.resolve&lt;PreStepDecision&gt;({
-  237          kind: &#39;enter&#39;,
-  238          messages: context === undefined ? claimed : [...claimed, context],
-  239        }),
-  240      )
-  241      signal.throwIfAborted()
-  242      return decision.kind === &#39;reject&#39; ? decision : { ...decision, assembly }
-  243    }</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-modelContext"><div class="chapter-rule"><span>03</span></div><div class="chapter-kicker">DIMENSION · MODELCONTEXT</div><h2>模型与上下文</h2><p class="chapter-deck">4 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-model-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 流式 chunk 先入日志，再由 BlockAssembler 合成消息</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>step() 调用 llm.stream，逐个 append assistant/chunk，同时把 chunk 推入 BlockAssembler；结束后生成 assistant/message，并保存 sourceEventSeqs。</p></section><section><span>白话解释</span><p>页面可以实时显示半句话，但恢复时仍知道这句话由哪些小片段组成。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>流式 UI、审计回放和模型消息不要使用三套互不相干的数据。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm/src/index.ts#L1-L24" target="_blank" rel="noreferrer">packages/llm/llm/src/index.ts:1–24 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:332–391</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L332-L391" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  332    private async step(assembly: PromptAssembly): Promise&lt;StepEndReason | null&gt; {
+  330    }
+  331
+  332    private async step(assembly: PromptAssembly): Promise&lt;StepEndReason | null&gt; {
   333      /* v8 ignore next -- private callers establish the running phase before executing a step */
   334      if (this.phase.kind !== &#39;running&#39;) throw new Error(`agent &quot;${this.id}&quot;: step outside running phase`)
   335      const { turn, step, abort: { signal } } = this.phase
@@ -244,19 +370,17 @@
   388          },
   389          { surfaceOp: &#39;append&#39;, sourceEventSeqs: chunkSeqs },
   390        )
-  391        if (finish.kind === &#39;max-tokens&#39;) return { kind: &#39;max-tokens&#39; }</code></pre></div></div></article><article class="finding-card" id="dsh-model-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>modelContext</span></div><h3>02 · Provider 错误是带 code/status/requestId 的结构化事实</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>LlmFailure 明确 message、code、status、providerRetryAfterMs、requestId；request-error waterfall 决定 retry，其他错误保留为 LlmError。</p></section><section><span>白话解释</span><p>失败不是一行字符串，系统可以判断是鉴权、限流、适配器缺失还是网络问题。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>错误分类要进入可回放事件和重试策略，不能靠 UI 猜。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm/src/index.ts#L1-L24" target="_blank" rel="noreferrer">packages/llm/llm/src/index.ts:1–24 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/llm/llm/src/types.ts:39–51</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm/src/types.ts#L39-L51" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   39  /** Serializable provider or transport failure facts; policy decides whether they are retryable. */
-   40  export interface LlmFailure {
-   41    /** Human-readable provider or transport failure. */
-   42    readonly message: string
-   43    /** Stable provider-neutral machine-routing code. */
-   44    readonly code: string
-   45    /** HTTP status returned by the provider, when available. */
-   46    readonly status?: number
-   47    /** Provider-requested delay in milliseconds, when valid and available. */
-   48    readonly providerRetryAfterMs?: number
-   49    /** Opaque provider-issued request identifier for diagnostics. */
-   50    readonly requestId?: ProviderRequestId
-   51  }</code></pre></div></div></article><article class="finding-card" id="dsh-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 动态上下文通过 projection 注入下一次请求</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>preStep 将 prompt sections 渲染后交给 RuntimeContextProjection.project，再把返回的 UserMessage 追加到 claimed messages。</p></section><section><span>白话解释</span><p>上下文不是永远拼进系统提示，而是按当前 session 状态生成一条可追踪的消息。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>动态环境信息应有预算、来源和版本，而不是隐藏注入。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm/src/index.ts#L1-L24" target="_blank" rel="noreferrer">packages/llm/llm/src/index.ts:1–24 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:225–242</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L225-L242" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  225    private async preStep(target: InboxTarget, position: { turn: number; step: number }): Promise&lt;PreparedStep&gt; {
+  391        if (finish.kind === &#39;max-tokens&#39;) return { kind: &#39;max-tokens&#39; }
+  392
+  393        const toolCalls = message.content.filter(block =&gt; block.type === &#39;tool-call&#39;)
+  394        if (toolCalls.length === 0) return { kind: &#39;completed&#39; }
+  395        const { concluded } = await executeToolCalls(
+  396          this.loopCtx, turn, step, toolCalls, signal,
+  397          context =&gt; this.inbox.splice(&#39;next-step&#39;, this.inbox.nextStep.length, 0, [context]),
+  398        )
+  399        return concluded ? { kind: &#39;completed&#39; } : null
+  400      }
+  401    }</code></pre></div></div></article><article class="finding-card" id="dsh-loop-002" data-finding-dimension="loop"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>loop</span></div><h3>02 · pre-step 是可拦截的模型请求闸门</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>preStep 先 claim inbox，再组装 system prompt 与 runtime context，之后经过 agent/pre-step waterfall；监听器可以重写 messages 或 reject。</p></section><section><span>白话解释</span><p>模型还没收到请求前，插件可以补上下文，也可以明确说这一步不该执行。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>审批、计划、预算和动态上下文应放在模型请求前的明确 seam。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>225–233</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>234–243</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:225–243</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L225-L243" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  225    private async preStep(target: InboxTarget, position: { turn: number; step: number }): Promise&lt;PreparedStep&gt; {
   226      /* v8 ignore next -- private callers establish the running phase before proposing a step */
   227      if (this.phase.kind !== &#39;running&#39;) throw new Error(`agent &quot;${this.id}&quot;: pre-step outside running phase`)
   228      const signal = this.phase.abort.signal
@@ -273,7 +397,380 @@
   239        }),
   240      )
   241      signal.throwIfAborted()
-  242      return decision.kind === &#39;reject&#39; ? decision : { ...decision, assembly }</code></pre></div></div></article><article class="finding-card" id="dsh-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>modelContext</span></div><h3>04 · 模型可见输入必须能从 session log 重建</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 明确规定 model-visible ⟺ logged：任何到达模型请求的内容都必须有事件来源，并由 deriveMessages 从日志投影。</p></section><section><span>白话解释</span><p>如果某段上下文只存在内存里，重启后模型就会失忆，所以它不能算正式输入。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>新增上下文能力时先加事件，再加 prompt 投影。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm/src/index.ts#L1-L24" target="_blank" rel="noreferrer">packages/llm/llm/src/index.ts:1–24 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:95–112</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L95-L112" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   95
+  242      return decision.kind === &#39;reject&#39; ? decision : { ...decision, assembly }
+  243    }
+  244
+  245    /** Open one turn before claiming its first proposed step. */
+  246    private async turn(): Promise&lt;boolean&gt; {
+  247      if (this.phase.kind !== &#39;running&#39;) {
+  248        this.throwError(new Error(`agent &quot;${this.id}&quot;: turn without driver reservation`))
+  249      }
+  250      const phase = this.phase
+  251      const { signal } = phase.abort
+  252      signal.throwIfAborted()
+  253      const turn = phase.turn + 1
+  254      try {
+  255        this.session.append(&#39;turn/start&#39;, { turn })
+  256      } catch (error: unknown) {
+  257        this.throwError(error)
+  258      }
+  259      phase.turn = turn
+  260      let turnEnds: TurnEndReason | null = null
+  261      let target: InboxTarget = &#39;next-turn&#39;
+  262      try {
+  263        while (true) {
+  264          signal.throwIfAborted()
+  265          const step = phase.step + 1
+  266          const decision = await this.preStep(target, { turn, step })
+  267          if (decision.kind === &#39;reject&#39;) {
+  268            turnEnds = { kind: &#39;blocked&#39; }
+  269            return false
+  270          }
+  271          if (turnEnds &amp;&amp; decision.messages.length === 0) break
+  272          // A removed waking message or an enter decision rewritten to empty
+  273          // still owns the initial turn boundary, but it spends no model call.
+  274          if (phase.step === 0 &amp;&amp; decision.messages.length === 0) {
+  275            turnEnds = { kind: &#39;completed&#39; }
+  276            return false
+  277          }
+  278          signal.throwIfAborted()
+  279          this.session.append(&#39;step/start&#39;, { turn, step })
+  280          phase.step = step
+  281          try {
+  282            for (const message of decision.messages) {
+  283              this.session.append(&#39;user/message&#39;, message, { surfaceOp: &#39;append&#39; })
+  284            }
+  285            // max-tokens is sticky: once any step hits the ceiling, later steps
+  286            // that complete normally must not downgrade the turn outcome.
+  287            const stepEnd = await this.step(decision.assembly)
+  288            // max-tokens stays sticky: a later completed step must not
+  289            // downgrade the turn outcome.
+  290            if (turnEnds === null || turnEnds.kind !== &#39;max-tokens&#39;) turnEnds = stepEnd
+  291          } finally {
+  292            this.session.append(&#39;step/end&#39;, { turn, step })
+  293          }
+  294          signal.throwIfAborted()
+  295          if (turnEnds &amp;&amp; this.inbox.nextStep.length === 0) {
+  296            await this.dispatch.serial(&#39;agent/turn-stopping&#39;, { turn, signal })
+  297            signal.throwIfAborted()
+  298          }
+  299          if (turnEnds &amp;&amp; this.inbox.nextStep.length === 0) break
+  300          target = &#39;next-step&#39;
+  301        }
+  302      } catch (error: unknown) {
+  303        if (signal.aborted) {
+  304          turnEnds = { kind: &#39;aborted&#39;, reason: signal.reason as AgentCancelCause }
+  305          throw error
+  306        }
+  307        // Every failure is structured: an `LlmError` keeps its facts, anything
+  308        // else flattens to `errorChain` text under the `UNKNOWN` code.
+  309        turnEnds = {
+  310          kind: &#39;error&#39;,
+  311          error: error instanceof LlmError
+  312            ? error.failure
+  313            : { message: errorChain(error), code: &#39;UNKNOWN&#39; },
+  314        }</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-modelContext"><div class="chapter-rule"><span>03</span></div><div class="chapter-kicker">DIMENSION · MODELCONTEXT</div><h2>模型与上下文</h2><p class="chapter-deck">4 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-model-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 流式 chunk 先入日志，再由 BlockAssembler 合成消息</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>step() 调用 llm.stream，逐个 append assistant/chunk，同时把 chunk 推入 BlockAssembler；结束后生成 assistant/message，并保存 sourceEventSeqs。</p></section><section><span>白话解释</span><p>页面可以实时显示半句话，但恢复时仍知道这句话由哪些小片段组成。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>流式 UI、审计回放和模型消息不要使用三套互不相干的数据。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>332–360</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>361–391</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:332–391</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L332-L391" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  332    private async step(assembly: PromptAssembly): Promise&lt;StepEndReason | null&gt; {
+  333      /* v8 ignore next -- private callers establish the running phase before executing a step */
+  334      if (this.phase.kind !== &#39;running&#39;) throw new Error(`agent &quot;${this.id}&quot;: step outside running phase`)
+  335      const { turn, step, abort: { signal } } = this.phase
+  336      signal.throwIfAborted()
+  337      const system = renderPrompt(assembly)
+  338
+  339      while (true) {
+  340        const { request, preparedCall } = await this.buildRequest(
+  341          turn, step, assembly.tools, system, this.session.deriveMessages(), signal,
+  342        )
+  343        const assembler = new BlockAssembler()
+  344        const chunkSeqs: number[] = []
+  345        const stream = preparedCall?.stream(request) ?? this.loopCtx.llm.stream(request)
+  346        signal.throwIfAborted()
+  347        for await (const chunk of stream) {
+  348          signal.throwIfAborted()
+  349          chunkSeqs.push(this.session.append(&#39;assistant/chunk&#39;, { turn, step, chunk }).seq)
+  350          assembler.push(chunk)
+  351        }
+  352        signal.throwIfAborted()
+  353        const finish = assembler.finish
+  354        if (finish.kind === &#39;error&#39; || finish.kind === &#39;aborted&#39;) {
+  355          const action = await this.dispatch.waterfall(
+  356            &#39;agent/request-error&#39;, {
+  357              turn,
+  358              step,
+  359              provider: request.provider,
+  360              failure: finish.failure,
+  361              retryPolicy: preparedCall?.retryPolicy,
+  362              signal,
+  363            },
+  364            () =&gt; Promise.resolve&lt;RequestErrorAction&gt;(undefined),
+  365          )
+  366          signal.throwIfAborted()
+  367          if (action?.kind !== &#39;retry&#39;) {
+  368            throw new LlmError(finish.failure.message, finish.failure.code, finish.failure)
+  369          }
+  370          continue
+  371        }
+  372
+  373        const message = createAssistantMessage({
+  374          content: assembler.blocks(),
+  375          source: {
+  376            provider: request.provider,
+  377            model: request.model,
+  378            ...assembler.replayState !== undefined ? { replayState: assembler.replayState } : {},
+  379          },
+  380        })
+  381        this.session.append(
+  382          &#39;assistant/message&#39;,
+  383          {
+  384            turn,
+  385            step,
+  386            message,
+  387            ...assembler.usage === undefined ? {} : { usage: assembler.usage },
+  388          },
+  389          { surfaceOp: &#39;append&#39;, sourceEventSeqs: chunkSeqs },
+  390        )
+  391        if (finish.kind === &#39;max-tokens&#39;) return { kind: &#39;max-tokens&#39; }
+  392
+  393        const toolCalls = message.content.filter(block =&gt; block.type === &#39;tool-call&#39;)
+  394        if (toolCalls.length === 0) return { kind: &#39;completed&#39; }
+  395        const { concluded } = await executeToolCalls(
+  396          this.loopCtx, turn, step, toolCalls, signal,
+  397          context =&gt; this.inbox.splice(&#39;next-step&#39;, this.inbox.nextStep.length, 0, [context]),
+  398        )
+  399        return concluded ? { kind: &#39;completed&#39; } : null
+  400      }
+  401    }
+  402
+  403    /**
+  404     * Compose one frozen request and bind it to the adapter registration that
+  405     * resolved its exact-model defaults.
+  406     */
+  407    private async buildRequest(
+  408      turn: number,
+  409      step: number,
+  410      tools: GenerateOptions[&#39;tools&#39;] &amp; object,
+  411      system: string,
+  412      boundaryMessages: Message[],
+  413      signal: AbortSignal,
+  414    ): Promise&lt;{ request: GenerateOptions; preparedCall?: PreparedLlmCall }&gt; {
+  415      const { session } = this
+  416
+  417      // A loop instance starts from its declared route, restoring only an explicit
+  418      // effort owned by that exact model. Later steps re-resolve marked defaults.
+  419      const persistedHeader = session.requestHeader()
+  420      const persistedConfig = persistedHeader?.config
+  421      const route = { provider: this.options.provider ?? &#39;&#39;, model: this.options.model ?? &#39;&#39; }
+  422      const reasoningEffort = persistedConfig?.provider === route.provider
+  423        &amp;&amp; persistedConfig.model === route.model
+  424        &amp;&amp; persistedHeader?.adapterDefaults?.reasoningEffort !== true
+  425        ? persistedConfig.reasoningEffort
+  426        : undefined
+  427      const maxTokens = this.options.maxTokens
+  428      const seedConfig = deepFreeze(structuredClone(
+  429        this.requestHeaderLogged
+  430          // oxlint-disable-next-line typescript/no-non-null-assertion -- the instance logged the header it now folds
+  431          ? requestProposal(persistedHeader!)
+  432          : {
+  433            ...route,
+  434            ...reasoningEffort === undefined ? {} : { reasoningEffort },
+  435            ...maxTokens === undefined ? {} : { maxTokens },
+  436          },
+  437      ))
+  438      const proposedConfig = await this.dispatch.waterfall(
+  439        &#39;agent/request&#39;, { turn, step, signal },
+  440        () =&gt; Promise.resolve(seedConfig),
+  441      )
+  442      signal.throwIfAborted()
+  443      if (!proposedConfig.provider || !proposedConfig.model) {
+  444        throw new Error(`agent &quot;${this.id}&quot; has no provider/model: set AgentOptions.provider and AgentOptions.model or supply both via the agent/request waterfall`)
+  445      }
+  446      let config: LlmCallConfig
+  447      let preparedCall: PreparedLlmCall | undefined
+  448      try {
+  449        preparedCall = await this.loopCtx.llm.prepareCall(proposedConfig, signal)
+  450        config = preparedCall.config
+  451      } catch (error: unknown) {
+  452        // Middleware may serve an unregistered route; terminal dispatch still requires an adapter.
+  453        if (!(error instanceof LlmError) || error.code !== &#39;NO_ADAPTER&#39;) throw error
+  454        config = proposedConfig
+  455      }
+  456      signal.throwIfAborted()
+  457
+  458      const header = canonicalHeader({
+  459        config,
+  460        ...preparedCall === undefined ? {} : { adapterDefaults: preparedCall.adapterDefaults },
+  461        ...system ? { system } : {},
+  462        ...tools.length &gt; 0 ? { tools } : {},</code></pre></div></div></article><article class="finding-card" id="dsh-model-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>modelContext</span></div><h3>02 · Provider 错误是带 code/status/requestId 的结构化事实</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>LlmFailure 明确 message、code、status、providerRetryAfterMs、requestId；request-error waterfall 决定 retry，其他错误保留为 LlmError。</p></section><section><span>白话解释</span><p>失败不是一行字符串，系统可以判断是鉴权、限流、适配器缺失还是网络问题。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>错误分类要进入可回放事件和重试策略，不能靠 UI 猜。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>39–44</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>45–51</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/llm/llm/src/types.ts:39–51</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm/src/types.ts#L39-L51" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   39  /** Serializable provider or transport failure facts; policy decides whether they are retryable. */
+   40  export interface LlmFailure {
+   41    /** Human-readable provider or transport failure. */
+   42    readonly message: string
+   43    /** Stable provider-neutral machine-routing code. */
+   44    readonly code: string
+   45    /** HTTP status returned by the provider, when available. */
+   46    readonly status?: number
+   47    /** Provider-requested delay in milliseconds, when valid and available. */
+   48    readonly providerRetryAfterMs?: number
+   49    /** Opaque provider-issued request identifier for diagnostics. */
+   50    readonly requestId?: ProviderRequestId
+   51  }
+   52
+   53  /** Plain text visible to the end user. */
+   54  export interface TextBlock {
+   55    type: &#39;text&#39;
+   56    text: string
+   57  }
+   58
+   59  /** Reasoning / thinking content, distinct from visible text. */
+   60  export interface ReasoningBlock {
+   61    type: &#39;reasoning&#39;
+   62    text: string
+   63  }
+   64
+   65  /**
+   66   * A durable raster image reference, valid in user or assistant content. The
+   67   * block is deliberately role-neutral; assistant-side rendering is forward
+   68   * compatibility — the current production adapters declare text-only output,
+   69   * so only user content carries images today.
+   70   */
+   71  export interface ImageBlock {
+   72    type: &#39;image&#39;
+   73    /** Immutable bytes and intrinsic display metadata owned by the attachment service. */
+   74    attachment: ImageAttachmentRef
+   75  }
+   76
+   77  /** A tool invocation requested by the model. */
+   78  export interface ToolCallBlock {
+   79    type: &#39;tool-call&#39;
+   80    /** Provider-issued call id; correlates with the matching tool result. */
+   81    id: CallId
+   82    name: string
+   83    /** Raw JSON string as produced by the model. */
+   84    arguments: string
+   85  }
+   86
+   87  /** The result of a tool invocation, sent back to the model. */
+   88  export interface ToolResultBlock {
+   89    type: &#39;tool-result&#39;
+   90    toolCallId: CallId
+   91    content: ContentBlock[]
+   92    isError?: boolean
+   93  }
+   94
+   95  /**
+   96   * Merge-extensible content blocks keyed by `type`. New core blocks must land
+   97   * with adapter, UI, and compaction support.
+   98   */
+   99  export interface ContentBlockMap {
+  100    &#39;text&#39;: TextBlock
+  101    &#39;reasoning&#39;: ReasoningBlock
+  102    &#39;image&#39;: ImageBlock
+  103    &#39;tool-call&#39;: ToolCallBlock
+  104    &#39;tool-result&#39;: ToolResultBlock
+  105  }
+  106
+  107  /** The block `type` tag vocabulary; widens as plugins add entries to {@link ContentBlockMap}. */
+  108  export type ContentBlockType = keyof ContentBlockMap
+  109  /** Any known content block, derived from {@link ContentBlockMap}; switch on `type` and fall through unknowns (merge-extensible). */
+  110  export type ContentBlock = ContentBlockMap[ContentBlockType]
+  111
+  112  /**
+  113   * Why a model response stopped.
+  114   * Merge-extensible so adapters can surface provider-specific reasons.
+  115   */
+  116  export interface FinishReasonMap {
+  117    &#39;stop&#39;: { kind: &#39;stop&#39; }
+  118    &#39;tool-calls&#39;: { kind: &#39;tool-calls&#39; }
+  119    &#39;max-tokens&#39;: { kind: &#39;max-tokens&#39; }
+  120    &#39;aborted&#39;: { kind: &#39;aborted&#39;; failure: LlmFailure }
+  121    &#39;error&#39;: { kind: &#39;error&#39;; failure: LlmFailure }
+  122  }</code></pre></div></div></article><article class="finding-card" id="dsh-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 动态上下文通过 projection 注入下一次请求</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>preStep 将 prompt sections 渲染后交给 RuntimeContextProjection.project，再把返回的 UserMessage 追加到 claimed messages。</p></section><section><span>白话解释</span><p>上下文不是永远拼进系统提示，而是按当前 session 状态生成一条可追踪的消息。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>动态环境信息应有预算、来源和版本，而不是隐藏注入。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>225–232</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>233–242</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/agent.ts:225–242</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/agent.ts#L225-L242" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  225    private async preStep(target: InboxTarget, position: { turn: number; step: number }): Promise&lt;PreparedStep&gt; {
+  226      /* v8 ignore next -- private callers establish the running phase before proposing a step */
+  227      if (this.phase.kind !== &#39;running&#39;) throw new Error(`agent &quot;${this.id}&quot;: pre-step outside running phase`)
+  228      const signal = this.phase.abort.signal
+  229      const claimed = this.inbox.claim(target, position.turn)
+  230      const assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal))
+  231      signal.throwIfAborted()
+  232      const sections = renderContextSections(assembly)
+  233      const context = this.runtimeContext.project(joinContextSections(sections), sections)
+  234      const decision = await this.dispatch.waterfall(
+  235        &#39;agent/pre-step&#39;, { messages: claimed, ...position, signal },
+  236        (): Promise&lt;PreStepDecision&gt; =&gt; Promise.resolve&lt;PreStepDecision&gt;({
+  237          kind: &#39;enter&#39;,
+  238          messages: context === undefined ? claimed : [...claimed, context],
+  239        }),
+  240      )
+  241      signal.throwIfAborted()
+  242      return decision.kind === &#39;reject&#39; ? decision : { ...decision, assembly }
+  243    }
+  244
+  245    /** Open one turn before claiming its first proposed step. */
+  246    private async turn(): Promise&lt;boolean&gt; {
+  247      if (this.phase.kind !== &#39;running&#39;) {
+  248        this.throwError(new Error(`agent &quot;${this.id}&quot;: turn without driver reservation`))
+  249      }
+  250      const phase = this.phase
+  251      const { signal } = phase.abort
+  252      signal.throwIfAborted()
+  253      const turn = phase.turn + 1
+  254      try {
+  255        this.session.append(&#39;turn/start&#39;, { turn })
+  256      } catch (error: unknown) {
+  257        this.throwError(error)
+  258      }
+  259      phase.turn = turn
+  260      let turnEnds: TurnEndReason | null = null
+  261      let target: InboxTarget = &#39;next-turn&#39;
+  262      try {
+  263        while (true) {
+  264          signal.throwIfAborted()
+  265          const step = phase.step + 1
+  266          const decision = await this.preStep(target, { turn, step })
+  267          if (decision.kind === &#39;reject&#39;) {
+  268            turnEnds = { kind: &#39;blocked&#39; }
+  269            return false
+  270          }
+  271          if (turnEnds &amp;&amp; decision.messages.length === 0) break
+  272          // A removed waking message or an enter decision rewritten to empty
+  273          // still owns the initial turn boundary, but it spends no model call.
+  274          if (phase.step === 0 &amp;&amp; decision.messages.length === 0) {
+  275            turnEnds = { kind: &#39;completed&#39; }
+  276            return false
+  277          }
+  278          signal.throwIfAborted()
+  279          this.session.append(&#39;step/start&#39;, { turn, step })
+  280          phase.step = step
+  281          try {
+  282            for (const message of decision.messages) {
+  283              this.session.append(&#39;user/message&#39;, message, { surfaceOp: &#39;append&#39; })
+  284            }
+  285            // max-tokens is sticky: once any step hits the ceiling, later steps
+  286            // that complete normally must not downgrade the turn outcome.
+  287            const stepEnd = await this.step(decision.assembly)
+  288            // max-tokens stays sticky: a later completed step must not
+  289            // downgrade the turn outcome.
+  290            if (turnEnds === null || turnEnds.kind !== &#39;max-tokens&#39;) turnEnds = stepEnd
+  291          } finally {
+  292            this.session.append(&#39;step/end&#39;, { turn, step })
+  293          }
+  294          signal.throwIfAborted()
+  295          if (turnEnds &amp;&amp; this.inbox.nextStep.length === 0) {
+  296            await this.dispatch.serial(&#39;agent/turn-stopping&#39;, { turn, signal })
+  297            signal.throwIfAborted()
+  298          }
+  299          if (turnEnds &amp;&amp; this.inbox.nextStep.length === 0) break
+  300          target = &#39;next-step&#39;
+  301        }
+  302      } catch (error: unknown) {
+  303        if (signal.aborted) {
+  304          turnEnds = { kind: &#39;aborted&#39;, reason: signal.reason as AgentCancelCause }
+  305          throw error
+  306        }
+  307        // Every failure is structured: an `LlmError` keeps its facts, anything
+  308        // else flattens to `errorChain` text under the `UNKNOWN` code.
+  309        turnEnds = {
+  310          kind: &#39;error&#39;,
+  311          error: error instanceof LlmError
+  312            ? error.failure
+  313            : { message: errorChain(error), code: &#39;UNKNOWN&#39; },</code></pre></div></div></article><article class="finding-card" id="dsh-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>modelContext</span></div><h3>04 · 模型可见输入必须能从 session log 重建</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 明确规定 model-visible ⟺ logged：任何到达模型请求的内容都必须有事件来源，并由 deriveMessages 从日志投影。</p></section><section><span>白话解释</span><p>如果某段上下文只存在内存里，重启后模型就会失忆，所以它不能算正式输入。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>新增上下文能力时先加事件，再加 prompt 投影。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>95–102</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>103–112</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:95–112</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L95-L112" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   95
    96  **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
    97
    98  ## Capability seams
@@ -290,7 +787,25 @@
   109  |---|---|
   110  | Add a model provider | register its adapter on `ctx.llm` |
   111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
-  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-execution"><div class="chapter-rule"><span>04</span></div><div class="chapter-kicker">DIMENSION · EXECUTION</div><h2>执行环境与沙箱</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-execution-001" data-finding-dimension="execution"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>01 · 沙箱 provider 先选择 runner，再包装 argv</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>sandbox-local 为 Linux 配置 bwrap→Landlock 链，为 macOS 使用 Seatbelt，为 Windows 使用 restricted-token ACL；confine 返回 runner argv、enforcement 与 failure rules。</p></section><section><span>白话解释</span><p>执行器拿到的不是原始命令，而是已经套上操作系统隔离参数的命令。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>沙箱应是执行 seam，shell、PTY、LSP 等消费者共用同一套隔离。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L1-L27" target="_blank" rel="noreferrer">packages/sandbox/sandbox-local/src/index.ts:1–27 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/sandbox/sandbox-local/src/index.ts:150–186</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L150-L186" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  150  /**
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |
+  119  | Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |
+  120  | Add model-facing context | call `agent.inject()`; it lands in the next admitted request |
+  121  | Add UI or editor integration | drive `ctx.agents` and render from `session/event` |
+  122  | Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |
+  123  | Add durable session state | extend `SessionEventMap`; render and replay from the log |
+  124  | Generate session titles | register the sole `ctx.sessionTitle` provider |
+  125  | Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |
+  126  | Fork a live session | `ctx.sessions.fork(source, boundary?, childSessionId?)` |
+  127  | Scope a registration to one agent | use that agent&#39;s `agent.ctx` |
+  128
+  129  The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [Chat nodes](cookbook/adding-a-conversation-node.md).
+  130</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-execution"><div class="chapter-rule"><span>04</span></div><div class="chapter-kicker">DIMENSION · EXECUTION</div><h2>执行环境与沙箱</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-execution-001" data-finding-dimension="execution"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>01 · 沙箱 provider 先选择 runner，再包装 argv</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>sandbox-local 为 Linux 配置 bwrap→Landlock 链，为 macOS 使用 Seatbelt，为 Windows 使用 restricted-token ACL；confine 返回 runner argv、enforcement 与 failure rules。</p></section><section><span>白话解释</span><p>执行器拿到的不是原始命令，而是已经套上操作系统隔离参数的命令。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>沙箱应是执行 seam，shell、PTY、LSP 等消费者共用同一套隔离。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>150–167</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>168–186</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/sandbox/sandbox-local/src/index.ts:150–186</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L150-L186" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  150  /**
   151   * The runner chain per platform — selection is BY PLATFORM first, probes
   152   * second: a platform&#39;s chain is probed in preference order only when it has
   153   * MORE than one candidate (probing arbitrates; it does not re-validate a
@@ -326,7 +841,78 @@
   183    // therefore remains writable, and NTFS hard links can alias a granted
   184    // workspace file to a path outside it. The backend enforces the remaining
   185    // ACL-addressable surface but must not advertise the absolute promise.
-  186    &#39;windows-acl&#39;: &#39;partial&#39;,</code></pre></div></div></article><article class="finding-card" id="dsh-execution-002" data-finding-dimension="execution"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>execution</span></div><h3>02 · 隔离能力探测失败时 fail closed，而不是降级裸执行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>sandbox-local 的模块注释和 confine 契约都要求 runner 不可用时抛出 SANDBOX_UNAVAILABLE；不会把原始 argv 返回给调用方。</p></section><section><span>白话解释</span><p>机器没有 bwrap 或 sandbox-exec 时，Agent 宁可不执行，也不会偷偷退回宿主 shell。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署检查必须把 runner 可用性当成启动前 gate。</p></section></div><div class="finding-code"><div class="finding-code-head"><span>packages/sandbox/sandbox-local/src/index.ts:1–18</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L1-L18" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  /**
+  186    &#39;windows-acl&#39;: &#39;partial&#39;,
+  187  }
+  188
+  189  /**
+  190   * A probe bound must be a positive finite number: Node treats
+  191   * `spawnSync({ timeout: 0 })` as NO timeout, so an unvalidated 0 would
+  192   * silently mean &quot;unbounded&quot; — the opposite of what the field promises.
+  193   */
+  194  function assertPositiveFinite(name: string, value: number): void {
+  195    if (!Number.isFinite(value) || value &lt;= 0) {
+  196      throw new Error(`sandbox-local: ${name} must be a positive finite number`)
+  197    }
+  198  }
+  199
+  200  /**
+  201   * The denial dialect each runner&#39;s kernel speaks — the case-insensitive stderr substrings a
+  202   * denied file effect produces under it, carried on every wrap (the seam&#39;s
+  203   * `ConfinedArgv.denialSignatures`).
+  204   */
+  205  const DENIAL_SIGNATURES = {
+  206    bwrap: [&#39;read-only file system&#39;],
+  207    landlock: [&#39;permission denied&#39;],
+  208    seatbelt: [&#39;operation not permitted&#39;],
+  209    // pwsh/.NET: &quot;Access to the path &#39;...&#39; is denied.&quot;; cmd: &quot;Access is denied.&quot;;
+  210    // node EACCES: &quot;permission denied&quot;.
+  211    &#39;windows-acl&#39;: [&#39;access is denied&#39;, &#39;access to the path&#39;, &#39;permission denied&#39;],
+  212    runnerCommand: [&#39;read-only file system&#39;, &#39;permission denied&#39;],
+  213  } as const satisfies Record&lt;SelectedRunner[&#39;runner&#39;] | &#39;runnerCommand&#39;, readonly string[]&gt;
+  214
+  215  /** The windows-acl runner&#39;s documented failure exit (its own RUNNER_FAILURE_EXIT contract, distinct from Landlock&#39;s 125). */
+  216  const WINDOWS_ACL_RUNNER_FAILURE_EXIT = 127
+  217
+  218  /**
+  219   * Runner-owned fatal diagnostics. Landlock has a versioned exit-125 plus
+  220   * fatal-line launcher-failure contract. Bubblewrap&#39;s current fatal paths exit
+  221   * 1 but its public contract does not reserve that status, while sandbox-exec
+  222   * publishes no launcher-failure status; those backends remain signature-only.
+  223   * The windows-acl runner prints `windows-acl-run: &lt;detail&gt;` on every
+  224   * runner-side failure and exits 127 — the rule is exit-gated on that status
+  225   * so a confined command that merely PRINTS the signature (or a runner
+  226   * cleanup failure reported on a non-zero child exit) is never misclassified
+  227   * as &quot;the command did not run&quot;. Keep the Landlock tuple aligned with the
+  228   * assembled snapshot fixture at
+  229   * `examples/acp-agent/tests/fixtures/partial-landlock-sandbox.ts`.
+  230   */
+  231  const RUNNER_FAILURE_RULES = {
+  232    bwrap: [{ fatalSignatures: [&#39;bwrap: &#39;] }],
+  233    landlock: [{
+  234      allowedExitCodes: [LAUNCHER_FAILURE_EXIT],
+  235      fatalSignatures: [`${LAUNCHER_BIN}: `],
+  236      informationalLines: [`${LAUNCHER_BIN}: partial enforcement (older Landlock ABI)`],
+  237    }],
+  238    seatbelt: [{ fatalSignatures: [&#39;sandbox-exec: &#39;] }],
+  239    &#39;windows-acl&#39;: [{ allowedExitCodes: [WINDOWS_ACL_RUNNER_FAILURE_EXIT], fatalSignatures: [&#39;windows-acl-run: &#39;] }],
+  240  } as const satisfies Record&lt;SelectedRunner[&#39;runner&#39;], readonly RunnerFailureRule[]&gt;
+  241
+  242  /**
+  243   * Local process-sandbox provider. Registers as `ctx.sandbox`. Caches the
+  244   * chain verdict and, on the windows-acl rung, the write grants
+  245   * ({@link AclWriteGrant}: the standing workspace-root grant per workspace
+  246   * and the revocable private-temp grant per live session/workspace pair, the
+  247   * latter revoked on provider dispose); the one-time probes spawn nothing
+  248   * else.
+  249   */
+  250  export class LocalSandboxProvider extends SandboxProvider {
+  251    // Inline schema call: the config catalog walks `static Config` statically.
+  252    static Config: z&lt;Config&gt; = z.object({
+  253      runnerCommand: z.array(z.string()).default([]),
+  254      runnerFailureSignatures: z.array(z.string()).default([]),
+  255      probeTimeoutMs: z.natural().default(5_000),
+  256    })
+  257</code></pre></div></div></article><article class="finding-card" id="dsh-execution-002" data-finding-dimension="execution"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>execution</span></div><h3>02 · 隔离能力探测失败时 fail closed，而不是降级裸执行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>sandbox-local 的模块注释和 confine 契约都要求 runner 不可用时抛出 SANDBOX_UNAVAILABLE；不会把原始 argv 返回给调用方。</p></section><section><span>白话解释</span><p>机器没有 bwrap 或 sandbox-exec 时，Agent 宁可不执行，也不会偷偷退回宿主 shell。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署检查必须把 runner 可用性当成启动前 gate。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–8</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>9–18</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/sandbox/sandbox-local/src/index.ts:1–18</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L1-L18" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  /**
     2   * Local sandbox backend. It selects the platform runner chain (Linux bwrap then
     3   * Landlock; macOS Seatbelt; Windows the ACL restricted-token runner), functionally probes
     4   * competing candidates once, and reports each wrap&#39;s enforcement and stderr
@@ -343,7 +929,78 @@
    15   * session); the private-temp ACEs are revoked on dispose. The runner
    16   * receives both SIDs (their presence marks the seam-managed contract) and
    17   * stops managing DACLs itself. The rung reports partial enforcement because
-   18   * WRITE_RESTRICTED must retain Everyone in its</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-tools"><div class="chapter-rule"><span>05</span></div><div class="chapter-kicker">DIMENSION · TOOLS</div><h2>工具注册与执行</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具调用先按 executionMode 分组</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>executeToolCalls 先解析所有 tool-call，再按 executionMode 把连续 parallel 调用放进 bounded pool；遇到 exclusive 就形成 barrier。</p></section><section><span>白话解释</span><p>能并行的读操作一起做，可能冲突的写操作排队做。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发策略应是工具声明的一部分，而不是模型临时决定。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L10-L39" target="_blank" rel="noreferrer">packages/core/agent-loop/src/tool-calls.ts:10–39 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:59–100</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L59-L100" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   59  export async function executeToolCalls(
+   18   * WRITE_RESTRICTED must retain Everyone in its
+   19   * restricting list and NTFS hard links alias one file object across paths.
+   20   * @module @deepseek-ai/dsh-sandbox-local
+   21   */
+   22
+   23  import { spawnSync } from &#39;node:child_process&#39;
+   24  import { existsSync, mkdtempSync, rmSync } from &#39;node:fs&#39;
+   25  import { tmpdir } from &#39;node:os&#39;
+   26  import { join } from &#39;node:path&#39;
+   27  import { fileURLToPath } from &#39;node:url&#39;
+   28  import {
+   29    LAUNCHER_BIN,
+   30    LAUNCHER_FAILURE_EXIT,
+   31    launcherPath as landlockLauncherPath,
+   32    probe as defaultProbeLandlock,
+   33  } from &#39;@deepseek-ai/node-addon-landlock-run&#39;
+   34  import { Context } from &#39;@deepseek-ai/cordis&#39;
+   35  import z from &#39;@deepseek-ai/schemastery&#39;
+   36  import { assertNever } from &#39;@deepseek-ai/dsh-llm&#39;
+   37  import { SandboxProvider, SandboxUnavailableError } from &#39;@deepseek-ai/dsh-sandbox&#39;
+   38  import type { ConfinedArgv, ConfinedSandboxMode, RunnerFailureRule, SandboxEnforcement, SandboxPolicy } from &#39;@deepseek-ai/dsh-sandbox&#39;
+   39  import type { SessionId } from &#39;@deepseek-ai/dsh-session&#39;
+   40  import { AclWriteGrant, assertTempRootOutsideWorkspace, tempWriteSid, workspaceWriteSid } from &#39;@deepseek-ai/dsh-sandbox-windows-acl&#39;
+   41  import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from &#39;./profiles.ts&#39;
+   42
+   43  /** Plugin config. All optional — `static Config` supplies the defaults. */
+   44  export interface Config {
+   45    /**
+   46     * Override the runner argv; bwrap-compatible profile arguments are appended. A
+   47     * non-empty override asserts full enforcement and skips built-in selection and
+   48     * probing. A runner that starts but refuses its profile must be identifiable by
+   49     * {@link runnerFailureSignatures}. Consumers classify a spawn rejection only after
+   50     * confirming the workdir is usable. `ENOENT` or `EACCES` identifies the runner when
+   51     * `error.path` equals argv[0] and `error.syscall` is `spawn` or `spawn &lt;runner&gt;`, or
+   52     * when `error.path` is absent and `error.syscall` is exactly `spawn &lt;runner&gt;`.
+   53     */
+   54    runnerCommand?: string[]
+   55    /**
+   56     * Case-insensitive stderr substrings emitted when a configured
+   57     * {@link runnerCommand} refuses its profile before executing the wrapped
+   58     * command. Required and non-empty with `runnerCommand`; rejected without
+   59     * it. Each entry is a non-empty, single-line, case-insensitive substring
+   60     * covering the executable runner&#39;s own failure dialect.
+   61     */
+   62    runnerFailureSignatures?: string[]
+   63    /** Positive timeout for each functional probe; zero would mean unbounded to Node. */
+   64    probeTimeoutMs?: number
+   65  }
+   66
+   67  /** Probe whether `bwrap` can create the profile; the provider caches the bounded result. */
+   68  function defaultProbeBwrap(timeoutMs: number): boolean {
+   69    const probe = spawnSync(&#39;bwrap&#39;, [&#39;--ro-bind&#39;, &#39;/&#39;, &#39;/&#39;, &#39;--dev&#39;, &#39;/dev&#39;, &#39;--proc&#39;, &#39;/proc&#39;, &#39;--die-with-parent&#39;, &#39;--&#39;, &#39;true&#39;], {
+   70      timeout: timeoutMs,
+   71      stdio: &#39;ignore&#39;,
+   72    })
+   73    return probe.status === 0
+   74  }
+   75
+   76  /**
+   77   * Functional Seatbelt probe: apply the real `read-only` profile through
+   78   * `sandbox-exec -p` and run `true` under it — exit 0 means the kernel
+   79   * accepted and enforced the profile (`sandbox-exec` exits non-zero when
+   80   * `sandbox_init` refuses it). A missing `sandbox-exec` (every non-macOS
+   81   * host) fails the spawn and probes `unusable`, exactly like the other
+   82   * rungs&#39; absent binaries. Apple marks the CLI deprecated but ships it on
+   83   * every macOS; if it ever disappears, this probe is what fails closed.
+   84   */
+   85  function defaultProbeSeatbelt(seatbeltExec: string, timeoutMs: number): boolean {
+   86    const probe = spawnSync(seatbeltExec, [...seatbeltProfileArgs({ mode: &#39;read-only&#39;, workspaceRoot: &#39;/&#39; }), &#39;--&#39;, &#39;true&#39;], {
+   87      timeout: timeoutMs,
+   88      stdio: &#39;ignore&#39;,
+   89    })</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-tools"><div class="chapter-rule"><span>05</span></div><div class="chapter-kicker">DIMENSION · TOOLS</div><h2>工具注册与执行</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具调用先按 executionMode 分组</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>executeToolCalls 先解析所有 tool-call，再按 executionMode 把连续 parallel 调用放进 bounded pool；遇到 exclusive 就形成 barrier。</p></section><section><span>白话解释</span><p>能并行的读操作一起做，可能冲突的写操作排队做。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发策略应是工具声明的一部分，而不是模型临时决定。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>59–78</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>79–100</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:59–100</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L59-L100" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   59  export async function executeToolCalls(
    60    ctx: Context,
    61    turn: number,
    62    step: number,
@@ -384,7 +1041,19 @@
    97        return { concluded }
    98      }
    99    }
-  100    return { concluded }</code></pre></div></div></article><article class="finding-card" id="dsh-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 工具结果异步完成，但按模型顺序提交</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>runGroup 用 slots 保存完成结果，commitReady 只从连续可提交的 index 开始 finalize/finish、appendToolResult，并把 additionalContexts 放进下一步。</p></section><section><span>白话解释</span><p>第三个工具先完成也不能把第二个工具的回执顶到模型前面。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发系统一定要有稳定 call id、提交序号和取消后的合成结果。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L10-L39" target="_blank" rel="noreferrer">packages/core/agent-loop/src/tool-calls.ts:10–39 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:112–159</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L112-L159" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  112  /**
+  100    return { concluded }
+  101  }
+  102
+  103  /** Parse model arguments, preserving invalid JSON as text and mapping empty input to `{}`. */
+  104  function parseArguments(raw: string): unknown {
+  105    try {
+  106      return raw ? JSON.parse(raw) : {}
+  107    } catch {
+  108      return raw
+  109    }
+  110  }
+  111
+  112  /**
   113   * Run one exclusive barrier or parallel pool. Later calls are reclassified
   114   * before start; an exclusive reclassification waits for the current pool to
   115   * drain and remains for the caller&#39;s next barrier. Results and contexts commit
@@ -431,7 +1100,137 @@
   156        for (const context of result.additionalContexts ?? []) acceptContext(context)
   157        concluded ||= result.concludesTurn === true
   158        committed++
-  159      }</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-connectors"><div class="chapter-rule"><span>06</span></div><div class="chapter-kicker">DIMENSION · CONNECTORS</div><h2>连接器、插件与 MCP</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-connectors-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>connectors</span></div><h3>01 · LLM、MCP、FS、Shell 和子 Agent 共用 capability seam</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 将 Service Definition、Provider、Consumer 定义为 seam 的三个角色；远端 sandbox 可以同时替换 Bash、PTY 和 LSP 的执行世界。</p></section><section><span>白话解释</span><p>换一个 provider，不需要为每种工具复制一套逻辑。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>连接器设计应先抽象执行世界，再堆具体工具。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L13-L42" target="_blank" rel="noreferrer">packages/core/system-prompt/src/index.ts:13–42 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:99–142</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L99-L142" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   99
+  159      }
+  160    }
+  161
+  162    const inFlight = new Map&lt;number, Promise&lt;number&gt;&gt;()
+  163
+  164    const startCall = async (index: number): Promise&lt;void&gt; =&gt; {
+  165      // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  166      const call = group[index]!
+  167      callSeqs[index] = appendToolCall(session, turn, step, call.block)
+  168      started++
+  169      const prepared = await ctx.tools[TOOL_RUNTIME_SCHEDULER].prepare(call.exec)
+  170      throwSchedulerFailure()
+  171      switch (prepared.kind) {</code></pre></div></div></article><article class="finding-card" id="dsh-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 工具结果异步完成，但按模型顺序提交</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>runGroup 用 slots 保存完成结果，commitReady 只从连续可提交的 index 开始 finalize/finish、appendToolResult，并把 additionalContexts 放进下一步。</p></section><section><span>白话解释</span><p>第三个工具先完成也不能把第二个工具的回执顶到模型前面。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发系统一定要有稳定 call id、提交序号和取消后的合成结果。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>112–134</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>135–159</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/agent-loop/src/tool-calls.ts:112–159</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/src/tool-calls.ts#L112-L159" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  112  /**
+  113   * Run one exclusive barrier or parallel pool. Later calls are reclassified
+  114   * before start; an exclusive reclassification waits for the current pool to
+  115   * drain and remains for the caller&#39;s next barrier. Results and contexts commit
+  116   * in model order. Abort stops starts, drains and commits started calls, accepts
+  117   * their contexts into the owning batch, records results for skipped calls, and
+  118   * returns an aborted outcome. Scheduler failure drains dispatches without
+  119   * committing synthetic recovery results.
+  120   */
+  121  async function runGroup(
+  122    ctx: Context,
+  123    turn: number,
+  124    step: number,
+  125    group: PlannedCall[],
+  126    mode: ToolExecutionMode[&#39;kind&#39;],
+  127    signal: AbortSignal,
+  128    acceptContext: (context: UserMessage) =&gt; void,
+  129  ): Promise&lt;GroupOutcome&gt; {
+  130    const { session } = ctx.agents.requireInitiator()
+  131    const { maxParallelToolCalls } = ctx.agentLoop.config
+  132    const slots: (Slot | undefined)[] = group.map(() =&gt; undefined)
+  133    // Started slots retain their `tool/call` seq so the result can cite it.
+  134    const callSeqs: number[] = group.map(() =&gt; -1)
+  135    let nextToStart = 0
+  136    let committed = 0
+  137    let started = 0
+  138    let aborted: boolean = signal.aborted
+  139    let concluded = false
+  140    let schedulerFailure: { error: unknown } | undefined
+  141    const throwSchedulerFailure = (): void =&gt; {
+  142      if (schedulerFailure !== undefined) throw schedulerFailure.error
+  143    }
+  144
+  145    // `committed` advances only across contiguous model-order slots.
+  146    const commitReady = async (): Promise&lt;void&gt; =&gt; {
+  147      while (committed &lt; group.length) {
+  148        const slot = slots[committed]
+  149        if (slot === undefined) break
+  150        const call = group[committed]
+  151        const result = slot.needsPost
+  152          ? await ctx.tools[TOOL_RUNTIME_SCHEDULER].finalize(slot.exec, slot.result)
+  153          : ctx.tools[TOOL_RUNTIME_SCHEDULER].finish(slot.exec, slot.result)
+  154        // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  155        appendToolResult(session, turn, step, call!.block, result, callSeqs[committed]!)
+  156        for (const context of result.additionalContexts ?? []) acceptContext(context)
+  157        concluded ||= result.concludesTurn === true
+  158        committed++
+  159      }
+  160    }
+  161
+  162    const inFlight = new Map&lt;number, Promise&lt;number&gt;&gt;()
+  163
+  164    const startCall = async (index: number): Promise&lt;void&gt; =&gt; {
+  165      // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded index
+  166      const call = group[index]!
+  167      callSeqs[index] = appendToolCall(session, turn, step, call.block)
+  168      started++
+  169      const prepared = await ctx.tools[TOOL_RUNTIME_SCHEDULER].prepare(call.exec)
+  170      throwSchedulerFailure()
+  171      switch (prepared.kind) {
+  172        case &#39;dispatch&#39;: {
+  173          const promise = ctx.tools[TOOL_RUNTIME_SCHEDULER].dispatch(prepared.exec).then(
+  174            (outcome) =&gt; {
+  175              slots[index] = { exec: prepared.exec, result: outcome.result, needsPost: outcome.kind === &#39;post-result&#39; }
+  176              return index
+  177            },
+  178            (error: unknown) =&gt; {
+  179              schedulerFailure ??= { error }
+  180              return index
+  181            },
+  182          )
+  183          inFlight.set(index, promise)
+  184          break
+  185        }
+  186        case &#39;post-result&#39;:
+  187          slots[index] = { exec: prepared.exec, result: prepared.result, needsPost: true }
+  188          break
+  189        case &#39;final-result&#39;:
+  190          slots[index] = { exec: prepared.exec, result: prepared.result, needsPost: false }
+  191          break
+  192        /* v8 ignore next -- closed-union exhaustiveness guard */
+  193        default:
+  194          assertNever(prepared, &#39;tool-call scheduler prepare result&#39;)
+  195      }
+  196    }
+  197
+  198    const fillPool = async (): Promise&lt;void&gt; =&gt; {
+  199      while (!aborted &amp;&amp; nextToStart &lt; group.length &amp;&amp; inFlight.size &lt; maxParallelToolCalls) {
+  200        // Re-read later modes after ordered commits so registry changes can create a barrier.
+  201        // oxlint-disable-next-line typescript/no-non-null-assertion -- bounded by the loop condition
+  202        const nextCall = group[nextToStart]!
+  203        if (nextToStart &gt; 0 &amp;&amp; mode === &#39;parallel&#39;
+  204          &amp;&amp; ctx.tools.executionMode(nextCall.exec).kind !== &#39;parallel&#39;) break
+  205        await startCall(nextToStart)
+  206        nextToStart++
+  207        throwSchedulerFailure()
+  208        await commitReady()
+  209        throwSchedulerFailure()
+  210        // Abort may arrive while pre-execute awaits.
+  211        if (signal.aborted) aborted = true
+  212      }
+  213    }
+  214
+  215    // Ordered pre-execute may await; only dispatch/body overlaps. A scheduler
+  216    // failure stops new dispatches and reaches the turn boundary after every
+  217    // already-started dispatch settles.
+  218    try {
+  219      await fillPool()
+  220      while (inFlight.size &gt; 0) {
+  221        const settledIndex = await Promise.race(inFlight.values())
+  222        inFlight.delete(settledIndex)
+  223        throwSchedulerFailure()
+  224        await commitReady()
+  225        throwSchedulerFailure()
+  226        // Abort may arrive while a tool or ordered commit awaits.
+  227
+  228        if (signal.aborted) aborted = true
+  229        await fillPool()
+  230      }</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-connectors"><div class="chapter-rule"><span>06</span></div><div class="chapter-kicker">DIMENSION · CONNECTORS</div><h2>连接器、插件与 MCP</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-connectors-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>connectors</span></div><h3>01 · LLM、MCP、FS、Shell 和子 Agent 共用 capability seam</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 将 Service Definition、Provider、Consumer 定义为 seam 的三个角色；远端 sandbox 可以同时替换 Bash、PTY 和 LSP 的执行世界。</p></section><section><span>白话解释</span><p>换一个 provider，不需要为每种工具复制一套逻辑。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>连接器设计应先抽象执行世界，再堆具体工具。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>99–119</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>120–142</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:99–142</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L99-L142" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   99
   100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
   101
   102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
@@ -462,7 +1261,7 @@
   127  | Scope a registration to one agent | use that agent&#39;s `agent.ctx` |
   128
   129  The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [Chat nodes](cookbook/adding-a-conversation-node.md).
-  130</code></pre></div></div></article><article class="finding-card" id="dsh-connectors-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · 工具管道用 waterfall/emit 区分决策与观测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>tools/pre-execute 可以 allow/deny/ask，tools/execute 包装实际 dispatch，tools/post-execute 可改写结果，tools/result 只观察最终冻结结果。</p></section><section><span>白话解释</span><p>审批、重试、结果改写和指标不是一个大函数里的隐式分支，而是可插拔的阶段。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>每个阶段要写清楚是否能阻断、是否持久化、是否允许改写。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L13-L42" target="_blank" rel="noreferrer">packages/core/system-prompt/src/index.ts:13–42 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:137–207</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L137-L207" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  137  declare module &#39;@deepseek-ai/cordis&#39; {
+  130</code></pre></div></div></article><article class="finding-card" id="dsh-connectors-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · 工具管道用 waterfall/emit 区分决策与观测</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>tools/pre-execute 可以 allow/deny/ask，tools/execute 包装实际 dispatch，tools/post-execute 可改写结果，tools/result 只观察最终冻结结果。</p></section><section><span>白话解释</span><p>审批、重试、结果改写和指标不是一个大函数里的隐式分支，而是可插拔的阶段。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>每个阶段要写清楚是否能阻断、是否持久化、是否允许改写。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>137–171</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>172–207</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:137–207</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L137-L207" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  137  declare module &#39;@deepseek-ai/cordis&#39; {
   138    interface Context {
   139      tools: ToolRuntime
   140    }
@@ -532,7 +1331,78 @@
   204       * scope&#39;s.
   205       * @mode emit
   206       */
-  207      &#39;tools/change&#39;(): void</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-security"><div class="chapter-rule"><span>07</span></div><div class="chapter-kicker">DIMENSION · SECURITY</div><h2>安全、审批与权限</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-security-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>security</span></div><h3>01 · 审批与沙箱是两条不同的控制轴</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>工具 pre-execute 的 ask/deny/allow 是策略判断；sandbox-local 的 confine 则负责把 argv 放进 OS runner，两者在不同 package 和事件 seam。</p></section><section><span>白话解释</span><p>问用户‘是否允许’不能替代限制命令能碰到哪些文件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>安全面板和审计日志要同时显示 approval 与 enforcement。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L1-L27" target="_blank" rel="noreferrer">packages/sandbox/sandbox-local/src/index.ts:1–27 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:142–175</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L142-L175" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  142    interface Events {
+  207      &#39;tools/change&#39;(): void
+  208    }
+  209  }
+  210
+  211  /** Tool-owned canonical output contract used after the body returns a JSON value. */
+  212  export interface ToolOutputDefinition {
+  213    /** Raw supported JSON Schema enforced against every successful canonical value. */
+  214    readonly schema: JsonSchemaNode
+  215    /** Pure projection from validated arguments and value to Native/model content. */
+  216    render(args: unknown, value: JsonValue): ContentBlock[]
+  217    /** Pure replayable presentation projection, computed only for top-level calls. */
+  218    presentationMeta?(args: unknown, value: JsonValue): JsonValue
+  219  }
+  220
+  221  /** A registered tool: its schema plus the execution function. */
+  222  export interface ToolDefinition extends ToolSchema {
+  223    /** Mandatory canonical output declaration. */
+  224    readonly output: ToolOutputDefinition
+  225    /**
+  226     * Run one accepted call and return only its canonical lossless-JSON value.
+  227     * Async work must observe or forward `exec.signal` and settle only after its
+  228     * owned work reaches quiescence. The registry preserves caller cancellation
+  229     * through around-dispatch signal replacement and does not abandon this
+  230     * promise, but it cannot hard-kill same-process code.
+  231     * @param args - losslessly snapshotted, frozen model arguments.
+  232     * @param exec - execution identity, cancellation signal, and context deferral.
+  233     * @returns the canonical value declared by `output.schema`.
+  234     */
+  235    execute(args: unknown, exec: ToolRunContext): Promise&lt;unknown&gt;
+  236    /**
+  237     * Synchronous last-mile transform for model-facing content. The registry
+  238     * snapshots this callback when execution starts and invokes it exactly once
+  239     * for every normalized outcome, including pipeline failures that bypass
+  240     * `tools/post-execute`, immediately before lossless materialization.
+  241     * Returning `undefined` preserves the content; every other result field
+  242     * remains registry-owned. The callback must be total and must not throw.
+  243     * @param exec - immutable execution identity and arguments.
+  244     * @param result - complete normalized outcome before materialization.
+  245     * @returns replacement content, or `undefined` to preserve it.
+  246     */
+  247    finalizeContent?(exec: Readonly&lt;ToolExecution&gt;, result: Readonly&lt;ToolExecutionResult&gt;): ContentBlock[] | undefined
+  248    /**
+  249     * Cooperative tool-call timeout budget in milliseconds. Omit for no deadline.
+  250     * Enforced by `@deepseek-ai/dsh-tool-call-timeout-policy` (a `tools/execute` wrapper); it
+  251     * is NEVER sent to the model — `schemas()` whitelists only name/description/
+  252     * parameters. Declaring it asserts this tool forwards `exec.signal` to a
+  253     * cooperative implementation that can reach quiescence when the signal aborts.
+  254     */
+  255    timeoutMs?: number
+  256    /**
+  257     * Pure synchronous classifier for overlap with sibling tool calls. Only
+  258     * `true` opts in; omission, exceptions, non-`true` returns, and invalid
+  259     * `defineTool` arguments are exclusive. This metadata is never model-visible.
+  260     *
+  261     * Opted-in executions must not mutate parent-owned state. Shared state must
+  262     * tolerate concurrent dispatch; recorder races are permitted only when they
+  263     * commute or fail closed. See the
+  264     * [parallel-tool-call Agent Note](../../../../.agents/notes/implemented/feature/2026-07-10-parallel-tool-call-execution.md)
+  265     * for the full contract.
+  266     * @param args - parsed arguments; `defineTool` validates before calling.
+  267     * @returns Whether this call may join a parallel group.
+  268     */
+  269    isConcurrencySafe?(args: unknown): boolean
+  270    /**
+  271     * Optional: how to present the PENDING state of one call in a UI, derived from
+  272     * the call&#39;s `args` (parsed arguments, `unknown` — the tool validates/narrows
+  273     * its own input). Returns a {@link ToolCallView} (a `card`-tagged render intent),
+  274     * or `undefined` (or omit the method) to fall back to a generic presentation
+  275     * (title = tool name, raw args as input). Pure and side-effect-free: a UI may
+  276     * call it during live streaming AND a session-log replay, so it must depend
+  277     * only on `args`.
+  278     */</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-security"><div class="chapter-rule"><span>07</span></div><div class="chapter-kicker">DIMENSION · SECURITY</div><h2>安全、审批与权限</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-security-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>security</span></div><h3>01 · 审批与沙箱是两条不同的控制轴</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>工具 pre-execute 的 ask/deny/allow 是策略判断；sandbox-local 的 confine 则负责把 argv 放进 OS runner，两者在不同 package 和事件 seam。</p></section><section><span>白话解释</span><p>问用户‘是否允许’不能替代限制命令能碰到哪些文件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>安全面板和审计日志要同时显示 approval 与 enforcement。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>142–157</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>158–175</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:142–175</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L142-L175" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  142    interface Events {
   143      /**
   144       * Allow, deny, or ask before dispatch. `next()` delegates to allow; missing
   145       * approval support turns `ask` into denial. Async gates must observe
@@ -565,7 +1435,78 @@
   172       * @param result - the dispatch outcome a listener may accept, replace, or block.
   173       * @mode waterfall
   174       */
-  175      &#39;tools/post-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, result: Readonly&lt;ToolExecutionResult&gt;, next: () =&gt; Promise&lt;PostToolDecision&gt;): Promise&lt;PostToolDecision&gt;</code></pre></div></div></article><article class="finding-card" id="dsh-security-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 工具回调必须尊重 caller signal，取消不能丢失</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>工具 around-dispatch 允许替换 exec.signal，但 registry 会在 body 前重新融合 caller signal；文档要求 listener 等待自有工作 quiescence。</p></section><section><span>白话解释</span><p>超时或取消不能只让 UI 变灰，真正的子进程和网络请求也要停在安全边界。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>取消语义是工具契约的一部分，测试必须覆盖半途取消。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sandbox/sandbox-local/src/index.ts#L1-L27" target="_blank" rel="noreferrer">packages/sandbox/sandbox-local/src/index.ts:1–27 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:154–176</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L154-L176" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  154       * Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns
+  175      &#39;tools/post-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, result: Readonly&lt;ToolExecutionResult&gt;, next: () =&gt; Promise&lt;PostToolDecision&gt;): Promise&lt;PostToolDecision&gt;
+  176      /**
+  177       * Allow a listener to replace content in the DURABLE LOG COPY of one
+  178       * `run_code` sub-dispatch outcome before the bridge appends its
+  179       * `tool/code-dispatch` event. `next()` keeps the
+  180       * content unchanged; a listener may return replacement blocks (e.g. the
+  181       * spill policy&#39;s preview + locator for an oversized text result). Only the
+  182       * logged copy is affected — the program already received the complete
+  183       * value, and the model sees neither. A throwing listener is contained:
+  184       * the bridge falls back to logging the original settled content.
+  185       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s dispatches.
+  186       * @param dispatch - the parent execution, sub-call identity, and the settled content to log.
+  187       * @mode waterfall
+  188       */
+  189      &#39;tools/code-dispatch-log&#39;(this: Scoped&lt;ToolRuntime&gt;, dispatch: CodeDispatchLog, next: () =&gt; Promise&lt;ContentBlock[]&gt;): Promise&lt;ContentBlock[]&gt;
+  190      /**
+  191       * Observe the frozen, lossless-JSON final outcome. Listener failures are contained.
+  192       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): keyed by `exec.agent`.
+  193       * @param exec - the execution object that traversed the pipeline.
+  194       * @param result - a deep-frozen snapshot of the final returned result.
+  195       * @mode emit
+  196       */
+  197      &#39;tools/result&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: Readonly&lt;ToolExecution&gt;, result: Readonly&lt;ToolExecutionResult&gt;): undefined
+  198      /**
+  199       * A tool was registered or unregistered, or a scoped restriction changed
+  200       * (the available tool set changed — possibly for one scope only). An
+  201       * UNFILTERED registry-subject notification, deliberately not scope-filtered
+  202       * dispatch: a global change concerns every agent&#39;s next assembly, so a
+  203       * scoped listener subscribing here sees every change, not just its own
+  204       * scope&#39;s.
+  205       * @mode emit
+  206       */
+  207      &#39;tools/change&#39;(): void
+  208    }
+  209  }
+  210
+  211  /** Tool-owned canonical output contract used after the body returns a JSON value. */
+  212  export interface ToolOutputDefinition {
+  213    /** Raw supported JSON Schema enforced against every successful canonical value. */
+  214    readonly schema: JsonSchemaNode
+  215    /** Pure projection from validated arguments and value to Native/model content. */
+  216    render(args: unknown, value: JsonValue): ContentBlock[]
+  217    /** Pure replayable presentation projection, computed only for top-level calls. */
+  218    presentationMeta?(args: unknown, value: JsonValue): JsonValue
+  219  }
+  220
+  221  /** A registered tool: its schema plus the execution function. */
+  222  export interface ToolDefinition extends ToolSchema {
+  223    /** Mandatory canonical output declaration. */
+  224    readonly output: ToolOutputDefinition
+  225    /**
+  226     * Run one accepted call and return only its canonical lossless-JSON value.
+  227     * Async work must observe or forward `exec.signal` and settle only after its
+  228     * owned work reaches quiescence. The registry preserves caller cancellation
+  229     * through around-dispatch signal replacement and does not abandon this
+  230     * promise, but it cannot hard-kill same-process code.
+  231     * @param args - losslessly snapshotted, frozen model arguments.
+  232     * @param exec - execution identity, cancellation signal, and context deferral.
+  233     * @returns the canonical value declared by `output.schema`.
+  234     */
+  235    execute(args: unknown, exec: ToolRunContext): Promise&lt;unknown&gt;
+  236    /**
+  237     * Synchronous last-mile transform for model-facing content. The registry
+  238     * snapshots this callback when execution starts and invokes it exactly once
+  239     * for every normalized outcome, including pipeline failures that bypass
+  240     * `tools/post-execute`, immediately before lossless materialization.
+  241     * Returning `undefined` preserves the content; every other result field
+  242     * remains registry-owned. The callback must be total and must not throw.
+  243     * @param exec - immutable execution identity and arguments.
+  244     * @param result - complete normalized outcome before materialization.
+  245     * @returns replacement content, or `undefined` to preserve it.
+  246     */</code></pre></div></div></article><article class="finding-card" id="dsh-security-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 工具回调必须尊重 caller signal，取消不能丢失</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>工具 around-dispatch 允许替换 exec.signal，但 registry 会在 body 前重新融合 caller signal；文档要求 listener 等待自有工作 quiescence。</p></section><section><span>白话解释</span><p>超时或取消不能只让 UI 变灰，真正的子进程和网络请求也要停在安全边界。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>取消语义是工具契约的一部分，测试必须覆盖半途取消。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>154–164</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>165–176</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/tools/src/index.ts:154–176</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/tools/src/index.ts#L154-L176" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  154       * Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns
   155       * a normalized result; wrappers may change only `exec.signal`, while call
   156       * identity remains immutable. The registry re-fuses the original caller
   157       * signal before the body, so replacement cannot detach caller cancellation;
@@ -587,7 +1528,78 @@
   173       * @mode waterfall
   174       */
   175      &#39;tools/post-execute&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: ToolExecution, result: Readonly&lt;ToolExecutionResult&gt;, next: () =&gt; Promise&lt;PostToolDecision&gt;): Promise&lt;PostToolDecision&gt;
-  176      /**</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-observability"><div class="chapter-rule"><span>08</span></div><div class="chapter-kicker">DIMENSION · OBSERVABILITY</div><h2>观测、日志与回放</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-observability-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · JSONL 持久化用稳定 stat/read 循环避免 torn read</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>readStableFile 在 readFile 前后比较 fileRevision，若 writer 在读期间追加就重试；readRaw 还能保留原始 JSONL 文本和压缩 frame。</p></section><section><span>白话解释</span><p>恢复时不会把刚写到一半的会话误当成完整事实。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>持久化读取必须考虑并发写入，不是简单 readFile 一次。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/index.ts#L1-L26" target="_blank" rel="noreferrer">packages/session/session-persistence-jsonl/src/index.ts:1–26 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/session/session-persistence-jsonl/src/index.ts:239–303</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/index.ts#L239-L303" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  239    /**
+  176      /**
+  177       * Allow a listener to replace content in the DURABLE LOG COPY of one
+  178       * `run_code` sub-dispatch outcome before the bridge appends its
+  179       * `tool/code-dispatch` event. `next()` keeps the
+  180       * content unchanged; a listener may return replacement blocks (e.g. the
+  181       * spill policy&#39;s preview + locator for an oversized text result). Only the
+  182       * logged copy is affected — the program already received the complete
+  183       * value, and the model sees neither. A throwing listener is contained:
+  184       * the bridge falls back to logging the original settled content.
+  185       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent&#39;s dispatches.
+  186       * @param dispatch - the parent execution, sub-call identity, and the settled content to log.
+  187       * @mode waterfall
+  188       */
+  189      &#39;tools/code-dispatch-log&#39;(this: Scoped&lt;ToolRuntime&gt;, dispatch: CodeDispatchLog, next: () =&gt; Promise&lt;ContentBlock[]&gt;): Promise&lt;ContentBlock[]&gt;
+  190      /**
+  191       * Observe the frozen, lossless-JSON final outcome. Listener failures are contained.
+  192       * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): keyed by `exec.agent`.
+  193       * @param exec - the execution object that traversed the pipeline.
+  194       * @param result - a deep-frozen snapshot of the final returned result.
+  195       * @mode emit
+  196       */
+  197      &#39;tools/result&#39;(this: Scoped&lt;ToolRuntime&gt;, exec: Readonly&lt;ToolExecution&gt;, result: Readonly&lt;ToolExecutionResult&gt;): undefined
+  198      /**
+  199       * A tool was registered or unregistered, or a scoped restriction changed
+  200       * (the available tool set changed — possibly for one scope only). An
+  201       * UNFILTERED registry-subject notification, deliberately not scope-filtered
+  202       * dispatch: a global change concerns every agent&#39;s next assembly, so a
+  203       * scoped listener subscribing here sees every change, not just its own
+  204       * scope&#39;s.
+  205       * @mode emit
+  206       */
+  207      &#39;tools/change&#39;(): void
+  208    }
+  209  }
+  210
+  211  /** Tool-owned canonical output contract used after the body returns a JSON value. */
+  212  export interface ToolOutputDefinition {
+  213    /** Raw supported JSON Schema enforced against every successful canonical value. */
+  214    readonly schema: JsonSchemaNode
+  215    /** Pure projection from validated arguments and value to Native/model content. */
+  216    render(args: unknown, value: JsonValue): ContentBlock[]
+  217    /** Pure replayable presentation projection, computed only for top-level calls. */
+  218    presentationMeta?(args: unknown, value: JsonValue): JsonValue
+  219  }
+  220
+  221  /** A registered tool: its schema plus the execution function. */
+  222  export interface ToolDefinition extends ToolSchema {
+  223    /** Mandatory canonical output declaration. */
+  224    readonly output: ToolOutputDefinition
+  225    /**
+  226     * Run one accepted call and return only its canonical lossless-JSON value.
+  227     * Async work must observe or forward `exec.signal` and settle only after its
+  228     * owned work reaches quiescence. The registry preserves caller cancellation
+  229     * through around-dispatch signal replacement and does not abandon this
+  230     * promise, but it cannot hard-kill same-process code.
+  231     * @param args - losslessly snapshotted, frozen model arguments.
+  232     * @param exec - execution identity, cancellation signal, and context deferral.
+  233     * @returns the canonical value declared by `output.schema`.
+  234     */
+  235    execute(args: unknown, exec: ToolRunContext): Promise&lt;unknown&gt;
+  236    /**
+  237     * Synchronous last-mile transform for model-facing content. The registry
+  238     * snapshots this callback when execution starts and invokes it exactly once
+  239     * for every normalized outcome, including pipeline failures that bypass
+  240     * `tools/post-execute`, immediately before lossless materialization.
+  241     * Returning `undefined` preserves the content; every other result field
+  242     * remains registry-owned. The callback must be total and must not throw.
+  243     * @param exec - immutable execution identity and arguments.
+  244     * @param result - complete normalized outcome before materialization.
+  245     * @returns replacement content, or `undefined` to preserve it.
+  246     */
+  247    finalizeContent?(exec: Readonly&lt;ToolExecution&gt;, result: Readonly&lt;ToolExecutionResult&gt;): ContentBlock[] | undefined</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-observability"><div class="chapter-rule"><span>08</span></div><div class="chapter-kicker">DIMENSION · OBSERVABILITY</div><h2>观测、日志与回放</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-observability-001" data-finding-dimension="observability"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>observability</span></div><h3>01 · JSONL 持久化用稳定 stat/read 循环避免 torn read</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>readStableFile 在 readFile 前后比较 fileRevision，若 writer 在读期间追加就重试；readRaw 还能保留原始 JSONL 文本和压缩 frame。</p></section><section><span>白话解释</span><p>恢复时不会把刚写到一半的会话误当成完整事实。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>持久化读取必须考虑并发写入，不是简单 readFile 一次。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>239–270</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>271–303</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/session/session-persistence-jsonl/src/index.ts:239–303</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/index.ts#L239-L303" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  239    /**
   240     * Read a session&#39;s stored artifact text verbatim: the durable file bytes
   241     * decoded from this backend&#39;s physical encoding (complete zstd frames
   242     * concatenated, or UTF-8 plaintext). The content is the exact JSONL text the
@@ -651,7 +1663,78 @@
   300        signal?.throwIfAborted()
   301        const after = fileRevision(await stat(path, { bigint: true }))
   302        if (before === after) return { buffer, revision: after }
-  303      }</code></pre></div></div></article><article class="finding-card" id="dsh-observability-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>observability</span></div><h3>02 · 持久事件与实时事件分层，回放和在线控制不混用</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 把 session events 定义为 durable facts，把 agent/* 定义为 live coordination，把 capability events 定义为 policy/adapters 的 extension point。</p></section><section><span>白话解释</span><p>回放用黑匣子，实时控制用对讲机，两者不能拿同一条消息互相替代。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>观测系统要明确哪些数据可恢复、哪些只在当前进程有效。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/index.ts#L1-L26" target="_blank" rel="noreferrer">packages/session/session-persistence-jsonl/src/index.ts:1–26 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:67–95</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L67-L95" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   67  ```text
+  303      }
+  304    }
+  305
+  306    /**
+  307     * Read a stored prefix and convert torn-tail state to the opaque marker the
+  308     * coordinator can round-trip without knowing the physical encoding.
+  309     */
+  310    private async readPrefix(
+  311      path: string,
+  312      expectedId?: SessionId,
+  313      signal?: AbortSignal,
+  314    ): Promise&lt;StoredPrefix&lt;JsonlTornMarker&gt;&gt; {
+  315      const { buffer, revision } = await this.readStableFile(path, signal)
+  316      let prefix: Omit&lt;StoredPrefix&lt;JsonlTornMarker&gt;, &#39;revision&#39;&gt;
+  317      try {
+  318        if (this.compression === &#39;zstd&#39;) {
+  319          prefix = await this.readZstdPrefix(buffer, signal)
+  320        } else {
+  321          signal?.throwIfAborted()
+  322          const { meta, events, committedBytes } = scanLog(buffer)
+  323          signal?.throwIfAborted()
+  324          prefix = {
+  325            meta,
+  326            events,
+  327            ...committedBytes &lt; buffer.byteLength
+  328              ? { tornMarker: { truncateTo: committedBytes, recoveredEvents: [] } }
+  329              : {},
+  330          }
+  331        }
+  332      } catch (error: unknown) {
+  333        // A parse-time format refusal predates any SessionHeader, so the
+  334        // coordinator&#39;s locate-based enrichment cannot run; attach the artifact
+  335        // this read actually refused.
+  336        if (error instanceof SessionFormatUnsupportedError &amp;&amp; error.location === undefined) {
+  337          throw new SessionFormatUnsupportedError(`${error.message} (raw log: ${path})`, { kind: &#39;jsonl&#39;, path })
+  338        }
+  339        throw error
+  340      }
+  341      signal?.throwIfAborted()
+  342      await this.assertStoredIdentity(path, prefix.meta, expectedId, signal)
+  343      signal?.throwIfAborted()
+  344      return { ...prefix, revision }
+  345    }
+  346
+  347    /** Decode complete frames and retain complete JSONL records from a torn final frame. */
+  348    private async readZstdPrefix(
+  349      buffer: Buffer,
+  350      signal?: AbortSignal,
+  351    ): Promise&lt;Omit&lt;StoredPrefix&lt;JsonlTornMarker&gt;, &#39;revision&#39;&gt;&gt; {
+  352      signal?.throwIfAborted()
+  353      const { frames, tornStart } = scanZstdFrames(buffer)
+  354      signal?.throwIfAborted()
+  355      if (frames.length === 0) throw new Error(&#39;empty or header-less Zstandard session log&#39;)
+  356
+  357      const decoder = createZstdFrameDecoder()
+  358      let yieldDeadline = performance.now() + ZSTD_DECODE_YIELD_INTERVAL_MS
+  359      try {
+  360        const decodedFrames = decoder.decode(buffer, frames)
+  361        signal?.throwIfAborted()
+  362        const headerFrame = decodedFrames.next()
+  363        signal?.throwIfAborted()
+  364        /* v8 ignore next -- a non-empty structural frame list makes the decoder yield its first frame or throw. */
+  365        if (headerFrame.done) throw new Error(&#39;empty or header-less Zstandard session log&#39;)
+  366        assertZstdHeaderFrame(headerFrame.value)
+  367        const scanner = new SessionLogScanner(headerFrame.value)
+  368
+  369        let remainingFrames = frames.length - 1
+  370        for (const plaintext of decodedFrames) {
+  371          signal?.throwIfAborted()
+  372          scanner.write(plaintext)
+  373          remainingFrames -= 1
+  374          if (remainingFrames &gt; 0 &amp;&amp; performance.now() &gt;= yieldDeadline) {</code></pre></div></div></article><article class="finding-card" id="dsh-observability-002" data-finding-dimension="observability"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>observability</span></div><h3>02 · 持久事件与实时事件分层，回放和在线控制不混用</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 把 session events 定义为 durable facts，把 agent/* 定义为 live coordination，把 capability events 定义为 policy/adapters 的 extension point。</p></section><section><span>白话解释</span><p>回放用黑匣子，实时控制用对讲机，两者不能拿同一条消息互相替代。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>观测系统要明确哪些数据可恢复、哪些只在当前进程有效。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>67–80</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>81–95</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:67–95</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L67-L95" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   67  ```text
    68  turn/start
    69    claim next-step input plus one queued message
    70    assemble prompt sections + tool schemas
@@ -679,7 +1762,42 @@
    92  ## Session log
    93
    94  The session log is the source of the context the model sees. `deriveMessages()` projects model history from it, and raw `assistant/chunk` events preserve replay and UI fidelity. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
-   95</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-collaboration"><div class="chapter-rule"><span>09</span></div><div class="chapter-kicker">DIMENSION · COLLABORATION</div><h2>协作与子 Agent</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-collaboration-001" data-finding-dimension="collaboration"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>01 · 子 Agent 有独立 session、descriptor 和 depth</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>subagent 包围绕 child-agent、descriptor、delegation depth、lifecycle 和 run settlement 组织，子 Agent 的结果从自己的事件后缀提取。</p></section><section><span>白话解释</span><p>子 Agent 不是在主提示里假装成另一个角色，而是另开一本可恢复的工作账。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>委派要有独立上下文、生命周期、取消和结算，而不只是再发一次 prompt。</p></section></div><div class="finding-code"><div class="finding-code-head"><span>packages/subagent/subagent/src/child-agent.ts:1–120</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent/src/child-agent.ts#L1-L120" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  /**
+   95
+   96  **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
+   97
+   98  ## Capability seams
+   99
+  100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
+  101
+  102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
+  103
+  104  ## Where new behavior goes
+  105
+  106  New behavior attaches to a documented extension point. Changing the loop itself updates this map.
+  107
+  108  | Goal | Mechanism |
+  109  |---|---|
+  110  | Add a model provider | register its adapter on `ctx.llm` |
+  111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |
+  119  | Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |
+  120  | Add model-facing context | call `agent.inject()`; it lands in the next admitted request |
+  121  | Add UI or editor integration | drive `ctx.agents` and render from `session/event` |
+  122  | Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |
+  123  | Add durable session state | extend `SessionEventMap`; render and replay from the log |
+  124  | Generate session titles | register the sole `ctx.sessionTitle` provider |
+  125  | Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |
+  126  | Fork a live session | `ctx.sessions.fork(source, boundary?, childSessionId?)` |
+  127  | Scope a registration to one agent | use that agent&#39;s `agent.ctx` |
+  128
+  129  The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [Chat nodes](cookbook/adding-a-conversation-node.md).
+  130</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-collaboration"><div class="chapter-rule"><span>09</span></div><div class="chapter-kicker">DIMENSION · COLLABORATION</div><h2>协作与子 Agent</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-collaboration-001" data-finding-dimension="collaboration"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>01 · 子 Agent 有独立 session、descriptor 和 depth</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>subagent 包围绕 child-agent、descriptor、delegation depth、lifecycle 和 run settlement 组织，子 Agent 的结果从自己的事件后缀提取。</p></section><section><span>白话解释</span><p>子 Agent 不是在主提示里假装成另一个角色，而是另开一本可恢复的工作账。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>委派要有独立上下文、生命周期、取消和结算，而不只是再发一次 prompt。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–59</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>60–120</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/subagent/subagent/src/child-agent.ts:1–120</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent/src/child-agent.ts#L1-L120" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  /**
     2   * Shared in-process child composition: the delegation-depth budget, the
     3   * durable session metadata, the resolved child `AgentOptions`, the delegated
     4   * policy seed, and the scoped setup a child agent needs. Both the one-shot
@@ -798,7 +1916,78 @@
   117      delegationDepth: childDepth,
   118      ...lineageSeedLength &gt; 0 ? { seedLength: lineageSeedLength } : {},
   119    }
-  120  }</code></pre></div></div></article><article class="finding-card" id="dsh-collaboration-002" data-finding-dimension="collaboration"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>02 · 子 Agent 终态从自己的事件事实推导</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>lifecycle 的 epochStopReason 根据 child session 的 turn/end、droppedUnrun、error、aborted 和 blocked 事件推导 completed/error/refusal/aborted。</p></section><section><span>白话解释</span><p>拆除进程成功不代表任务成功，系统会看孩子到底做到了什么。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>协作结果必须以任务事实为准，而不是以线程退出码为准。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent/src/child-agent.ts#L1-L24" target="_blank" rel="noreferrer">packages/subagent/subagent/src/child-agent.ts:1–24 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/subagent/subagent/src/lifecycle.ts:220–258</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent/src/lifecycle.ts#L220-L258" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  220   * Why this child&#39;s epoch ended, for the terminal lifecycle edge and the
+  120  }
+  121
+  122  /** The scoped composition a child agent&#39;s creation window applies. */
+  123  export interface ChildComposition {
+  124    /** Per-child persona shadowing the deployment persona. */
+  125    readonly persona?: string | undefined
+  126    /** Per-child tool scoping. */
+  127    readonly toolFilter?: ToolRestriction | undefined
+  128  }
+  129
+  130  /**
+  131   * Model-facing delegation-scope statement for every in-process child. A
+  132   * runtime-context contribution rather than a system-prompt section, so the
+  133   * deployment&#39;s system prompt stays uniform across parents and children.
+  134   */
+  135  export const SUBAGENT_DELEGATION_CONTEXT
+  136    = &#39;You are a delegated subagent: your permission scope was fixed when you were started and cannot be &#39;
+  137      + &#39;widened from inside this session — operations that require approval are rejected automatically. &#39;
+  138      + &#39;When the task needs access beyond that scope, do not retry the denied operation; state the &#39;
+  139      + &#39;limitation in your reply so the delegating agent can handle it.&#39;
+  140
+  141  /**
+  142   * Compose one child inside its creation window: join its parent&#39;s preset,
+  143   * register the fixed delegation-scope statement, then apply the child&#39;s own
+  144   * shadowing persona section and tool restriction, all owned by the child&#39;s
+  145   * scope and therefore invisible to its parent and siblings. Creation and cold
+  146   * resume both pass through here.
+  147   *
+  148   * The join comes first and the child&#39;s own registrations second, which is the
+  149   * order the layering already implies — the nearest scope wins a name, and a
+  150   * per-child restriction intersects with everything its chain admits — but
+  151   * stating it here keeps the two steps from being read as independent.
+  152   *
+  153   * The join and the per-child registrations live in ONE call because a child
+  154   * composed without the join is exactly the defect this function exists to
+  155   * prevent: with every model-facing row on the agent plane, a child that joins
+  156   * no preset sees an empty tool registry and none of its parent&#39;s prompt
+  157   * sections. Taking the parent as a parameter is what makes that omission
+  158   * unrepresentable at the call sites.
+  159   * @param childCtx - the child agent&#39;s scoped creation context.
+  160   * @param parent - the delegating parent whose composition the child joins.
+  161   * @param composition - the per-child persona and tool filter to install.
+  162   */
+  163  export function applyChildComposition(
+  164    childCtx: Context,
+  165    parent: Agent,
+  166    composition: ChildComposition,
+  167  ): void {
+  168    childCtx.get(&#39;agentPresets&#39;)?.composeFrom(childCtx, parent.ctx)
+  169    // Order 120: after the sandbox:policy (110) and approval:policy (115) sentences.
+  170    childCtx.systemPrompt.context({ name: &#39;subagent:delegation&#39;, order: 120, text: SUBAGENT_DELEGATION_CONTEXT })
+  171    if (composition.persona !== undefined) {
+  172      childCtx.systemPrompt.section({ name: &#39;deployment:persona&#39;, order: 0, text: composition.persona })
+  173    }
+  174    if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter)
+  175  }
+  176
+  177  /** Policy seeded onto a child session&#39;s log at the delegation boundary. */
+  178  export interface DelegatedPolicyOverrides {
+  179    /** The parent session&#39;s explicit sandbox-mode override, or `undefined` without one. */
+  180    readonly sandboxMode: SandboxMode | undefined
+  181    /**
+  182     * `&#39;never&#39;` whenever the approval capability is composed, `undefined`
+  183     * otherwise: a delegated child acts only within the sandbox scope fixed at
+  184     * delegation, so its asks are rejected deterministically.
+  185     */
+  186    readonly approvalPolicy: &#39;never&#39; | undefined
+  187  }
+  188
+  189  /**
+  190   * Capture the policy to seed into one delegation. Call synchronously before
+  191   * the child start&#39;s first await: a later parent switch belongs to the</code></pre></div></div></article><article class="finding-card" id="dsh-collaboration-002" data-finding-dimension="collaboration"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>02 · 子 Agent 终态从自己的事件事实推导</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>lifecycle 的 epochStopReason 根据 child session 的 turn/end、droppedUnrun、error、aborted 和 blocked 事件推导 completed/error/refusal/aborted。</p></section><section><span>白话解释</span><p>拆除进程成功不代表任务成功，系统会看孩子到底做到了什么。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>协作结果必须以任务事实为准，而不是以线程退出码为准。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>220–238</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>239–258</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/subagent/subagent/src/lifecycle.ts:220–258</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent/src/lifecycle.ts#L220-L258" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  220   * Why this child&#39;s epoch ended, for the terminal lifecycle edge and the
   221   * manager&#39;s own parent delivery. The child&#39;s own log is authoritative:
   222   * teardown succeeding says nothing about whether the model errored, hit its
   223   * token ceiling, or was cancelled, so deriving the reason from disposal would
@@ -836,7 +2025,19 @@
   255       * backend that adds a variant; treating an unnameable reason as success would
   256       * report failed work as completed. */
   257      default:
-  258        return &#39;error&#39;</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-instructions"><div class="chapter-rule"><span>10</span></div><div class="chapter-kicker">DIMENSION · INSTRUCTIONS</div><h2>全部指令与扩展面</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>instructions</span></div><h3>01 · system-prompt 有严格的 section 和 toolOrder 规则</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>system-prompt 对变量、重复 toolOrder、&lt;unlisted-tools&gt; 和未知工具名进行校验，再按稳定顺序渲染 sections。</p></section><section><span>白话解释</span><p>提示词和工具目录不是随便拼字符串，顺序和未知项都会被拒绝。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>指令系统要能 fail loudly，否则模型看到的能力集合会悄悄漂移。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L13-L42" target="_blank" rel="noreferrer">packages/core/system-prompt/src/index.ts:13–42 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/system-prompt/src/index.ts:142–182</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L142-L182" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  142  /**
+  258        return &#39;error&#39;
+  259    }
+  260  }
+  261
+  262  /** Render any listener-thrown value without letting coercion escape containment. */
+  263  function renderThrown(value: unknown): string {
+  264    try {
+  265      return value instanceof Error ? `${value.name}: ${value.message}` : String(value)
+  266    } catch {
+  267      return &#39;&lt;unrenderable thrown value&gt;&#39;
+  268    }
+  269  }
+  270</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-instructions"><div class="chapter-rule"><span>10</span></div><div class="chapter-kicker">DIMENSION · INSTRUCTIONS</div><h2>全部指令与扩展面</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L2</b><span>fact</span><span>instructions</span></div><h3>01 · system-prompt 有严格的 section 和 toolOrder 规则</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>system-prompt 对变量、重复 toolOrder、&lt;unlisted-tools&gt; 和未知工具名进行校验，再按稳定顺序渲染 sections。</p></section><section><span>白话解释</span><p>提示词和工具目录不是随便拼字符串，顺序和未知项都会被拒绝。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>指令系统要能 fail loudly，否则模型看到的能力集合会悄悄漂移。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>142–161</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>162–182</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/system-prompt/src/index.ts:142–182</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L142-L182" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  142  /**
   143   * Validate duplicate names and the required {@link TOOL_ORDER_REST} marker.
   144   * Registered names are checked later because plugins have not loaded yet.
   145   */
@@ -876,7 +2077,78 @@
   179
   180  /** Lexicographic (code-unit) name comparison — locale-independent, so the order is identical on every machine. */
   181  function compareToolNames(a: ToolSchema, b: ToolSchema): number {
-  182    return a.name &lt; b.name ? -1 : a.name &gt; b.name ? 1 : 0</code></pre></div></div></article><article class="finding-card" id="dsh-instructions-002" data-finding-dimension="instructions"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>instructions</span></div><h3>02 · 配置通过 profile、bundle 和 patch 分层覆盖</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 规定 bundle 顺序、profile patch、home patch 和 --patch overlay 的覆盖顺序，用户可以 dump-config 查看最终运行树。</p></section><section><span>白话解释</span><p>同一套源码在 web、headless、企业 profile 中可以换不同能力，但必须能看到最后到底装了什么。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署时应把 resolved config 当作可审计产物。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/system-prompt/src/index.ts#L13-L42" target="_blank" rel="noreferrer">packages/core/system-prompt/src/index.ts:13–42 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:17–47</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L47" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   17  A running `dsh` is a plugin tree composed at boot from ordered layers.
+  182    return a.name &lt; b.name ? -1 : a.name &gt; b.name ? 1 : 0
+  183  }
+  184
+  185  /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.persona} for its contract). */
+  186  export interface Config {
+  187    /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
+  188    includeHarnessIdentity?: boolean
+  189    /** Include dynamic runtime-context snapshots in model history (default true). */
+  190    includeRuntimeContext?: boolean
+  191    /**
+  192     * Deployment-wide order-0 persona template. A scoped section named
+  193     * `deployment:persona` shadows it; `{{variable}}` references are strict.
+  194     */
+  195    persona?: string
+  196    /**
+  197     * Model-facing tool names in order, with {@link TOOL_ORDER_REST} exactly once.
+  198     * Invalid fields fail at load and unknown names fail at assembly; known names
+  199     * hidden in one scope may be absent there. Omitted means lexicographic order.
+  200     */
+  201    toolOrder?: string[]
+  202  }
+  203
+  204  /**
+  205   * Interpolate strict `{{variable}}` references, drop empty sections, and join
+  206   * the rest with blank lines. Malformed, unknown, or undefined references throw;
+  207   * a lone `{{` without any later `}}` is literal prose, and substituted values
+  208   * are not scanned again.
+  209   * @param assembly - the assembly whose sections and variables to render.
+  210   * @returns the rendered prompt, or `&#39;&#39;` when all sections are empty.
+  211   */
+  212  export function renderPrompt(assembly: PromptAssembly): string {
+  213    return assembly.sections
+  214      .map(section =&gt; interpolate(section, assembly.variables, &#39;section&#39;))
+  215      .filter(text =&gt; text.length &gt; 0)
+  216      .join(&#39;\n\n&#39;)
+  217  }
+  218
+  219  /**
+  220   * Render the complete dynamic context snapshot.
+  221   * @param assembly - the assembly whose contexts and variables to render.
+  222   * @returns the current full snapshot, or `&#39;&#39;` when no context is active.
+  223   */
+  224  export function renderContextSnapshot(assembly: PromptAssembly): string {
+  225    return joinContextSections(renderContextSections(assembly))
+  226  }
+  227
+  228  /**
+  229   * The model-facing snapshot text for an already-rendered section list.
+  230   *
+  231   * A caller that also needs the sections renders them once and joins here, so a
+  232   * request does not interpolate every context twice.
+  233   * @param sections - sections from {@link renderContextSections}.
+  234   * @returns the current full snapshot, or `&#39;&#39;` when no context is active.
+  235   */
+  236  export function joinContextSections(sections: readonly ContextSnapshotSection[]): string {
+  237    const body = sections.map(section =&gt; section.text).join(&#39;\n\n&#39;)
+  238    if (body.length === 0) return &#39;&#39;
+  239    return `Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\n${body}`
+  240  }
+  241
+  242  /**
+  243   * The same snapshot, kept as the named contributions it was assembled from.
+  244   *
+  245   * {@link renderContextSnapshot} joins these for the model; a consumer that
+  246   * presents the snapshot uses them to attribute each part to the subsystem that
+  247   * contributed it, without re-splitting the joined prose.
+  248   * @param assembly - the assembly whose contexts and variables to render.
+  249   * @returns one entry per contributing context that rendered to non-empty text.
+  250   */
+  251  export function renderContextSections(assembly: PromptAssembly): ContextSnapshotSection[] {
+  252    return assembly.contexts
+  253      .map(context =&gt; ({ name: context.name, text: interpolate(context, assembly.variables, &#39;context&#39;) }))</code></pre></div></div></article><article class="finding-card" id="dsh-instructions-002" data-finding-dimension="instructions"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L4</b><span>fact</span><span>instructions</span></div><h3>02 · 配置通过 profile、bundle 和 patch 分层覆盖</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>architecture.md 规定 bundle 顺序、profile patch、home patch 和 --patch overlay 的覆盖顺序，用户可以 dump-config 查看最终运行树。</p></section><section><span>白话解释</span><p>同一套源码在 web、headless、企业 profile 中可以换不同能力，但必须能看到最后到底装了什么。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>部署时应把 resolved config 当作可审计产物。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>17–31</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>32–47</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/architecture.md:17–47</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L47" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   17  A running `dsh` is a plugin tree composed at boot from ordered layers.
    18
    19  A **profile** is a named composition stored in the Harness home. It lists the bundles it stacks, holds any out-of-tree plugins it installs, and keeps the user&#39;s own `cordis.patch.yml`. `web` and `headless` ship as templates.
    20
@@ -906,7 +2178,78 @@
    44  |---|---|---|
    45  | [`core/session`](subsystems/session.md) | The append-only `SessionEvent` log and in-memory store | `ctx.sessions` |
    46  | [`core/system-prompt`](subsystems/system-prompt.md) | Prompt-section and tool-schema assembly | `ctx.systemPrompt` |
-   47  | [`core/tools`](subsystems/tools.md) | The scoped tool registry and guarded execution pipeline | `ctx.tools` |</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-recovery"><div class="chapter-rule"><span>11</span></div><div class="chapter-kicker">DIMENSION · RECOVERY</div><h2>恢复、测试与取舍</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-recovery-001" data-finding-dimension="recovery"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>recovery</span></div><h3>01 · 上下文压缩在 pre-step 和 canonical overflow 两个时点触发</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>agent-lifecycle 文档说明 compaction-basic 在 agent/pre-step 处理压力，并在 agent/request-error 处理 canonical context overflow；失败 step 先闭合，再决定是否开新 retry turn。</p></section><section><span>白话解释</span><p>压缩不是把历史突然删掉，而是在一次失败的 step 收尾后重新组织请求。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>压缩、重试和事件闭合必须有明确先后，否则会产生孤儿 tool result。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/tests/loop.spec.ts#L1-L29" target="_blank" rel="noreferrer">packages/core/agent-loop/tests/loop.spec.ts:1–29 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>docs/agent-lifecycle.md:73–95</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/agent-lifecycle.md#L73-L95" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   73
+   47  | [`core/tools`](subsystems/tools.md) | The scoped tool registry and guarded execution pipeline | `ctx.tools` |
+   48  | [`core/agent`](subsystems/core.md) | The `Agent` interface, live registry, and `agent/*` events | `ctx.agents` |
+   49  | [`core/agent-loop`](subsystems/core.md) | The default driver implementing that interface | `ctx.agentLoop` |
+   50  | [`core/scope`](subsystems/scope.md) | The per-agent scoped-registration primitive | library, no key |
+   51  | [`llm/llm`](subsystems/llm-streaming.md) | Message and stream vocabulary plus the adapter seam | `ctx.llm` |
+   52
+   53  ## Events
+   54
+   55  Events are the extension points, and picking the right domain is the first decision in most changes.
+   56
+   57  - **Session events** are durable facts appended to the log and broadcast through `session/event`. Use one when the fact must survive a reload.
+   58  - **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.
+   59  - **Capability events** attach policy and adapters to a seam (`fs/*`, `tools/*`, `telemetry/*`) without importing the loop.
+   60
+   61  The [event map](event-producer-consumer.md) lists every event&#39;s producers and consumers.
+   62
+   63  ## Turn flow
+   64
+   65  A **step** is one model request plus the tools it calls. A **turn** is zero or more steps: it opens before its first input is claimed and closes once nothing is owed.
+   66
+   67  ```text
+   68  turn/start
+   69    claim next-step input plus one queued message
+   70    assemble prompt sections + tool schemas
+   71    -&gt; agent/pre-step                   reject | enter(messages)
+   72       reject, or a first enter rewritten empty -&gt; close the turn with no step
+   73       step/start
+   74       append entered messages as user/message
+   75       derive model history from the log
+   76       agent/request -&gt; llm/stream -&gt; assistant/chunk* -&gt; assistant/message
+   77       tool/call* -&gt; tools/pre-execute -&gt; tools/execute -&gt; tools/post-execute -&gt; tool/result*
+   78       step/end
+   79       tools owe another request, or next-step input arrived -&gt; claim -&gt; next step
+   80    -&gt; agent/turn-stopping
+   81  turn/end
+   82  ```
+   83
+   84  `turn/*`, `step/*`, `user/message`, `assistant/*`, and `tool/*` are durable session events; the rest are live extension points across three domains. `agent/pre-step`, `agent/request`, `llm/stream`, and the three `tools/*` events are waterfalls, whose listeners must call `next()` to delegate; `agent/turn-stopping` is serial and has no `next()`.
+   85
+   86  Input reaches the driver through one inbox. Some messages wake it immediately; injected context waits in the inbox until another message does.
+   87
+   88  `agent/pre-step` decides what the model sees. Listeners may rewrite the claimed messages or reject them outright; a rejected or empty first claim still closes a durable turn that spent no step, so the log records the attempt. Each step reads the prompt sections and tool schemas that plugins registered.
+   89
+   90  Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
+   91
+   92  ## Session log
+   93
+   94  The session log is the source of the context the model sees. `deriveMessages()` projects model history from it, and raw `assistant/chunk` events preserve replay and UI fidelity. Fork, resume, transcripts, telemetry, and persistence all derive from this stream.
+   95
+   96  **Model-visible means logged.** Anything that reaches a model request must be reconstructable from the log, and a runtime invariant asserts it. This is why a new model-visible input requires a new session event: extend `SessionEventMap` and render from the log.
+   97
+   98  ## Capability seams
+   99
+  100  A **seam** is a swappable capability with three roles: a **Service Definition** declaring the interface, a **Service Provider** implementing it, and a **Consumer** using it, commonly a model-facing tool. A package may combine roles, but one role alone is not a seam; adding a capability means designing all three ([capability graph](capability-seams.md)).
+  101
+  102  Seams are why one provider swap changes the whole product. Filesystem and subprocess providers share one execution world, so pointing them at a remote sandbox moves Bash, PTY, and LSP with them, with no provider forks. [Subagent providers](subsystems/subagent.md) vary just as widely behind one interface, from a fresh child agent to a delegated turn in another product.
+  103
+  104  ## Where new behavior goes
+  105
+  106  New behavior attaches to a documented extension point. Changing the loop itself updates this map.
+  107
+  108  | Goal | Mechanism |
+  109  |---|---|
+  110  | Add a model provider | register its adapter on `ctx.llm` |
+  111  | Add a model-facing capability | register on `ctx.tools`; its schema joins prompt assembly |
+  112  | Give one session a different capability set | compose an agent preset; a service row there needs an `isolate` realm |
+  113  | Add shell execution | register a `ctx.shell` backend; the local one spawns through `ctx.subprocess` |
+  114  | Add persistent terminal execution | register a `ctx.terminals` backend plus `dsh-tool-terminal` |
+  115  | Add a human command | register on `ctx.commands`; it dispatches without a model turn |
+  116  | Add background work | register on `ctx.jobs`; `job_*` tools collect or stop it |
+  117  | Add filesystem access or policy | register a `ctx.fs` provider or listen to `fs/*` events |
+  118  | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |</code></pre></div></div></article></section><section class="evidence-chapter" id="dim-recovery"><div class="chapter-rule"><span>11</span></div><div class="chapter-kicker">DIMENSION · RECOVERY</div><h2>恢复、测试与取舍</h2><p class="chapter-deck">2 条可定位结论；每条按事实 → 白话 → 工程影响 → 源码摘录展开。</p><article class="finding-card" id="dsh-recovery-001" data-finding-dimension="recovery"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>recovery</span></div><h3>01 · 上下文压缩在 pre-step 和 canonical overflow 两个时点触发</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>agent-lifecycle 文档说明 compaction-basic 在 agent/pre-step 处理压力，并在 agent/request-error 处理 canonical context overflow；失败 step 先闭合，再决定是否开新 retry turn。</p></section><section><span>白话解释</span><p>压缩不是把历史突然删掉，而是在一次失败的 step 收尾后重新组织请求。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>压缩、重试和事件闭合必须有明确先后，否则会产生孤儿 tool result。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>73–83</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>84–95</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>docs/agent-lifecycle.md:73–95</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/agent-lifecycle.md#L73-L95" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   73
    74  The `assistant/message` event records every successful provider call, including content-less and `max-tokens` finishes. Empty content stays out of derived history, while the durable event keeps usage and `sourceEventSeqs` listing the exact `assistant/chunk` events, including an explicit empty list.
    75
    76  `dsh-compaction-basic` uses `agent/pre-step` for pressure before request derivation and `agent/request-error` only for canonical context overflow. Once either trigger qualifies, optional tool-result pruning runs before summary selection. Recovery works between the closed failed step and failed turn close, and opens a fresh retry turn only when pruning or summarization advances the surface replacement generation; otherwise the original request error remains authoritative.
@@ -916,7 +2259,7 @@
    80  SDK users that need replayable transcript data should consume `session/event`; `agent/*` is the live coordination API for queue/status, prompt interception, request construction, steering, continuation, and errors.
    81
    82  Maintenance mode: curated Mermaid sequence; exact event signatures live in the generated Cordis catalog.
-   83</code></pre></div></div></article><article class="finding-card" id="dsh-recovery-002" data-finding-dimension="recovery"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>recovery</span></div><h3>02 · JSONL 记录版本、父会话、delegationDepth 与压缩编码</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>HeaderLine 包含 version、id、cwd、parentSession、origin、delegationDepth、agentPreset；logPath 再根据 zstd/none 选择物理文件后缀。</p></section><section><span>白话解释</span><p>恢复时先知道这本账是谁、从哪来、属于哪个委派深度，再读后续事件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>会话文件头应是可验证的迁移协议，而不只是几个方便调试的字段。</p></section><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent-loop/tests/loop.spec.ts#L1-L29" target="_blank" rel="noreferrer">packages/core/agent-loop/tests/loop.spec.ts:1–29 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/session/session-persistence-jsonl/src/format.ts:29–85</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/format.ts#L29-L85" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   29   * The first JSONL record of a session artifact: the immutable
+   83</code></pre></div></div></article><article class="finding-card" id="dsh-recovery-002" data-finding-dimension="recovery"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>recovery</span></div><h3>02 · JSONL 记录版本、父会话、delegationDepth 与压缩编码</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>HeaderLine 包含 version、id、cwd、parentSession、origin、delegationDepth、agentPreset；logPath 再根据 zstd/none 选择物理文件后缀。</p></section><section><span>白话解释</span><p>恢复时先知道这本账是谁、从哪来、属于哪个委派深度，再读后续事件。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>会话文件头应是可验证的迁移协议，而不只是几个方便调试的字段。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>29–56</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>57–85</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div></div><div class="finding-code"><div class="finding-code-head"><span>packages/session/session-persistence-jsonl/src/format.ts:29–85</span><a href="https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/src/format.ts#L29-L85" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   29   * The first JSONL record of a session artifact: the immutable
    30   * {@link SessionHeader} tagged as a `session` record so a reader can tell it
    31   * apart from an event line.
    32   */
@@ -972,4 +2315,75 @@
    82      ...line.origin !== undefined ? { origin: line.origin } : {},
    83      delegationDepth: line.delegationDepth,
    84      ...line.agentPreset !== undefined ? { agentPreset: line.agentPreset } : {},
-   85    }</code></pre></div></div></article></section><footer class="report-footer"><span>deepseek-ai/deepseek-harness · 47f943859bef60e4160492346772ded9b24f765a</span><nav><a href="../../../zh/index.html">回到总览</a><a href="tutorial/index.html">进入教程</a></nav></footer></main></div><script src="../../../assets/harness.js"></script></body></html>
+   85    }
+   86  }
+   87
+   88  /** Type guard: a parsed first line is a well-formed session header. */
+   89  function isHeaderLine(value: unknown): value is HeaderLine {
+   90    return (
+   91      typeof value === &#39;object&#39; &amp;&amp; value !== null
+   92      &amp;&amp; (value as { type?: unknown }).type === &#39;session&#39;
+   93      &amp;&amp; typeof (value as { version?: unknown }).version === &#39;number&#39;
+   94      &amp;&amp; typeof (value as { id?: unknown }).id === &#39;string&#39;
+   95      &amp;&amp; typeof (value as { createdAt?: unknown }).createdAt === &#39;number&#39;
+   96      &amp;&amp; Number.isSafeInteger((value as { createdAt: number }).createdAt)
+   97      &amp;&amp; (value as { createdAt: number }).createdAt &gt;= 0
+   98      &amp;&amp; !Object.is((value as { createdAt: number }).createdAt, -0)
+   99      &amp;&amp; typeof (value as { delegationDepth?: unknown }).delegationDepth === &#39;number&#39;
+  100      &amp;&amp; Number.isSafeInteger((value as { delegationDepth: number }).delegationDepth)
+  101      &amp;&amp; (value as { delegationDepth: number }).delegationDepth &gt;= 0
+  102      &amp;&amp; !Object.is((value as { delegationDepth: number }).delegationDepth, -0)
+  103      &amp;&amp; ((value as { origin?: unknown }).origin === undefined
+  104        || (value as { origin?: unknown }).origin === &#39;subagent&#39;)
+  105      &amp;&amp; ((value as { agentPreset?: unknown }).agentPreset === undefined
+  106        || typeof (value as { agentPreset?: unknown }).agentPreset === &#39;string&#39;)
+  107    )
+  108  }
+  109
+  110  /**
+  111   * Encode an arbitrary string as a single safe path segment, injectively over ALL JS (UTF-16)
+  112   * strings — including lone surrogates. A {@link SessionId} is an unvalidated branded string,
+  113   * so this neutralizes `../`, absolute paths, NUL, and separators before any filesystem use.
+  114   * Safe code units remain literal; every other unit, including `~`, becomes
+  115   * `~XXXX`. Operating on code units preserves lone surrogates, while special-
+  116   * casing `.` and `..` prevents traversal by an otherwise safe whole segment.
+  117   *
+  118   * @param raw - the string to encode; must be non-empty (throws on `&#39;&#39;`).
+  119   * @returns the escaped single path segment, decodable back to `raw`.
+  120   */
+  121  export function encodeSegment(raw: string): string {
+  122    if (raw.length === 0) throw new Error(&#39;cannot encode an empty path segment&#39;)
+  123    if (raw === &#39;.&#39;) return &#39;~002E&#39;
+  124    if (raw === &#39;..&#39;) return &#39;~002E~002E&#39;
+  125    let out = &#39;&#39;
+  126    for (let i = 0; i &lt; raw.length; i++) {
+  127      const code = raw.charCodeAt(i)
+  128      const ch = String.fromCharCode(code)
+  129      if (ch !== &#39;~&#39; &amp;&amp; /^[A-Za-z0-9._-]$/.test(ch)) {
+  130        out += ch
+  131      } else {
+  132        out += &#39;~&#39; + code.toString(16).toUpperCase().padStart(4, &#39;0&#39;)
+  133      }
+  134    }
+  135    return out
+  136  }
+  137
+  138  /**
+  139   * Build the readable directory key for a project path.
+  140   * Filesystem separators and drive separators become `-`; unsafe code units use
+  141   * the same `~XXXX` escape as session ids. The key is bounded for filesystem
+  142   * component limits. Separator replacement and truncation are intentionally
+  143   * lossy, following the common human-navigable project-directory convention.
+  144   * @param cwd - the session&#39;s project directory.
+  145   * @returns a single filesystem-safe project directory name.
+  146   */
+  147  export function projectKey(cwd: string): string {
+  148    if (cwd.length === 0) throw new Error(&#39;cannot encode an empty project path&#39;)
+  149    let readable = &#39;&#39;
+  150    let separatorRun = false
+  151    for (let i = 0; i &lt; cwd.length; i++) {
+  152      const code = cwd.charCodeAt(i)
+  153      const ch = String.fromCharCode(code)
+  154      if (ch === &#39;/&#39; || ch === &#39;\\&#39; || ch === &#39;:&#39;) {
+  155        if (!separatorRun) readable += &#39;-&#39;
+  156        separatorRun = true</code></pre></div></div></article></section><footer class="report-footer"><span>deepseek-ai/deepseek-harness · 47f943859bef60e4160492346772ded9b24f765a</span><nav><a href="../../../zh/index.html">回到总览</a><a href="tutorial/index.html">进入教程</a></nav></footer></main></div><script src="../../../assets/harness.js"></script></body></html>

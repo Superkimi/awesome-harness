@@ -1,1 +1,659 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="什么时候是工具，什么时候才是协作单元？"><title>DeepSeek-Reasonix · M09 · 协作：子 Agent 与工作流</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch09-collaboration.html">中</a><a href="../../en/tutorial/ch09-collaboration.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="active" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M09 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>协作：子 Agent 与工作流</h1><p class="lede">什么时候是工具，什么时候才是协作单元？</p><div class="chapter-meta"><span>第 9 / 10 章</span><span>3 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M09</span><b>DeepSeek-Reasonix · M09 · 协作：子 Agent 与工作流</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch09-collaboration.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch09-collaboration.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>真正协作像派工单：要有负责的人、边界、预算、取消方式和可验收的交付物。</p></div><h2>先回答本章问题</h2><p>什么时候是工具，什么时候才是协作单元？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-collab-001" data-finding-dimension="collaboration"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>01 · Planner 与 Executor 是两份独立 session，显式审批路线 fail-closed</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Coordinator 用 planner provider/session 做只读研究和结构化 plan，再把 plan handoff 给完整工具 Executor；两个 session 的 prefix 不互相污染。普通 plan-and-execute 在 planner 失败时可降级 executor-only，但 plan-only 或 plan-for-approval 缺 plan 时直接报错，避免 planner outage 变成未经批准的副作用。</p></section><section><span>白话解释</span><p>规划模型负责读和写计划，执行模型负责改东西；规划挂掉时，普通请求可继续，但“必须先批准”的路线不会偷偷绕过去。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>双模型不是简单串两个 API，而是要有独立上下文、路由决策和不同的失败语义。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/coordinator.go:36–81</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>Planner 只读、结构化 approval/ask/no_changes 契约。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-collab-002" data-finding-dimension="collaboration"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>02 · parallel_tasks 只允许读操作，最多 64 个并发请求并受 scheduler/depth 限制</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>parallel_tasks 工具被标记 ReadOnly/PlanModeSafe，拒绝空、单个或超过 64 个任务；每个 child 有独立 session、read-only registry、child depth、max steps、provider profile 和 nested event sink，并经 scheduler 获取读槽位，取消时 drain/wait 后聚合结果。</p></section><section><span>白话解释</span><p>它能同时派 64 个“查代码/查资料”的小工，但这些小工不能写文件，且仍要遵守并发和嵌套深度额度。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发 Agent 必须把任务输入上限、工具 allowlist、读写属性、预算、取消和结果聚合一起作为资源合同。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/parallel_tasks.go#L17-L65" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">internal/agent/coordinator.go:36–81 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/parallel_tasks.go:17–65</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/parallel_tasks.go#L17-L65" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>parallel_tasks 的只读/Plan-safe 定义和 schema。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-collab-003" data-finding-dimension="collaboration"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>03 · 子 Agent 复用父工具基座，但单独限制模型、深度、并发、沙箱和 transcript</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>boot 在所有内建/MCP 工具装配后创建 TaskTool，子 Agent 继承 parent registry 但剔除 task，使用 headless gate、独立 provider resolver、transcripts、MaxSubagentDepth、scheduler、workspace lease 和 bash sandbox contract；另外显式注册 parallel_tasks、fleet 与 read_only_task。</p></section><section><span>白话解释</span><p>子 Agent 不是复制一份全局进程；它们共享已经治理过的工具目录，却有自己的会话、额度和后台审批边界。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多 Agent 设计要把“共享能力”与“共享状态”分开，避免 child 绕过 parent 的安全设置或无限递归。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/boot/boot.go#L756-L779" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">internal/agent/coordinator.go:36–81 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/boot/boot.go:756–779</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/boot/boot.go#L756-L779" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>TaskTool 继承 registry、gate 与 provider resolver。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="DeepSeek-Reasonix capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch08-ecosystem.html">← 扩展：MCP、Skill、插件如何接入</a><a href="ch10-evidence.html">证据与取舍：把源码结论带回自研 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="什么时候是工具，什么时候才是协作单元？"><title>DeepSeek-Reasonix · M09 · 协作：子 Agent 与工作流</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch09-collaboration.html">中</a><a href="../../en/tutorial/ch09-collaboration.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="active" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M09 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>协作：子 Agent 与工作流</h1><p class="lede">什么时候是工具，什么时候才是协作单元？</p><div class="chapter-meta"><span>第 9 / 10 章</span><span>3 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M09</span><b>DeepSeek-Reasonix · M09 · 协作：子 Agent 与工作流</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch09-collaboration.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch09-collaboration.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>真正协作像派工单：要有负责的人、边界、预算、取消方式和可验收的交付物。</p></div><h2>先回答本章问题</h2><p>什么时候是工具，什么时候才是协作单元？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-collab-001" data-finding-dimension="collaboration"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>01 · Planner 与 Executor 是两份独立 session，显式审批路线 fail-closed</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>Coordinator 用 planner provider/session 做只读研究和结构化 plan，再把 plan handoff 给完整工具 Executor；两个 session 的 prefix 不互相污染。普通 plan-and-execute 在 planner 失败时可降级 executor-only，但 plan-only 或 plan-for-approval 缺 plan 时直接报错，避免 planner outage 变成未经批准的副作用。</p></section><section><span>白话解释</span><p>规划模型负责读和写计划，执行模型负责改东西；规划挂掉时，普通请求可继续，但“必须先批准”的路线不会偷偷绕过去。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>双模型不是简单串两个 API，而是要有独立上下文、路由决策和不同的失败语义。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>36–57</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>58–81</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/coordinator.go:36–81</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   36  // DefaultPlannerPrompt steers the planner toward concise plans, not execution.
+   37  const DefaultPlannerPrompt = `You are the planner in a two-model coding agent.
+   38  Given a task, produce a concise, ordered plan for the executor model to carry out.
+   39  Use the read-only tools available to you when the task needs context from the
+   40  workspace, user rules, or docs; keep that research targeted and stop once you
+   41  have enough evidence. Do not write full implementations or attempt side effects.
+   42  Do not ask the user how to trigger the executor and do not say you are waiting
+   43  for the executor. Output executor-ready instructions: what to do, which files or
+   44  commands are relevant, expected blockers, and key decisions. Keep it short and
+   45  actionable.
+   46
+   47  A host-authored &lt;planner-turn&gt; block at the end of the user turn selects the
+   48  planning depth. For depth=light, return a compact objective, 1-4 ordered steps,
+   49  likely touchpoints, and the main verification; omit empty boilerplate sections.
+   50  For depth=full, inspect enough evidence to distinguish verified touchpoints from
+   51  candidate touchpoints, then include goal/non-goals when useful, ordered steps,
+   52  risks or blockers, concrete acceptance criteria, command-level verification, and
+   53  rollback only when the change is risky or difficult to reverse. Label assumptions
+   54  instead of presenting inferred paths or commands as verified facts.
+   55
+   56  If execution must stop for explicit user approval of the plan, end the plan with
+   57  a final line containing exactly [planner_requires_approval]. If execution needs
+   58  a user-owned decision or missing user-provided value before it can be safe, do
+   59  not ask in prose; include one structured block:
+   60  &lt;planner-ask&gt;
+   61  question: the concrete question
+   62  option: recommended safe/default choice
+   63  option: alternative choice
+   64  &lt;/planner-ask&gt;
+   65
+   66  Crucial: You only have research tools plus the stable use_capability proxy for
+   67  authorized MCP. You do NOT have bash, execute, file writers, or other
+   68  side-effect tools — those belong to the executor. Never question or dwell on
+   69  the lack of execution tools; it is by design. Just plan what the executor
+   70  should do with its tools.
+   71
+   72  When you need external real data and the capability route does not name a
+   73  specific tool, call use_capability(action=&quot;list&quot;) first to see configured MCP
+   74  servers, then inspect or call a non-destructive capability. If a capability is
+   75  destructive, do not treat that as missing configuration or an unavailable MCP:
+   76  write the operation into the plan for the executor instead.
+   77
+   78  If your research shows the task needs no changes and no actions at all (already
+   79  implemented, already resolved), explain that briefly and end your reply with a
+   80  final line containing exactly [no_changes]. Never emit that marker when any
+   81  work, verification, or follow-up remains.`
+   82
+   83  const executorHandoffMarker = &quot;Reasonix executor handoff&quot;
+   84
+   85  // plannerFallbackNotice is shown when the planner fails and the turn degrades
+   86  // to executor-only instead of failing outright.
+   87  const plannerFallbackNotice = &quot;Planner failed; continuing this turn with the executor only.&quot;
+   88
+   89  // A host-owned research budget must cap planner cost without stranding an
+   90  // ordinary task. If the planner ignores its finalization nudge, the executor
+   91  // still owns the task and can inspect the workspace directly. Explicit
+   92  // no-execution and approval boundaries remain fail-closed.
+   93  const (
+   94  	plannerResearchFallbackNotice = &quot;Planner reached its research limit without a final plan; continuing this turn with the executor.&quot;
+   95  	plannerResearchBoundaryError  = &quot;planner could not finalize within its research budget; no execution was started&quot;
+   96  )
+   97
+   98  // noChangesMarker is the explicit no-op conclusion the planner is asked to emit
+   99  // on its final line (see DefaultPlannerPrompt). isNoOpPlan trusts it over the
+  100  // legacy phrase heuristics.
+  101  const noChangesMarker = &quot;[no_changes]&quot;
+  102
+  103  const plannerRequiresApprovalMarker = &quot;[planner_requires_approval]&quot;
+  104  const plannerAskStartMarker = &quot;&lt;planner-ask&gt;&quot;
+  105  const plannerAskEndMarker = &quot;&lt;/planner-ask&gt;&quot;
+  106
+  107  // PlannerPromptWithContext appends cache-stable standing context, such as loaded
+  108  // REASONIX.md / AGENTS.md memory, to the planner&#39;s smaller system prompt.
+  109  func PlannerPromptWithContext(context string) string {
+  110  	context = strings.TrimSpace(context)
+  111  	if context == &quot;&quot; {
+  112  		return DefaultPlannerPrompt
+  113  	}
+  114  	return DefaultPlannerPrompt + &quot;\n\n# Planning context\n\n&quot; + context
+  115  }
+  116
+  117  // Coordinator runs two models in separate sessions to keep each one&#39;s prompt
+  118  // prefix cache-stable: a low-frequency planner proposes an approach, then the
+  119  // executor (a full tool-using Agent) carries it out. The sessions never mix, so
+  120  // neither model&#39;s prefix is disturbed by the other&#39;s turns.
+  121  type Coordinator struct {
+  122  	planner        provider.Provider
+  123  	plannerSess    *Session
+  124  	plannerSystem  string
+  125  	plannerPricing *provider.Pricing
+  126  	plannerAgent   *Agent
+  127  	executor       *Agent
+  128  	temperature    float64
+  129  	sink           event.Sink
+  130  	// plannerPolicy chooses executor-only, plan-and-execute, or plan-for-approval
+  131  	// per turn. nil preserves the historical &quot;plan every turn&quot; constructor
+  132  	// behavior used by direct Coordinator callers.
+  133  	plannerPolicy            PlannerPolicy
+  134  	plannerPlanApprover      PlannerPlanApprover
+  135  	plannerUserDecisionAsker PlannerUserDecisionAsker
+  136  }
+  137
+  138  // NewCoordinator wires a planner provider (with its own session) to an executor.
+  139  // sink receives the planner&#39;s phase/text/usage events; the executor emits its
+  140  // own events to its own sink (the CLI wires the same sink into both). A nil
+  141  // sink is replaced with event.Discard.
+  142  func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerPricing *provider.Pricing, plannerTools *tool.Registry, plannerOptions Options, executor *Agent, temperature float64, sink event.Sink, shouldPlan func(context.Context, string) bool) *Coordinator {
+  143  	var policy PlannerPolicy
+  144  	if shouldPlan != nil {
+  145  		policy = func(ctx context.Context, input string) PlannerDecision {
+  146  			if !shouldPlan(ctx, input) {
+  147  				return PlannerDecision{Route: PlannerRouteExecutorOnly, Reason: &quot;legacy_skip&quot;}
+  148  			}
+  149  			return PlannerDecision{Route: PlannerRoutePlanAndExecute, Depth: PlannerDepthFull, Reason: &quot;legacy_plan&quot;}
+  150  		}
+  151  	}
+  152  	return newCoordinator(planner, plannerSession, plannerPricing, plannerTools, plannerOptions, executor, temperature, sink, policy)</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/coordinator.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   36  have enough evidence. Do not write full implementations or attempt side effects.
+   37  Do not ask the user how to trigger the executor and do not say you are waiting
+   38  for the executor. Output executor-ready instructions: what to do, which files or
+   39  commands are relevant, expected blockers, and key decisions. Keep it short and
+   40  actionable.
+   41
+   42  Deliver the plan by calling submit_plan. The plan is data, not prose: the host
+   43  renders it for the user and hands it to the executor, so do not also write the
+   44  plan out in your reply. Fill the fields you actually have — a step&#39;s title is
+   45  required, everything else is there so the plan can say what free text only
+   46  implies. Record read paths as verified_files and inferred ones as
+   47  candidate_files; never present an unread path as verified. Set requires_approval
+   48  when execution should stop for the user; the host owns the final decision.
+   49
+   50  A host-authored &lt;planner-turn&gt; block at the end of the user turn selects the
+   51  planning depth. For depth=light, submit a compact objective with 1-4 steps,
+   52  likely touchpoints, and the main verification. For depth=full, inspect enough
+   53  evidence to separate verified touchpoints from candidates, then also fill
+   54  non-goals, per-step risks, acceptance criteria, and command-level verification.
+   55  Label anything unproven in assumptions rather than stating it as fact.
+   56
+   57  If execution needs a user-owned decision or a missing user-provided value
+   58  before it can be safe, call ask and let the answer shape the plan; never ask in
+   59  prose and never plan around a guess you could have settled.
+   60
+   61  If submit_plan is unavailable to you, fall back to writing the plan as your
+   62  reply, and end it with a final line containing exactly
+   63  [planner_requires_approval] when execution must stop for user approval.
+   64
+   65  Crucial: You only have research tools plus the stable use_capability proxy for
+   66  authorized MCP. You do NOT have bash, execute, file writers, or other
+   67  side-effect tools — those belong to the executor. Never question or dwell on
+   68  the lack of execution tools; it is by design. Just plan what the executor
+   69  should do with its tools.
+   70
+   71  When you need external real data and the capability route does not name a
+   72  specific tool, call use_capability(action=&quot;list&quot;) first to see configured MCP
+   73  servers, then inspect or call a non-destructive capability. If a capability is
+   74  destructive, do not treat that as missing configuration or an unavailable MCP:
+   75  write the operation into the plan for the executor instead.
+   76
+   77  If the task needs no executor actions at all, end your reply with a final line
+   78  containing exactly [no_changes]. That covers two cases: your research shows the
+   79  work is already done (already implemented, already resolved — explain that
+   80  briefly), and the task is a question, comparison, analysis, or explanation that
+   81  your reply itself fully answers — write the complete answer, then the marker.
+   82  The host then delivers your reply directly instead of starting the executor.
+   83  Never emit that marker when any workspace change, command, verification, or
+   84  follow-up action remains.`
+   85
+   86  const executorHandoffMarker = &quot;Reasonix executor handoff&quot;
+   87
+   88  // plannerFallbackNotice is shown when the planner fails and the turn degrades
+   89  // to executor-only instead of failing outright.
+   90  const plannerFallbackNotice = &quot;Planner failed; continuing this turn with the executor only.&quot;
+   91
+   92  // A host-owned research budget must cap planner cost without stranding an
+   93  // ordinary task. If the planner ignores its finalization nudge, the executor
+   94  // still owns the task and can inspect the workspace directly. Explicit
+   95  // no-execution and approval boundaries remain fail-closed.
+   96  const (
+   97  	plannerResearchFallbackNotice = &quot;Planner reached its research limit without a final plan; continuing this turn with the executor.&quot;
+   98  	plannerResearchBoundaryError  = &quot;planner could not finalize within its research budget; no execution was started&quot;
+   99  )
+  100
+  101  // noChangesMarker is the explicit no-op conclusion the planner is asked to emit
+  102  // on its final line (see DefaultPlannerPrompt). isNoOpPlan trusts it over the
+  103  // legacy phrase heuristics.
+  104  const noChangesMarker = &quot;[no_changes]&quot;
+  105
+  106  const plannerRequiresApprovalMarker = &quot;[planner_requires_approval]&quot;
+  107
+  108  // PlannerPromptWithContext appends cache-stable standing context, such as loaded
+  109  // REASONIX.md / AGENTS.md memory, to the planner&#39;s smaller system prompt.
+  110  func PlannerPromptWithContext(context string) string {
+  111  	context = strings.TrimSpace(context)
+  112  	if context == &quot;&quot; {
+  113  		return DefaultPlannerPrompt
+  114  	}
+  115  	return DefaultPlannerPrompt + &quot;\n\n# Planning context\n\n&quot; + context
+  116  }
+  117
+  118  // Coordinator runs two models in separate sessions to keep each one&#39;s prompt
+  119  // prefix cache-stable: a low-frequency planner proposes an approach, then the
+  120  // executor (a full tool-using Agent) carries it out. The sessions never mix, so
+  121  // neither model&#39;s prefix is disturbed by the other&#39;s turns.
+  122  type Coordinator struct {
+  123  	planner         provider.Provider
+  124  	plannerSess     *Session
+  125  	plannerSystem   string
+  126  	plannerPricing  *provider.Pricing
+  127  	plannerModelRef string
+  128  	plannerAgent    *Agent
+  129  	executor        *Agent
+  130  	temperature     float64
+  131  	sink            event.Sink
+  132  	// plannerPolicy chooses executor-only, plan-and-execute, or plan-for-approval
+  133  	// per turn. nil preserves the historical &quot;plan every turn&quot; constructor
+  134  	// behavior used by direct Coordinator callers.
+  135  	plannerPolicy       PlannerPolicy
+  136  	plannerPlanApprover PlannerPlanApprover
+  137  }
+  138
+  139  // NewCoordinator wires a planner provider (with its own session) to an executor.
+  140  // sink receives the planner&#39;s phase/text/usage events; the executor emits its
+  141  // own events to its own sink (the CLI wires the same sink into both). A nil
+  142  // sink is replaced with event.Discard.
+  143  func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerPricing *provider.Pricing, plannerTools *tool.Registry, plannerOptions Options, executor *Agent, temperature float64, sink event.Sink, shouldPlan func(context.Context, string) bool) *Coordinator {
+  144  	var policy PlannerPolicy
+  145  	if shouldPlan != nil {
+  146  		policy = func(ctx context.Context, input string) PlannerDecision {
+  147  			if !shouldPlan(ctx, input) {
+  148  				return PlannerDecision{Route: PlannerRouteExecutorOnly, Reason: &quot;legacy_skip&quot;}
+  149  			}
+  150  			return PlannerDecision{Route: PlannerRoutePlanAndExecute, Depth: PlannerDepthFull, Reason: &quot;legacy_plan&quot;}
+  151  		}
+  152  	}</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-collab-002" data-finding-dimension="collaboration"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>02 · parallel_tasks 只允许读操作，最多 64 个并发请求并受 scheduler/depth 限制</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>parallel_tasks 工具被标记 ReadOnly/PlanModeSafe，拒绝空、单个或超过 64 个任务；每个 child 有独立 session、read-only registry、child depth、max steps、provider profile 和 nested event sink，并经 scheduler 获取读槽位，取消时 drain/wait 后聚合结果。</p></section><section><span>白话解释</span><p>它能同时派 64 个“查代码/查资料”的小工，但这些小工不能写文件，且仍要遵守并发和嵌套深度额度。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>并发 Agent 必须把任务输入上限、工具 allowlist、读写属性、预算、取消和结果聚合一起作为资源合同。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>17–40</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>41–65</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/parallel_tasks.go#L17-L65" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/agent/parallel_tasks.go:17–65</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/parallel_tasks.go#L17-L65" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   17  // ParallelTasksTool dispatches multiple read-only sub-agent tasks concurrently
+   18  // and collects all results. Each sub-task runs as a foreground sub-agent in its
+   19  // own goroutine, emitting nested events so the frontend renders independent
+   20  // cards for each sub-task.
+   21  type ParallelTasksTool struct {
+   22  	taskTool *TaskTool
+   23  	reg      *tool.Registry
+   24  }
+   25
+   26  // NewParallelTasksTool creates a parallel dispatch tool that reuses the given
+   27  // TaskTool&#39;s sub-agent infrastructure.
+   28  func NewParallelTasksTool(taskTool *TaskTool, reg *tool.Registry) *ParallelTasksTool {
+   29  	return &amp;ParallelTasksTool{taskTool: taskTool, reg: reg}
+   30  }
+   31
+   32  func (p *ParallelTasksTool) Name() string { return &quot;parallel_tasks&quot; }
+   33
+   34  func (p *ParallelTasksTool) Description() string {
+   35  	return &quot;Dispatch multiple read-only sub-agent tasks concurrently and collect their results. Each task runs in its own read-only sub-agent in parallel. Blocks until all complete.&quot;
+   36  }
+   37
+   38  func (p *ParallelTasksTool) Schema() json.RawMessage {
+   39  	return json.RawMessage(`{
+   40  &quot;type&quot;:&quot;object&quot;,
+   41  &quot;properties&quot;:{
+   42    &quot;tasks&quot;:{
+   43      &quot;type&quot;:&quot;array&quot;,
+   44      &quot;description&quot;:&quot;Array of sub-task descriptions to run in parallel.&quot;,
+   45      &quot;items&quot;:{
+   46        &quot;type&quot;:&quot;object&quot;,
+   47        &quot;properties&quot;:{
+   48          &quot;prompt&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;The task prompt for the sub-agent.&quot;},
+   49          &quot;description&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Optional short label shown in the job list.&quot;},
+   50          &quot;tools&quot;:{&quot;type&quot;:&quot;array&quot;,&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;description&quot;:&quot;Optional tool whitelist for the sub-agent.&quot;},
+   51          &quot;max_steps&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;description&quot;:&quot;Optional max tool-call rounds. Defaults to half the parent agent&#39;s step budget (minimum 5), same as task.&quot;,&quot;minimum&quot;:1},
+   52          &quot;model&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Optional model override.&quot;},
+   53          &quot;effort&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Optional reasoning effort override.&quot;}
+   54        },
+   55        &quot;required&quot;:[&quot;prompt&quot;]
+   56      }
+   57    }
+   58  },
+   59  &quot;required&quot;:[&quot;tasks&quot;]
+   60  }`)
+   61  }
+   62
+   63  func (p *ParallelTasksTool) ReadOnly() bool { return true }
+   64
+   65  func (p *ParallelTasksTool) PlanModeSafe() bool { return true }
+   66
+   67  type parallelTaskItem struct {
+   68  	Prompt      string   `json:&quot;prompt&quot;`
+   69  	Description string   `json:&quot;description&quot;`
+   70  	Tools       []string `json:&quot;tools&quot;`
+   71  	MaxSteps    int      `json:&quot;max_steps&quot;`
+   72  	Model       string   `json:&quot;model&quot;`
+   73  	Effort      string   `json:&quot;effort&quot;`
+   74  }
+   75
+   76  type parallelTaskStatus string
+   77
+   78  // parallelTasksMaxTasks bounds the request before any task-sized slices,
+   79  // channels, or goroutines are allocated. The scheduler limits how many
+   80  // children run simultaneously, but without an input cap a single model call
+   81  // could still reserve unbounded memory and queue unbounded API work (#6933).
+   82  const parallelTasksMaxTasks = 64
+   83
+   84  const (
+   85  	parallelTaskPending   parallelTaskStatus = &quot;pending&quot;
+   86  	parallelTaskCompleted parallelTaskStatus = &quot;completed&quot;
+   87  	parallelTaskFailed    parallelTaskStatus = &quot;failed&quot;
+   88  	parallelTaskCancelled parallelTaskStatus = &quot;cancelled&quot;
+   89  	parallelTaskSkipped   parallelTaskStatus = &quot;skipped&quot;
+   90  )
+   91
+   92  func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+   93  	var params struct {
+   94  		Tasks []parallelTaskItem `json:&quot;tasks&quot;`
+   95  	}
+   96  	dec := json.NewDecoder(bytes.NewReader(args))
+   97  	dec.DisallowUnknownFields()
+   98  	if err := dec.Decode(&amp;params); err != nil {
+   99  		return &quot;&quot;, fmt.Errorf(&quot;invalid args: %w&quot;, err)
+  100  	}
+  101  	if len(params.Tasks) == 0 {
+  102  		return &quot;&quot;, fmt.Errorf(&quot;at least one task is required&quot;)
+  103  	}
+  104  	if len(params.Tasks) == 1 {
+  105  		return &quot;&quot;, fmt.Errorf(&quot;parallel_tasks with a single task is equivalent to task; use task instead&quot;)
+  106  	}
+  107  	if len(params.Tasks) &gt; parallelTasksMaxTasks {
+  108  		return &quot;&quot;, fmt.Errorf(&quot;parallel_tasks accepts at most %d tasks; got %d&quot;, parallelTasksMaxTasks, len(params.Tasks))
+  109  	}
+  110  	if err := validateParallelTaskItems(params.Tasks); err != nil {
+  111  		return &quot;&quot;, err
+  112  	}
+  113  	if p.taskTool == nil {
+  114  		return &quot;&quot;, fmt.Errorf(&quot;parallel_tasks is not configured&quot;)
+  115  	}
+  116
+  117  	parentID, sink, _, ok := CallContext(ctx)
+  118  	if !ok || sink == nil {
+  119  		parentID = &quot;parallel_tasks&quot;
+  120  		sink = event.Discard
+  121  	}
+  122
+  123  	type subResult struct {
+  124  		index  int
+  125  		output string
+  126  		err    error
+  127  	}
+  128
+  129  	n := len(params.Tasks)
+  130
+  131  	running := make([]bool, n)
+  132  	done := make([]bool, n)
+  133  	outputs := make([]string, n)
+  134  	taskErrs := make([]error, n)
+  135  	statuses := make([]parallelTaskStatus, n)
+  136  	for i := range params.Tasks {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/agent/parallel_tasks.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/agent/parallel_tasks.go#L17-L65" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   17  // ParallelTasksTool dispatches multiple read-only sub-agent tasks concurrently
+   18  // and collects all results. Each sub-task runs as a foreground sub-agent in its
+   19  // own goroutine, emitting nested events so the frontend renders independent
+   20  // cards for each sub-task.
+   21  type ParallelTasksTool struct {
+   22  	taskTool *TaskTool
+   23  }
+   24
+   25  // NewParallelTasksTool creates a parallel dispatch tool that reuses the given
+   26  // TaskTool&#39;s sub-agent infrastructure.
+   27  func NewParallelTasksTool(taskTool *TaskTool, reg *tool.Registry) *ParallelTasksTool {
+   28  	_ = reg // retained for source compatibility with existing constructors
+   29  	return &amp;ParallelTasksTool{taskTool: taskTool}
+   30  }
+   31
+   32  func (p *ParallelTasksTool) Name() string { return &quot;parallel_tasks&quot; }
+   33
+   34  func (p *ParallelTasksTool) Description() string {
+   35  	return &quot;Dispatch multiple read-only sub-agent tasks concurrently. Blocks until all complete, then returns a bounded preview and a stable Subagent reference for every completed persisted child; use read_subagent_result to page through any full answer without combined-result truncation.&quot;
+   36  }
+   37
+   38  func (p *ParallelTasksTool) Schema() json.RawMessage {
+   39  	return json.RawMessage(`{
+   40  &quot;type&quot;:&quot;object&quot;,
+   41  &quot;properties&quot;:{
+   42    &quot;tasks&quot;:{
+   43      &quot;type&quot;:&quot;array&quot;,
+   44      &quot;description&quot;:&quot;Array of sub-task descriptions to run in parallel.&quot;,
+   45      &quot;items&quot;:{
+   46        &quot;type&quot;:&quot;object&quot;,
+   47        &quot;properties&quot;:{
+   48          &quot;prompt&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;The task prompt for the sub-agent.&quot;},
+   49          &quot;description&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Optional short label shown in the job list.&quot;},
+   50          &quot;tools&quot;:{&quot;type&quot;:&quot;array&quot;,&quot;items&quot;:{&quot;type&quot;:&quot;string&quot;},&quot;description&quot;:&quot;Optional tool whitelist for the sub-agent.&quot;},
+   51          &quot;max_steps&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;description&quot;:&quot;Optional max tool-call rounds. Defaults to half the parent agent&#39;s step budget (minimum 5), same as task.&quot;,&quot;minimum&quot;:1},
+   52          &quot;model&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Optional model override.&quot;},
+   53          &quot;effort&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Optional reasoning effort override.&quot;}
+   54        },
+   55        &quot;required&quot;:[&quot;prompt&quot;]
+   56      }
+   57    }
+   58  },
+   59  &quot;required&quot;:[&quot;tasks&quot;]
+   60  }`)
+   61  }
+   62
+   63  func (p *ParallelTasksTool) ReadOnly() bool { return true }
+   64
+   65  func (p *ParallelTasksTool) PlanModeSafe() bool { return true }
+   66
+   67  type parallelTaskItem struct {
+   68  	Prompt      string   `json:&quot;prompt&quot;`
+   69  	Description string   `json:&quot;description&quot;`
+   70  	Tools       []string `json:&quot;tools&quot;`
+   71  	MaxSteps    int      `json:&quot;max_steps&quot;`
+   72  	Model       string   `json:&quot;model&quot;`
+   73  	Effort      string   `json:&quot;effort&quot;`
+   74  }
+   75
+   76  type parallelTaskStatus string
+   77
+   78  // parallelTasksMaxTasks bounds the request before any task-sized slices,
+   79  // channels, or goroutines are allocated. The scheduler limits how many
+   80  // children run simultaneously, but without an input cap a single model call
+   81  // could still reserve unbounded memory and queue unbounded API work (#6933).
+   82  const parallelTasksMaxTasks = 64
+   83
+   84  const (
+   85  	parallelTaskPending   parallelTaskStatus = &quot;pending&quot;
+   86  	parallelTaskCompleted parallelTaskStatus = &quot;completed&quot;
+   87  	parallelTaskFailed    parallelTaskStatus = &quot;failed&quot;
+   88  	parallelTaskCancelled parallelTaskStatus = &quot;cancelled&quot;
+   89  	parallelTaskSkipped   parallelTaskStatus = &quot;skipped&quot;
+   90  )
+   91
+   92  func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (result string, err error) {
+   93  	// Group lifecycle: the group card&#39;s terminal is an explicit event from
+   94  	// the tool itself (running once children start, exactly one terminal at
+   95  	// the end) so frontends never infer group completion from the children
+   96  	// they happen to have observed — children dispatch asynchronously, and a
+   97  	// fast first child can finish before later children even appear. Every
+   98  	// exit path (including validation failures) emits a terminal.
+   99  	parentID, sink, _, ok := CallContext(ctx)
+  100  	if !ok || sink == nil {
+  101  		parentID = &quot;parallel_tasks&quot;
+  102  		sink = event.Discard
+  103  	}
+  104  	merger := newSubagentProgressMerger(realProgressClock{}, sink, parentID)
+  105  	defer merger.Close()
+  106  	var statuses []parallelTaskStatus
+  107  	defer func() {
+  108  		merger.directStatus(parentID, parallelGroupTerminalPhase(ctx, err, statuses))
+  109  	}()
+  110  	ctx = withSubagentProgressMerger(ctx, merger)
+  111
+  112  	var params struct {
+  113  		Tasks []parallelTaskItem `json:&quot;tasks&quot;`
+  114  	}
+  115  	dec := json.NewDecoder(bytes.NewReader(args))
+  116  	dec.DisallowUnknownFields()
+  117  	if err := dec.Decode(&amp;params); err != nil {
+  118  		return &quot;&quot;, fmt.Errorf(&quot;invalid args: %w&quot;, err)
+  119  	}
+  120  	if len(params.Tasks) == 0 {
+  121  		return &quot;&quot;, fmt.Errorf(&quot;at least one task is required&quot;)
+  122  	}
+  123  	if len(params.Tasks) == 1 {
+  124  		return &quot;&quot;, fmt.Errorf(&quot;parallel_tasks with a single task is equivalent to task; use task instead&quot;)
+  125  	}
+  126  	if len(params.Tasks) &gt; parallelTasksMaxTasks {
+  127  		return &quot;&quot;, fmt.Errorf(&quot;parallel_tasks accepts at most %d tasks; got %d&quot;, parallelTasksMaxTasks, len(params.Tasks))
+  128  	}
+  129  	if err := validateParallelTaskItems(params.Tasks); err != nil {
+  130  		return &quot;&quot;, err
+  131  	}
+  132  	if p.taskTool == nil {
+  133  		return &quot;&quot;, fmt.Errorf(&quot;parallel_tasks is not configured&quot;)
+  134  	}
+  135
+  136  	// The group starts running once children begin dispatching.</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-collab-003" data-finding-dimension="collaboration"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>03 · 子 Agent 复用父工具基座，但单独限制模型、深度、并发、沙箱和 transcript</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>boot 在所有内建/MCP 工具装配后创建 TaskTool，子 Agent 继承 parent registry 但剔除 task，使用 headless gate、独立 provider resolver、transcripts、MaxSubagentDepth、scheduler、workspace lease 和 bash sandbox contract；另外显式注册 parallel_tasks、fleet 与 read_only_task。</p></section><section><span>白话解释</span><p>子 Agent 不是复制一份全局进程；它们共享已经治理过的工具目录，却有自己的会话、额度和后台审批边界。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多 Agent 设计要把“共享能力”与“共享状态”分开，避免 child 绕过 parent 的安全设置或无限递归。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>756–766</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>767–779</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/boot/boot.go#L756-L779" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/boot/boot.go:756–779</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/boot/boot.go#L756-L779" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  756  	// The `task` tool spawns sub-agents that reuse the parent&#39;s provider and
+  757  	// tool registry. Wired here after the built-ins / plugins are loaded so
+  758  	// sub-agents inherit the full tool set (minus `task` itself, to keep
+  759  	// nesting out of the picture). It registers into the same reg the
+  760  	// executor uses, so the model surfaces it like any other tool.
+  761  	resolveSubagentProvider := func(modelRef, effort string) (provider.Provider, *provider.Pricing, int, error) {
+  762  		me := *entry
+  763  		selectedRef := modelRefFromEntry(entry)
+  764  		if strings.TrimSpace(modelRef) != &quot;&quot; {
+  765  			if resolved, ok := cfg.ResolveModel(modelRef); ok {
+  766  				me = *resolved
+  767  				selectedRef = modelRefFromEntry(resolved)
+  768  			} else if opts.ProviderResolver != nil {
+  769  				me = *syntheticEntryFromResolver(opts.ProviderResolver, modelRef)
+  770  				selectedRef = modelRef
+  771  			} else {
+  772  				return nil, nil, 0, fmt.Errorf(&quot;unknown model %q&quot;, modelRef)
+  773  			}
+  774  		}
+  775  		var effortOverride *string
+  776  		if strings.TrimSpace(effort) != &quot;&quot; {
+  777  			normalized, err := config.NormalizeEffort(&amp;me, effort)
+  778  			if err != nil {
+  779  				if opts.ProviderResolver == nil {
+  780  					return nil, nil, 0, err
+  781  				}
+  782  				normalized = effort
+  783  			}
+  784  			me.Effort = normalized
+  785  			effortOverride = &amp;normalized
+  786  			if me.Kind == &quot;anthropic&quot; &amp;&amp; strings.TrimSpace(me.Effort) != &quot;&quot; &amp;&amp; strings.TrimSpace(me.Thinking) == &quot;&quot; {
+  787  				me.Thinking = &quot;adaptive&quot;
+  788  			}
+  789  		}
+  790  		p, err := resolveProvider(opts, cfg, proxySpec, provider.Selection{Ref: selectedRef, Effort: effortOverride})
+  791  		if err != nil {
+  792  			return nil, nil, 0, err
+  793  		}
+  794  		return p, me.Price, me.ContextWindow, nil
+  795  	}
+  796  	subagentIdentity := func(modelRef, effort string) (string, string) {
+  797  		return subagentEffectiveIdentity(cfg, modelName, entry, modelRef, effort)
+  798  	}
+  799  	taskModel := firstNonEmpty(cfg.Agent.SubagentModels[&quot;task&quot;], cfg.Agent.SubagentModel)
+  800  	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts[&quot;task&quot;], cfg.Agent.SubagentEffort)
+  801  	maxSubagentDepth := agent.NormalizeMaxSubagentDepth(cfg.Agent.MaxSubagentDepth)
+  802  	maxSubagentConcurrency, maxParallelWriters := agent.NormalizeConcurrencyLimits(
+  803  		cfg.Agent.MaxSubagentConcurrency, cfg.Agent.MaxParallelWriters,
+  804  	)
+  805  	subagentScheduler := agent.NewSubagentScheduler(maxSubagentConcurrency, maxParallelWriters)
+  806  	profileLookup := func(name string) (agent.ProfileDefinition, bool) {
+  807  		sk, ok := skillStore.Read(name)
+  808  		if !ok || sk.RunAs != skill.RunSubagent {
+  809  			return agent.ProfileDefinition{}, false
+  810  		}
+  811  		sk = skillStore.Prepare(sk)
+  812  		return agent.ProfileDefinition{
+  813  			Name:         sk.Name,
+  814  			Body:         sk.Body,
+  815  			AllowedTools: sk.AllowedTools,
+  816  			Model:        sk.Model,
+  817  			Effort:       sk.Effort,
+  818  			ReadOnly:     sk.ReadOnly,
+  819  			Invocation:   sk.Invocation,
+  820  			NamedBuiltin: agent.NamedBuiltinProfile(sk.Name),
+  821  		}, true
+  822  	}
+  823  	profileConfigModel := func(profile string) string {
+  824  		for _, key := range SubagentModelKeys(profile) {
+  825  			if m := strings.TrimSpace(cfg.Agent.SubagentModels[key]); m != &quot;&quot; {
+  826  				return m
+  827  			}
+  828  		}
+  829  		return &quot;&quot;
+  830  	}
+  831  	profileConfigEffort := func(profile string) string {
+  832  		for _, key := range SubagentModelKeys(profile) {
+  833  			if e := strings.TrimSpace(cfg.Agent.SubagentEfforts[key]); e != &quot;&quot; {
+  834  				return e
+  835  			}
+  836  		}
+  837  		return &quot;&quot;
+  838  	}
+  839  	bashSandboxEnforced := func() bool {
+  840  		return bashSpec.Enforce()
+  841  	}
+  842  	taskToolAdded := false
+  843  	readOnlyTaskToolAdded := false
+  844  	var taskTool *agent.TaskTool
+  845  	// capRuntime is assigned after MCP specs load; closures capture the variable
+  846  	// so task tools created later still receive the session-shared substrate.
+  847  	var capRuntime *agent.MCPCapabilityRuntime
+  848  	newTaskTool := func() *agent.TaskTool {
+  849  		return agent.NewTaskToolWithOptions(agent.TaskToolOptions{
+  850  			Provider:            execProv,</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/boot/boot.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/boot/boot.go#L756-L779" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  756  	autoStartEntries := cfg.EnabledPlugins(root, config.DefaultMCPActivationStore())
+  757  	enabledMCPNames := make(map[string]bool, len(autoStartEntries))
+  758  	for _, enabled := range autoStartEntries {
+  759  		if name := strings.TrimSpace(enabled.Name); name != &quot;&quot; {
+  760  			enabledMCPNames[name] = true
+  761  		}
+  762  	}
+  763  	// Legacy eager/background tiers are still parsed for config compatibility
+  764  	// but no longer change process start timing. Keep the partition only so
+  765  	// demotion notices remain meaningful for chronically slow eager configs.
+  766  	eagerEntries, bgEntries := partitionByTier(autoStartEntries)
+  767  	extraSpecs := applyDefaultMCPStartupTimeout(
+  768  		applyDefaultMCPCallTimeout(
+  769  			applyKnownPluginOverrides(opts.ExtraPlugins, root),
+  770  			pluginSpecOptions.DefaultCallTimeout,
+  771  		),
+  772  		pluginSpecOptions.DefaultStartupTimeout,
+  773  	)
+  774  	for i := range extraSpecs {
+  775  		if strings.TrimSpace(extraSpecs[i].WorkspaceRoot) == &quot;&quot; {
+  776  			extraSpecs[i].WorkspaceRoot = root
+  777  		}
+  778  		if extraSpecs[i].LaunchManager == nil {
+  779  			extraSpecs[i].LaunchManager = pluginSpecOptions.LaunchManager
+  780  		}
+  781  		if strings.TrimSpace(extraSpecs[i].ConfigSource) == &quot;&quot; {
+  782  			extraSpecs[i].ConfigSource = &quot;host_session&quot;
+  783  		}
+  784  		if !extraSpecs[i].RequireLaunchApproval {
+  785  			// Session-scoped MCP specs arrive through an explicit host/user action
+  786  			// (for example ACP session/new), so they follow installed-server
+  787  			// authorization without another per-tool or per-session prompt.
+  788  			extraSpecs[i].Authorized = true
+  789  		}
+  790  		applyMCPIsolation(&amp;extraSpecs[i], root, pluginSpecOptions)
+  791  	}
+  792  	// Auto-demote: any eager plugin that has been chronically slow (recent
+  793  	// samples repeatedly hit the blocking startup budget) drops to background
+  794  	// for this session. The user keeps eager intent, just doesn&#39;t pay for it
+  795  	// on a server that&#39;s been misbehaving. A notice surfaces the demotion.
+  796  	var demoteMessages []string
+  797  	budget := plugin.DefaultStartupBudget()
+  798  	kept := eagerEntries[:0]
+  799  	for _, e := range eagerEntries {
+  800  		rec := plugin.Recommend(e.Name, budget, 0)
+  801  		if rec.Demote {
+  802  			demoteMessages = append(demoteMessages, rec.Reason)
+  803  			bgEntries = append(bgEntries, e)
+  804  			continue
+  805  		}
+  806  		kept = append(kept, e)
+  807  	}
+  808  	eagerEntries = kept
+  809
+  810  	eagerSpecs := PluginSpecsForRootWithOptions(eagerEntries, root, pluginSpecOptions)
+  811  	bgSpecs := PluginSpecsForRootWithOptions(bgEntries, root, pluginSpecOptions)
+  812
+  813  	eagerSpecs = append(eagerSpecs, extraSpecs...)
+  814
+  815  	// Apply caller-supplied stderr override to every spec across tiers.
+  816  	if opts.Stderr != nil {
+  817  		for i := range eagerSpecs {
+  818  			eagerSpecs[i].Stderr = opts.Stderr
+  819  		}
+  820  		for i := range bgSpecs {
+  821  			bgSpecs[i].Stderr = opts.Stderr
+  822  		}
+  823  	}
+  824
+  825  	// Host-session ExtraPlugins (for example ACP session servers) are explicit
+  826  	// for this controller and still take a short readiness probe so recovery and
+  827  	// session-scoped servers are deterministic. User/project config MCP stays
+  828  	// catalog-first and process-idle until first real tool call.
+  829  	if len(extraSpecs) &gt; 0 {
+  830  		for _, s := range extraSpecs {
+  831  			if pluginHost.HasClient(s.Name) {
+  832  				if tools, err := pluginHost.ToolsFor(ctx, s.Name); err == nil {
+  833  					for _, t := range tools {
+  834  						reg.Add(t)
+  835  					}
+  836  					continue
+  837  				}
+  838  			}
+  839  			addCtx, addCancel := context.WithTimeout(ctx, 5*time.Second)
+  840  			tools, err := pluginHost.EnsureConnectedWithLifecycle(ctx, addCtx, s, 0)
+  841  			addCancel()
+  842  			if err != nil {
+  843  				if plugin.IsServerAlreadyConnected(err) {
+  844  					if tools, err2 := pluginHost.ToolsFor(ctx, s.Name); err2 == nil {
+  845  						for _, t := range tools {
+  846  							reg.Add(t)
+  847  						}
+  848  						continue
+  849  					}
+  850  				}</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">COLLABORATION · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>Coordinator 用 planner provider/session 做只读研究和结构化 plan，再把 plan handoff 给完整工具 Executor；两个 session 的 prefix 不互相污染。普通 plan-and-execute 在 planner 失败时可降级 executor-only，但 plan-only 或 plan-for-approval 缺 plan 时直接报错，避免 planner outage 变成未经批准的副作用。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/coordinator.go#L36-L81" target="_blank" rel="noreferrer">internal/agent/coordinator.go:36–81 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>parallel_tasks 工具被标记 ReadOnly/PlanModeSafe，拒绝空、单个或超过 64 个任务；每个 child 有独立 session、read-only registry、child depth、max steps、provider profile 和 nested event sink，并经 scheduler 获取读槽位，取消时 drain/wait 后聚合结果。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/agent/parallel_tasks.go#L17-L65" target="_blank" rel="noreferrer">internal/agent/parallel_tasks.go:17–65 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>boot 在所有内建/MCP 工具装配后创建 TaskTool，子 Agent 继承 parent registry 但剔除 task，使用 headless gate、独立 provider resolver、transcripts、MaxSubagentDepth、scheduler、workspace lease 和 bash sandbox contract；另外显式注册 parallel_tasks、fleet 与 read_only_task。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/boot/boot.go#L756-L779" target="_blank" rel="noreferrer">internal/boot/boot.go:756–779 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>boot 在所有内建/MCP 工具装配后创建 TaskTool，子 Agent 继承 parent registry 但剔除 task，使用 headless gate、独立 provider resolver、transcripts、MaxSubagentDepth、scheduler、workspace lease 和 bash sandbox contract；另外显式注册 parallel_tasks、fleet 与 read_only_task。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/boot/boot.go#L756-L779" target="_blank" rel="noreferrer">internal/boot/boot.go:756–779 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="DeepSeek-Reasonix capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch08-ecosystem.html">← 扩展：MCP、Skill、插件如何接入</a><a href="ch10-evidence.html">证据与取舍：把源码结论带回自研 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

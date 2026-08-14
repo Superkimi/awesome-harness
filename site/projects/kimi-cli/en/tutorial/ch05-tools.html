@@ -1,1 +1,432 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>Kimi CLI · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Kimi CLI · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Kimi CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>cbc15c076d17</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · Kimi CLI · cbc15c076d17</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>4 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>Kimi CLI · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/kimi-cli/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/kimi-cli/ch05-tools.srt" data-video-status="published">SRT</a><em>cbc15c076d17</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="kimi-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具表由 agent spec 动态装配，插件和 MCP 追加进入同一 Toolset</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>load_agent 从 YAML 选 tools/allowed_tools 并应用 exclude_tools，通过依赖注入实例化；插件冲突时跳过；MCP config 验证后可后台加载或延迟到首轮。</p></section><section><span>PLAIN LANGUAGE</span><p>工具箱不是写死在循环里，而是由角色配置装配；本地插件和远程 MCP 最终都变成模型看到的同类工具。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>角色最小权限容易表达；工具名称冲突按先到内建优先。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/agent.py:411–451</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>subagent policy 与 built-in tool loading。</code></pre></div></div></article><article class="finding-card compact" id="kimi-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 同一模型回复里的不同工具并发启动，完全重复调用共享结果</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Kosong 收到完整 tool call 即调用 Toolset.handle；KimiToolset 为每个新 call 创建 asyncio task。同 step 相同 name+canonical args 不重复执行，而是等待原 task 并复制 result。</p></section><section><span>PLAIN LANGUAGE</span><p>模型一口气开多张不同工单会一起跑；两张完全相同的工单只做一次，第二张拿同一结果。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>吞吐高且减少重复副作用；不同工具之间没有全局串行保证。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/packages/kosong/src/kosong/__init__.py#L134-L167" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">src/kimi_cli/soul/agent.py:411–451 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/kosong/src/kosong/__init__.py:134–167</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/packages/kosong/src/kosong/__init__.py#L134-L167" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>tool call 到达即 handle 并登记 future。</code></pre></div></div></article><article class="finding-card compact" id="kimi-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · 跨 step 重复调用按 3/5/8/12 阶梯提醒并强停</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Toolset 对 canonical tool call 维护连续 streak：第 3 次开始提示换方法，第 5 次展示调用细节，第 8 次要求停止工具并总结，第 12 次设置 force_stop_turn。</p></section><section><span>PLAIN LANGUAGE</span><p>不是第一次重复就封杀，而是逐级提醒；连续十二次原地打转才硬踩刹车。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>降低模型卡死和费用失控，也允许合理重试；canonicalization 只比较名称和 JSON 参数，不判断外部状态是否变化。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/toolset.py#L116-L172" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">src/kimi_cli/soul/agent.py:411–451 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/toolset.py:116–172</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/toolset.py#L116-L172" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>repeat thresholds/reminders。</code></pre></div></div></article><article class="finding-card compact" id="kimi-tools-004" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 前台 Shell 有 5 分钟上限，后台任务可到 24 小时并持久通知</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Shell 参数限制前台 timeout &lt;=300s、后台 &lt;=86400s；两者都先 approval。前台通过 KAOS 流式读 stdout/stderr，取消/超时 kill 当前进程；后台交 BackgroundTaskManager 持久化，完成后自动通知，并可 TaskList/Output/Stop 管理。</p></section><section><span>PLAIN LANGUAGE</span><p>短命令当场等，长 build/server 作为有编号的后台任务继续跑，不用让对话一直卡住。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长任务体验完整；前台 LocalKaos.kill 只 kill 直接子进程，后台 worker 才显式管理整个进程组。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/tools/shell/__init__.py#L22-L57" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">src/kimi_cli/soul/agent.py:411–451 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/tools/shell/__init__.py:22–57</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/tools/shell/__init__.py#L22-L57" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>前后台 timeout validation。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Kimi CLI sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>Kimi CLI · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Kimi CLI · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Kimi CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>cbc15c076d17</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · Kimi CLI · cbc15c076d17</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>4 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>Kimi CLI · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/kimi-cli/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/kimi-cli/ch05-tools.srt" data-video-status="published">SRT</a><em>cbc15c076d17</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="kimi-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具表由 agent spec 动态装配，插件和 MCP 追加进入同一 Toolset</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>load_agent 从 YAML 选 tools/allowed_tools 并应用 exclude_tools，通过依赖注入实例化；插件冲突时跳过；MCP config 验证后可后台加载或延迟到首轮。</p></section><section><span>PLAIN LANGUAGE</span><p>工具箱不是写死在循环里，而是由角色配置装配；本地插件和远程 MCP 最终都变成模型看到的同类工具。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>角色最小权限容易表达；工具名称冲突按先到内建优先。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>411–430</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>431–451</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/agent.py:411–451</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  411      # Register built-in subagent types before loading tools because some tools render
+  412      # descriptions from the labor market on initialization.
+  413      for subagent_name, subagent_spec in agent_spec.subagents.items():
+  414          logger.debug(
+  415              &quot;Registering builtin subagent type: {subagent_name}&quot;, subagent_name=subagent_name
+  416          )
+  417          builtin_spec = load_agent_spec(subagent_spec.path)
+  418          tool_policy = (
+  419              ToolPolicy(mode=&quot;allowlist&quot;, tools=tuple(builtin_spec.allowed_tools))
+  420              if builtin_spec.allowed_tools is not None
+  421              else ToolPolicy(mode=&quot;inherit&quot;)
+  422          )
+  423          runtime.labor_market.add_builtin_type(
+  424              AgentTypeDefinition(
+  425                  name=subagent_name,
+  426                  description=subagent_spec.description,
+  427                  agent_file=subagent_spec.path,
+  428                  when_to_use=builtin_spec.when_to_use,
+  429                  default_model=builtin_spec.model,
+  430                  tool_policy=tool_policy,
+  431              )
+  432          )
+  433
+  434      toolset = KimiToolset()
+  435      tool_deps = {
+  436          KimiToolset: toolset,
+  437          Runtime: runtime,
+  438          # TODO: remove all the following dependencies and use Runtime instead
+  439          Config: runtime.config,
+  440          BuiltinSystemPromptArgs: runtime.builtin_args,
+  441          Session: runtime.session,
+  442          DenwaRenji: runtime.denwa_renji,
+  443          Approval: runtime.approval,
+  444          LaborMarket: runtime.labor_market,
+  445          Environment: runtime.environment,
+  446      }
+  447      tools = agent_spec.allowed_tools if agent_spec.allowed_tools is not None else agent_spec.tools
+  448      if agent_spec.exclude_tools:
+  449          logger.debug(&quot;Excluding tools: {tools}&quot;, tools=agent_spec.exclude_tools)
+  450          tools = [tool for tool in tools if tool not in agent_spec.exclude_tools]
+  451      toolset.load_tools(tools, tool_deps)
+  452
+  453      # Load plugin tools
+  454      from kimi_cli.plugin.manager import get_plugins_dir
+  455      from kimi_cli.plugin.tool import load_plugin_tools
+  456
+  457      plugin_tools = load_plugin_tools(get_plugins_dir(), runtime.config, approval=runtime.approval)
+  458      for plugin_tool in plugin_tools:
+  459          if toolset.find(plugin_tool.name) is not None:
+  460              logger.warning(
+  461                  &quot;Plugin tool &#39;{name}&#39; conflicts with an existing tool, skipping&quot;,
+  462                  name=plugin_tool.name,
+  463              )
+  464              continue
+  465          toolset.add(plugin_tool)
+  466
+  467      if mcp_configs:
+  468          validated_mcp_configs: list[MCPConfig] = []
+  469          if mcp_configs:
+  470              from fastmcp.mcp_config import MCPConfig
+  471
+  472              for mcp_config in mcp_configs:
+  473                  try:
+  474                      validated_mcp_configs.append(
+  475                          mcp_config
+  476                          if isinstance(mcp_config, MCPConfig)
+  477                          else MCPConfig.model_validate(mcp_config)
+  478                      )
+  479                  except pydantic.ValidationError as e:
+  480                      raise MCPConfigError(f&quot;Invalid MCP config: {e}&quot;) from e
+  481          if start_mcp_loading:
+  482              await toolset.load_mcp_tools(validated_mcp_configs, runtime, in_background=True)
+  483          else:
+  484              toolset.defer_mcp_tool_loading(validated_mcp_configs, runtime)
+  485
+  486      return Agent(
+  487          name=agent_spec.name,
+  488          system_prompt=system_prompt,
+  489          toolset=toolset,
+  490          runtime=runtime,
+  491      )
+  492
+  493
+  494  def _load_system_prompt(
+  495      path: Path, args: dict[str, str], builtin_args: BuiltinSystemPromptArgs
+  496  ) -&gt; str:
+  497      logger.info(&quot;Loading system prompt: {path}&quot;, path=path)
+  498      system_prompt = path.read_text(encoding=&quot;utf-8&quot;).strip()
+  499      logger.debug(
+  500          &quot;Substituting system prompt with builtin args: {builtin_args}, spec args: {spec_args}&quot;,
+  501          builtin_args=builtin_args,
+  502          spec_args=args,
+  503      )
+  504      env = JinjaEnvironment(
+  505          loader=FileSystemLoader(path.parent),
+  506          keep_trailing_newline=True,
+  507          lstrip_blocks=True,
+  508          trim_blocks=True,
+  509          variable_start_string=&quot;${&quot;,
+  510          variable_end_string=&quot;}&quot;,
+  511          undefined=StrictUndefined,
+  512      )
+  513      try:
+  514          template = env.from_string(system_prompt)
+  515          return template.render(asdict(builtin_args), **args)
+  516      except UndefinedError as exc:
+  517          raise SystemPromptTemplateError(f&quot;Missing system prompt arg in {path}: {exc}&quot;) from exc
+  518      except TemplateError as exc:
+  519          raise SystemPromptTemplateError(f&quot;Invalid system prompt template: {path}: {exc}&quot;) from exc
+  520</code></pre></div></div></article><article class="finding-card compact" id="kimi-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 同一模型回复里的不同工具并发启动，完全重复调用共享结果</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Kosong 收到完整 tool call 即调用 Toolset.handle；KimiToolset 为每个新 call 创建 asyncio task。同 step 相同 name+canonical args 不重复执行，而是等待原 task 并复制 result。</p></section><section><span>PLAIN LANGUAGE</span><p>模型一口气开多张不同工单会一起跑；两张完全相同的工单只做一次，第二张拿同一结果。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>吞吐高且减少重复副作用；不同工具之间没有全局串行保证。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>134–149</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>150–167</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/packages/kosong/src/kosong/__init__.py#L134-L167" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/kosong/src/kosong/__init__.py:134–167</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/packages/kosong/src/kosong/__init__.py#L134-L167" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  134      tool_calls: list[ToolCall] = []
+  135      tool_result_futures: dict[str, ToolResultFuture] = {}
+  136
+  137      def future_done_callback(future: ToolResultFuture):
+  138          if on_tool_result:
+  139              try:
+  140                  result = future.result()
+  141                  on_tool_result(result)
+  142              except asyncio.CancelledError:
+  143                  return
+  144
+  145      async def on_tool_call(tool_call: ToolCall):
+  146          tool_calls.append(tool_call)
+  147          result = toolset.handle(tool_call)
+  148
+  149          if isinstance(result, ToolResult):
+  150              future = ToolResultFuture()
+  151              future.add_done_callback(future_done_callback)
+  152              future.set_result(result)
+  153              tool_result_futures[tool_call.id] = future
+  154          else:
+  155              result.add_done_callback(future_done_callback)
+  156              tool_result_futures[tool_call.id] = result
+  157
+  158      try:
+  159          result = await generate(
+  160              chat_provider,
+  161              system_prompt,
+  162              toolset.tools,
+  163              history,
+  164              on_message_part=on_message_part,
+  165              on_tool_call=on_tool_call,
+  166              on_trace_id=on_trace_id,
+  167          )
+  168      except (ChatProviderError, asyncio.CancelledError):
+  169          # cancel all the futures to avoid hanging tasks
+  170          for future in tool_result_futures.values():
+  171              future.remove_done_callback(future_done_callback)
+  172              future.cancel()
+  173          await asyncio.gather(*tool_result_futures.values(), return_exceptions=True)
+  174          raise
+  175
+  176      return StepResult(
+  177          result.id,
+  178          result.message,
+  179          result.usage,
+  180          tool_calls,
+  181          tool_result_futures,
+  182          trace_id=result.trace_id,
+  183      )
+  184
+  185
+  186  @dataclass(frozen=True, slots=True)
+  187  class StepResult:
+  188      id: str | None
+  189      &quot;&quot;&quot;The ID of the generated message.&quot;&quot;&quot;
+  190
+  191      message: Message
+  192      &quot;&quot;&quot;The message generated in this step.&quot;&quot;&quot;
+  193
+  194      usage: TokenUsage | None
+  195      &quot;&quot;&quot;The token usage in this step.&quot;&quot;&quot;
+  196
+  197      tool_calls: list[ToolCall]
+  198      &quot;&quot;&quot;All the tool calls generated in this step.&quot;&quot;&quot;
+  199
+  200      _tool_result_futures: dict[str, ToolResultFuture]
+  201      &quot;&quot;&quot;@private The futures of the results of the spawned tool calls.&quot;&quot;&quot;
+  202
+  203      trace_id: str | None = None
+  204      &quot;&quot;&quot;The ``x-trace-id`` response header of the request, if the provider exposes it.&quot;&quot;&quot;
+  205
+  206      async def tool_results(self) -&gt; list[ToolResult]:
+  207          &quot;&quot;&quot;All the tool results returned by corresponding tool calls.&quot;&quot;&quot;
+  208          if not self._tool_result_futures:
+  209              return []
+  210
+  211          try:
+  212              results: list[ToolResult] = []
+  213              for tool_call in self.tool_calls:
+  214                  future = self._tool_result_futures[tool_call.id]
+  215                  result = await future
+  216                  results.append(result)
+  217              return results
+  218          finally:
+  219              # one exception should cancel all the futures to avoid hanging tasks
+  220              for future in self._tool_result_futures.values():
+  221                  future.cancel()
+  222              await asyncio.gather(*self._tool_result_futures.values(), return_exceptions=True)
+  223</code></pre></div></div></article><article class="finding-card compact" id="kimi-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · 跨 step 重复调用按 3/5/8/12 阶梯提醒并强停</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Toolset 对 canonical tool call 维护连续 streak：第 3 次开始提示换方法，第 5 次展示调用细节，第 8 次要求停止工具并总结，第 12 次设置 force_stop_turn。</p></section><section><span>PLAIN LANGUAGE</span><p>不是第一次重复就封杀，而是逐级提醒；连续十二次原地打转才硬踩刹车。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>降低模型卡死和费用失控，也允许合理重试；canonicalization 只比较名称和 JSON 参数，不判断外部状态是否变化。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>116–143</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>144–172</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/toolset.py#L116-L172" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/soul/toolset.py:116–172</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/toolset.py#L116-L172" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  116  _REMINDER_TEXT_1 = (
+  117      &quot;\n\n&lt;system-reminder&gt;\n&quot;
+  118      &quot;You are repeating the exact same tool call with identical parameters.&quot;
+  119      &quot; Please carefully analyze the previous result. If the task is not yet complete,&quot;
+  120      &quot; try a different method or parameters instead of repeating the same call.&quot;
+  121      &quot;\n&lt;/system-reminder&gt;&quot;
+  122  )
+  123
+  124
+  125  def _make_reminder_text_2(tool_name: str, repeat_count: int, canonical_args: str) -&gt; str:
+  126      return (
+  127          &quot;\n\n&lt;system-reminder&gt;\n&quot;
+  128          &quot;You have repeatedly called the same tool with identical parameters many times.\n&quot;
+  129          &quot;Repeated tool call detected:\n&quot;
+  130          f&quot;- tool: {tool_name}\n&quot;
+  131          f&quot;- repeated_times: {repeat_count}\n&quot;
+  132          f&quot;- arguments: {canonical_args}\n&quot;
+  133          &quot;The previous repeated calls did not make progress. Do not call this exact same tool &quot;
+  134          &quot;with the exact same arguments again.\n&quot;
+  135          &quot;Carefully inspect the latest tool result and choose a different next action, &quot;
+  136          &quot;different parameters, or finish the task if enough evidence has been gathered.&quot;
+  137          &quot;\n&lt;/system-reminder&gt;&quot;
+  138      )
+  139
+  140
+  141  _REMINDER_TEXT_3 = (
+  142      &quot;\n\n&lt;system-reminder&gt;\n&quot;
+  143      &quot;You are stuck in a dead end and have repeatedly made the same function call without &quot;
+  144      &quot;progress.\n&quot;
+  145      &quot;Stop all function calls immediately. Do not call any tool in your next response.\n&quot;
+  146      &quot;In analysis, review the current execution state and identify why progress is blocked.\n&quot;
+  147      &quot;Then return a text-only summary to the user that reports the current problem, what has &quot;
+  148      &quot;already been tried, and what information or decision is needed next.&quot;
+  149      &quot;\n&lt;/system-reminder&gt;&quot;
+  150  )
+  151
+  152
+  153  _REPEAT_REMINDER_1_START = 3
+  154  _REPEAT_REMINDER_2_START = 5
+  155  _REPEAT_REMINDER_3_START = 8
+  156  _REPEAT_FORCE_STOP_STREAK = 12
+  157
+  158  type RepeatAction = Literal[&quot;none&quot;, &quot;r1&quot;, &quot;r2&quot;, &quot;r3&quot;, &quot;stop&quot;]
+  159
+  160
+  161  def _build_repeat_reminder(
+  162      streak: int, tool_name: str, canonical_args: str
+  163  ) -&gt; tuple[RepeatAction, str | None]:
+  164      if streak &gt;= _REPEAT_FORCE_STOP_STREAK:
+  165          return &quot;stop&quot;, _REMINDER_TEXT_3
+  166      if streak &gt;= _REPEAT_REMINDER_3_START:
+  167          return &quot;r3&quot;, _REMINDER_TEXT_3
+  168      if streak &gt;= _REPEAT_REMINDER_2_START:
+  169          return &quot;r2&quot;, _make_reminder_text_2(tool_name, streak, canonical_args)
+  170      if streak &gt;= _REPEAT_REMINDER_1_START:
+  171          return &quot;r1&quot;, _REMINDER_TEXT_1
+  172      return &quot;none&quot;, None
+  173
+  174
+  175  def _sort_json_value(value: object) -&gt; object:
+  176      if isinstance(value, list):
+  177          return [_sort_json_value(item) for item in cast(&quot;list[object]&quot;, value)]
+  178      if isinstance(value, dict):
+  179          value_dict = cast(&quot;dict[str, object]&quot;, value)
+  180          return {key: _sort_json_value(value_dict[key]) for key in sorted(value_dict)}
+  181      return value
+  182
+  183
+  184  def _canonical_tool_arguments(arguments: Any) -&gt; str:
+  185      try:
+  186          return json.dumps(
+  187              _sort_json_value(arguments),
+  188              ensure_ascii=False,
+  189              separators=(&quot;,&quot;, &quot;:&quot;),
+  190          )
+  191      except (TypeError, ValueError):
+  192          return str(arguments)
+  193
+  194
+  195  def _canonical_tool_arguments_text(arguments: str) -&gt; str:
+  196      try:
+  197          return _canonical_tool_arguments(json.loads(arguments, strict=False))
+  198      except json.JSONDecodeError:
+  199          return arguments
+  200
+  201
+  202  def _normalize_call_key(tool_name: str, arguments: str) -&gt; ToolCallKey:
+  203      return (tool_name, _canonical_tool_arguments_text(arguments))
+  204
+  205
+  206  def _append_reminder_to_return_value(
+  207      return_value: Any, reminder_text: str = _REMINDER_TEXT_1
+  208  ) -&gt; Any:
+  209      &quot;&quot;&quot;Append dedup reminder text to a ToolReturnValue output.&quot;&quot;&quot;
+  210      from kosong.tooling import ToolReturnValue
+  211
+  212      if not isinstance(return_value, ToolReturnValue):
+  213          return return_value
+  214
+  215      output = return_value.output
+  216
+  217      if isinstance(output, str):
+  218          new_output = output + reminder_text
+  219      else:
+  220          new_output = list(output)
+  221          if new_output and isinstance(new_output[-1], TextPart):
+  222              new_output[-1] = TextPart(text=new_output[-1].text + reminder_text)
+  223          else:
+  224              new_output.append(TextPart(text=reminder_text))
+  225
+  226      return return_value.model_copy(update={&quot;output&quot;: new_output})
+  227
+  228
+  229  class KimiToolset:
+  230      def __init__(self) -&gt; None:
+  231          self._tool_dict: dict[str, ToolType] = {}
+  232          self._hidden_tools: set[str] = set()
+  233          self._mcp_servers: dict[str, MCPServerInfo] = {}
+  234          self._mcp_loading_task: asyncio.Task[None] | None = None
+  235          self._deferred_mcp_load: tuple[list[MCPConfig], Runtime] | None = None
+  236          self._hook_engine: HookEngine = HookEngine()
+  237
+  238          # Deduplication state
+  239          self._previous_step_calls: list[ToolCallKey] = []
+  240          self._current_step_calls: list[ToolCallKey] = []
+  241          self._current_step_tasks: dict[ToolCallKey, asyncio.Task[ToolResult]] = {}
+  242          self._seen_call_keys: set[ToolCallKey] = set()
+  243          self._consecutive_key: ToolCallKey | None = None</code></pre></div></div></article><article class="finding-card compact" id="kimi-tools-004" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 前台 Shell 有 5 分钟上限，后台任务可到 24 小时并持久通知</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>Shell 参数限制前台 timeout &lt;=300s、后台 &lt;=86400s；两者都先 approval。前台通过 KAOS 流式读 stdout/stderr，取消/超时 kill 当前进程；后台交 BackgroundTaskManager 持久化，完成后自动通知，并可 TaskList/Output/Stop 管理。</p></section><section><span>PLAIN LANGUAGE</span><p>短命令当场等，长 build/server 作为有编号的后台任务继续跑，不用让对话一直卡住。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长任务体验完整；前台 LocalKaos.kill 只 kill 直接子进程，后台 worker 才显式管理整个进程组。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>22–38</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>39–57</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4a550effdfcb · <a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/tools/shell/__init__.py#L22-L57" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>src/kimi_cli/tools/shell/__init__.py:22–57</span><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/tools/shell/__init__.py#L22-L57" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   22  MAX_FOREGROUND_TIMEOUT = 5 * 60
+   23  MAX_BACKGROUND_TIMEOUT = 24 * 60 * 60
+   24
+   25
+   26  class Params(BaseModel):
+   27      command: str = Field(description=&quot;The command to execute.&quot;)
+   28      timeout: int = Field(
+   29          description=(
+   30              &quot;The timeout in seconds for the command to execute. &quot;
+   31              &quot;If the command takes longer than this, it will be killed.&quot;
+   32          ),
+   33          default=60,
+   34          ge=1,
+   35          le=MAX_BACKGROUND_TIMEOUT,
+   36      )
+   37      run_in_background: bool = Field(
+   38          default=False,
+   39          description=&quot;Whether to run the command as a background task.&quot;,
+   40      )
+   41      description: str = Field(
+   42          default=&quot;&quot;,
+   43          description=(
+   44              &quot;A short description for the background task. Required when run_in_background=true.&quot;
+   45          ),
+   46      )
+   47
+   48      @model_validator(mode=&quot;after&quot;)
+   49      def _validate_background_fields(self) -&gt; Self:
+   50          if self.run_in_background and not self.description.strip():
+   51              raise ValueError(&quot;description is required when run_in_background is true&quot;)
+   52          if not self.run_in_background and self.timeout &gt; MAX_FOREGROUND_TIMEOUT:
+   53              raise ValueError(
+   54                  f&quot;timeout must be &lt;= {MAX_FOREGROUND_TIMEOUT}s for foreground commands; &quot;
+   55                  f&quot;use run_in_background=true for longer timeouts (up to {MAX_BACKGROUND_TIMEOUT}s)&quot;
+   56              )
+   57          return self
+   58
+   59
+   60  class Shell(CallableTool2[Params]):
+   61      name: str = &quot;Shell&quot;
+   62      params: type[Params] = Params
+   63
+   64      def __init__(self, approval: Approval, environment: Environment, runtime: Runtime):
+   65          super().__init__(
+   66              description=load_desc(
+   67                  Path(__file__).parent / &quot;bash.md&quot;,
+   68                  {&quot;SHELL&quot;: f&quot;{environment.shell_name} (`{environment.shell_path}`)&quot;},
+   69              )
+   70          )
+   71          self._approval = approval
+   72          self._shell_path = environment.shell_path
+   73          self._on_windows = environment.os_kind == &quot;Windows&quot;
+   74          self._runtime = runtime
+   75
+   76      def _preprocess_command(self, command: str) -&gt; str:
+   77          &quot;&quot;&quot;Apply platform-specific defensive rewrites before execution.&quot;&quot;&quot;
+   78          return rewrite_windows_null_redirect(command, on_windows=self._on_windows)
+   79
+   80      @override
+   81      async def __call__(self, params: Params) -&gt; ToolReturnValue:
+   82          builder = ToolResultBuilder()
+   83
+   84          if not params.command:
+   85              return builder.error(&quot;Command cannot be empty.&quot;, brief=&quot;Empty command&quot;)
+   86
+   87          if params.run_in_background:
+   88              return await self._run_in_background(params)
+   89
+   90          command = self._preprocess_command(params.command)
+   91
+   92          result = await self._approval.request(
+   93              self.name,
+   94              &quot;run command&quot;,
+   95              f&quot;Run command `{command}`&quot;,
+   96              display=[
+   97                  ShellDisplayBlock(
+   98                      language=&quot;bash&quot;,
+   99                      command=command,
+  100                  )
+  101              ],
+  102          )
+  103          if not result:
+  104              return result.rejection_error()
+  105
+  106          def stdout_cb(line: bytes):
+  107              line_str = line.decode(encoding=&quot;utf-8&quot;, errors=&quot;replace&quot;)
+  108              builder.write(line_str)
+  109
+  110          def stderr_cb(line: bytes):
+  111              line_str = line.decode(encoding=&quot;utf-8&quot;, errors=&quot;replace&quot;)
+  112              builder.write(line_str)
+  113
+  114          try:
+  115              exitcode = await self._run_shell_command(command, stdout_cb, stderr_cb, params.timeout)
+  116
+  117              if exitcode == 0:
+  118                  return builder.ok(&quot;Command executed successfully.&quot;)
+  119              else:
+  120                  brief = f&quot;Failed with exit code: {exitcode}&quot;
+  121                  tail = builder.tail()
+  122                  if tail:
+  123                      brief += f&quot;\n{tail}&quot;
+  124                  return builder.error(
+  125                      f&quot;Command failed with exit code: {exitcode}.&quot;,
+  126                      brief=brief,
+  127                  )
+  128          except TimeoutError:</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">TOOLS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>load_agent 从 YAML 选 tools/allowed_tools 并应用 exclude_tools，通过依赖注入实例化；插件冲突时跳过；MCP config 验证后可后台加载或延迟到首轮。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/agent.py#L411-L451" target="_blank" rel="noreferrer">src/kimi_cli/soul/agent.py:411–451 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>Kosong 收到完整 tool call 即调用 Toolset.handle；KimiToolset 为每个新 call 创建 asyncio task。同 step 相同 name+canonical args 不重复执行，而是等待原 task 并复制 result。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/packages/kosong/src/kosong/__init__.py#L134-L167" target="_blank" rel="noreferrer">packages/kosong/src/kosong/__init__.py:134–167 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>Toolset 对 canonical tool call 维护连续 streak：第 3 次开始提示换方法，第 5 次展示调用细节，第 8 次要求停止工具并总结，第 12 次设置 force_stop_turn。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/soul/toolset.py#L116-L172" target="_blank" rel="noreferrer">src/kimi_cli/soul/toolset.py:116–172 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>Shell 参数限制前台 timeout &lt;=300s、后台 &lt;=86400s；两者都先 approval。前台通过 KAOS 流式读 stdout/stderr，取消/超时 kill 当前进程；后台交 BackgroundTaskManager 持久化，完成后自动通知，并可 TaskList/Output/Stop 管理。</blockquote><a href="https://github.com/MoonshotAI/kimi-cli/blob/4a550effdfcb29a25a5d325bf935296cc50cd417/src/kimi_cli/tools/shell/__init__.py#L22-L57" target="_blank" rel="noreferrer">src/kimi_cli/tools/shell/__init__.py:22–57 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Kimi CLI sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,1 +1,997 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>CodeWhale · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · CodeWhale · cfc2f2b13c07</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>5 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>CodeWhale · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch05-tools.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 5 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · ToolSpec 把能力、审批、只读、并行和资源声明放到同一输入特化接口</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ToolSpec 要求 name/description/schema/capabilities，默认按 ExecutesCode/WritesFiles/其他能力映射 Required/Suggest/Auto；每个具体 input 还能决定 read-only、approval、parallel、detached 和 resource claims，prepare 生成 PreparedToolCall。</p></section><section><span>PLAIN LANGUAGE</span><p>工具不是只有一个名字和一个函数；系统会问“这一次具体参数是否只读、能否并行、需要什么审批、会占什么资源”。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>工具能力要来自类型和实际 input，而不是维护一份会漏掉插件/MCP 的名字黑名单。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/spec.rs:1158–1217</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>ToolSpec 能力与 input-specific policy。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · Registry 执行前会重新施加 machine authority，并提供只读事实投影</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ToolRegistry execute_full 在真正执行前调用 enforce_tool_authority；registry_facts 只导出名称、描述、可见性、能力、审批和插件标记，不暴露可执行对象；名称解析有大小写、空格/连字符、CamelCase、后缀和模糊匹配的确定性阶梯。</p></section><section><span>PLAIN LANGUAGE</span><p>预览层拿到的是一份不能执行的菜单，执行层还要再验一次；模型叫错 `read-file` 也会按固定规则解析，不会随机挑工具。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>把 facts projection 和 executable registry 分离，是构建 request inspector、审计 UI 和安全边界的关键。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/registry.rs#L91-L99" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">crates/tui/src/tools/spec.rs:1158–1217 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/registry.rs:91–99</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/registry.rs#L91-L99" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>execute_full 前置 authority。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · 并行工具只允许 read-only、Auto approval 且声明 supports_parallel</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>execute_parallel_tool 对每个调用检查 MCP parallel-safe 白名单，普通工具必须 registered、input-specific read-only、approval=Auto、supports_parallel=true；通过后用 FuturesUnordered 并发，shell 额外受 Semaphore 限流。</p></section><section><span>PLAIN LANGUAGE</span><p>并行不是模型说了算：写文件、需要询问用户或没声明线程安全的工具都不能塞进并行批次。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>并发调度要让工具自己声明安全性，再由 scheduler 做交叉检查；不能只按工具名字分组。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L230-L287" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">crates/tui/src/tools/spec.rs:1158–1217 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine/tool_execution.rs:230–287</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L230-L287" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>parallel MCP/read-only/approval/support checks。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-tools-004" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 工具执行有 heartbeat、读写锁、交互终端 RAII 和结构化结束日志</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>execute_tool_with_lock 在抢锁前启动 ToolHeartbeatGuard，read-only/parallel 走读锁、其他工具走写锁；InteractiveTerminalGuard 在取消时也保证 ResumeEvents，结束日志记录 dispatch、耗时、输出大小和 typed error kind。</p></section><section><span>PLAIN LANGUAGE</span><p>一个长时间 build 不会被 UI 误判为死掉；并发读不会阻塞，写会排他；交互终端中途取消也会恢复 TUI 状态。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>可观测性要覆盖等待资源的时间，而不只是工具函数真正开始后的耗时。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L353-L406" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">crates/tui/src/tools/spec.rs:1158–1217 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine/tool_execution.rs:353–406</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L353-L406" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>heartbeat、读写锁和 terminal RAII。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-tools-005" data-finding-dimension="tools"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>05 · 跨进程 Fleet 的重命令用文件锁和内存压力收紧 admission</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>resource_admission 默认只开放 2 个 heavy command permit，最大 16；permit 由 CODEWHALE_HOME 下的文件锁实现，跨进程有效。内存压力 constrained 时减半，critical 时变成 0 个 slot，等待过程每 50ms 检查取消。</p></section><section><span>PLAIN LANGUAGE</span><p>多个子进程同时编译不会因为各自都有一个 Tokio semaphore 就把机器打爆；它们共享磁盘上的锁，内存紧张时新任务排队。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多 Agent 资源治理必须跨进程设计；只在单进程内限并发不够。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/resource_admission.rs#L1-L27" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">crates/tui/src/tools/spec.rs:1158–1217 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/resource_admission.rs:1–27</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/resource_admission.rs#L1-L27" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>跨进程 permit、默认/最大数量与压力阈值。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="CodeWhale sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>CodeWhale · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · CodeWhale · cfc2f2b13c07</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>5 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>CodeWhale · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch05-tools.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 5 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · ToolSpec 把能力、审批、只读、并行和资源声明放到同一输入特化接口</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ToolSpec 要求 name/description/schema/capabilities，默认按 ExecutesCode/WritesFiles/其他能力映射 Required/Suggest/Auto；每个具体 input 还能决定 read-only、approval、parallel、detached 和 resource claims，prepare 生成 PreparedToolCall。</p></section><section><span>PLAIN LANGUAGE</span><p>工具不是只有一个名字和一个函数；系统会问“这一次具体参数是否只读、能否并行、需要什么审批、会占什么资源”。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>工具能力要来自类型和实际 input，而不是维护一份会漏掉插件/MCP 的名字黑名单。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1158–1186</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1187–1217</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/spec.rs:1158–1217</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1158  /// The core trait that all tools must implement.
+ 1159  #[async_trait]
+ 1160  pub trait ToolSpec: Send + Sync {
+ 1161      /// Returns the unique name of this tool (used in API calls).
+ 1162      fn name(&amp;self) -&gt; &amp;str;
+ 1163
+ 1164      /// Returns a human-readable description of what this tool does.
+ 1165      fn description(&amp;self) -&gt; &amp;str;
+ 1166
+ 1167      /// Returns the JSON Schema for the tool&#39;s input parameters.
+ 1168      fn input_schema(&amp;self) -&gt; Value;
+ 1169
+ 1170      /// Returns the capabilities this tool has.
+ 1171      fn capabilities(&amp;self) -&gt; Vec&lt;ToolCapability&gt;;
+ 1172
+ 1173      /// Returns the approval requirement for this tool.
+ 1174      fn approval_requirement(&amp;self) -&gt; ApprovalRequirement {
+ 1175          let caps = self.capabilities();
+ 1176          if caps.contains(&amp;ToolCapability::ExecutesCode) {
+ 1177              ApprovalRequirement::Required
+ 1178          } else if caps.contains(&amp;ToolCapability::WritesFiles) {
+ 1179              ApprovalRequirement::Suggest
+ 1180          } else {
+ 1181              ApprovalRequirement::Auto
+ 1182          }
+ 1183      }
+ 1184
+ 1185      /// Returns the approval requirement for this concrete tool input.
+ 1186      fn approval_requirement_for(&amp;self, _input: &amp;Value) -&gt; ApprovalRequirement {
+ 1187          self.approval_requirement()
+ 1188      }
+ 1189
+ 1190      /// Returns whether this tool is sandboxable.
+ 1191      #[allow(dead_code)]
+ 1192      fn is_sandboxable(&amp;self) -&gt; bool {
+ 1193          self.capabilities().contains(&amp;ToolCapability::Sandboxable)
+ 1194      }
+ 1195
+ 1196      /// Returns whether this tool is read-only.
+ 1197      fn is_read_only(&amp;self) -&gt; bool {
+ 1198          let caps = self.capabilities();
+ 1199          caps.contains(&amp;ToolCapability::ReadOnly)
+ 1200              &amp;&amp; !caps.contains(&amp;ToolCapability::WritesFiles)
+ 1201              &amp;&amp; !caps.contains(&amp;ToolCapability::ExecutesCode)
+ 1202      }
+ 1203
+ 1204      /// Returns whether this concrete tool input is read-only.
+ 1205      fn is_read_only_for(&amp;self, _input: &amp;Value) -&gt; bool {
+ 1206          self.is_read_only()
+ 1207      }
+ 1208
+ 1209      /// Returns whether this tool can be executed in parallel with others.
+ 1210      fn supports_parallel(&amp;self) -&gt; bool {
+ 1211          false
+ 1212      }
+ 1213
+ 1214      /// Returns whether this concrete tool input can run in parallel.
+ 1215      fn supports_parallel_for(&amp;self, _input: &amp;Value) -&gt; bool {
+ 1216          self.supports_parallel()
+ 1217      }
+ 1218
+ 1219      /// Returns whether this input starts durable/detached work and returns
+ 1220      /// immediately. Detached starts are not read-only, but in auto-approved
+ 1221      /// turns they do not need to block neighboring read-only inspections.
+ 1222      fn starts_detached_for(&amp;self, _input: &amp;Value) -&gt; bool {
+ 1223          false
+ 1224      }
+ 1225
+ 1226      /// Resolve input-specific policy without performing external side effects.
+ 1227      ///
+ 1228      /// Resource claims deliberately default to global exclusivity until a
+ 1229      /// first-party tool opts into narrower, canonicalized claims. The initial
+ 1230      /// seam records this decision but leaves the existing scheduler unchanged.
+ 1231      fn prepare(&amp;self, input: Value, _context: &amp;ToolContext) -&gt; Result&lt;PreparedToolCall, ToolError&gt; {
+ 1232          Ok(PreparedToolCall {
+ 1233              name: self.name().to_string(),
+ 1234              description: self.description().to_string(),
+ 1235              read_only: self.is_read_only_for(&amp;input),
+ 1236              supports_parallel: self.supports_parallel_for(&amp;input),
+ 1237              starts_detached: self.starts_detached_for(&amp;input),
+ 1238              approval: self.approval_requirement_for(&amp;input),
+ 1239              resources: vec![ResourceClaim::GlobalExclusive],
+ 1240              input,
+ 1241          })
+ 1242      }
+ 1243
+ 1244      /// Returns whether this tool should be excluded from the model-visible
+ 1245      /// tool catalog (deferred loading). Tools marked `true` are registered
+ 1246      /// but not sent to the model until explicitly activated via tool search.
+ 1247      fn defer_loading(&amp;self) -&gt; bool {
+ 1248          false
+ 1249      }
+ 1250
+ 1251      /// Returns whether this tool should be advertised in the model-facing
+ 1252      /// catalog. Hidden compatibility tools remain registered and executable
+ 1253      /// by name so saved transcripts can replay without teaching new sessions
+ 1254      /// the deprecated spelling.
+ 1255      fn model_visible(&amp;self) -&gt; bool {
+ 1256          true
+ 1257      }
+ 1258
+ 1259      /// Execute the tool with the given input and context.
+ 1260      async fn execute(&amp;self, input: Value, context: &amp;ToolContext) -&gt; Result&lt;ToolResult, ToolError&gt;;
+ 1261  }
+ 1262
+ 1263  #[cfg(test)]
+ 1264  mod tests;
+ 1265</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/tui/src/tools/spec.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code> 1158          }
+ 1159
+ 1160          Ok(canonical)
+ 1161      }
+ 1162
+ 1163      /// Whether `path` is under any of the user-trusted external roots. The
+ 1164      /// caller should pass an already-canonicalized (or normalized) path.
+ 1165      fn is_trusted_external_path(&amp;self, path: &amp;Path) -&gt; bool {
+ 1166          self.trusted_external_paths
+ 1167              .iter()
+ 1168              .any(|trusted| path.starts_with(trusted))
+ 1169      }
+ 1170
+ 1171      /// Set the trust mode.
+ 1172      #[allow(dead_code)]
+ 1173      pub fn with_trust_mode(mut self, trust: bool) -&gt; Self {
+ 1174          self.trust_mode = trust;
+ 1175          self
+ 1176      }
+ 1177
+ 1178      /// Set the sandbox policy.
+ 1179      #[allow(dead_code)]
+ 1180      pub fn with_sandbox_policy(mut self, policy: SandboxPolicy) -&gt; Self {
+ 1181          self.sandbox_policy = policy;
+ 1182          self
+ 1183      }
+ 1184
+ 1185      /// Set feature flags for tool execution.
+ 1186      pub fn with_features(mut self, features: Features) -&gt; Self {
+ 1187          self.features = features;
+ 1188          self
+ 1189      }
+ 1190
+ 1191      /// Override the shared shell manager.
+ 1192      pub fn with_shell_manager(mut self, shell_manager: SharedShellManager) -&gt; Self {
+ 1193          self.shell_manager = shell_manager;
+ 1194          self
+ 1195      }
+ 1196
+ 1197      /// Reuse the engine&#39;s session-scoped read snapshots across tool-context
+ 1198      /// rebuilds. A fresh context is assembled for each turn, but successful
+ 1199      /// reads must remain authoritative until the observed file changes.
+ 1200      pub fn with_file_read_tracker(mut self, tracker: SharedFileReadTracker) -&gt; Self {
+ 1201          self.file_read_tracker = tracker;
+ 1202          self
+ 1203      }
+ 1204
+ 1205      /// Set the elevated sandbox policy override.
+ 1206      ///
+ 1207      /// This is used when retrying a tool after a sandbox denial, to run
+ 1208      /// with elevated permissions.
+ 1209      pub fn with_elevated_sandbox_policy(mut self, policy: crate::sandbox::SandboxPolicy) -&gt; Self {
+ 1210          self.elevated_sandbox_policy = Some(policy);
+ 1211          self
+ 1212      }
+ 1213
+ 1214      /// Set the shell network-denial hint used by network-restricted modes.
+ 1215      pub fn with_shell_network_denied_hint(mut self, hint: impl Into&lt;String&gt;) -&gt; Self {
+ 1216          self.shell_network_denied_hint = Some(hint.into());
+ 1217          self
+ 1218      }
+ 1219
+ 1220      /// Set the namespace used for session-scoped tool state.
+ 1221      pub fn with_state_namespace(mut self, namespace: impl Into&lt;String&gt;) -&gt; Self {
+ 1222          self.state_namespace = namespace.into();
+ 1223          self
+ 1224      }
+ 1225
+ 1226      /// Attach the active route&#39;s effective context window.
+ 1227      #[must_use]
+ 1228      pub fn with_route_context_window(mut self, context_window: u32) -&gt; Self {
+ 1229          self.route_context_window = (context_window &gt; 0).then_some(context_window);
+ 1230          self
+ 1231      }
+ 1232
+ 1233      /// Attach the large-output router (#548). When set, tool results that
+ 1234      /// exceed the configured token threshold are synthesised by a V4-Flash
+ 1235      /// sub-agent before being returned to the parent context.
+ 1236      #[must_use]
+ 1237      pub fn with_large_output_router(
+ 1238          mut self,
+ 1239          router: crate::tools::large_output_router::LargeOutputRouter,
+ 1240          vars: std::sync::Arc&lt;
+ 1241              tokio::sync::Mutex&lt;crate::tools::large_output_router::WorkshopVariables&gt;,
+ 1242          &gt;,
+ 1243      ) -&gt; Self {
+ 1244          self.large_output_router = Some(router);
+ 1245          self.workshop_vars = Some(vars);
+ 1246          self
+ 1247      }
+ 1248  }
+ 1249
+ 1250  /// Gather LSP diagnostics for `paths` using the manager stored in `context`,
+ 1251  /// and return the rendered `&lt;diagnostics …&gt;` blocks joined by newlines.
+ 1252  ///
+ 1253  /// Returns an empty string when:
+ 1254  /// - `context.lsp_manager` is `None`
+ 1255  /// - the manager&#39;s `enabled` flag is `false`
+ 1256  /// - none of the files produce diagnostics (e.g. all clean, or language unknown)
+ 1257  ///
+ 1258  /// This function is non-blocking by design: every failure mode (missing LSP
+ 1259  /// binary, timeout, unknown language) degrades to an empty string rather than
+ 1260  /// propagating an error to the caller.
+ 1261  pub async fn lsp_diagnostics_for_paths(context: &amp;ToolContext, paths: &amp;[PathBuf]) -&gt; String {
+ 1262      use crate::lsp::render_blocks;
+ 1263
+ 1264      let manager = match context.lsp_manager.as_ref() {
+ 1265          Some(m) if m.config().enabled =&gt; m,
+ 1266          _ =&gt; return String::new(),
+ 1267      };
+ 1268
+ 1269      let mut blocks = Vec::new();
+ 1270      for (idx, path) in paths.iter().enumerate() {
+ 1271          if let Some(block) = manager.diagnostics_for(path, idx as u64).await {
+ 1272              blocks.push(block);
+ 1273          }
+ 1274      }
+ 1275
+ 1276      render_blocks(&amp;blocks)
+ 1277  }
+ 1278
+ 1279  pub(crate) fn normalize_path(path: &amp;Path) -&gt; PathBuf {
+ 1280      let mut prefix: Option&lt;std::ffi::OsString&gt; = None;
+ 1281      let mut is_root = false;
+ 1282      let mut stack: Vec&lt;std::ffi::OsString&gt; = Vec::new();
+ 1283
+ 1284      for component in path.components() {
+ 1285          match component {
+ 1286              Component::Prefix(prefix_component) =&gt; {
+ 1287                  prefix = Some(prefix_component.as_os_str().to_owned());
+ 1288              }</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · Registry 执行前会重新施加 machine authority，并提供只读事实投影</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>ToolRegistry execute_full 在真正执行前调用 enforce_tool_authority；registry_facts 只导出名称、描述、可见性、能力、审批和插件标记，不暴露可执行对象；名称解析有大小写、空格/连字符、CamelCase、后缀和模糊匹配的确定性阶梯。</p></section><section><span>PLAIN LANGUAGE</span><p>预览层拿到的是一份不能执行的菜单，执行层还要再验一次；模型叫错 `read-file` 也会按固定规则解析，不会随机挑工具。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>把 facts projection 和 executable registry 分离，是构建 request inspector、审计 UI 和安全边界的关键。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>91–94</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>95–99</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/registry.rs#L91-L99" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/registry.rs:91–99</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/registry.rs#L91-L99" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   91      /// Execute a tool by name, returning the full `ToolResult`.
+   92      pub async fn execute_full(&amp;self, name: &amp;str, input: Value) -&gt; Result&lt;ToolResult, ToolError&gt; {
+   93          let tool = self
+   94              .get(name)
+   95              .ok_or_else(|| ToolError::not_available(format!(&quot;tool &#39;{name}&#39; is not registered&quot;)))?;
+   96
+   97          enforce_tool_authority(name, &amp;input, tool.as_ref(), &amp;self.context)?;
+   98          tool.execute(input, &amp;self.context).await
+   99      }
+  100
+  101      /// Execute a tool with an optional context override.
+  102      ///
+  103      /// This is used for retrying tools with elevated sandbox policies.
+  104      /// After execution, results are stamped with adaptive evidence routing.
+  105      pub async fn execute_full_with_context(
+  106          &amp;self,
+  107          name: &amp;str,
+  108          input: Value,
+  109          context_override: Option&lt;&amp;ToolContext&gt;,
+  110      ) -&gt; Result&lt;ToolResult, ToolError&gt; {
+  111          let tool = self
+  112              .get(name)
+  113              .ok_or_else(|| ToolError::not_available(format!(&quot;tool &#39;{name}&#39; is not registered&quot;)))?;
+  114
+  115          let ctx = context_override.unwrap_or(&amp;self.context);
+  116          enforce_tool_authority(name, &amp;input, tool.as_ref(), ctx)?;
+  117          let mut result = tool.execute(input.clone(), ctx).await?;
+  118
+  119          // Adaptive evidence routing (#4619) is storage-free here because this
+  120          // layer does not own a call id. The engine/subagent completion boundary
+  121          // publishes the exact artifact. Classic workshop previews remain an
+  122          // explicit local rollback path.
+  123          let raw_bypass = input.get(&quot;raw&quot;).and_then(|v| v.as_bool()).unwrap_or(false);
+  124
+  125          if let Some(router) = ctx.large_output_router.as_ref() {
+  126              use crate::tools::large_output_router::{
+  127                  LargeOutputRouter, RouteDecision, classic_output_routing_enabled,
+  128              };
+  129              if !classic_output_routing_enabled() {
+  130                  let (routing, estimated_tokens, threshold) =
+  131                      router.evidence_routing(name, &amp;result, raw_bypass);
+  132                  let metadata = result.metadata.get_or_insert_with(|| serde_json::json!({}));
+  133                  if let Some(object) = metadata.as_object_mut() {
+  134                      object.insert(
+  135                          &quot;evidence_routing&quot;.to_string(),
+  136                          serde_json::to_value(routing)
+  137                              .unwrap_or_else(|_| serde_json::json!(&quot;inline&quot;)),
+  138                      );
+  139                      object.insert(
+  140                          &quot;evidence_estimated_tokens&quot;.to_string(),
+  141                          estimated_tokens.into(),
+  142                      );
+  143                      object.insert(&quot;evidence_threshold_tokens&quot;.to_string(), threshold.into());
+  144                  }
+  145                  return Ok(result);
+  146              }
+  147              match router.route(name, &amp;result, raw_bypass) {
+  148                  RouteDecision::PassThrough =&gt; {}
+  149                  RouteDecision::Synthesise {
+  150                      estimated_tokens,
+  151                      threshold,
+  152                  } =&gt; {
+  153                      // Store the raw output in the workshop variable store.
+  154                      if let Some(vars_arc) = ctx.workshop_vars.as_ref() {
+  155                          let mut vars = vars_arc.lock().await;
+  156                          vars.store_raw(name, &amp;result.content);
+  157                      }
+  158
+  159                      // Build a terse synthesis using the same model the registry
+  160                      // was constructed for (workshop Flash model). For now we
+  161                      // produce a structured header + truncated preview without
+  162                      // a live API call so the engine stays dependency-free at
+  163                      // the registry layer. A follow-up can wire in the Flash
+  164                      // client when the async LLM call is safe here.
+  165                      let preview_chars = 1_200usize;
+  166                      let preview: String = result.content.chars().take(preview_chars).collect();
+  167                      let ellipsis = if result.content.chars().count() &gt; preview_chars {
+  168                          &quot;\n… [output truncated — full text in workshop variable `last_tool_result`]&quot;
+  169                      } else {
+  170                          &quot;&quot;</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/tui/src/tools/registry.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/tools/registry.rs#L91-L99" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>   91
+   92      /// Execute a tool by name, returning the full `ToolResult`.
+   93      pub async fn execute_full(&amp;self, name: &amp;str, input: Value) -&gt; Result&lt;ToolResult, ToolError&gt; {
+   94          self.execute_rich_full(name, input)
+   95              .await
+   96              .map(RichToolResult::into_result)
+   97      }
+   98
+   99      pub(crate) async fn execute_rich_full(
+  100          &amp;self,
+  101          name: &amp;str,
+  102          input: Value,
+  103      ) -&gt; Result&lt;RichToolResult, ToolError&gt; {
+  104          let tool = self
+  105              .get(name)
+  106              .ok_or_else(|| ToolError::not_available(format!(&quot;tool &#39;{name}&#39; is not registered&quot;)))?;
+  107
+  108          enforce_tool_authority(name, &amp;input, tool.as_ref(), &amp;self.context)?;
+  109          tool.execute_rich(input, &amp;self.context)
+  110              .await
+  111              .map(crate::image_attach::bound_rich_tool_result)
+  112      }
+  113
+  114      /// Execute a tool with an optional context override.
+  115      ///
+  116      /// This is used for retrying tools with elevated sandbox policies.
+  117      /// After execution, results are stamped with adaptive evidence routing.
+  118      #[allow(dead_code)] // compatibility seam for text-only internal callers
+  119      pub async fn execute_full_with_context(
+  120          &amp;self,
+  121          name: &amp;str,
+  122          input: Value,
+  123          context_override: Option&lt;&amp;ToolContext&gt;,
+  124      ) -&gt; Result&lt;ToolResult, ToolError&gt; {
+  125          self.execute_rich_full_with_context(name, input, context_override)
+  126              .await
+  127              .map(RichToolResult::into_result)
+  128      }
+  129
+  130      pub(crate) async fn execute_rich_full_with_context(
+  131          &amp;self,
+  132          name: &amp;str,
+  133          input: Value,
+  134          context_override: Option&lt;&amp;ToolContext&gt;,
+  135      ) -&gt; Result&lt;RichToolResult, ToolError&gt; {
+  136          let tool = self
+  137              .get(name)
+  138              .ok_or_else(|| ToolError::not_available(format!(&quot;tool &#39;{name}&#39; is not registered&quot;)))?;
+  139
+  140          let ctx = context_override.unwrap_or(&amp;self.context);
+  141          enforce_tool_authority(name, &amp;input, tool.as_ref(), ctx)?;
+  142          let mut rich = crate::image_attach::bound_rich_tool_result(
+  143              tool.execute_rich(input.clone(), ctx).await?,
+  144          );
+  145          let result = &amp;mut rich.result;
+  146
+  147          // Adaptive evidence routing (#4619) is storage-free here because this
+  148          // layer does not own a call id. The engine/subagent completion boundary
+  149          // publishes the exact artifact. Classic workshop previews remain an
+  150          // explicit local rollback path.
+  151          let raw_bypass = input.get(&quot;raw&quot;).and_then(|v| v.as_bool()).unwrap_or(false);
+  152
+  153          if let Some(router) = ctx.large_output_router.as_ref() {
+  154              use crate::tools::large_output_router::{
+  155                  EvidenceRouting, LargeOutputRouter, RouteDecision, classic_output_routing_enabled,
+  156              };
+  157              if !classic_output_routing_enabled() {
+  158                  let (estimated_routing, estimated_tokens, threshold) =
+  159                      router.evidence_routing(name, result, raw_bypass);
+  160                  let metadata = result.metadata.get_or_insert_with(|| serde_json::json!({}));
+  161                  if let Some(object) = metadata.as_object_mut() {
+  162                      // A tool that self-bounds its output behind its own
+  163                      // recovery contract (e.g. read_file&#39;s `next_start_line`
+  164                      // paging) declares its routing itself; the size estimate
+  165                      // must not override that and double-wrap the result.
+  166                      let routing = object
+  167                          .get(&quot;evidence_routing&quot;)
+  168                          .cloned()
+  169                          .and_then(|value| serde_json::from_value::&lt;EvidenceRouting&gt;(value).ok())
+  170                          .unwrap_or(estimated_routing);</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-tools-003" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · 并行工具只允许 read-only、Auto approval 且声明 supports_parallel</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>execute_parallel_tool 对每个调用检查 MCP parallel-safe 白名单，普通工具必须 registered、input-specific read-only、approval=Auto、supports_parallel=true；通过后用 FuturesUnordered 并发，shell 额外受 Semaphore 限流。</p></section><section><span>PLAIN LANGUAGE</span><p>并行不是模型说了算：写文件、需要询问用户或没声明线程安全的工具都不能塞进并行批次。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>并发调度要让工具自己声明安全性，再由 scheduler 做交叉检查；不能只按工具名字分组。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>230–257</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>258–287</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L230-L287" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine/tool_execution.rs:230–287</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L230-L287" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  230      pub(super) async fn execute_parallel_tool(
+  231          &amp;mut self,
+  232          input: serde_json::Value,
+  233          tool_registry: Option&lt;&amp;crate::tools::ToolRegistry&gt;,
+  234          tool_exec_lock: Arc&lt;RwLock&lt;()&gt;&gt;,
+  235          context_override: Option&lt;crate::tools::ToolContext&gt;,
+  236      ) -&gt; Result&lt;ToolResult, ToolError&gt; {
+  237          let calls = parse_parallel_tool_calls(&amp;input)?;
+  238          let mcp_pool = if calls.iter().any(|(tool, _)| McpPool::is_mcp_tool(tool)) {
+  239              Some(self.ensure_mcp_pool().await?)
+  240          } else {
+  241              None
+  242          };
+  243          let Some(registry) = tool_registry else {
+  244              return Err(ToolError::not_available(
+  245                  &quot;tool registry unavailable for multi_tool_use.parallel&quot;,
+  246              ));
+  247          };
+  248
+  249          let result_count = calls.len();
+  250          let mut tasks = FuturesUnordered::new();
+  251          let shell_permits = Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_SHELL_EXEC));
+  252          for (index, (tool_name, tool_input)) in calls.into_iter().enumerate() {
+  253              if tool_name == MULTI_TOOL_PARALLEL_NAME {
+  254                  return Err(ToolError::invalid_input(
+  255                      &quot;multi_tool_use.parallel cannot call itself&quot;,
+  256                  ));
+  257              }
+  258              if McpPool::is_mcp_tool(&amp;tool_name) {
+  259                  if !mcp_tool_is_parallel_safe(&amp;tool_name) {
+  260                      return Err(ToolError::invalid_input(format!(
+  261                          &quot;Tool &#39;{tool_name}&#39; is an MCP tool and cannot run in parallel. \
+  262                           Allowed MCP tools: list_mcp_resources, list_mcp_resource_templates, \
+  263                           mcp_read_resource, read_mcp_resource, mcp_get_prompt.&quot;
+  264                      )));
+  265                  }
+  266              } else {
+  267                  let Some(spec) = registry.get(&amp;tool_name) else {
+  268                      return Err(ToolError::not_available(format!(
+  269                          &quot;tool &#39;{tool_name}&#39; is not registered&quot;
+  270                      )));
+  271                  };
+  272                  if !spec.is_read_only_for(&amp;tool_input) {
+  273                      return Err(ToolError::invalid_input(format!(
+  274                          &quot;Tool &#39;{tool_name}&#39; is not read-only and cannot run in parallel&quot;
+  275                      )));
+  276                  }
+  277                  if spec.approval_requirement_for(&amp;tool_input) != ApprovalRequirement::Auto {
+  278                      return Err(ToolError::invalid_input(format!(
+  279                          &quot;Tool &#39;{tool_name}&#39; requires approval and cannot run in parallel&quot;
+  280                      )));
+  281                  }
+  282                  if !spec.supports_parallel_for(&amp;tool_input) {
+  283                      return Err(ToolError::invalid_input(format!(
+  284                          &quot;Tool &#39;{tool_name}&#39; does not support parallel execution&quot;
+  285                      )));
+  286                  }
+  287              }
+  288
+  289              let registry_ref = registry;
+  290              let lock = tool_exec_lock.clone();
+  291              let tx_event = self.tx_event.clone();
+  292              let mcp_pool = mcp_pool.clone();
+  293              let shell_permits = shell_permits.clone();
+  294              let workspace = self.session.workspace.clone();
+  295              let context_override = context_override.clone();
+  296              tasks.push(async move {
+  297                  let _shell_permit = if tool_name == &quot;exec_shell&quot; {
+  298                      shell_permits.acquire_owned().await.ok()
+  299                  } else {
+  300                      None
+  301                  };
+  302                  let result = Engine::execute_tool_with_lock(
+  303                      lock,
+  304                      true,
+  305                      false,
+  306                      tx_event,
+  307                      tool_name.clone(),
+  308                      tool_input.clone(),
+  309                      workspace,
+  310                      Some(registry_ref),
+  311                      mcp_pool,
+  312                      context_override,
+  313                  )
+  314                  .await;
+  315                  (index, tool_name, result)
+  316              });
+  317          }
+  318
+  319          let mut results: Vec&lt;Option&lt;ParallelToolResultEntry&gt;&gt; = Vec::with_capacity(result_count);
+  320          results.resize_with(result_count, || None);
+  321          while let Some((index, tool_name, result)) = tasks.next().await {
+  322              let entry = match result {
+  323                  Ok(output) =&gt; {
+  324                      let mut error = None;
+  325                      if !output.success {
+  326                          error = Some(output.content.clone());
+  327                      }
+  328                      ParallelToolResultEntry {
+  329                          tool_name,
+  330                          success: output.success,
+  331                          content: output.content,
+  332                          error,
+  333                      }
+  334                  }
+  335                  Err(err) =&gt; {
+  336                      let message = format!(&quot;{err}&quot;);
+  337                      ParallelToolResultEntry {
+  338                          tool_name,
+  339                          success: false,
+  340                          content: format!(&quot;Error: {message}&quot;),
+  341                          error: Some(message),
+  342                      }
+  343                  }
+  344              };
+  345              results[index] = Some(entry);
+  346          }
+  347          let results = results.into_iter().flatten().collect();
+  348
+  349          ToolResult::json(&amp;ParallelToolResult { results })
+  350              .map_err(|e| ToolError::execution_failed(e.to_string()))
+  351      }
+  352
+  353      #[allow(clippy::too_many_arguments)]
+  354      pub(super) async fn execute_tool_with_lock(
+  355          lock: Arc&lt;RwLock&lt;()&gt;&gt;,
+  356          supports_parallel: bool,
+  357          interactive: bool,
+  358          tx_event: mpsc::Sender&lt;Event&gt;,</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/tui/src/core/engine/tool_execution.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/core/engine/tool_execution.rs#L230-L287" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  230      pub(super) async fn execute_parallel_tool(
+  231          &amp;mut self,
+  232          input: serde_json::Value,
+  233          tool_registry: Option&lt;&amp;crate::tools::ToolRegistry&gt;,
+  234          tool_exec_lock: Arc&lt;RwLock&lt;()&gt;&gt;,
+  235          context_override: Option&lt;crate::tools::ToolContext&gt;,
+  236      ) -&gt; Result&lt;RichToolResult, ToolError&gt; {
+  237          let calls = parse_parallel_tool_calls(&amp;input)?;
+  238          let mcp_pool = if calls.iter().any(|(tool, _)| McpPool::is_mcp_tool(tool)) {
+  239              Some(self.ensure_mcp_pool().await?)
+  240          } else {
+  241              None
+  242          };
+  243          let Some(registry) = tool_registry else {
+  244              return Err(ToolError::not_available(
+  245                  &quot;tool registry unavailable for multi_tool_use.parallel&quot;,
+  246              ));
+  247          };
+  248
+  249          let result_count = calls.len();
+  250          let mut tasks = FuturesUnordered::new();
+  251          let shell_permits = Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_SHELL_EXEC));
+  252          for (index, (tool_name, tool_input)) in calls.into_iter().enumerate() {
+  253              if tool_name == MULTI_TOOL_PARALLEL_NAME {
+  254                  return Err(ToolError::invalid_input(
+  255                      &quot;multi_tool_use.parallel cannot call itself&quot;,
+  256                  ));
+  257              }
+  258              if McpPool::is_mcp_tool(&amp;tool_name) {
+  259                  if !mcp_tool_is_parallel_safe(&amp;tool_name) {
+  260                      return Err(ToolError::invalid_input(format!(
+  261                          &quot;Tool &#39;{tool_name}&#39; is an MCP tool and cannot run in parallel. \
+  262                           Allowed MCP tools: list_mcp_resources, list_mcp_resource_templates, \
+  263                           mcp_read_resource, read_mcp_resource, mcp_get_prompt.&quot;
+  264                      )));
+  265                  }
+  266              } else {
+  267                  let Some(spec) = registry.get(&amp;tool_name) else {
+  268                      return Err(ToolError::not_available(format!(
+  269                          &quot;tool &#39;{tool_name}&#39; is not registered&quot;
+  270                      )));
+  271                  };
+  272                  if !spec.is_read_only_for(&amp;tool_input) {
+  273                      return Err(ToolError::invalid_input(format!(
+  274                          &quot;Tool &#39;{tool_name}&#39; is not read-only and cannot run in parallel&quot;
+  275                      )));
+  276                  }
+  277                  if spec.approval_requirement_for(&amp;tool_input) != ApprovalRequirement::Auto {
+  278                      return Err(ToolError::invalid_input(format!(
+  279                          &quot;Tool &#39;{tool_name}&#39; requires approval and cannot run in parallel&quot;
+  280                      )));
+  281                  }
+  282                  if !spec.supports_parallel_for(&amp;tool_input) {
+  283                      return Err(ToolError::invalid_input(format!(
+  284                          &quot;Tool &#39;{tool_name}&#39; does not support parallel execution&quot;
+  285                      )));
+  286                  }
+  287              }
+  288
+  289              let registry_ref = registry;
+  290              let lock = tool_exec_lock.clone();
+  291              let tx_event = self.tx_event.clone();
+  292              let mcp_pool = mcp_pool.clone();
+  293              let shell_permits = shell_permits.clone();
+  294              let workspace = self.session.workspace.clone();
+  295              let context_override = context_override.clone();
+  296              let cancel_token = self.cancel_token.clone();
+  297              tasks.push(async move {
+  298                  let _shell_permit = if matches!(tool_name.as_str(), &quot;bash&quot; | &quot;Bash&quot; | &quot;exec_shell&quot;)
+  299                  {
+  300                      shell_permits.acquire_owned().await.ok()
+  301                  } else {
+  302                      None
+  303                  };
+  304                  let result = Engine::execute_tool_with_lock(
+  305                      lock,
+  306                      true,
+  307                      false,
+  308                      tx_event,
+  309                      Some(cancel_token),
+  310                      tool_name.clone(),
+  311                      tool_input.clone(),
+  312                      workspace,
+  313                      Some(registry_ref),
+  314                      mcp_pool,
+  315                      context_override,
+  316                  )
+  317                  .await;
+  318                  (index, tool_name, result)
+  319              });
+  320          }
+  321
+  322          let mut results: Vec&lt;Option&lt;ParallelToolResultEntry&gt;&gt; = Vec::with_capacity(result_count);
+  323          results.resize_with(result_count, || None);
+  324          let mut content_blocks = Vec::new();
+  325          while let Some((index, tool_name, result)) = tasks.next().await {
+  326              let entry = match result {
+  327                  Ok(output) =&gt; {
+  328                      let RichToolResult {
+  329                          result: output,
+  330                          content_blocks: output_blocks,
+  331                      } = output;
+  332                      content_blocks.extend(output_blocks);
+  333                      let mut error = None;
+  334                      if !output.success {
+  335                          error = Some(output.content.clone());
+  336                      }
+  337                      ParallelToolResultEntry {
+  338                          tool_name,
+  339                          success: output.success,
+  340                          content: output.content,
+  341                          error,
+  342                      }
+  343                  }
+  344                  Err(err) =&gt; {
+  345                      let message = format!(&quot;{err}&quot;);
+  346                      ParallelToolResultEntry {
+  347                          tool_name,
+  348                          success: false,
+  349                          content: format!(&quot;Error: {message}&quot;),
+  350                          error: Some(message),
+  351                      }
+  352                  }
+  353              };
+  354              results[index] = Some(entry);
+  355          }
+  356          let results = results.into_iter().flatten().collect();
+  357
+  358          let result = ToolResult::json(&amp;ParallelToolResult { results })</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-tools-004" data-finding-dimension="tools"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>04 · 工具执行有 heartbeat、读写锁、交互终端 RAII 和结构化结束日志</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>execute_tool_with_lock 在抢锁前启动 ToolHeartbeatGuard，read-only/parallel 走读锁、其他工具走写锁；InteractiveTerminalGuard 在取消时也保证 ResumeEvents，结束日志记录 dispatch、耗时、输出大小和 typed error kind。</p></section><section><span>PLAIN LANGUAGE</span><p>一个长时间 build 不会被 UI 误判为死掉；并发读不会阻塞，写会排他；交互终端中途取消也会恢复 TUI 状态。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>可观测性要覆盖等待资源的时间，而不只是工具函数真正开始后的耗时。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>353–378</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>379–406</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L353-L406" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/core/engine/tool_execution.rs:353–406</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L353-L406" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  353      #[allow(clippy::too_many_arguments)]
+  354      pub(super) async fn execute_tool_with_lock(
+  355          lock: Arc&lt;RwLock&lt;()&gt;&gt;,
+  356          supports_parallel: bool,
+  357          interactive: bool,
+  358          tx_event: mpsc::Sender&lt;Event&gt;,
+  359          tool_name: String,
+  360          tool_input: serde_json::Value,
+  361          workspace: PathBuf,
+  362          registry: Option&lt;&amp;crate::tools::ToolRegistry&gt;,
+  363          mcp_pool: Option&lt;Arc&lt;AsyncMutex&lt;McpPool&gt;&gt;&gt;,
+  364          context_override: Option&lt;crate::tools::ToolContext&gt;,
+  365      ) -&gt; Result&lt;ToolResult, ToolError&gt; {
+  366          // This guard starts before lock acquisition, so contention as well as
+  367          // registry/MCP/interpreter execution remains visibly live.
+  368          let _heartbeat = ToolHeartbeatGuard::start(tx_event.clone(), TOOL_HEARTBEAT_INTERVAL);
+  369          let started_at = std::time::Instant::now();
+  370          let dispatch = if McpPool::is_mcp_tool(&amp;tool_name) {
+  371              &quot;mcp&quot;
+  372          } else if matches!(
+  373              tool_name.as_str(),
+  374              CODE_EXECUTION_TOOL_NAME | JS_EXECUTION_TOOL_NAME
+  375          ) {
+  376              &quot;interpreter&quot;
+  377          } else if registry.is_some() {
+  378              &quot;registry&quot;
+  379          } else {
+  380              &quot;missing&quot;
+  381          };
+  382          let input_bytes = serde_json::to_string(&amp;tool_input)
+  383              .map(|s| s.len())
+  384              .unwrap_or(0);
+  385          tracing::debug!(
+  386              target: &quot;engine.tool_execution&quot;,
+  387              tool = %tool_name,
+  388              dispatch,
+  389              interactive,
+  390              supports_parallel,
+  391              input_bytes,
+  392              &quot;tool.exec.start&quot;,
+  393          );
+  394
+  395          let _guard = if supports_parallel {
+  396              ToolExecGuard::Read(lock.read().await)
+  397          } else {
+  398              ToolExecGuard::Write(lock.write().await)
+  399          };
+  400
+  401          // RAII pause/resume: ensures `Event::ResumeEvents` always fires on
+  402          // drop, even if the tool future is cancelled mid-await. See
+  403          // `InteractiveTerminalGuard` doc-comment for the regression this
+  404          // closes (parent terminal scrollback hijacking the TUI after a
+  405          // cancelled interactive tool).
+  406          let _terminal = InteractiveTerminalGuard::engage(tx_event, interactive).await;
+  407
+  408          let tool_authority = context_override
+  409              .as_ref()
+  410              .and_then(|context| context.tool_authority.as_ref())
+  411              .or_else(|| registry.and_then(|registry| registry.context().tool_authority.as_ref()));
+  412          if let Some(authority) = tool_authority {
+  413              if McpPool::is_mcp_tool(&amp;tool_name)
+  414                  &amp;&amp; !super::dispatch::mcp_tool_is_read_only(&amp;tool_name)
+  415              {
+  416                  return Err(ToolError::permission_denied(format!(
+  417                      &quot;worker &#39;{}&#39; cannot run mutating MCP tool {tool_name}: it has no authorized file target&quot;,
+  418                      authority.owner
+  419                  )));
+  420              }
+  421              if matches!(
+  422                  tool_name.as_str(),
+  423                  CODE_EXECUTION_TOOL_NAME | JS_EXECUTION_TOOL_NAME
+  424              ) {
+  425                  return Err(ToolError::permission_denied(format!(
+  426                      &quot;worker &#39;{}&#39; cannot run {tool_name}: arbitrary code execution is outside its machine-readable authority envelope&quot;,
+  427                      authority.owner
+  428                  )));
+  429              }
+  430          }
+  431
+  432          let outcome = if McpPool::is_mcp_tool(&amp;tool_name) {
+  433              if let Some(pool) = mcp_pool {
+  434                  Engine::execute_mcp_tool_with_pool(pool, &amp;tool_name, tool_input).await
+  435              } else {
+  436                  Err(ToolError::not_available(format!(
+  437                      &quot;tool &#39;{tool_name}&#39; is not registered&quot;
+  438                  )))
+  439              }
+  440          } else if tool_name == CODE_EXECUTION_TOOL_NAME {
+  441              execute_code_execution_tool(&amp;tool_input, &amp;workspace).await
+  442          } else if tool_name == JS_EXECUTION_TOOL_NAME {
+  443              execute_js_execution_tool(&amp;tool_input, &amp;workspace).await
+  444          } else if let Some(registry) = registry {
+  445              registry
+  446                  .execute_full_with_context(&amp;tool_name, tool_input, context_override.as_ref())
+  447                  .await
+  448          } else {
+  449              Err(ToolError::not_available(format!(
+  450                  &quot;tool &#39;{tool_name}&#39; is not registered&quot;
+  451              )))
+  452          };
+  453
+  454          let duration_ms = started_at.elapsed().as_millis() as u64;
+  455          match &amp;outcome {
+  456              Ok(result) =&gt; {
+  457                  tracing::debug!(
+  458                      target: &quot;engine.tool_execution&quot;,
+  459                      tool = %tool_name,
+  460                      dispatch,
+  461                      duration_ms,
+  462                      success = result.success,
+  463                      output_bytes = result.content.len(),
+  464                      &quot;tool.exec.end&quot;,
+  465                  );
+  466              }
+  467              Err(err) =&gt; {
+  468                  let kind = match err {
+  469                      ToolError::InvalidInput { .. } =&gt; &quot;invalid_input&quot;,
+  470                      ToolError::MissingField { .. } =&gt; &quot;missing_field&quot;,
+  471                      ToolError::PathEscape { .. } =&gt; &quot;path_escape&quot;,
+  472                      ToolError::ExecutionFailed { .. } =&gt; &quot;execution_failed&quot;,
+  473                      ToolError::Timeout { .. } =&gt; &quot;timeout&quot;,
+  474                      ToolError::Cancelled { .. } =&gt; &quot;cancelled&quot;,
+  475                      ToolError::NotAvailable { .. } =&gt; &quot;not_available&quot;,
+  476                      ToolError::PermissionDenied { .. } =&gt; &quot;permission_denied&quot;,
+  477                  };</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/tui/src/core/engine/tool_execution.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/core/engine/tool_execution.rs#L353-L406" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  353              };
+  354              results[index] = Some(entry);
+  355          }
+  356          let results = results.into_iter().flatten().collect();
+  357
+  358          let result = ToolResult::json(&amp;ParallelToolResult { results })
+  359              .map_err(|e| ToolError::execution_failed(e.to_string()))?;
+  360          Ok(crate::image_attach::bound_rich_tool_result(
+  361              RichToolResult::with_content_blocks(result, content_blocks),
+  362          ))
+  363      }
+  364
+  365      #[allow(clippy::too_many_arguments)]
+  366      pub(super) async fn execute_tool_with_lock(
+  367          lock: Arc&lt;RwLock&lt;()&gt;&gt;,
+  368          supports_parallel: bool,
+  369          interactive: bool,
+  370          tx_event: mpsc::Sender&lt;Event&gt;,
+  371          cancel_token: Option&lt;CancellationToken&gt;,
+  372          tool_name: String,
+  373          tool_input: serde_json::Value,
+  374          workspace: PathBuf,
+  375          registry: Option&lt;&amp;crate::tools::ToolRegistry&gt;,
+  376          mcp_pool: Option&lt;Arc&lt;AsyncMutex&lt;McpPool&gt;&gt;&gt;,
+  377          context_override: Option&lt;crate::tools::ToolContext&gt;,
+  378      ) -&gt; Result&lt;RichToolResult, ToolError&gt; {
+  379          if cancel_token
+  380              .as_ref()
+  381              .is_some_and(CancellationToken::is_cancelled)
+  382          {
+  383              return Err(ToolError::permission_denied(
+  384                  &quot;Turn stopped by user. Tool call blocked.&quot;,
+  385              ));
+  386          }
+  387          // This guard starts before lock acquisition, so contention as well as
+  388          // registry/MCP/interpreter execution remains visibly live.
+  389          let _heartbeat = ToolHeartbeatGuard::start(tx_event.clone(), TOOL_HEARTBEAT_INTERVAL);
+  390          let started_at = std::time::Instant::now();
+  391          let dispatch = if McpPool::is_mcp_tool(&amp;tool_name) {
+  392              &quot;mcp&quot;
+  393          } else if matches!(
+  394              tool_name.as_str(),
+  395              CODE_EXECUTION_TOOL_NAME | JS_EXECUTION_TOOL_NAME
+  396          ) {
+  397              &quot;interpreter&quot;
+  398          } else if registry.is_some() {
+  399              &quot;registry&quot;
+  400          } else {
+  401              &quot;missing&quot;
+  402          };
+  403          let input_bytes = serde_json::to_string(&amp;tool_input)
+  404              .map(|s| s.len())
+  405              .unwrap_or(0);
+  406          tracing::debug!(
+  407              target: &quot;engine.tool_execution&quot;,
+  408              tool = %tool_name,
+  409              dispatch,
+  410              interactive,
+  411              supports_parallel,
+  412              input_bytes,
+  413              &quot;tool.exec.start&quot;,
+  414          );
+  415
+  416          let _guard = if supports_parallel {
+  417              ToolExecGuard::Read(lock.read().await)
+  418          } else {
+  419              ToolExecGuard::Write(lock.write().await)
+  420          };
+  421
+  422          // RAII pause/resume: ensures `Event::ResumeEvents` always fires on
+  423          // drop, even if the tool future is cancelled mid-await. See
+  424          // `InteractiveTerminalGuard` doc-comment for the regression this
+  425          // closes (parent terminal scrollback hijacking the TUI after a
+  426          // cancelled interactive tool).
+  427          let _terminal = InteractiveTerminalGuard::engage(tx_event, interactive).await;
+  428
+  429          if cancel_token
+  430              .as_ref()
+  431              .is_some_and(CancellationToken::is_cancelled)
+  432          {
+  433              return Err(ToolError::permission_denied(
+  434                  &quot;Turn stopped by user. Tool call blocked.&quot;,
+  435              ));
+  436          }
+  437
+  438          let tool_authority = context_override
+  439              .as_ref()
+  440              .and_then(|context| context.tool_authority.as_ref())
+  441              .or_else(|| registry.and_then(|registry| registry.context().tool_authority.as_ref()));
+  442          if let Some(authority) = tool_authority {
+  443              if McpPool::is_mcp_tool(&amp;tool_name)
+  444                  &amp;&amp; !super::dispatch::mcp_tool_is_read_only(&amp;tool_name)
+  445              {
+  446                  return Err(ToolError::permission_denied(format!(
+  447                      &quot;worker &#39;{}&#39; cannot run mutating MCP tool {tool_name}: it has no authorized file target&quot;,
+  448                      authority.owner
+  449                  )));
+  450              }
+  451              if matches!(
+  452                  tool_name.as_str(),
+  453                  CODE_EXECUTION_TOOL_NAME | JS_EXECUTION_TOOL_NAME
+  454              ) {
+  455                  return Err(ToolError::permission_denied(format!(
+  456                      &quot;worker &#39;{}&#39; cannot run {tool_name}: arbitrary code execution is outside its machine-readable authority envelope&quot;,
+  457                      authority.owner
+  458                  )));
+  459              }
+  460          }
+  461
+  462          let outcome: Result&lt;RichToolResult, ToolError&gt; = if McpPool::is_mcp_tool(&amp;tool_name) {
+  463              if let Some(pool) = mcp_pool {
+  464                  Engine::execute_mcp_tool_with_pool(pool, &amp;tool_name, tool_input)
+  465                      .await
+  466                      .map(RichToolResult::plain)
+  467              } else {
+  468                  Err(ToolError::not_available(format!(
+  469                      &quot;tool &#39;{tool_name}&#39; is not registered&quot;
+  470                  )))
+  471              }
+  472          } else if tool_name == CODE_EXECUTION_TOOL_NAME {
+  473              execute_code_execution_tool(&amp;tool_input, &amp;workspace)
+  474                  .await
+  475                  .map(RichToolResult::plain)
+  476          } else if tool_name == JS_EXECUTION_TOOL_NAME {
+  477              execute_js_execution_tool(&amp;tool_input, &amp;workspace)</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-tools-005" data-finding-dimension="tools"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>05 · 跨进程 Fleet 的重命令用文件锁和内存压力收紧 admission</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>resource_admission 默认只开放 2 个 heavy command permit，最大 16；permit 由 CODEWHALE_HOME 下的文件锁实现，跨进程有效。内存压力 constrained 时减半，critical 时变成 0 个 slot，等待过程每 50ms 检查取消。</p></section><section><span>PLAIN LANGUAGE</span><p>多个子进程同时编译不会因为各自都有一个 Tokio semaphore 就把机器打爆；它们共享磁盘上的锁，内存紧张时新任务排队。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多 Agent 资源治理必须跨进程设计；只在单进程内限并发不够。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1–13</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>14–27</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/resource_admission.rs#L1-L27" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/resource_admission.rs:1–27</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/resource_admission.rs#L1-L27" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    1  //! Cross-process admission for expensive local commands.
+    2  //!
+    3  //! Fleet and Workflow workers execute in separate Codewhale processes, so an
+    4  //! in-process semaphore cannot protect the host. Heavy shell commands instead
+    5  //! take one of a small number of filesystem-backed permits under
+    6  //! `CODEWHALE_HOME`. The default of two permits is deliberately conservative
+    7  //! for the 36 GiB laptop class from #4864.
+    8
+    9  use std::fs::{File, OpenOptions};
+   10  use std::io;
+   11  use std::path::{Path, PathBuf};
+   12  use std::time::{Duration, Instant};
+   13
+   14  use anyhow::{Context, Result, anyhow};
+   15  use fd_lock::{RwLock, RwLockWriteGuard};
+   16  use tokio_util::sync::CancellationToken;
+   17
+   18  pub(crate) const DEFAULT_HEAVY_COMMAND_LIMIT: usize = 2;
+   19  const MAX_HEAVY_COMMAND_LIMIT: usize = 16;
+   20  const ADMISSION_POLL_INTERVAL: Duration = Duration::from_millis(50);
+   21
+   22  /// When the host free-RAM fraction drops to/below these thresholds the
+   23  /// effective heavy-command admission limit tightens so a saturated host stops
+   24  /// admitting new link graphs (#4864 req 7). Values are deliberately generous
+   25  /// because the measurement is advisory, not authoritative.
+   26  const CONSTRAINED_FREE_FRACTION: f64 = 0.30;
+   27  const CRITICAL_FREE_FRACTION: f64 = 0.15;
+   28
+   29  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   30  pub(crate) enum CommandExpense {
+   31      Normal,
+   32      Heavy,
+   33  }
+   34
+   35  /// Measured host memory pressure used to tighten heavy-command admission.
+   36  ///
+   37  /// `Unknown` means &quot;could not be measured&quot;; admission then fails open (uses the
+   38  /// configured limit) rather than risk blocking on an unmeasurable host. This
+   39  /// keeps the gate safe on any CI runner where the probe is unavailable.
+   40  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   41  pub(crate) enum MemoryPressure {
+   42      Unknown,
+   43      Nominal,
+   44      Constrained,
+   45      Critical,
+   46  }
+   47
+   48  /// Pluggable memory probe so the admission policy is unit-testable without
+   49  /// having to drive the host into real memory pressure.
+   50  pub(crate) trait MemoryProbe: Send + Sync {
+   51      /// Free-RAM fraction in `0.0..=1.0`, or `None` when it cannot be measured.
+   52      fn free_fraction(&amp;self) -&gt; Option&lt;f64&gt;;
+   53  }
+   54
+   55  struct HostMemoryProbe;
+   56
+   57  impl MemoryProbe for HostMemoryProbe {
+   58      fn free_fraction(&amp;self) -&gt; Option&lt;f64&gt; {
+   59          host_memory_free_fraction()
+   60      }
+   61  }
+   62
+   63  fn classify_memory_pressure(free_fraction: Option&lt;f64&gt;) -&gt; MemoryPressure {
+   64      match free_fraction {
+   65          None =&gt; MemoryPressure::Unknown,
+   66          Some(fraction) if fraction &lt;= CRITICAL_FREE_FRACTION =&gt; MemoryPressure::Critical,
+   67          Some(fraction) if fraction &lt;= CONSTRAINED_FREE_FRACTION =&gt; MemoryPressure::Constrained,
+   68          Some(_) =&gt; MemoryPressure::Nominal,
+   69      }
+   70  }
+   71
+   72  /// Effective admission limit after applying host memory pressure. `Critical`
+   73  /// yields zero so queued heavy commands wait for the host to recover instead of
+   74  /// snowballing; `Constrained` halves the budget (never below one).
+   75  fn effective_admission_limit(configured: usize, pressure: MemoryPressure) -&gt; usize {
+   76      match pressure {
+   77          MemoryPressure::Critical =&gt; 0,
+   78          MemoryPressure::Constrained =&gt; configured.div_ceil(2).max(1),
+   79          MemoryPressure::Nominal | MemoryPressure::Unknown =&gt; configured,
+   80      }
+   81  }
+   82
+   83  #[derive(Debug)]
+   84  struct HeavyPermitSlot {
+   85      _guard: RwLockWriteGuard&lt;&#39;static, File&gt;,
+   86      // The guard borrows the lock. Keeping the boxed lock here makes that
+   87      // allocation outlive the guard; field drop order is guard, then lock.
+   88      _lock: Box&lt;RwLock&lt;File&gt;&gt;,
+   89  }
+   90
+   91  /// A held cross-process heavy-command permit.
+   92  #[derive(Debug)]
+   93  pub(crate) struct HeavyCommandPermit {
+   94      _slot: HeavyPermitSlot,
+   95      queued_for: Duration,
+   96      limit: usize,
+   97      memory_pressure: MemoryPressure,
+   98  }</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">TOOLS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>ToolSpec 要求 name/description/schema/capabilities，默认按 ExecutesCode/WritesFiles/其他能力映射 Required/Suggest/Auto；每个具体 input 还能决定 read-only、approval、parallel、detached 和 resource claims，prepare 生成 PreparedToolCall。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L1158-L1217" target="_blank" rel="noreferrer">crates/tui/src/tools/spec.rs:1158–1217 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>ToolRegistry execute_full 在真正执行前调用 enforce_tool_authority；registry_facts 只导出名称、描述、可见性、能力、审批和插件标记，不暴露可执行对象；名称解析有大小写、空格/连字符、CamelCase、后缀和模糊匹配的确定性阶梯。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/registry.rs#L91-L99" target="_blank" rel="noreferrer">crates/tui/src/tools/registry.rs:91–99 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>execute_parallel_tool 对每个调用检查 MCP parallel-safe 白名单，普通工具必须 registered、input-specific read-only、approval=Auto、supports_parallel=true；通过后用 FuturesUnordered 并发，shell 额外受 Semaphore 限流。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L230-L287" target="_blank" rel="noreferrer">crates/tui/src/core/engine/tool_execution.rs:230–287 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>execute_tool_with_lock 在抢锁前启动 ToolHeartbeatGuard，read-only/parallel 走读锁、其他工具走写锁；InteractiveTerminalGuard 在取消时也保证 ResumeEvents，结束日志记录 dispatch、耗时、输出大小和 typed error kind。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/core/engine/tool_execution.rs#L353-L406" target="_blank" rel="noreferrer">crates/tui/src/core/engine/tool_execution.rs:353–406 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="CodeWhale sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

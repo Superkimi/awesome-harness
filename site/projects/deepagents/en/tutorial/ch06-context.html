@@ -1,1 +1,412 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What enters context, and what gets compacted or recovered?"><title>DeepAgents · M06 · Context: keeping long tasks coherent</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepAgents · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch06-context.html">中</a><a href="ch06-context.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepAgents</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="active" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>217b9eb372fa</div></aside><main><section class="chapter-hero"><p class="eyebrow">M06 · DeepAgents · 217b9eb372fa</p><h1>Context: keeping long tasks coherent</h1><p class="lede">What enters context, and what gets compacted or recovered?</p><div class="chapter-meta"><span>Chapter 6 / 10</span><span>4 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M06</span><b>DeepAgents · M06 · 上下文：长任务怎样不丢重点</b></div><div class="video-links"><a href="../../../../videos/deepagents/ch06-context.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepagents/ch06-context.srt" data-video-status="published">SRT</a><em>217b9eb372fa</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Context is a workbench that tidies itself: current material stays visible, old material is archived, and indexes remain recoverable.</p></div><h2>Answer the chapter question first</h2><p>What enters context, and what gets compacted or recovered? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="deep-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 摘要默认按模型窗口的 85% 触发、保留 10%</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>factory 在有 profile max input tokens 时用 trigger=(fraction,0.85)、keep=(fraction,0.10)，没有 profile 时回退 tokens=170000、keep messages=6；tool arguments 还可单独设截断阈值。</p></section><section><span>PLAIN LANGUAGE</span><p>它不会给所有模型硬塞同一个消息数量，而是尽量按模型实际输入窗口比例决定何时压缩和保留多少。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文策略应使用模型 profile，而不是只写“最近 20 条消息”。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:249–289</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>profile-aware trigger/keep 和 fallback defaults。</code></pre></div></div></article><article class="finding-card compact" id="deep-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 压缩先归档旧历史，再把 summary event 放进私有 state</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>summarization middleware 在 provider ContextOverflowError 或阈值触发后 partition messages，把旧消息写入 `/conversation_history/{thread_id}.md`，构造 summary HumanMessage 和 file_path，最后用 ExtendedModelResponse 的 Command 更新 `_summarization_event`。</p></section><section><span>PLAIN LANGUAGE</span><p>上下文里的旧内容不是直接蒸发：它先被保存成可 read_file 的 markdown，模型只拿摘要和路径，下一轮还能按需取回。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>压缩应同时产生“模型 working set”和“可恢复 archive pointer”，并且 archive failure 要显式告警。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1-L58" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/summarization.py:249–289 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:1–58</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1-L58" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>summary/offload/media storage contract。</code></pre></div></div></article><article class="finding-card compact" id="deep-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 媒体会单独上传并在摘要中保留可读取路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>内联 image/data URL 在 offload 前上传到 artifacts_root/conversation_history/media/{hash}.{ext}，摘要提示词要求保留 `&lt;image url=...&gt;` 引用并提醒模型需要时调用 read_file。</p></section><section><span>PLAIN LANGUAGE</span><p>图片不会因为转成文字摘要就无声丢失；系统把它变成文件引用，并告诉接手的模型如何再读。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多模态 Agent 的压缩策略要把媒体 artifact 与文本摘要分开管理。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L42-L56" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/summarization.py:249–289 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:42–56</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L42-L56" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>markdown history 与 media path。</code></pre></div></div></article><article class="finding-card compact" id="deep-context-004" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · manual compact_conversation 受半阈值 gate 约束</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>SummarizationToolMiddleware 把 compact_conversation 注册为普通 tool，但只有当消息量/token/fraction 达到自动压缩阈值约 50% 时才允许；成功路径共享 `_summarization_event`，异常转为 ToolMessage 而不抛穿 graph。</p></section><section><span>PLAIN LANGUAGE</span><p>模型可以主动整理上下文，但不能一开场就把还没做完的工作压成一句摘要。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>手动压缩工具也需要 eligibility gate 和可观察失败结果，不能把“compact”当无条件清空按钮。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1768-L1784" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/langchain-ai/deepagents/blob/217b9eb372fa51b0439434f31abc3ac22e6cd7f2/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/summarization.py:249–289 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:1768–1784</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1768-L1784" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>manual compact semantics and shared state key。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="DeepAgents capability" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch05-tools.html">← Tools: registering the agent&#39;s hands</a><a href="ch07-security.html">Security: approvals, permissions, boundaries →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What enters context, and what gets compacted or recovered?"><title>DeepAgents · M06 · Context: keeping long tasks coherent</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepAgents · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch06-context.html">中</a><a href="ch06-context.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepAgents</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="active" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>217b9eb372fa</div></aside><main><section class="chapter-hero"><p class="eyebrow">M06 · DeepAgents · 217b9eb372fa</p><h1>Context: keeping long tasks coherent</h1><p class="lede">What enters context, and what gets compacted or recovered?</p><div class="chapter-meta"><span>Chapter 6 / 10</span><span>4 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M06</span><b>DeepAgents · M06 · 上下文：长任务怎样不丢重点</b></div><div class="video-links"><a href="../../../../videos/deepagents/ch06-context.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepagents/ch06-context.srt" data-video-status="published">SRT</a><em>217b9eb372fa</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Context is a workbench that tidies itself: current material stays visible, old material is archived, and indexes remain recoverable.</p></div><h2>Answer the chapter question first</h2><p>What enters context, and what gets compacted or recovered? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 4 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="deep-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · 摘要默认按模型窗口的 85% 触发、保留 10%</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>factory 在有 profile max input tokens 时用 trigger=(fraction,0.85)、keep=(fraction,0.10)，没有 profile 时回退 tokens=170000、keep messages=6；tool arguments 还可单独设截断阈值。</p></section><section><span>PLAIN LANGUAGE</span><p>它不会给所有模型硬塞同一个消息数量，而是尽量按模型实际输入窗口比例决定何时压缩和保留多少。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文策略应使用模型 profile，而不是只写“最近 20 条消息”。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>249–268</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>269–289</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:249–289</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  249  def compute_summarization_defaults(model: BaseChatModel) -&gt; SummarizationDefaults:
+  250      &quot;&quot;&quot;Compute default summarization settings based on model profile.
+  251
+  252      Args:
+  253          model: A resolved chat model instance.
+  254
+  255      Returns:
+  256          Default settings for trigger, keep, and truncate_args_settings.
+  257              If the model has a profile with `max_input_tokens`, uses
+  258              fraction-based settings. Otherwise, uses fixed token/message counts.
+  259      &quot;&quot;&quot;
+  260      has_profile = (
+  261          model.profile is not None
+  262          and isinstance(model.profile, dict)
+  263          and &quot;max_input_tokens&quot; in model.profile
+  264          and isinstance(model.profile[&quot;max_input_tokens&quot;], int)
+  265      )
+  266
+  267      if has_profile:
+  268          return {
+  269              &quot;trigger&quot;: (&quot;fraction&quot;, 0.85),
+  270              &quot;keep&quot;: (&quot;fraction&quot;, 0.10),
+  271              &quot;truncate_args_settings&quot;: {
+  272                  &quot;trigger&quot;: (&quot;fraction&quot;, 0.85),
+  273                  &quot;keep&quot;: (&quot;fraction&quot;, 0.10),
+  274              },
+  275          }
+  276
+  277      # Defaults for models without profile info are more conservative to avoid
+  278      # overshooting context limits.
+  279      return {
+  280          &quot;trigger&quot;: (&quot;tokens&quot;, 170000),
+  281          &quot;keep&quot;: (&quot;messages&quot;, 6),
+  282          &quot;truncate_args_settings&quot;: {
+  283              &quot;trigger&quot;: (&quot;messages&quot;, 20),
+  284              &quot;keep&quot;: (&quot;messages&quot;, 20),
+  285          },
+  286      }
+  287
+  288
+  289  _OFFLOAD_FAILED_PLACEHOLDER = &#39;&lt;image error=&quot;failed_to_offload&quot; /&gt;&#39;
+  290  &quot;&quot;&quot;Text placeholder written when a media block cannot be offloaded.
+  291
+  292  Marks the spot so the saved history shows a block was present rather than
+  293  silently omitting it.
+  294  &quot;&quot;&quot;
+  295
+  296
+  297  def _is_data_url(url: str) -&gt; bool:
+  298      &quot;&quot;&quot;Return whether `url` is an inline `data:` URL.
+  299
+  300      Any `data:` URL is treated as inline media to offload, because the XML
+  301      history renderer drops `data:` URL blocks entirely (only `http(s)`-style
+  302      references survive). This covers both base64 (`data:&lt;mime&gt;;base64,&lt;payload&gt;`)
+  303      and percent-encoded / plaintext (`data:&lt;mime&gt;,&lt;payload&gt;`, e.g. an inline SVG)
+  304      forms; whether the payload actually decodes is left to `_decode_data_url`.
+  305      &quot;&quot;&quot;
+  306      return url.startswith(&quot;data:&quot;)
+  307
+  308
+  309  def _extract_data_url(block: Any) -&gt; str | None:  # noqa: ANN401
+  310      &quot;&quot;&quot;Return the embedded `data:` URL for an inline-media content block.
+  311
+  312      Detects the three inline-data content-block shapes that appear across
+  313      LangChain messages:
+  314
+  315      1. A standard content block with an explicit `base64` field.
+  316      2. A `data:` URL on the `url` field.
+  317      3. An OpenAI-style `image_url` block whose `url` is a `data:` URL.
+  318
+  319      Both base64 (`;base64,`) and percent-encoded / plaintext `data:` URLs are
+  320      detected -- e.g. an inline SVG (`data:image/svg+xml,&lt;svg .../&gt;`) -- because
+  321      the XML history renderer drops *any* inline `data:` URL, so all of them must
+  322      be offloaded to a referenceable path rather than left inline.
+  323
+  324      Shape 3 is defensive: `content_blocks` normalizes most `image_url` blocks
+  325      (a base64 `data:` URL becomes shape 1; an `https` URL becomes a plain `url`
+  326      image block), so this branch rarely fires for normalized input; it is kept
+  327      for raw, un-normalized blocks.
+  328
+  329      This is pure detection and never raises: it reports *whether* a block
+  330      carries inline data, leaving decoding (which can fail) to `_decode_data_url`.
+  331
+  332      Args:
+  333          block: A single content block (usually a dict).
+  334
+  335      Returns:
+  336          The block&#39;s `data:` URL, or `None` if the block carries no inline data.
+  337      &quot;&quot;&quot;
+  338      if not isinstance(block, dict):
+  339          return None
+  340
+  341      # 1. Standard content block with an explicit base64 field.
+  342      raw_b64 = block.get(&quot;base64&quot;)
+  343      if raw_b64:
+  344          mime = block.get(&quot;mime_type&quot;) or &quot;application/octet-stream&quot;
+  345          return f&quot;data:{mime};base64,{raw_b64}&quot;
+  346
+  347      # 2. Top-level data: URL.
+  348      url = block.get(&quot;url&quot;, &quot;&quot;)
+  349      if isinstance(url, str) and _is_data_url(url):
+  350          return url
+  351
+  352      # 3. OpenAI-style image_url with a data: URL.
+  353      image_url = block.get(&quot;image_url&quot;)
+  354      if isinstance(image_url, dict):
+  355          inner = image_url.get(&quot;url&quot;, &quot;&quot;)
+  356          if isinstance(inner, str) and _is_data_url(inner):
+  357              return inner
+  358
+  359      return None
+  360</code></pre></div></div></article><article class="finding-card compact" id="deep-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 压缩先归档旧历史，再把 summary event 放进私有 state</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>summarization middleware 在 provider ContextOverflowError 或阈值触发后 partition messages，把旧消息写入 `/conversation_history/{thread_id}.md`，构造 summary HumanMessage 和 file_path，最后用 ExtendedModelResponse 的 Command 更新 `_summarization_event`。</p></section><section><span>PLAIN LANGUAGE</span><p>上下文里的旧内容不是直接蒸发：它先被保存成可 read_file 的 markdown，模型只拿摘要和路径，下一轮还能按需取回。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>压缩应同时产生“模型 working set”和“可恢复 archive pointer”，并且 archive failure 要显式告警。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1–28</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>29–58</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1-L58" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:1–58</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1-L58" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    1  &quot;&quot;&quot;Summarization middleware for automatic and tool-based conversation compaction.
+    2
+    3  This module provides two middleware classes and a convenience factory:
+    4
+    5  - `SummarizationMiddleware` — automatically compacts the conversation when token
+    6      usage exceeds a configurable threshold.
+    7
+    8      Older messages are summarized via an LLM call and the full history is
+    9      offloaded to a backend for later retrieval.
+   10  - `SummarizationToolMiddleware` — exposes a `compact_conversation` tool that
+   11      lets the agent (or a human-in-the-loop approval flow) trigger compaction on
+   12      demand.
+   13
+   14      Composes with a `SummarizationMiddleware` instance and reuses its
+   15      summarization engine.
+   16  - `create_summarization_tool_middleware` — convenience factory that creates both
+   17      middleware layers with model-aware defaults.
+   18
+   19  ## Usage
+   20
+   21  ```python
+   22  from deepagents import create_deep_agent
+   23  from deepagents.middleware.summarization import (
+   24      SummarizationMiddleware,
+   25      SummarizationToolMiddleware,
+   26  )
+   27  from deepagents.backends import FilesystemBackend
+   28
+   29  backend = FilesystemBackend(root_dir=&quot;/data&quot;)
+   30
+   31  summ = SummarizationMiddleware(
+   32      model=&quot;gpt-5.5&quot;,
+   33      backend=backend,
+   34      trigger=(&quot;fraction&quot;, 0.85),
+   35      keep=(&quot;fraction&quot;, 0.10),
+   36  )
+   37  tool_mw = SummarizationToolMiddleware(summ)
+   38
+   39  agent = create_deep_agent(middleware=[summ, tool_mw])
+   40  ```
+   41
+   42  ## Storage
+   43
+   44  Offloaded messages are stored as markdown at `/conversation_history/{thread_id}.md`.
+   45
+   46  Each summarization event appends a new section to this file, creating a running
+   47  log of all evicted messages. Base64 media in evicted messages is written
+   48  separately under `&lt;artifacts_root&gt;/conversation_history/media/` and referenced
+   49  by path from the markdown, so the history file stays text-only (see
+   50  `_offload_inline_media` for the exact path).
+   51
+   52  ## Summary prompt
+   53
+   54  `DEEPAGENTS_DEFAULT_SUMMARY_PROMPT` augments LangChain&#39;s `DEFAULT_SUMMARY_PROMPT`
+   55  with a deepagents-specific addendum explaining the media reference tags that the
+   56  offloading behavior introduces, so the summarizing model knows to preserve them.
+   57  It is the default `summary_prompt` for `SummarizationMiddleware` and both
+   58  factories.
+   59  &quot;&quot;&quot;
+   60
+   61  from __future__ import annotations
+   62
+   63  import asyncio
+   64  import base64
+   65  import hashlib
+   66  import inspect
+   67  import logging
+   68  import mimetypes
+   69  import urllib.parse
+   70  import uuid
+   71  import warnings
+   72  from collections.abc import Mapping
+   73  from datetime import UTC, datetime
+   74  from typing import TYPE_CHECKING, Annotated, Any, ClassVar, NotRequired, cast
+   75
+   76  from langchain.agents.middleware.summarization import (
+   77      _DEFAULT_MESSAGES_TO_KEEP,
+   78      _DEFAULT_TRIM_TOKEN_LIMIT,
+   79      DEFAULT_SUMMARY_PROMPT,
+   80      ContextSize,
+   81      SummarizationMiddleware as LCSummarizationMiddleware,
+   82      TokenCounter,
+   83  )
+   84  from langchain.agents.middleware.types import AgentMiddleware, AgentState, ExtendedModelResponse, PrivateStateAttr
+   85  from langchain.tools import (
+   86      ToolRuntime,  # noqa: TC002  # runtime import: StructuredTool resolves the compact-tool annotations at schema-inference time
+   87  )
+   88  from langchain_core.exceptions import ContextOverflowError
+   89  from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage, get_buffer_string
+   90  from langchain_core.messages.utils import count_tokens_approximately
+   91  from langgraph.config import get_config
+   92  from langgraph.types import Command
+   93  from pydantic import BaseModel
+   94  from typing_extensions import TypedDict
+   95
+   96  from deepagents.backends import CompositeBackend
+   97  from deepagents.middleware._overflow_clip import _aclip_overflow_tail, _clip_overflow_tail
+   98  from deepagents.middleware._utils import append_to_system_message
+   99
+  100  _MEDIA_REFERENCE_SUMMARY_PROMPT = &quot;&quot;&quot;&lt;media_reference_information&gt;
+  101  Conversation history may include XML media reference tags, for example:
+  102  &lt;image url=\&quot;/conversation_history/media/{{hash}}.png\&quot; /&gt;
+  103  These tags mean the original message included media that was preserved at the referenced backend path.
+  104  Treat the tag and path as part of the conversation context. Do not infer visual details that are not available from surrounding text.
+  105  When the media could be important for future context, preserve the media reference in your summary.
+  106  The model consuming the summary can call `read_file` on the referenced path if it needs to inspect the media.
+  107  &lt;/media_reference_information&gt;&quot;&quot;&quot;
+  108
+  109  # NOTE: This splices the media-reference addendum in just before the
+  110  # `&lt;messages&gt;` marker that `DEFAULT_SUMMARY_PROMPT` exposes. That marker is a
+  111  # load-bearing contract -- see the `DEFAULT_SUMMARY_PROMPT` docstring in
+  112  # langchain for the downstream-dependency note.
+  113  DEEPAGENTS_DEFAULT_SUMMARY_PROMPT = DEFAULT_SUMMARY_PROMPT.replace(
+  114      &quot;\n&lt;messages&gt;\n&quot;,
+  115      f&quot;\n{_MEDIA_REFERENCE_SUMMARY_PROMPT}\n\n&lt;messages&gt;\n&quot;,
+  116      1,
+  117  )
+  118
+  119  if TYPE_CHECKING:
+  120      from collections.abc import Awaitable, Callable
+  121
+  122      from langchain.agents.middleware.types import ModelRequest, ModelResponse
+  123      from langchain.chat_models import BaseChatModel
+  124      from langchain_core.tools import BaseTool
+  125
+  126      from deepagents.backends.protocol import BackendProtocol, FileUploadResponse
+  127
+  128  logger = logging.getLogger(__name__)
+  129</code></pre></div></div></article><article class="finding-card compact" id="deep-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · 媒体会单独上传并在摘要中保留可读取路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>内联 image/data URL 在 offload 前上传到 artifacts_root/conversation_history/media/{hash}.{ext}，摘要提示词要求保留 `&lt;image url=...&gt;` 引用并提醒模型需要时调用 read_file。</p></section><section><span>PLAIN LANGUAGE</span><p>图片不会因为转成文字摘要就无声丢失；系统把它变成文件引用，并告诉接手的模型如何再读。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多模态 Agent 的压缩策略要把媒体 artifact 与文本摘要分开管理。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>42–48</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>49–56</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L42-L56" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:42–56</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L42-L56" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   42  ## Storage
+   43
+   44  Offloaded messages are stored as markdown at `/conversation_history/{thread_id}.md`.
+   45
+   46  Each summarization event appends a new section to this file, creating a running
+   47  log of all evicted messages. Base64 media in evicted messages is written
+   48  separately under `&lt;artifacts_root&gt;/conversation_history/media/` and referenced
+   49  by path from the markdown, so the history file stays text-only (see
+   50  `_offload_inline_media` for the exact path).
+   51
+   52  ## Summary prompt
+   53
+   54  `DEEPAGENTS_DEFAULT_SUMMARY_PROMPT` augments LangChain&#39;s `DEFAULT_SUMMARY_PROMPT`
+   55  with a deepagents-specific addendum explaining the media reference tags that the
+   56  offloading behavior introduces, so the summarizing model knows to preserve them.
+   57  It is the default `summary_prompt` for `SummarizationMiddleware` and both
+   58  factories.
+   59  &quot;&quot;&quot;
+   60
+   61  from __future__ import annotations
+   62
+   63  import asyncio
+   64  import base64
+   65  import hashlib
+   66  import inspect
+   67  import logging
+   68  import mimetypes
+   69  import urllib.parse
+   70  import uuid
+   71  import warnings
+   72  from collections.abc import Mapping
+   73  from datetime import UTC, datetime
+   74  from typing import TYPE_CHECKING, Annotated, Any, ClassVar, NotRequired, cast
+   75
+   76  from langchain.agents.middleware.summarization import (
+   77      _DEFAULT_MESSAGES_TO_KEEP,
+   78      _DEFAULT_TRIM_TOKEN_LIMIT,
+   79      DEFAULT_SUMMARY_PROMPT,
+   80      ContextSize,
+   81      SummarizationMiddleware as LCSummarizationMiddleware,
+   82      TokenCounter,
+   83  )
+   84  from langchain.agents.middleware.types import AgentMiddleware, AgentState, ExtendedModelResponse, PrivateStateAttr
+   85  from langchain.tools import (
+   86      ToolRuntime,  # noqa: TC002  # runtime import: StructuredTool resolves the compact-tool annotations at schema-inference time
+   87  )
+   88  from langchain_core.exceptions import ContextOverflowError
+   89  from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage, get_buffer_string
+   90  from langchain_core.messages.utils import count_tokens_approximately
+   91  from langgraph.config import get_config
+   92  from langgraph.types import Command
+   93  from pydantic import BaseModel
+   94  from typing_extensions import TypedDict
+   95
+   96  from deepagents.backends import CompositeBackend
+   97  from deepagents.middleware._overflow_clip import _aclip_overflow_tail, _clip_overflow_tail
+   98  from deepagents.middleware._utils import append_to_system_message
+   99
+  100  _MEDIA_REFERENCE_SUMMARY_PROMPT = &quot;&quot;&quot;&lt;media_reference_information&gt;
+  101  Conversation history may include XML media reference tags, for example:
+  102  &lt;image url=\&quot;/conversation_history/media/{{hash}}.png\&quot; /&gt;
+  103  These tags mean the original message included media that was preserved at the referenced backend path.
+  104  Treat the tag and path as part of the conversation context. Do not infer visual details that are not available from surrounding text.
+  105  When the media could be important for future context, preserve the media reference in your summary.
+  106  The model consuming the summary can call `read_file` on the referenced path if it needs to inspect the media.
+  107  &lt;/media_reference_information&gt;&quot;&quot;&quot;
+  108
+  109  # NOTE: This splices the media-reference addendum in just before the
+  110  # `&lt;messages&gt;` marker that `DEFAULT_SUMMARY_PROMPT` exposes. That marker is a
+  111  # load-bearing contract -- see the `DEFAULT_SUMMARY_PROMPT` docstring in
+  112  # langchain for the downstream-dependency note.
+  113  DEEPAGENTS_DEFAULT_SUMMARY_PROMPT = DEFAULT_SUMMARY_PROMPT.replace(
+  114      &quot;\n&lt;messages&gt;\n&quot;,
+  115      f&quot;\n{_MEDIA_REFERENCE_SUMMARY_PROMPT}\n\n&lt;messages&gt;\n&quot;,
+  116      1,
+  117  )
+  118
+  119  if TYPE_CHECKING:
+  120      from collections.abc import Awaitable, Callable
+  121
+  122      from langchain.agents.middleware.types import ModelRequest, ModelResponse
+  123      from langchain.chat_models import BaseChatModel
+  124      from langchain_core.tools import BaseTool
+  125
+  126      from deepagents.backends.protocol import BackendProtocol, FileUploadResponse
+  127</code></pre></div></div></article><article class="finding-card compact" id="deep-context-004" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · manual compact_conversation 受半阈值 gate 约束</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>SummarizationToolMiddleware 把 compact_conversation 注册为普通 tool，但只有当消息量/token/fraction 达到自动压缩阈值约 50% 时才允许；成功路径共享 `_summarization_event`，异常转为 ToolMessage 而不抛穿 graph。</p></section><section><span>PLAIN LANGUAGE</span><p>模型可以主动整理上下文，但不能一开场就把还没做完的工作压成一句摘要。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>手动压缩工具也需要 eligibility gate 和可观察失败结果，不能把“compact”当无条件清空按钮。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1768–1775</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1776–1784</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 4cd21b61592e · <a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1768-L1784" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>libs/deepagents/deepagents/middleware/summarization.py:1768–1784</span><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1768-L1784" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1768  class SummarizationToolMiddleware(AgentMiddleware):
+ 1769      &quot;&quot;&quot;Middleware that provides a `compact_conversation` tool for manual compaction.
+ 1770
+ 1771      This middleware composes with a `SummarizationMiddleware` instance, reusing
+ 1772      its summarization engine (model, backend, trigger thresholds) to let the
+ 1773      agent compact its own context window.
+ 1774
+ 1775      This middleware never compacts automatically. Compaction only occurs when
+ 1776      `compact_conversation` is called as a normal tool call (by the model or by
+ 1777      an explicit user action, e.g. as implemented in the deepagents-cli).
+ 1778
+ 1779      To avoid compacting too early, compact tool execution is gated by
+ 1780      `_is_eligible_for_compaction`, which requires reported usage to reach about
+ 1781      50% of the configured auto-summarization trigger.
+ 1782
+ 1783      The tool and auto-summarization share the same `_summarization_event` state
+ 1784      key, so they interoperate correctly.
+ 1785
+ 1786      For a simpler setup, use `create_summarization_tool_middleware` which
+ 1787      handles both steps.
+ 1788
+ 1789      Example:
+ 1790          ```python
+ 1791          from deepagents.middleware.summarization import (
+ 1792              SummarizationMiddleware,
+ 1793              SummarizationToolMiddleware,
+ 1794          )
+ 1795
+ 1796          summ = SummarizationMiddleware(model=&quot;gpt-5.5&quot;, backend=backend)
+ 1797          tool_mw = SummarizationToolMiddleware(summ)
+ 1798
+ 1799          agent = create_deep_agent(middleware=[summ, tool_mw])
+ 1800          ```
+ 1801      &quot;&quot;&quot;
+ 1802
+ 1803      state_schema = SummarizationState
+ 1804
+ 1805      def __init__(
+ 1806          self,
+ 1807          summarization: _DeepAgentsSummarizationMiddleware,
+ 1808          *,
+ 1809          system_prompt: str | None = None,
+ 1810      ) -&gt; None:
+ 1811          &quot;&quot;&quot;Initialize with a reference to the summarization middleware.
+ 1812
+ 1813          Args:
+ 1814              summarization: The `SummarizationMiddleware` instance whose
+ 1815                  summarization engine this tool will delegate to.
+ 1816              system_prompt: System-prompt fragment nudging the model to call
+ 1817                  `compact_conversation`. Pass `None` to skip appending the
+ 1818                  nudge entirely (the tool remains registered and callable
+ 1819                  but the model is unlikely to discover it without an
+ 1820                  external mention).
+ 1821
+ 1822          Raises:
+ 1823              TypeError: If `system_prompt` is not `str` or `None`.
+ 1824          &quot;&quot;&quot;
+ 1825          if system_prompt is not None and not isinstance(system_prompt, str):
+ 1826              msg = f&quot;system_prompt must be str or None, got {type(system_prompt).__name__}&quot;
+ 1827              raise TypeError(msg)
+ 1828          self._summarization = summarization
+ 1829          self.system_prompt = system_prompt
+ 1830          self.tools: list[BaseTool] = [self._create_compact_tool()]
+ 1831
+ 1832      def _create_compact_tool(self) -&gt; BaseTool:
+ 1833          &quot;&quot;&quot;Create the `compact_conversation` structured tool.
+ 1834
+ 1835          Returns:
+ 1836              A `StructuredTool` with both sync and async implementations.
+ 1837          &quot;&quot;&quot;
+ 1838          from langchain_core.tools import StructuredTool  # noqa: PLC0415
+ 1839
+ 1840          mw = self
+ 1841
+ 1842          def sync_compact(runtime: ToolRuntime) -&gt; Command:
+ 1843              return mw._run_compact(runtime)
+ 1844
+ 1845          async def async_compact(runtime: ToolRuntime) -&gt; Command:
+ 1846              return await mw._arun_compact(runtime)
+ 1847
+ 1848          return StructuredTool.from_function(
+ 1849              name=&quot;compact_conversation&quot;,
+ 1850              description=(
+ 1851                  &quot;Compact the conversation by summarizing older messages &quot;
+ 1852                  &quot;into a concise summary. Use this proactively when the &quot;
+ 1853                  &quot;conversation is getting long to free up context window &quot;
+ 1854                  &quot;space. Use it when moving on to a completely new, unrelated &quot;
+ 1855                  &quot;task, or after finishing synthesis or extraction when the &quot;</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">CONTEXT · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>factory 在有 profile max input tokens 时用 trigger=(fraction,0.85)、keep=(fraction,0.10)，没有 profile 时回退 tokens=170000、keep messages=6；tool arguments 还可单独设截断阈值。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L249-L289" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/summarization.py:249–289 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>summarization middleware 在 provider ContextOverflowError 或阈值触发后 partition messages，把旧消息写入 `/conversation_history/{thread_id}.md`，构造 summary HumanMessage 和 file_path，最后用 ExtendedModelResponse 的 Command 更新 `_summarization_event`。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1-L58" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/summarization.py:1–58 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>内联 image/data URL 在 offload 前上传到 artifacts_root/conversation_history/media/{hash}.{ext}，摘要提示词要求保留 `&lt;image url=...&gt;` 引用并提醒模型需要时调用 read_file。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L42-L56" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/summarization.py:42–56 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>SummarizationToolMiddleware 把 compact_conversation 注册为普通 tool，但只有当消息量/token/fraction 达到自动压缩阈值约 50% 时才允许；成功路径共享 `_summarization_event`，异常转为 ToolMessage 而不抛穿 graph。</blockquote><a href="https://github.com/langchain-ai/deepagents/blob/4cd21b61592ef0239f59cf4e3f27a2a70d226737/libs/deepagents/deepagents/middleware/summarization.py#L1768-L1784" target="_blank" rel="noreferrer">libs/deepagents/deepagents/middleware/summarization.py:1768–1784 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="DeepAgents capability" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch05-tools.html">← Tools: registering the agent&#39;s hands</a><a href="ch07-security.html">Security: approvals, permissions, boundaries →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

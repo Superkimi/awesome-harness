@@ -1,1 +1,1241 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="新能力如何被发现、加载、调用和卸载？"><title>OpenAI Codex · M08 · 扩展：MCP、Skill、插件如何接入</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch08-ecosystem.html">中</a><a href="../../en/tutorial/ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · OpenAI Codex · 902bd9e06b3e</p><h1>扩展：MCP、Skill、插件如何接入</h1><p class="lede">新能力如何被发现、加载、调用和卸载？</p><div class="chapter-meta"><span>第 8 / 10 章</span><span>2 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>OpenAI Codex · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/codex/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。</p></div><h2>先回答本章问题</h2><p>新能力如何被发现、加载、调用和卸载？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：2 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · MCP 是带复用、认证、required gate 和 catalog revision 的运行时</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>McpConnectionSet 同时管理 server、required servers、工具目录版本、Codex Apps cache、plugin provenance、工具命名前缀和 elicitation；连接配置/OAuth 凭据一致且存活时才复用。</p></section><section><span>白话解释</span><p>它不是每轮临时扫一遍外接工具，而是维护一套有版本、有健康状态、有认证身份的连接池。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>工具清单可稳定捕获到 step snapshot，连接变化不会悄悄污染正在执行的一步。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/codex-mcp/src/connection_manager.rs:66–117</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>连接复用、OAuth 一致性和取消。</code></pre></div></div></article><article class="finding-card compact" id="codex-mcp-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · 模型只能看到显式可见且能绑定到同一目录版本的 MCP 工具</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>tool_catalog 过滤 UI visibility，不含 metadata 时默认可见；capture_binding 在读锁下捕获 revision、ready client、过滤后的 tools 和 prepared calls，无法精确绑定的工具被省略。</p></section><section><span>白话解释</span><p>展示给模型的工具名和真正执行它的连接必须来自同一版目录，不能拿新版菜单去点旧版厨房。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>减少热刷新导致的工具错配和 TOCTOU 风险。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117" target="_blank" rel="noreferrer">codex-rs/codex-mcp/src/connection_manager.rs:66–117 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs:34–55</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>model visibility 规则。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← 安全：审批、权限和边界</a><a href="ch09-collaboration.html">协作：子 Agent 与工作流 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="新能力如何被发现、加载、调用和卸载？"><title>OpenAI Codex · M08 · 扩展：MCP、Skill、插件如何接入</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch08-ecosystem.html">中</a><a href="../../en/tutorial/ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · OpenAI Codex · 902bd9e06b3e</p><h1>扩展：MCP、Skill、插件如何接入</h1><p class="lede">新能力如何被发现、加载、调用和卸载？</p><div class="chapter-meta"><span>第 8 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>OpenAI Codex · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/codex/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。</p></div><h2>先回答本章问题</h2><p>新能力如何被发现、加载、调用和卸载？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · MCP 是带复用、认证、required gate 和 catalog revision 的运行时</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>McpConnectionSet 同时管理 server、required servers、工具目录版本、Codex Apps cache、plugin provenance、工具命名前缀和 elicitation；连接配置/OAuth 凭据一致且存活时才复用。</p></section><section><span>白话解释</span><p>它不是每轮临时扫一遍外接工具，而是维护一套有版本、有健康状态、有认证身份的连接池。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>工具清单可稳定捕获到 step snapshot，连接变化不会悄悄污染正在执行的一步。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>66–90</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>91–117</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/codex-mcp/src/connection_manager.rs:66–117</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   66  pub(crate) struct McpServerConnection {
+   67      identity: Option&lt;McpServerConnectionIdentity&gt;,
+   68      client: AsyncManagedClient,
+   69  }
+   70
+   71  impl McpServerConnection {
+   72      async fn reusable_client(
+   73          &amp;self,
+   74          desired: &amp;McpServerConnectionIdentity,
+   75      ) -&gt; Option&lt;ManagedClient&gt; {
+   76          let current = self.identity.as_ref()?;
+   77          if !current.has_same_connection_config(desired) {
+   78              return None;
+   79          }
+   80          if !self.client.startup_complete.load(Ordering::Acquire) {
+   81              return None;
+   82          }
+   83          let client = self.client.client().await.ok()?;
+   84          if client.client.is_closed().await {
+   85              return None;
+   86          }
+   87          let Ok(desired_credentials) = desired.oauth_credentials() else {
+   88              return Some(client);
+   89          };
+   90          let reusable = match client.client.managed_oauth_credentials().await {
+   91              Some(live_credentials) =&gt; &amp;live_credentials == desired_credentials,
+   92              None =&gt; current
+   93                  .oauth_credentials()
+   94                  .is_ok_and(|startup_credentials| startup_credentials == desired_credentials),
+   95          };
+   96          if reusable { Some(client) } else { None }
+   97      }
+   98
+   99      pub(crate) async fn client(&amp;self) -&gt; Result&lt;ManagedClient, StartupOutcomeError&gt; {
+  100          self.client.client().await
+  101      }
+  102
+  103      async fn shutdown(&amp;self) {
+  104          self.client.shutdown().await;
+  105      }
+  106
+  107      fn cancel_startup(&amp;self) {
+  108          if !self.client.startup_complete.load(Ordering::Acquire) {
+  109              self.client.cancel_token.cancel();
+  110          }
+  111      }
+  112  }
+  113
+  114  impl Drop for McpServerConnection {
+  115      fn drop(&amp;mut self) {
+  116          self.client.cancel_token.cancel();
+  117      }
+  118  }
+  119
+  120  #[derive(Clone)]
+  121  struct McpServerView {
+  122      connection: Arc&lt;McpServerConnection&gt;,
+  123      metadata: McpServerMetadata,
+  124      tool_filter: ToolFilter,
+  125      tool_timeout: Option&lt;Duration&gt;,
+  126  }
+  127
+  128  impl McpServerView {
+  129      async fn listed_tools(
+  130          &amp;self,
+  131          tool_plugin_provenance: &amp;ToolPluginProvenance,
+  132      ) -&gt; Option&lt;Vec&lt;ToolInfo&gt;&gt; {
+  133          let tools = self.connection.client.listed_tools().await?;
+  134          let tools = filter_tools(tools, &amp;self.tool_filter);
+  135          Some(if self.connection.client.is_codex_apps_mcp_server {
+  136              prepare_codex_apps_tools_for_model(tools, tool_plugin_provenance)
+  137          } else {
+  138              prepare_regular_mcp_tools_for_model(tools, tool_plugin_provenance)
+  139          })
+  140      }
+  141  }
+  142
+  143  /// A published view over a set of running MCP server connections.
+  144  pub(crate) struct McpConnectionSet {
+  145      servers: HashMap&lt;String, McpServerView&gt;,
+  146      required_servers: Vec&lt;String&gt;,
+  147      tool_catalog_revision: Arc&lt;RwLock&lt;u64&gt;&gt;,
+  148      codex_apps_tools_override: RwLock&lt;Option&lt;Vec&lt;ToolInfo&gt;&gt;&gt;,
+  149      codex_apps_refresh_lock: Mutex&lt;()&gt;,
+  150      tool_plugin_provenance: Arc&lt;ToolPluginProvenance&gt;,
+  151      prefix_mcp_tool_names: bool,
+  152      non_prefixed_mcp_tool_servers: Vec&lt;String&gt;,
+  153      elicitation_requests: ElicitationRequestManager,
+  154  }
+  155
+  156  impl McpConnectionSet {
+  157      /// Creates an MCP connection manager. Threadless callers can pass no `tx_event`; startup
+  158      /// notifications are then skipped and interactive elicitations are declined.
+  159      pub async fn new(
+  160          previous: Option&lt;&amp;Self&gt;,
+  161          publication_gate: McpPublicationGate,
+  162          input: McpRuntimeInput,
+  163          elicitation_router: ElicitationRequestRouter,
+  164      ) -&gt; Self {
+  165          let McpRuntimeInput {
+  166              config,
+  167              plugins_available: _,
+  168              ready_selected_capability_roots: _,
+  169              mcp_servers,
+  170              submit_id,
+  171              tx_event,
+  172              startup_cancellation_token,
+  173              runtime_context,
+  174              codex_apps_tools_cache,
+  175              tool_catalog_cache,
+  176              codex_apps_tools_cache_key,
+  177              supports_openai_form_elicitation,
+  178              auth,
+  179              codex_apps_auth_manager,
+  180              elicitation_reviewer,
+  181              elicitation_lifecycle,
+  182          } = input;
+  183          let store_mode = config.mcp_oauth_credentials_store_mode;
+  184          let keyring_backend_kind = config.auth_keyring_backend_kind;
+  185          let approval_policy = &amp;config.approval_policy;
+  186          let initial_permission_profile = config.permission_profile.clone();
+  187          let codex_home = config.codex_home.clone();
+  188          let prefix_mcp_tool_names = config.prefix_mcp_tool_names;</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/codex-mcp/src/connection_manager.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   66  use codex_protocol::protocol::McpStartupFailure;
+   67  use codex_protocol::protocol::McpStartupFailureReason;
+   68  use codex_protocol::protocol::McpStartupStatus;
+   69  use codex_protocol::protocol::McpStartupUpdateEvent;
+   70  use codex_rmcp_client::determine_streamable_http_auth_status_from_credentials;
+   71  use tokio::sync::Mutex;
+   72  use tokio::sync::RwLock;
+   73  use tokio::sync::watch;
+   74  use tokio::task::JoinSet;
+   75  use tracing::warn;
+   76
+   77  static LIVE_CONNECTIONS: Gauge = Gauge::new(&quot;mcp.connections.live&quot;);
+   78
+   79  pub(crate) struct McpServerConnection {
+   80      identity: Option&lt;McpServerConnectionIdentity&gt;,
+   81      client: AsyncManagedClient,
+   82      startup_trigger: Option&lt;watch::Sender&lt;bool&gt;&gt;,
+   83      _diagnostics_guard: GaugeGuard,
+   84  }
+   85
+   86  impl McpServerConnection {
+   87      async fn reusable_client(
+   88          &amp;self,
+   89          desired: &amp;McpServerConnectionIdentity,
+   90      ) -&gt; Option&lt;ManagedClient&gt; {
+   91          let current = self.identity.as_ref()?;
+   92          if !current.has_same_connection_config(desired) {
+   93              return None;
+   94          }
+   95          if !self.client.startup_complete.load(Ordering::Acquire) {
+   96              return None;
+   97          }
+   98          let client = self.client.client().await.ok()?;
+   99          if client.client.is_closed().await {
+  100              return None;
+  101          }
+  102          if current == desired {
+  103              if matches!(desired.oauth_credentials(), Ok(None))
+  104                  &amp;&amp; tokio::time::timeout(Duration::ZERO, client.client.managed_oauth_credentials())
+  105                      .await
+  106                      .is_ok_and(|credentials| matches!(credentials, Some(Some(_))))
+  107              {
+  108                  return None;
+  109              }
+  110              return Some(client);
+  111          }
+  112          let Ok(desired_credentials) = desired.oauth_credentials() else {
+  113              return Some(client);
+  114          };
+  115          let reusable = match client.client.managed_oauth_credentials().await {
+  116              Some(live_credentials) =&gt; live_credentials.as_ref() == desired_credentials,
+  117              None =&gt; current
+  118                  .oauth_credentials()
+  119                  .is_ok_and(|startup_credentials| startup_credentials == desired_credentials),
+  120          };
+  121          if reusable { Some(client) } else { None }
+  122      }
+  123
+  124      pub(crate) async fn client(&amp;self) -&gt; Result&lt;ManagedClient, StartupOutcomeError&gt; {
+  125          if let Some(startup_trigger) = &amp;self.startup_trigger {
+  126              startup_trigger.send_replace(true);
+  127          }
+  128          self.client.client().await
+  129      }
+  130
+  131      async fn shutdown(&amp;self) {
+  132          self.client.shutdown().await;
+  133      }
+  134
+  135      fn cancel_startup(&amp;self) {
+  136          if !self.startup_is_dormant() &amp;&amp; !self.client.startup_complete.load(Ordering::Acquire) {
+  137              self.client.cancel_token.cancel();
+  138          }
+  139      }
+  140
+  141      fn startup_is_dormant(&amp;self) -&gt; bool {
+  142          self.startup_trigger
+  143              .as_ref()
+  144              .is_some_and(|startup_trigger| !*startup_trigger.borrow())
+  145      }
+  146  }
+  147
+  148  impl Drop for McpServerConnection {
+  149      fn drop(&amp;mut self) {
+  150          self.client.cancel_token.cancel();
+  151      }
+  152  }
+  153
+  154  #[derive(Clone)]
+  155  struct McpServerView {
+  156      connection: Arc&lt;McpServerConnection&gt;,
+  157      metadata: McpServerMetadata,
+  158      tool_filter: ToolFilter,
+  159      tool_timeout: Option&lt;Duration&gt;,
+  160      catalog_item_limit: usize,
+  161  }
+  162
+  163  impl McpServerView {
+  164      async fn listed_tools(
+  165          &amp;self,
+  166          tool_plugin_provenance: &amp;ToolPluginProvenance,
+  167      ) -&gt; Option&lt;Vec&lt;ToolInfo&gt;&gt; {
+  168          let tools = self.connection.client.listed_tools().await?;
+  169          let tools = filter_tools(tools, &amp;self.tool_filter);
+  170          Some(if self.connection.client.is_codex_apps_mcp_server {
+  171              prepare_codex_apps_tools_for_model(tools, tool_plugin_provenance)
+  172          } else {
+  173              prepare_regular_mcp_tools_for_model(tools, tool_plugin_provenance)
+  174          })
+  175      }
+  176  }
+  177
+  178  /// A published view over a set of running MCP server connections.
+  179  pub(crate) struct McpConnectionSet {
+  180      servers: HashMap&lt;String, McpServerView&gt;,
+  181      protocol_mode: crate::McpProtocolMode,
+  182      required_servers: Vec&lt;String&gt;,
+  183      optional_startup_deadline: OnceLock&lt;tokio::time::Instant&gt;,
+  184      tool_catalog_revision: Arc&lt;RwLock&lt;u64&gt;&gt;,
+  185      codex_apps_tools_override: RwLock&lt;Option&lt;Vec&lt;ToolInfo&gt;&gt;&gt;,
+  186      codex_apps_refresh_lock: Mutex&lt;()&gt;,
+  187      tool_plugin_provenance: Arc&lt;ToolPluginProvenance&gt;,
+  188      prefix_mcp_tool_names: bool,</code></pre></details></div></div></article><article class="finding-card compact" id="codex-mcp-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · 模型只能看到显式可见且能绑定到同一目录版本的 MCP 工具</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>tool_catalog 过滤 UI visibility，不含 metadata 时默认可见；capture_binding 在读锁下捕获 revision、ready client、过滤后的 tools 和 prepared calls，无法精确绑定的工具被省略。</p></section><section><span>白话解释</span><p>展示给模型的工具名和真正执行它的连接必须来自同一版目录，不能拿新版菜单去点旧版厨房。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>减少热刷新导致的工具错配和 TOCTOU 风险。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>34–43</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>44–55</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs:34–55</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   34  /// Returns whether a tool may be included in model-facing tool declarations.
+   35  ///
+   36  /// Tools without visibility metadata remain visible. Tools with visibility
+   37  /// metadata are hidden unless they explicitly include `model`.
+   38  ///
+   39  /// &lt;https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx#resource-discovery&gt;
+   40  pub fn tool_is_model_visible(tool: &amp;ToolInfo) -&gt; bool {
+   41      let Some(visibility) = tool
+   42          .tool
+   43          .meta
+   44          .as_deref()
+   45          .and_then(|meta| meta.get(MCP_UI_META_KEY))
+   46          .and_then(serde_json::Value::as_object)
+   47          .and_then(|ui| ui.get(MCP_UI_VISIBILITY_META_KEY))
+   48          .and_then(serde_json::Value::as_array)
+   49      else {
+   50          return true;
+   51      };
+   52      visibility
+   53          .iter()
+   54          .any(|target| target.as_str() == Some(MCP_UI_MODEL_VISIBILITY))
+   55  }
+   56
+   57  impl McpConnectionSet {
+   58      /// Returns all tools with model-visible names normalized.
+   59      #[instrument(level = &quot;trace&quot;, skip_all, fields(mcp_server_count = self.servers.len()))]
+   60      pub async fn list_all_tools(&amp;self) -&gt; Vec&lt;ToolInfo&gt; {
+   61          let mut tools = Vec::new();
+   62          let mut available_server_count = 0;
+   63          let mut unavailable_server_count = 0;
+   64          for (server_name, view) in &amp;self.servers {
+   65              view.connection.client.reconnect_failed_startup().await;
+   66              let has_cached_tools = view.connection.client.has_cached_tools();
+   67              let startup_complete = view
+   68                  .connection
+   69                  .client
+   70                  .startup_complete
+   71                  .load(Ordering::Acquire);
+   72              let catalog_override = if server_name == CODEX_APPS_MCP_SERVER_NAME {
+   73                  self.codex_apps_tools_override.read().await.clone()
+   74              } else {
+   75                  None
+   76              };
+   77              let Some(server_tools) = async {
+   78                  match catalog_override {
+   79                      Some(tools) =&gt; {
+   80                          let tools = filter_tools(tools, &amp;view.tool_filter);
+   81                          Some(prepare_codex_apps_tools_for_model(
+   82                              tools,
+   83                              &amp;self.tool_plugin_provenance,
+   84                          ))
+   85                      }
+   86                      None =&gt; view.listed_tools(&amp;self.tool_plugin_provenance).await,
+   87                  }
+   88              }
+   89              .instrument(trace_span!(
+   90                  &quot;list_tools_for_server&quot;,
+   91                  server_name = %server_name,
+   92                  has_cached_tools,
+   93                  startup_complete
+   94              ))
+   95              .await
+   96              else {
+   97                  unavailable_server_count += 1;
+   98                  trace!(
+   99                      server_name = %server_name,
+  100                      has_cached_tools,
+  101                      startup_complete,
+  102                      &quot;MCP server tools unavailable while building tool list&quot;
+  103                  );
+  104                  continue;
+  105              };
+  106              available_server_count += 1;
+  107              tools.extend(
+  108                  server_tools
+  109                      .into_iter()
+  110                      .map(|tool| Self::with_server_metadata(tool, &amp;view.metadata)),
+  111              );
+  112          }
+  113          let tools = normalize_tools_for_model_with_prefix(
+  114              tools,
+  115              self.prefix_mcp_tool_names,
+  116              &amp;self.non_prefixed_mcp_tool_servers,
+  117          );
+  118          trace!(
+  119              available_server_count,
+  120              unavailable_server_count,
+  121              tool_count = tools.len(),
+  122              &quot;built MCP tool list&quot;
+  123          );
+  124          tools
+  125      }
+  126</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   34  const MCP_UI_MODEL_VISIBILITY: &amp;str = &quot;model&quot;;
+   35  const OPTIONAL_MCP_STARTUP_GRACE: Duration = Duration::from_secs(1);
+   36
+   37  /// Returns whether a tool may be included in model-facing tool declarations.
+   38  ///
+   39  /// Tools without visibility metadata remain visible. Tools with visibility
+   40  /// metadata are hidden unless they explicitly include `model`.
+   41  ///
+   42  /// &lt;https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx#resource-discovery&gt;
+   43  pub fn tool_is_model_visible(tool: &amp;ToolInfo) -&gt; bool {
+   44      let Some(visibility) = tool
+   45          .tool
+   46          .meta
+   47          .as_deref()
+   48          .and_then(|meta| meta.get(MCP_UI_META_KEY))
+   49          .and_then(serde_json::Value::as_object)
+   50          .and_then(|ui| ui.get(MCP_UI_VISIBILITY_META_KEY))
+   51          .and_then(serde_json::Value::as_array)
+   52      else {
+   53          return true;
+   54      };
+   55      visibility
+   56          .iter()
+   57          .any(|target| target.as_str() == Some(MCP_UI_MODEL_VISIBILITY))
+   58  }
+   59
+   60  impl McpConnectionSet {
+   61      pub(crate) async fn stable_catalog_revision(&amp;self) -&gt; Option&lt;u64&gt; {
+   62          for (server_name, view) in &amp;self.servers {
+   63              if !view
+   64                  .connection
+   65                  .client
+   66                  .startup_complete
+   67                  .load(Ordering::Acquire)
+   68              {
+   69                  return None;
+   70              }
+   71              let Some(client) = view.connection.client.ready_transport() else {
+   72                  if !view.connection.client.is_codex_apps_mcp_server
+   73                      &amp;&amp; self.required_servers.binary_search(server_name).is_err()
+   74                      &amp;&amp; matches!(view.connection.client.client.peek(), Some(Err(_)))
+   75                  {
+   76                      continue;
+   77                  }
+   78                  return None;
+   79              };
+   80              if client.is_closed().await {
+   81                  return None;
+   82              }
+   83          }
+   84          Some(*self.tool_catalog_revision.read().await)
+   85      }
+   86
+   87      /// Returns all tools with model-visible names normalized.
+   88      #[instrument(level = &quot;trace&quot;, skip_all, fields(mcp_server_count = self.servers.len()))]
+   89      pub async fn list_all_tools(&amp;self) -&gt; Vec&lt;ToolInfo&gt; {
+   90          let mut tools = Vec::new();
+   91          let mut available_server_count = 0;
+   92          let mut unavailable_server_count = 0;
+   93          let server_results = join_all(self.servers.iter().map(|(server_name, view)| async move {
+   94              view.connection.client.reconnect_failed_startup().await;
+   95              let has_cached_tools = view.connection.client.has_cached_tools();
+   96              let startup_complete = view
+   97                  .connection
+   98                  .client
+   99                  .startup_complete
+  100                  .load(Ordering::Acquire);
+  101              let catalog_override = if server_name == CODEX_APPS_MCP_SERVER_NAME {
+  102                  self.codex_apps_tools_override.read().await.clone()
+  103              } else {
+  104                  None
+  105              };
+  106              let server_tools = async {
+  107                  match catalog_override {
+  108                      Some(tools) =&gt; {
+  109                          let tools = filter_tools(tools, &amp;view.tool_filter);
+  110                          Some(prepare_codex_apps_tools_for_model(
+  111                              tools,
+  112                              &amp;self.tool_plugin_provenance,
+  113                          ))
+  114                      }
+  115                      None =&gt; view.listed_tools(&amp;self.tool_plugin_provenance).await,
+  116                  }
+  117              }
+  118              .instrument(trace_span!(
+  119                  &quot;list_tools_for_server&quot;,
+  120                  server_name = %server_name,
+  121                  has_cached_tools,
+  122                  startup_complete
+  123              ))
+  124              .await;
+  125              match server_tools {
+  126                  Some(server_tools) =&gt; Some(</code></pre></details></div></div></article><article class="finding-card compact" id="codex-instructions-001" data-finding-dimension="instructions"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>03 · AGENTS.md 从项目根向 cwd 分层合并，局部 override 优先且有总字节预算</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>发现逻辑以 project root marker 截断上行范围，从根到 cwd 每层最多选 AGENTS.override.md、AGENTS.md 或 fallback 文件之一；按总预算读取，超出部分截断。</p></section><section><span>白话解释</span><p>公司规章先读，走进子目录后再叠加本地规章；同一层的 override 像贴在门上的最新通知。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>目录作用域明确，但超预算时越靠后的深层说明更可能被截断，需要可视化告警。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–7</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>8–16</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agents_md.rs#L1-L16" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/agents_md.rs:1–16</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agents_md.rs#L1-L16" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  //! AGENTS.md discovery and user instruction assembly.
+    2  //!
+    3  //! Project-level documentation is primarily stored in files named `AGENTS.md`.
+    4  //! Additional fallback filenames can be configured via `project_doc_fallback_filenames`.
+    5  //! We include the concatenation of all files found along the path from the
+    6  //! project root to the current working directory as follows:
+    7  //!
+    8  //! 1.  Determine the project root by walking upwards from the current working
+    9  //!     directory until a configured `project_root_markers` entry is found.
+   10  //!     When `project_root_markers` is unset, the default marker list is used
+   11  //!     (`.git`). If no marker is found, only the current working directory is
+   12  //!     considered. An empty marker list disables parent traversal.
+   13  //! 2.  Collect every `AGENTS.md` found from the project root down to the
+   14  //!     current working directory (inclusive) and concatenate their contents in
+   15  //!     that order.
+   16  //! 3.  We do **not** walk past the project root.
+   17
+   18  use crate::config::Config;
+   19  use crate::context::UserInstructions as ContextUserInstructions;
+   20  use crate::environment_selection::TurnEnvironmentSnapshot;
+   21  use codex_config::ConfigLayerSource;
+   22  use codex_config::ConfigLayerStackOrdering;
+   23  use codex_config::default_project_root_markers;
+   24  use codex_config::merge_toml_values;
+   25  use codex_config::project_root_markers_from_config;
+   26  use codex_exec_server::ExecutorFileSystem;
+   27  use codex_extension_api::UserInstructions;
+   28  use codex_file_system::FindUpErrorPolicy;
+   29  use codex_file_system::find_nearest_ancestor_with_markers;
+   30  use codex_utils_absolute_path::AbsolutePathBuf;
+   31  use codex_utils_path_uri::PathUri;
+   32  use futures::StreamExt;
+   33  use std::io;
+   34  use toml::Value as TomlValue;
+   35  use tracing::error;
+   36
+   37  /// Default filename scanned for AGENTS.md instructions.
+   38  pub const DEFAULT_AGENTS_MD_FILENAME: &amp;str = &quot;AGENTS.md&quot;;
+   39  /// Preferred local override for AGENTS.md instructions.
+   40  pub const LOCAL_AGENTS_MD_FILENAME: &amp;str = &quot;AGENTS.override.md&quot;;
+   41
+   42  /// When both user and project AGENTS.md docs are present, they will be
+   43  /// concatenated with the following separator.
+   44  const AGENTS_MD_SEPARATOR: &amp;str = &quot;\n\n--- project-doc ---\n\n&quot;;
+   45
+   46  // Metadata probes are cheap and the exec-server transport already bounds total in-flight calls.
+   47  // This covers typical project hierarchies in one remote round trip without monopolizing that
+   48  // transport when independent startup discovery runs concurrently.
+   49  const MAX_CONCURRENT_ANCESTOR_PROBES: usize = 256;
+   50
+   51  /// Loads project AGENTS.md content and combines it with host-provided user
+   52  /// instructions.
+   53  pub(crate) async fn load_project_instructions(
+   54      config: &amp;Config,
+   55      user_instructions: Option&lt;UserInstructions&gt;,
+   56      environments: &amp;TurnEnvironmentSnapshot,
+   57  ) -&gt; Option&lt;LoadedAgentsMd&gt; {
+   58      let mut loaded = LoadedAgentsMd::from_user_instructions(user_instructions);
+   59      for turn_environment in environments.turn_environments() {
+   60          let filesystem = turn_environment.environment.get_filesystem();
+   61          match read_agents_md(
+   62              config,
+   63              filesystem.as_ref(),
+   64              &amp;turn_environment.environment_id,
+   65              turn_environment.cwd(),
+   66          )
+   67          .await
+   68          {
+   69              Ok(Some(docs)) =&gt; loaded.entries.extend(docs.entries),
+   70              Ok(None) =&gt; {}
+   71              Err(e) =&gt; {
+   72                  error!(
+   73                      environment_id = turn_environment.environment_id,
+   74                      &quot;error trying to find AGENTS.md docs: {e:#}&quot;
+   75                  );
+   76              }
+   77          }
+   78      }
+   79
+   80      (!loaded.is_empty()).then_some(loaded)
+   81  }
+   82
+   83  /// Attempt to locate and load AGENTS.md documentation.
+   84  ///
+   85  /// On success returns `Ok(Some(loaded))` where `loaded` contains every
+   86  /// discovered doc. If no documentation file is found the function returns
+   87  /// `Ok(None)`. Unexpected I/O failures bubble up as `Err` so callers can</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/agents_md.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/agents_md.rs#L1-L16" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    1  //! AGENTS.md discovery and user instruction assembly.
+    2  //!
+    3  //! Project-level documentation is primarily stored in files named `AGENTS.md`.
+    4  //! Additional fallback filenames can be configured via `project_doc_fallback_filenames`.
+    5  //! We include the concatenation of all files found along the path from the
+    6  //! project root to the current working directory as follows:
+    7  //!
+    8  //! 1.  Determine the project root by walking upwards from the current working
+    9  //!     directory until a configured `project_root_markers` entry is found.
+   10  //!     When `project_root_markers` is unset, the default marker list is used
+   11  //!     (`.git`). If no marker is found, only the current working directory is
+   12  //!     considered. An empty marker list disables parent traversal.
+   13  //! 2.  Collect every `AGENTS.md` found from the project root down to the
+   14  //!     current working directory (inclusive) and concatenate their contents in
+   15  //!     that order.
+   16  //! 3.  We do **not** walk past the project root.
+   17
+   18  use crate::config::Config;
+   19  use crate::context::UserInstructions as ContextUserInstructions;
+   20  use crate::environment_selection::TurnEnvironmentSnapshot;
+   21  use codex_config::ConfigLayerSource;
+   22  use codex_config::default_project_root_markers;
+   23  use codex_config::merge_toml_values;
+   24  use codex_config::project_root_markers_from_config;
+   25  use codex_exec_server::ExecutorFileSystem;
+   26  use codex_extension_api::UserInstructions;
+   27  use codex_file_system::FindUpErrorPolicy;
+   28  use codex_file_system::find_nearest_ancestor_with_markers;
+   29  use codex_utils_absolute_path::AbsolutePathBuf;
+   30  use codex_utils_path_uri::PathUri;
+   31  use futures::StreamExt;
+   32  use std::io;
+   33  use toml::Value as TomlValue;
+   34  use tracing::error;
+   35
+   36  /// Default filename scanned for AGENTS.md instructions.
+   37  pub const DEFAULT_AGENTS_MD_FILENAME: &amp;str = &quot;AGENTS.md&quot;;
+   38  /// Preferred local override for AGENTS.md instructions.
+   39  pub const LOCAL_AGENTS_MD_FILENAME: &amp;str = &quot;AGENTS.override.md&quot;;
+   40
+   41  /// When both user and project AGENTS.md docs are present, they will be
+   42  /// concatenated with the following separator.
+   43  const AGENTS_MD_SEPARATOR: &amp;str = &quot;\n\n--- project-doc ---\n\n&quot;;
+   44
+   45  // Metadata probes are cheap and the exec-server transport already bounds total in-flight calls.
+   46  // This covers typical project hierarchies in one remote round trip without monopolizing that
+   47  // transport when independent startup discovery runs concurrently.
+   48  const MAX_CONCURRENT_ANCESTOR_PROBES: usize = 256;
+   49
+   50  /// Loads project AGENTS.md content and combines it with host-provided user
+   51  /// instructions.
+   52  pub(crate) async fn load_project_instructions(
+   53      config: &amp;Config,
+   54      user_instructions: Option&lt;UserInstructions&gt;,
+   55      environments: &amp;TurnEnvironmentSnapshot,
+   56  ) -&gt; Option&lt;LoadedAgentsMd&gt; {
+   57      let mut loaded = LoadedAgentsMd::from_user_instructions(user_instructions);
+   58      let mut remaining = config.project_doc_max_bytes;
+   59      for turn_environment in environments.turn_environments() {
+   60          if remaining == 0 {
+   61              break;
+   62          }
+   63
+   64          let filesystem = turn_environment.environment.get_filesystem();
+   65          match read_agents_md(
+   66              config,
+   67              filesystem.as_ref(),
+   68              &amp;turn_environment.environment_id,
+   69              turn_environment.cwd(),
+   70              remaining,
+   71          )
+   72          .await
+   73          {
+   74              Ok(Some(docs)) =&gt; {
+   75                  for entry in docs.entries {
+   76                      remaining = remaining.saturating_sub(entry.contents.len());
+   77                      loaded.entries.push(entry);
+   78                  }
+   79              }
+   80              Ok(None) =&gt; {}
+   81              Err(e) =&gt; {
+   82                  error!(
+   83                      environment_id = turn_environment.environment_id,
+   84                      &quot;error trying to find AGENTS.md docs: {e:#}&quot;
+   85                  );
+   86              }
+   87          }</code></pre></details></div></div></article><article class="finding-card compact" id="codex-extension-001" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · Skills、plugins 和 extensions 都在初始上下文构建期受预算与来源控制</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>build_initial_context 按 context window 计算 skill metadata budget，超限发 warning；plugins 先按配置加载，再生成推荐插件上下文；extension contributors 可注入 developer、contextual user 或独立 developer fragment。</p></section><section><span>白话解释</span><p>扩展不是把所有说明一股脑塞进提示词，而是先做预算，再按可信来源和消息层级装配。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>可扩展性强且照顾 prompt cache；插件推荐与已安装插件被区分。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>3336–3365</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>3366–3397</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L3336-L3397" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/mod.rs:3336–3397</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L3336-L3397" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 3336      pub(crate) async fn build_initial_context_with_world_state(
+ 3337          &amp;self,
+ 3338          turn_context: &amp;TurnContext,
+ 3339          world_state: &amp;WorldState,
+ 3340      ) -&gt; Vec&lt;ResponseItem&gt; {
+ 3341          let mut developer_sections = Vec::&lt;String&gt;::with_capacity(8);
+ 3342          let mut contextual_user_sections = Vec::&lt;String&gt;::with_capacity(2);
+ 3343          let mut separate_developer_sections = Vec::&lt;String&gt;::new();
+ 3344          let (session_source, auto_compact_window_ids) = {
+ 3345              let state = self.state.lock().await;
+ 3346              (
+ 3347                  state.session_configuration.session_source.clone(),
+ 3348                  state.auto_compact_window_ids(),
+ 3349              )
+ 3350          };
+ 3351          let separate_guardian_developer_message =
+ 3352              crate::guardian::is_guardian_reviewer_source(&amp;session_source);
+ 3353          // Keep the guardian policy prompt out of the aggregated developer bundle so it
+ 3354          // stays isolated as its own top-level developer message for guardian subagents.
+ 3355          if !separate_guardian_developer_message
+ 3356              &amp;&amp; let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
+ 3357              &amp;&amp; !developer_instructions.is_empty()
+ 3358          {
+ 3359              developer_sections.push(developer_instructions.to_string());
+ 3360          }
+ 3361          if turn_context.config.include_skill_instructions {
+ 3362              let host_catalog_in_world_state = turn_context
+ 3363                  .extension_data
+ 3364                  .get::&lt;HostSkillsCatalogInWorldState&gt;()
+ 3365                  .is_some();
+ 3366              let side_effects = if host_catalog_in_world_state {
+ 3367                  SkillRenderSideEffects::None
+ 3368              } else {
+ 3369                  SkillRenderSideEffects::ThreadStart {
+ 3370                      session_telemetry: &amp;self.services.session_telemetry,
+ 3371                  }
+ 3372              };
+ 3373              let available_skills = build_available_skills(
+ 3374                  turn_context.turn_skills.snapshot.outcome(),
+ 3375                  default_skill_metadata_budget(turn_context.model_info.context_window),
+ 3376                  side_effects,
+ 3377              );
+ 3378              if let Some(available_skills) = available_skills {
+ 3379                  let warning_message = available_skills.warning_message.clone();
+ 3380                  let skills_instructions = AvailableSkillsInstructions::from_available_skills(
+ 3381                      &amp;available_skills,
+ 3382                      turn_context.model_info.include_skills_usage_instructions,
+ 3383                  );
+ 3384                  if let Some(warning_message) = warning_message {
+ 3385                      self.send_event_raw(Event {
+ 3386                          id: String::new(),
+ 3387                          msg: EventMsg::Warning(WarningEvent {
+ 3388                              message: warning_message,
+ 3389                          }),
+ 3390                      })
+ 3391                      .await;
+ 3392                  }
+ 3393                  if !host_catalog_in_world_state {
+ 3394                      developer_sections.push(skills_instructions.render());
+ 3395                  }
+ 3396              }
+ 3397          }
+ 3398          let loaded_plugins = self
+ 3399              .services
+ 3400              .plugins_manager
+ 3401              .plugins_for_config(&amp;turn_context.config.plugins_config_input())
+ 3402              .await;
+ 3403          let recommended_plugin_candidates =
+ 3404              if crate::tools::spec_plan::tool_suggest_enabled(turn_context) {
+ 3405                  let auth = self.services.auth_manager.auth().await;
+ 3406                  let plugins_config = turn_context.config.plugins_config_input();
+ 3407                  self.services
+ 3408                      .plugins_manager
+ 3409                      .recommended_plugin_candidates_for_config(RecommendedPluginCandidatesInput {
+ 3410                          plugins_config: &amp;plugins_config,
+ 3411                          loaded_plugins: &amp;loaded_plugins,
+ 3412                          auth: auth.as_ref(),
+ 3413                          disabled_tools: &amp;turn_context.config.tool_suggest.disabled_tools,
+ 3414                          app_server_client_name: turn_context.app_server_client_name.as_deref(),
+ 3415                      })
+ 3416                      .await
+ 3417              } else {
+ 3418                  None
+ 3419              };
+ 3420          if let Some(recommended_plugins) = recommended_plugin_candidates
+ 3421              .as_deref()
+ 3422              .and_then(RecommendedPluginsInstructions::from_plugins)
+ 3423          {
+ 3424              contextual_user_sections.push(recommended_plugins.render());
+ 3425          }
+ 3426          let context_contributors = self.services.extensions.context_contributors().to_vec();
+ 3427          for contributor in &amp;context_contributors {
+ 3428              for fragment in contributor
+ 3429                  .contribute_thread_context(
+ 3430                      &amp;self.services.session_extension_data,
+ 3431                      &amp;self.services.thread_extension_data,
+ 3432                  )
+ 3433                  .await
+ 3434              {
+ 3435                  push_prompt_fragment(
+ 3436                      fragment,
+ 3437                      &amp;mut developer_sections,
+ 3438                      &amp;mut contextual_user_sections,
+ 3439                      &amp;mut separate_developer_sections,
+ 3440                  );
+ 3441              }
+ 3442          }
+ 3443          for contributor in &amp;context_contributors {
+ 3444              for fragment in contributor
+ 3445                  .contribute_turn_context(TurnContextContributionInput {
+ 3446                      thread_id: self.thread_id(),
+ 3447                      turn_id: turn_context.sub_id.as_str(),
+ 3448                      session_store: &amp;self.services.session_extension_data,
+ 3449                      thread_store: &amp;self.services.thread_extension_data,
+ 3450                      turn_store: turn_context.extension_data.as_ref(),
+ 3451                      model_context_window: turn_context.model_context_window(),
+ 3452                  })
+ 3453                  .await
+ 3454              {
+ 3455                  push_prompt_fragment(
+ 3456                      fragment,
+ 3457                      &amp;mut developer_sections,
+ 3458                      &amp;mut contextual_user_sections,
+ 3459                      &amp;mut separate_developer_sections,
+ 3460                  );
+ 3461              }
+ 3462          }
+ 3463          // This is full-context metadata. Steady-state context diffs should not re-emit it.
+ 3464          if turn_context.config.features.enabled(Feature::TokenBudget)
+ 3465              &amp;&amp; turn_context.model_context_window().is_some()
+ 3466          {
+ 3467              let mcp_result = self
+ 3468                  .services</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/session/mod.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/session/mod.rs#L3336-L3397" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code> 3336              }
+ 3337          }
+ 3338
+ 3339          self.persist_rollout_items(&amp;[RolloutItem::Compacted(compacted_item)])
+ 3340              .await;
+ 3341          // Persist the baseline after the replacement history that established it.
+ 3342          if let Some(world_state_item) = world_state_item {
+ 3343              self.persist_rollout_items(&amp;[RolloutItem::WorldState(world_state_item)])
+ 3344                  .await;
+ 3345          }
+ 3346          if let Some(turn_context_item) = reference_context_item {
+ 3347              self.persist_rollout_items(&amp;[RolloutItem::TurnContext(turn_context_item)])
+ 3348                  .await;
+ 3349          }
+ 3350          {
+ 3351              let mut state = self.state.lock().await;
+ 3352              state.queue_pending_session_start_source(codex_hooks::SessionStartSource::Compact);
+ 3353          }
+ 3354      }
+ 3355
+ 3356      pub fn enabled(&amp;self, feature: Feature) -&gt; bool {
+ 3357          self.features.enabled(feature)
+ 3358      }
+ 3359
+ 3360      pub(crate) fn features(&amp;self) -&gt; ManagedFeatures {
+ 3361          self.features.clone()
+ 3362      }
+ 3363
+ 3364      pub(crate) async fn collaboration_mode(&amp;self) -&gt; CollaborationMode {
+ 3365          let state = self.state.lock().await;
+ 3366          state.session_configuration.collaboration_mode.clone()
+ 3367      }
+ 3368
+ 3369      pub(crate) fn multi_agent_version(&amp;self) -&gt; Option&lt;MultiAgentVersion&gt; {
+ 3370          self.multi_agent_version.get().copied()
+ 3371      }
+ 3372
+ 3373      pub(crate) fn set_multi_agent_version_if_unset(
+ 3374          &amp;self,
+ 3375          multi_agent_version: MultiAgentVersion,
+ 3376      ) -&gt; MultiAgentVersion {
+ 3377          *self.multi_agent_version.get_or_init(|| multi_agent_version)
+ 3378      }
+ 3379
+ 3380      pub(crate) fn resolve_multi_agent_version_for_model(
+ 3381          &amp;self,
+ 3382          model_info: &amp;ModelInfo,
+ 3383          config: &amp;Config,
+ 3384      ) -&gt; MultiAgentVersion {
+ 3385          if let Some(multi_agent_version) = self.multi_agent_version() {
+ 3386              return config.multi_agent_version_for_model(Some(multi_agent_version));
+ 3387          }
+ 3388
+ 3389          let selected = config.multi_agent_version_for_model(model_info.multi_agent_version);
+ 3390
+ 3391          self.set_multi_agent_version_if_unset(selected)
+ 3392      }
+ 3393
+ 3394      #[tracing::instrument(level = &quot;trace&quot;, skip_all, fields(item_count = items.len()))]
+ 3395      async fn send_raw_response_items(&amp;self, turn_context: &amp;TurnContext, items: &amp;[ResponseItem]) {
+ 3396          for item in items {
+ 3397              self.send_event(
+ 3398                  turn_context,
+ 3399                  EventMsg::RawResponseItem(RawResponseItemEvent { item: item.clone() }),
+ 3400              )
+ 3401              .await;
+ 3402          }
+ 3403      }
+ 3404
+ 3405      async fn build_turn_context_contribution_items(
+ 3406          &amp;self,
+ 3407          step_context: &amp;StepContext,
+ 3408      ) -&gt; Vec&lt;ResponseItem&gt; {
+ 3409          let turn_context = step_context.turn.as_ref();
+ 3410          let mut developer_sections = Vec::new();
+ 3411          let mut contextual_user_sections = Vec::new();
+ 3412          let mut separate_developer_sections = Vec::new();
+ 3413          let context_contributors = self.services.extensions.context_contributors().to_vec();
+ 3414
+ 3415          for contributor in &amp;context_contributors {
+ 3416              for fragment in contributor
+ 3417                  .contribute_turn_context(TurnContextContributionInput {
+ 3418                      thread_id: self.thread_id(),
+ 3419                      turn_id: turn_context.sub_id.as_str(),
+ 3420                      session_store: &amp;self.services.session_extension_data,
+ 3421                      thread_store: &amp;self.services.thread_extension_data,
+ 3422                      turn_store: turn_context.extension_data.as_ref(),
+ 3423                      model_context_window: turn_context.model_context_window(),
+ 3424                  })
+ 3425                  .await
+ 3426              {
+ 3427                  push_prompt_fragment(
+ 3428                      fragment,
+ 3429                      &amp;mut developer_sections,
+ 3430                      &amp;mut contextual_user_sections,
+ 3431                      &amp;mut separate_developer_sections,
+ 3432                  );
+ 3433              }
+ 3434          }
+ 3435
+ 3436          let mut items = Vec::with_capacity(3);
+ 3437          if let Some(developer_message) =
+ 3438              crate::context_manager::updates::build_developer_update_item(developer_sections)
+ 3439          {
+ 3440              items.push(developer_message);
+ 3441          }
+ 3442          for section in separate_developer_sections {
+ 3443              if let Some(developer_message) =
+ 3444                  crate::context_manager::updates::build_developer_update_item(vec![section])
+ 3445              {
+ 3446                  items.push(developer_message);
+ 3447              }
+ 3448          }
+ 3449          if let Some(contextual_user_message) =
+ 3450              crate::context_manager::updates::build_contextual_user_message(contextual_user_sections)
+ 3451          {
+ 3452              items.push(contextual_user_message);
+ 3453          }
+ 3454          items
+ 3455      }
+ 3456
+ 3457      pub(crate) async fn build_initial_context_with_world_state(
+ 3458          &amp;self,
+ 3459          turn_context: &amp;TurnContext,
+ 3460          world_state: &amp;WorldState,
+ 3461      ) -&gt; Vec&lt;ResponseItem&gt; {
+ 3462          let mut developer_sections = Vec::&lt;String&gt;::with_capacity(8);
+ 3463          let mut contextual_user_sections = Vec::&lt;String&gt;::with_capacity(2);
+ 3464          let mut separate_developer_sections = Vec::&lt;String&gt;::new();
+ 3465          let (session_source, auto_compact_window_ids) = {
+ 3466              let state = self.state.lock().await;
+ 3467              (
+ 3468                  state.session_configuration.session_source.clone(),</code></pre></details></div></div></article><article class="finding-card compact" id="codex-hooks-001" data-finding-dimension="instructions"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>05 · Hooks 覆盖 session、prompt、permission、tool、compact、stop 与 subagent 生命周期</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>runtime 为 session/subagent start、PreToolUse、PermissionRequest、PostToolUse、UserPromptSubmit 等构造稳定 payload；hook 可阻断、改写输入或注入额外上下文，完成事件同时进入指标和 analytics。</p></section><section><span>白话解释</span><p>钩子既能当门卫，也能当翻译器和旁路记录员；每次执行都有开始、结束和耗时记录。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>组织可插入治理逻辑，但 hook 本身应被当作有权限的代码并受项目信任策略保护。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>103–160</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>161–220</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/hook_runtime.rs#L103-L220" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/hook_runtime.rs:103–220</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/hook_runtime.rs#L103-L220" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  103  pub(crate) async fn run_pending_session_start_hooks(
+  104      sess: &amp;Arc&lt;Session&gt;,
+  105      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  106  ) -&gt; bool {
+  107      while let Some(session_start_source) = sess.take_pending_session_start_source().await {
+  108          // Pending session-start hooks are reused to dispatch thread-spawn subagent
+  109          // starts. Other subagent sessions are internal/system work and do not run
+  110          // start hooks.
+  111          let target = match &amp;turn_context.session_source {
+  112              SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_role, .. })
+  113                  if matches!(
+  114                      session_start_source,
+  115                      codex_hooks::SessionStartSource::Startup
+  116                  ) =&gt;
+  117              {
+  118                  let context = subagent_hook_context(sess, agent_role);
+  119                  StartHookTarget::SubagentStart {
+  120                      turn_id: turn_context.sub_id.clone(),
+  121                      agent_id: context.agent_id,
+  122                      agent_type: context.agent_type,
+  123                  }
+  124              }
+  125              SessionSource::SubAgent(_) =&gt; return false,
+  126              _ =&gt; StartHookTarget::SessionStart {
+  127                  source: session_start_source,
+  128              },
+  129          };
+  130          let request = codex_hooks::SessionStartRequest {
+  131              session_id: sess.session_id().into(),
+  132              #[allow(deprecated)]
+  133              cwd: turn_context.cwd.clone(),
+  134              transcript_path: sess.hook_transcript_path().await,
+  135              model: turn_context.model_info.slug.clone(),
+  136              permission_mode: hook_permission_mode(turn_context),
+  137              target,
+  138          };
+  139          let hooks = sess.hooks();
+  140          let preview_runs = hooks.preview_session_start(&amp;request);
+  141          if run_context_injecting_hook(
+  142              sess,
+  143              turn_context,
+  144              preview_runs,
+  145              hooks.run_session_start(request, Some(turn_context.sub_id.clone())),
+  146          )
+  147          .await
+  148          .record_additional_contexts(sess, turn_context)
+  149          .await
+  150          {
+  151              return true;
+  152          }
+  153      }
+  154
+  155      false
+  156  }
+  157
+  158  /// Runs matching `PreToolUse` hooks before a tool executes.
+  159  ///
+  160  /// `tool_name` is the canonical name serialized to hook stdin. Matcher aliases
+  161  /// are internal compatibility names used only for selecting configured hook
+  162  /// handlers.
+  163  pub(crate) async fn run_pre_tool_use_hooks(
+  164      sess: &amp;Arc&lt;Session&gt;,
+  165      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  166      tool_use_id: String,
+  167      tool_name: &amp;HookToolName,
+  168      tool_input: &amp;Value,
+  169  ) -&gt; PreToolUseHookResult {
+  170      let request = PreToolUseRequest {
+  171          session_id: sess.session_id().into(),
+  172          turn_id: turn_context.sub_id.clone(),
+  173          subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+  174          #[allow(deprecated)]
+  175          cwd: turn_context.cwd.clone(),
+  176          transcript_path: sess.hook_transcript_path().await,
+  177          model: turn_context.model_info.slug.clone(),
+  178          permission_mode: hook_permission_mode(turn_context),
+  179          tool_name: tool_name.name().to_string(),
+  180          matcher_aliases: tool_name.matcher_aliases().to_vec(),
+  181          tool_use_id,
+  182          tool_input: tool_input.clone(),
+  183      };
+  184      let hooks = sess.hooks();
+  185      let preview_runs = hooks.preview_pre_tool_use(&amp;request);
+  186      emit_hook_started_events(sess, turn_context, preview_runs).await;
+  187
+  188      let PreToolUseOutcome {
+  189          hook_events,
+  190          should_block,
+  191          block_reason,
+  192          additional_contexts,
+  193          updated_input,
+  194      } = hooks.run_pre_tool_use(request).await;
+  195      emit_hook_completed_events(sess, turn_context, hook_events).await;
+  196      record_additional_contexts(sess, turn_context, additional_contexts).await;
+  197
+  198      if !should_block {
+  199          return PreToolUseHookResult::Continue { updated_input };
+  200      }
+  201
+  202      let Some(reason) = block_reason else {
+  203          return PreToolUseHookResult::Continue {
+  204              updated_input: None,
+  205          };
+  206      };
+  207
+  208      if (tool_name.name() == &quot;Bash&quot; || tool_name.name() == &quot;apply_patch&quot;)
+  209          &amp;&amp; let Some(command) = tool_input.get(&quot;command&quot;).and_then(Value::as_str)
+  210      {
+  211          PreToolUseHookResult::Blocked(format!(
+  212              &quot;Command blocked by PreToolUse hook: {reason}. Command: {command}&quot;
+  213          ))
+  214      } else {
+  215          PreToolUseHookResult::Blocked(format!(
+  216              &quot;Tool call blocked by PreToolUse hook: {reason}. Tool: {}&quot;,
+  217              tool_name.name()
+  218          ))
+  219      }
+  220  }
+  221
+  222  // PermissionRequest hooks share the same preview/start/completed event flow as
+  223  // other hook types, but they return an optional decision instead of mutating
+  224  // tool input or post-run state.
+  225  pub(crate) async fn run_permission_request_hooks(
+  226      sess: &amp;Arc&lt;Session&gt;,
+  227      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  228      run_id_suffix: &amp;str,
+  229      payload: PermissionRequestPayload,
+  230  ) -&gt; Option&lt;PermissionRequestDecision&gt; {
+  231      let request = PermissionRequestRequest {
+  232          session_id: sess.session_id().into(),
+  233          turn_id: turn_context.sub_id.clone(),
+  234          subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+  235          #[allow(deprecated)]
+  236          cwd: turn_context.cwd.to_path_buf(),
+  237          transcript_path: sess.hook_transcript_path().await,
+  238          model: turn_context.model_info.slug.clone(),
+  239          permission_mode: hook_permission_mode(turn_context),
+  240          tool_name: payload.tool_name.name().to_string(),
+  241          matcher_aliases: payload.tool_name.matcher_aliases().to_vec(),
+  242          run_id_suffix: run_id_suffix.to_string(),
+  243          tool_input: payload.tool_input,
+  244      };
+  245      let hooks = sess.hooks();
+  246      let preview_runs = hooks.preview_permission_request(&amp;request);
+  247      emit_hook_started_events(sess, turn_context, preview_runs).await;
+  248
+  249      let PermissionRequestOutcome {
+  250          hook_events,
+  251          decision,
+  252      } = hooks.run_permission_request(request).await;
+  253      emit_hook_completed_events(sess, turn_context, hook_events).await;
+  254
+  255      decision
+  256  }
+  257
+  258  /// Runs matching `PostToolUse` hooks after a tool has produced a successful output.
+  259  ///
+  260  /// The `tool_name`, matcher aliases, `tool_input`, and `tool_response` values are
+  261  /// already adapted by the tool handler into the stable hook contract. Passing
+  262  /// raw internal tool data here would leak implementation details into user hook
+  263  /// matchers and hook logs.
+  264  pub(crate) async fn run_post_tool_use_hooks(
+  265      sess: &amp;Arc&lt;Session&gt;,
+  266      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  267      tool_use_id: String,
+  268      tool_name: String,
+  269      matcher_aliases: Vec&lt;String&gt;,
+  270      tool_input: Value,
+  271      tool_response: Value,
+  272  ) -&gt; PostToolUseOutcome {
+  273      let request = PostToolUseRequest {
+  274          session_id: sess.session_id().into(),
+  275          turn_id: turn_context.sub_id.clone(),
+  276          subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+  277          #[allow(deprecated)]
+  278          cwd: turn_context.cwd.clone(),
+  279          transcript_path: sess.hook_transcript_path().await,
+  280          model: turn_context.model_info.slug.clone(),
+  281          permission_mode: hook_permission_mode(turn_context),
+  282          tool_name,
+  283          matcher_aliases,
+  284          tool_use_id,
+  285          tool_input,
+  286          tool_response,
+  287      };
+  288      let hooks = sess.hooks();
+  289      let preview_runs = hooks.preview_post_tool_use(&amp;request);
+  290      emit_hook_started_events(sess, turn_context, preview_runs).await;
+  291</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/hook_runtime.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/hook_runtime.rs#L103-L220" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  103      }
+  104  }
+  105
+  106  #[instrument(level = &quot;trace&quot;, skip_all)]
+  107  pub(crate) async fn run_pending_session_start_hooks(
+  108      sess: &amp;Arc&lt;Session&gt;,
+  109      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  110  ) -&gt; bool {
+  111      while let Some(session_start_source) = sess.take_pending_session_start_source().await {
+  112          // Pending session-start hooks are reused to dispatch thread-spawn subagent
+  113          // starts. Other subagent sessions are internal/system work and do not run
+  114          // start hooks.
+  115          let target = match &amp;turn_context.session_source {
+  116              SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_role, .. })
+  117                  if matches!(
+  118                      session_start_source,
+  119                      codex_hooks::SessionStartSource::Startup
+  120                  ) =&gt;
+  121              {
+  122                  let context = subagent_hook_context(sess, agent_role);
+  123                  StartHookTarget::SubagentStart {
+  124                      turn_id: turn_context.sub_id.clone(),
+  125                      agent_id: context.agent_id,
+  126                      agent_type: context.agent_type,
+  127                  }
+  128              }
+  129              SessionSource::SubAgent(_) =&gt; return false,
+  130              _ =&gt; StartHookTarget::SessionStart {
+  131                  source: session_start_source,
+  132              },
+  133          };
+  134          let request = codex_hooks::SessionStartRequest {
+  135              session_id: sess.session_id().into(),
+  136              #[allow(deprecated)]
+  137              cwd: turn_context.cwd.clone(),
+  138              transcript_path: sess.hook_transcript_path().await,
+  139              model: turn_context.model_info.slug.clone(),
+  140              permission_mode: hook_permission_mode(turn_context),
+  141              target,
+  142          };
+  143          let hooks = sess.hooks();
+  144          let preview_runs = hooks.preview_session_start(&amp;request);
+  145          if run_context_injecting_hook(
+  146              sess,
+  147              turn_context,
+  148              preview_runs,
+  149              hooks.run_session_start(request, Some(turn_context.sub_id.clone())),
+  150          )
+  151          .await
+  152          .record_additional_contexts(sess, turn_context)
+  153          .await
+  154          {
+  155              return true;
+  156          }
+  157      }
+  158
+  159      false
+  160  }
+  161
+  162  /// Runs matching `PreToolUse` hooks before a tool executes.
+  163  ///
+  164  /// `tool_name` is the canonical name serialized to hook stdin. Matcher aliases
+  165  /// are internal compatibility names used only for selecting configured hook
+  166  /// handlers.
+  167  pub(crate) async fn run_pre_tool_use_hooks(
+  168      sess: &amp;Arc&lt;Session&gt;,
+  169      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  170      tool_use_id: String,
+  171      tool_name: &amp;HookToolName,
+  172      tool_input: &amp;Value,
+  173  ) -&gt; PreToolUseHookResult {
+  174      let request = PreToolUseRequest {
+  175          session_id: sess.session_id().into(),
+  176          turn_id: turn_context.sub_id.clone(),
+  177          subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+  178          #[allow(deprecated)]
+  179          cwd: turn_context.cwd.clone(),
+  180          transcript_path: sess.hook_transcript_path().await,
+  181          model: turn_context.model_info.slug.clone(),
+  182          permission_mode: hook_permission_mode(turn_context),
+  183          tool_name: tool_name.name().to_string(),
+  184          matcher_aliases: tool_name.matcher_aliases().to_vec(),
+  185          tool_use_id,
+  186          tool_input: tool_input.clone(),
+  187      };
+  188      let hooks = sess.hooks();
+  189      let preview_runs = hooks.preview_pre_tool_use(&amp;request);
+  190      emit_hook_started_events(sess, turn_context, preview_runs).await;
+  191
+  192      let PreToolUseOutcome {
+  193          hook_events,
+  194          should_block,
+  195          block_reason,
+  196          additional_contexts,
+  197          updated_input,
+  198      } = hooks.run_pre_tool_use(request).await;
+  199      emit_hook_completed_events(sess, turn_context, hook_events).await;
+  200      record_additional_contexts(sess, turn_context, additional_contexts).await;
+  201
+  202      if !should_block {
+  203          return PreToolUseHookResult::Continue { updated_input };
+  204      }
+  205
+  206      let Some(reason) = block_reason else {
+  207          return PreToolUseHookResult::Continue {
+  208              updated_input: None,
+  209          };
+  210      };
+  211
+  212      if (tool_name.name() == &quot;Bash&quot; || tool_name.name() == &quot;apply_patch&quot;)
+  213          &amp;&amp; let Some(command) = tool_input.get(&quot;command&quot;).and_then(Value::as_str)
+  214      {
+  215          PreToolUseHookResult::Blocked(format!(
+  216              &quot;Command blocked by PreToolUse hook: {reason}. Command: {command}&quot;
+  217          ))
+  218      } else {
+  219          PreToolUseHookResult::Blocked(format!(
+  220              &quot;Tool call blocked by PreToolUse hook: {reason}. Tool: {}&quot;,
+  221              tool_name.name()
+  222          ))
+  223      }
+  224  }
+  225
+  226  // PermissionRequest hooks share the same preview/start/completed event flow as
+  227  // other hook types, but they return an optional decision instead of mutating
+  228  // tool input or post-run state.
+  229  pub(crate) async fn run_permission_request_hooks(
+  230      sess: &amp;Arc&lt;Session&gt;,
+  231      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  232      run_id_suffix: &amp;str,
+  233      payload: PermissionRequestPayload,
+  234  ) -&gt; Option&lt;PermissionRequestDecision&gt; {
+  235      let request = PermissionRequestRequest {
+  236          session_id: sess.session_id().into(),
+  237          turn_id: turn_context.sub_id.clone(),
+  238          subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+  239          #[allow(deprecated)]
+  240          cwd: turn_context.cwd.to_path_buf(),
+  241          transcript_path: sess.hook_transcript_path().await,
+  242          model: turn_context.model_info.slug.clone(),
+  243          permission_mode: hook_permission_mode(turn_context),
+  244          tool_name: payload.tool_name.name().to_string(),
+  245          matcher_aliases: payload.tool_name.matcher_aliases().to_vec(),
+  246          run_id_suffix: run_id_suffix.to_string(),
+  247          tool_input: payload.tool_input,
+  248      };
+  249      let hooks = sess.hooks();
+  250      let preview_runs = hooks.preview_permission_request(&amp;request);
+  251      emit_hook_started_events(sess, turn_context, preview_runs).await;
+  252
+  253      let PermissionRequestOutcome {
+  254          hook_events,
+  255          decision,
+  256      } = hooks.run_permission_request(request).await;
+  257      emit_hook_completed_events(sess, turn_context, hook_events).await;
+  258
+  259      decision
+  260  }
+  261
+  262  /// Runs matching `PostToolUse` hooks after a tool has produced a successful output.
+  263  ///
+  264  /// The `tool_name`, matcher aliases, `tool_input`, and `tool_response` values are
+  265  /// already adapted by the tool handler into the stable hook contract. Passing
+  266  /// raw internal tool data here would leak implementation details into user hook
+  267  /// matchers and hook logs.
+  268  pub(crate) async fn run_post_tool_use_hooks(
+  269      sess: &amp;Arc&lt;Session&gt;,
+  270      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  271      tool_use_id: String,
+  272      tool_name: String,
+  273      matcher_aliases: Vec&lt;String&gt;,
+  274      tool_input: Value,
+  275      tool_response: Value,
+  276  ) -&gt; PostToolUseOutcome {
+  277      let request = PostToolUseRequest {
+  278          session_id: sess.session_id().into(),
+  279          turn_id: turn_context.sub_id.clone(),
+  280          subagent: thread_spawn_subagent_hook_context(sess, turn_context),
+  281          #[allow(deprecated)]
+  282          cwd: turn_context.cwd.clone(),
+  283          transcript_path: sess.hook_transcript_path().await,
+  284          model: turn_context.model_info.slug.clone(),
+  285          permission_mode: hook_permission_mode(turn_context),
+  286          tool_name,
+  287          matcher_aliases,
+  288          tool_use_id,
+  289          tool_input,
+  290          tool_response,
+  291      };</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ECOSYSTEM · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>McpConnectionSet 同时管理 server、required servers、工具目录版本、Codex Apps cache、plugin provenance、工具命名前缀和 elicitation；连接配置/OAuth 凭据一致且存活时才复用。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117" target="_blank" rel="noreferrer">codex-rs/codex-mcp/src/connection_manager.rs:66–117 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>tool_catalog 过滤 UI visibility，不含 metadata 时默认可见；capture_binding 在读锁下捕获 revision、ready client、过滤后的 tools 和 prepared calls，无法精确绑定的工具被省略。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55" target="_blank" rel="noreferrer">codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs:34–55 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>发现逻辑以 project root marker 截断上行范围，从根到 cwd 每层最多选 AGENTS.override.md、AGENTS.md 或 fallback 文件之一；按总预算读取，超出部分截断。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agents_md.rs#L1-L16" target="_blank" rel="noreferrer">codex-rs/core/src/agents_md.rs:1–16 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>build_initial_context 按 context window 计算 skill metadata budget，超限发 warning；plugins 先按配置加载，再生成推荐插件上下文；extension contributors 可注入 developer、contextual user 或独立 developer fragment。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L3336-L3397" target="_blank" rel="noreferrer">codex-rs/core/src/session/mod.rs:3336–3397 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← 安全：审批、权限和边界</a><a href="ch09-collaboration.html">协作：子 Agent 与工作流 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

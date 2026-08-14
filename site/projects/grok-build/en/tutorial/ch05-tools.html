@@ -1,1 +1,617 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>Grok Build · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Grok Build · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Grok Build</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>e5fd4816d432</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · Grok Build · e5fd4816d432</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>2 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>Grok Build · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/grok-build/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/grok-build/ch05-tools.srt" data-video-status="published">SRT</a><em>e5fd4816d432</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 2 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="grok-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具执行明确拆成 prepare、并发 dispatch、post-flight</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>execute_tool_calls_batch 先逐个解析、运行 Plan gate、hooks 和权限；批准后用 FuturesUnordered 并发执行，写同一路径的工具共享 Mutex 串行；完成后按原 slot 做事件和结果处理。</p></section><section><span>PLAIN LANGUAGE</span><p>能并行的尽量并行，但两个工具若同时写同一个文件会排队，避免互相覆盖。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>并发策略不是简单 all-at-once，而是带资源锁的调度。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:355–449</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>preflight 阶段逐项准备，拒绝可终止后续项。</code></pre></div></div></article><article class="finding-card compact" id="grok-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 工具参数对模型瑕疵有恢复层</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>prepare_tool_call 会规范空参数、尝试解析 JSON；遇到拼接的多个 JSON 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 ToolParsingError。</p></section><section><span>PLAIN LANGUAGE</span><p>模型偶尔把两个 JSON 粘在一起，Grok Build 会先抢救，不是一看到格式错就整轮失败。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>对模型输出做保守修复能提高成功率，但必须记录恢复行为，避免悄悄改变语义。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:355–449 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878–950</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>空参数规范、拼接 JSON 抽取、schema 试配和解析失败处理。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Grok Build sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Where are tool declarations, arguments, execution, and receipts handled?"><title>Grok Build · M05 · Tools: registering the agent&#39;s hands</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Grok Build · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch05-tools.html">中</a><a href="ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Grok Build</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="active" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>e5fd4816d432</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · Grok Build · e5fd4816d432</p><h1>Tools: registering the agent&#39;s hands</h1><p class="lede">Where are tool declarations, arguments, execution, and receipts handled?</p><div class="chapter-meta"><span>Chapter 5 / 10</span><span>2 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>Grok Build · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/grok-build/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/grok-build/ch05-tools.srt" data-video-status="published">SRT</a><em>e5fd4816d432</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Tools are runways: a model ticket is not enough—registration, policy, arguments, execution, and receipts must pass gates.</p></div><h2>Answer the chapter question first</h2><p>Where are tool declarations, arguments, execution, and receipts handled? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 2 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="grok-tools-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具执行明确拆成 prepare、并发 dispatch、post-flight</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>execute_tool_calls_batch 先逐个解析、运行 Plan gate、hooks 和权限；批准后用 FuturesUnordered 并发执行，写同一路径的工具共享 Mutex 串行；完成后按原 slot 做事件和结果处理。</p></section><section><span>PLAIN LANGUAGE</span><p>能并行的尽量并行，但两个工具若同时写同一个文件会排队，避免互相覆盖。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>并发策略不是简单 all-at-once，而是带资源锁的调度。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>355–401</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>402–449</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:355–449</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  355      /// Prepare → dispatch → post-flight. Caller owns the outer tail flush.
+  356      async fn execute_tool_calls_batch(
+  357          &amp;self,
+  358          tool_calls: Vec&lt;crate::sampling::types::ToolCallResponse&gt;,
+  359          deferred_followups: &amp;mut Vec&lt;ConversationItem&gt;,
+  360          final_result: &amp;mut Option&lt;ToolLoop&gt;,
+  361      ) -&gt; Result&lt;(), acp::Error&gt; {
+  362          let mut approved: Vec&lt;PreparedToolCall&gt; = Vec::new();
+  363          for call in tool_calls.into_iter() {
+  364              if final_result.is_some() {
+  365                  let message = match &amp;*final_result {
+  366                      Some(ToolLoop::PermissionReject { .. }) =&gt; {
+  367                          format!(
+  368                              &quot;Tool execution cancelled due to earlier permission rejection for tool `{}`&quot;,
+  369                              call.function.name
+  370                          )
+  371                      }
+  372                      Some(ToolLoop::Cancelled) =&gt; {
+  373                          format!(
+  374                              &quot;Tool execution cancelled due to earlier user cancellation for tool `{}`&quot;,
+  375                              call.function.name
+  376                          )
+  377                      }
+  378                      Some(ToolLoop::FollowupMessage(_)) =&gt; {
+  379                          format!(
+  380                              &quot;Tool execution cancelled due to earlier user followup message for tool `{}`&quot;,
+  381                              call.function.name
+  382                          )
+  383                      }
+  384                      _ =&gt; {
+  385                          format!(&quot;Tool execution cancelled for tool `{}`&quot;, call.function.name)
+  386                      }
+  387                  };
+  388                  self.chat_state_handle
+  389                      .push_tool_result(ConversationItem::tool_result(call.id.clone(), message));
+  390                  continue;
+  391              }
+  392              self.emit_event(crate::session::events::Event::ToolStarted {
+  393                  tool_name: call.function.name.clone(),
+  394              });
+  395              self.observability_bridge
+  396                  .emit(
+  397                      xai_tool_protocol::session_event::SessionEvent::ToolCallStarted {
+  398                          tool_call_id: call.id.clone(),
+  399                          tool_name: call.function.name.clone(),
+  400                          turn_number: self.current_turn_number.get(),
+  401                      },
+  402                  )
+  403                  .await;
+  404              let call_name = call.function.name.clone();
+  405              match self.prepare_tool_call(call, deferred_followups).await? {
+  406                  Ok(prepared) =&gt; approved.push(prepared),
+  407                  Err(tool_loop) =&gt; {
+  408                      self.events.tool_finished();
+  409                      if let Some((server, tool)) =
+  410                          crate::session::mcp_servers::parse_mcp_tool_name(&amp;call_name)
+  411                      {
+  412                          let error_reason = match &amp;tool_loop {
+  413                              ToolLoop::PermissionReject { reason, .. } =&gt; reason.clone(),
+  414                              ToolLoop::Cancelled =&gt; &quot;cancelled&quot;.to_string(),
+  415                              ToolLoop::FollowupMessage(_) =&gt; &quot;followup&quot;.to_string(),
+  416                              ToolLoop::HookDenied { hook_name, .. } =&gt; {
+  417                                  format!(&quot;hook_denied:{hook_name}&quot;)
+  418                              }
+  419                              other =&gt; format!(&quot;{other:?}&quot;),
+  420                          };
+  421                          self.emit_event(xai_file_utils::events::Event::McpToolCallCompleted {
+  422                              server_name: server.to_string(),
+  423                              tool_name: tool.to_string(),
+  424                              call_id: format!(
+  425                                  &quot;{}{}{}&quot;,
+  426                                  server,
+  427                                  crate::session::mcp_servers::MCP_TOOL_NAME_DELIMITER,
+  428                                  tool
+  429                              ),
+  430                              duration_ms: 0,
+  431                              success: false,
+  432                              is_timeout: false,
+  433                              error: Some(error_reason),
+  434                              reconnect_attempted: false,
+  435                              auth_retry_attempted: false,
+  436                          });
+  437                      }
+  438                      if matches!(
+  439                          tool_loop,
+  440                          ToolLoop::PermissionReject { .. }
+  441                              | ToolLoop::Cancelled
+  442                              | ToolLoop::FollowupMessage(_)
+  443                      ) &amp;&amp; final_result.is_none()
+  444                      {
+  445                          *final_result = Some(tool_loop);
+  446                      }
+  447                  }
+  448              }
+  449          }
+  450          if approved.iter().any(|p| p.tool_name == &quot;search_tool&quot;) {
+  451              self.retry_auth_required_servers().await;
+  452          }
+  453          let write_paths: std::collections::HashSet&lt;String&gt; = approved
+  454              .iter()
+  455              .filter(|prepared| !prepared.is_read_only)
+  456              .filter_map(|prepared| lock_path_for_args(&amp;prepared.parsed_args).map(str::to_owned))
+  457              .collect();
+  458          let file_locks = {
+  459              let mut map: std::collections::HashMap&lt;String, Arc&lt;tokio::sync::Mutex&lt;()&gt;&gt;&gt; =
+  460                  std::collections::HashMap::new();
+  461              for prepared in &amp;approved {
+  462                  if let Some(fp) = lock_path_for_args(&amp;prepared.parsed_args)
+  463                      &amp;&amp; write_paths.contains(fp)
+  464                  {
+  465                      map.entry(fp.to_owned())
+  466                          .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())));
+  467                  }
+  468              }
+  469              map
+  470          };
+  471          let shared_recovery = Arc::new(tokio::sync::OnceCell::&lt;bool&gt;::const_new());
+  472          let workspace_ops = self.workspace_ops.clone();
+  473          let pending_interjections = self.pending_interjections.clone();
+  474          let session_id: Arc&lt;str&gt; = Arc::from(&amp;*self.session_info.id.0);
+  475          let dispatch_futures: Vec&lt;_&gt; = approved
+  476              .iter()
+  477              .enumerate()
+  478              .map(|(idx, prepared)| {
+  479                  let prepared = Arc::new(prepared.clone());
+  480                  let am = self.auth_manager.clone();
+  481                  let shared_recovery = Arc::clone(&amp;shared_recovery);
+  482                  let workspace_ops = workspace_ops.clone();
+  483                  let session_id = session_id.clone();
+  484                  let pending_interjections = pending_interjections.clone();
+  485                  let blocking_wait_depth = self.tool_context.blocking_wait_depth.clone();
+  486                  let interruptible =
+  487                      is_interruptible_wait_tool(&amp;prepared.tool_name, &amp;prepared.parsed_args);
+  488                  let lock = lock_path_for_args(&amp;prepared.parsed_args)
+  489                      .and_then(|fp| file_locks.get(fp).cloned());
+  490                  async move {
+  491                      let exec_start = std::time::Instant::now();
+  492                      let run_tool = || {
+  493                          let prepared = Arc::clone(&amp;prepared);
+  494                          let workspace_ops = workspace_ops.clone();
+  495                          let session_id = session_id.clone();
+  496                          let lock = lock.clone();
+  497                          async move {
+  498                              let _guard = if let Some(ref l) = lock {
+  499                                  Some(l.lock().await)
+  500                              } else {
+  501                                  None
+  502                              };
+  503                              dispatch_tool(&amp;workspace_ops, &amp;prepared, &amp;session_id).await
+  504                          }
+  505                      };
+  506                      let result = if interruptible {
+  507                          let _wait_guard = BlockingWaitGuard::enter(blocking_wait_depth.clone());
+  508                          tokio::select! {
+  509                              biased;
+  510                              result = call_with_auth_retry(
+  511                                  am.as_ref(),
+  512                                  Some(&amp;shared_recovery),
+  513                                  &amp;prepared.tool_name,
+  514                                  run_tool,
+  515                              ) =&gt; result,
+  516                              _ = wait_for_pending_interjection(&amp;pending_interjections) =&gt; {
+  517                                  tracing::info!(
+  518                                      tool = %prepared.tool_name,
+  519                                      &quot;abort wait tool: interjection pending&quot;
+  520                                  );</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  355      pub(super) async fn execute_tool_calls(
+  356          &amp;self,
+  357          tool_calls: Vec&lt;crate::sampling::types::ToolCallResponse&gt;,
+  358      ) -&gt; Result&lt;ToolLoop, acp::Error&gt; {
+  359          if let Some(cfg) = self.chat_state_handle.get_sampling_config().await {
+  360              tracing::Span::current().record(&quot;model_id&quot;, cfg.model.as_str());
+  361          }
+  362          let mut final_result: Option&lt;ToolLoop&gt; = None;
+  363          let mut deferred_followups: Vec&lt;ConversationItem&gt; = Vec::new();
+  364          if tool_calls.len() &gt; 1 {
+  365              let kind_of = |name: &amp;str| self.agent.borrow().tool_bridge().tool_kind(name);
+  366              let (body, tail) = split_exit_plan_tail(tool_calls, kind_of);
+  367              if !body.is_empty() {
+  368                  self.execute_tool_calls_batch(body, &amp;mut deferred_followups, &amp;mut final_result)
+  369                      .await?;
+  370              }
+  371              if !tail.is_empty() {
+  372                  self.execute_tool_calls_batch(tail, &amp;mut deferred_followups, &amp;mut final_result)
+  373                      .await?;
+  374              }
+  375          } else {
+  376              self.execute_tool_calls_batch(tool_calls, &amp;mut deferred_followups, &amp;mut final_result)
+  377                  .await?;
+  378          }
+  379          {
+  380              let _span = if !deferred_followups.is_empty() {
+  381                  Some(
+  382                      tracing::info_span!(
+  383                          &quot;tools.deferred_followups&quot;,
+  384                          count = deferred_followups.len()
+  385                      )
+  386                      .entered(),
+  387                  )
+  388              } else {
+  389                  None
+  390              };
+  391              for chat in deferred_followups {
+  392                  self.chat_state_handle.push_user_message(chat);
+  393              }
+  394          }
+  395          self.drain_pending_interjections().await;
+  396          self.flush_pending_skill_reminders().await;
+  397          if let Some(final_result) = final_result {
+  398              return Ok(final_result);
+  399          }
+  400          Ok(ToolLoop::Continue)
+  401      }
+  402      /// Prepare → dispatch → post-flight. Caller owns the outer tail flush.
+  403      async fn execute_tool_calls_batch(
+  404          &amp;self,
+  405          tool_calls: Vec&lt;crate::sampling::types::ToolCallResponse&gt;,
+  406          deferred_followups: &amp;mut Vec&lt;ConversationItem&gt;,
+  407          final_result: &amp;mut Option&lt;ToolLoop&gt;,
+  408      ) -&gt; Result&lt;(), acp::Error&gt; {
+  409          if self.permissions.is_auto_mode() {
+  410              let conversation = self.chat_state_handle.get_conversation().await;
+  411              super::refresh_classifier_transcript(&amp;self.permissions, &amp;conversation);
+  412          }
+  413          let mut approved: Vec&lt;PreparedToolCall&gt; = Vec::new();
+  414          for call in tool_calls.into_iter() {
+  415              if final_result.is_some() {
+  416                  let message = match &amp;*final_result {
+  417                      Some(ToolLoop::PermissionReject { .. }) =&gt; {
+  418                          format!(
+  419                              &quot;Tool execution cancelled due to earlier permission rejection for tool `{}`&quot;,
+  420                              call.function.name
+  421                          )
+  422                      }
+  423                      Some(ToolLoop::Cancelled) =&gt; {
+  424                          format!(
+  425                              &quot;Tool execution cancelled due to earlier user cancellation for tool `{}`&quot;,
+  426                              call.function.name
+  427                          )
+  428                      }
+  429                      Some(ToolLoop::FollowupMessage(_)) =&gt; {
+  430                          format!(
+  431                              &quot;Tool execution cancelled due to earlier user followup message for tool `{}`&quot;,
+  432                              call.function.name
+  433                          )
+  434                      }
+  435                      _ =&gt; {
+  436                          format!(&quot;Tool execution cancelled for tool `{}`&quot;, call.function.name)
+  437                      }
+  438                  };
+  439                  self.chat_state_handle
+  440                      .push_tool_result(ConversationItem::tool_result(call.id.clone(), message));
+  441                  continue;
+  442              }
+  443              self.emit_event(crate::session::events::Event::ToolStarted {
+  444                  tool_name: call.function.name.clone(),
+  445              });
+  446              self.observability_bridge
+  447                  .emit(
+  448                      xai_tool_protocol::session_event::SessionEvent::ToolCallStarted {
+  449                          tool_call_id: call.id.clone(),
+  450                          tool_name: call.function.name.clone(),
+  451                          turn_number: self.current_turn_number.get(),
+  452                      },
+  453                  )
+  454                  .await;
+  455              let call_name = call.function.name.clone();
+  456              match self.prepare_tool_call(call, deferred_followups).await? {
+  457                  Ok(prepared) =&gt; approved.push(prepared),
+  458                  Err(tool_loop) =&gt; {
+  459                      self.events.tool_finished();
+  460                      if let Some((server, tool)) =
+  461                          crate::session::mcp_servers::parse_mcp_tool_name(&amp;call_name)
+  462                      {
+  463                          let error_reason = match &amp;tool_loop {
+  464                              ToolLoop::PermissionReject { reason, .. } =&gt; reason.clone(),
+  465                              ToolLoop::Cancelled =&gt; &quot;cancelled&quot;.to_string(),
+  466                              ToolLoop::FollowupMessage(_) =&gt; &quot;followup&quot;.to_string(),
+  467                              ToolLoop::HookDenied { hook_name, .. } =&gt; {
+  468                                  format!(&quot;hook_denied:{hook_name}&quot;)
+  469                              }
+  470                              other =&gt; format!(&quot;{other:?}&quot;),
+  471                          };
+  472                          self.emit_event(xai_grok_session_events::Event::McpToolCallCompleted {
+  473                              server_name: server.to_string(),
+  474                              tool_name: tool.to_string(),
+  475                              call_id: format!(
+  476                                  &quot;{}{}{}&quot;,
+  477                                  server,
+  478                                  crate::session::mcp_servers::MCP_TOOL_NAME_DELIMITER,
+  479                                  tool
+  480                              ),
+  481                              duration_ms: 0,
+  482                              success: false,
+  483                              is_timeout: false,
+  484                              error: Some(error_reason),
+  485                              reconnect_attempted: false,
+  486                              auth_retry_attempted: false,
+  487                          });
+  488                      }
+  489                      if matches!(
+  490                          tool_loop,
+  491                          ToolLoop::PermissionReject { .. }
+  492                              | ToolLoop::Cancelled
+  493                              | ToolLoop::FollowupMessage(_)
+  494                      ) &amp;&amp; final_result.is_none()
+  495                      {
+  496                          *final_result = Some(tool_loop);
+  497                      }
+  498                  }
+  499              }
+  500          }
+  501          if approved.iter().any(|p| p.tool_name == &quot;search_tool&quot;) {
+  502              self.retry_auth_required_servers().await;
+  503          }
+  504          let write_paths: std::collections::HashSet&lt;String&gt; = approved
+  505              .iter()
+  506              .filter(|prepared| !prepared.is_read_only)
+  507              .filter_map(|prepared| lock_path_for_args(&amp;prepared.parsed_args).map(str::to_owned))
+  508              .collect();
+  509          let file_locks = {
+  510              let mut map: std::collections::HashMap&lt;String, Arc&lt;tokio::sync::Mutex&lt;()&gt;&gt;&gt; =
+  511                  std::collections::HashMap::new();
+  512              for prepared in &amp;approved {
+  513                  if let Some(fp) = lock_path_for_args(&amp;prepared.parsed_args)
+  514                      &amp;&amp; write_paths.contains(fp)
+  515                  {
+  516                      map.entry(fp.to_owned())
+  517                          .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())));
+  518                  }
+  519              }
+  520              map</code></pre></details></div></div></article><article class="finding-card compact" id="grok-tools-002" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 工具参数对模型瑕疵有恢复层</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>prepare_tool_call 会规范空参数、尝试解析 JSON；遇到拼接的多个 JSON 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 ToolParsingError。</p></section><section><span>PLAIN LANGUAGE</span><p>模型偶尔把两个 JSON 粘在一起，Grok Build 会先抢救，不是一看到格式错就整轮失败。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>对模型输出做保守修复能提高成功率，但必须记录恢复行为，避免悄悄改变语义。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>878–913</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>914–950</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878–950</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  878          let args_str = crate::session::helpers::tool_input_parsing::normalize_empty_arguments(
+  879              &amp;call.function.arguments,
+  880          );
+  881          let parse_result = serde_json::from_str::&lt;serde_json::Value&gt;(args_str);
+  882          let mut concatenated_json_count: usize = 0;
+  883          let raw_input = match &amp;parse_result {
+  884              Ok(value) =&gt; value.clone(),
+  885              Err(e) =&gt; {
+  886                  if let Some(objects) = crate::session::helpers::tool_input_parsing::try_extract_concatenated_json_objects(
+  887                      &amp;call.function.arguments,
+  888                  ) {
+  889                      let total_count = objects.len();
+  890                      if objects.is_empty() {
+  891                          json!({ &quot;raw&quot;: call.function.arguments.clone() })
+  892                      } else {
+  893                          let best_match = objects[0].clone();
+  894                          let mut selected_index = 0;
+  895                          let mut matched_tool = false;
+  896                          let bridge = self.agent.borrow().tool_bridge().clone();
+  897                          for (idx, obj) in objects.iter().enumerate() {
+  898                              if bridge
+  899                                  .try_parse(&amp;call.function.name, obj.clone())
+  900                                  .await
+  901                                  .is_ok()
+  902                              {
+  903                                  selected_index = idx;
+  904                                  matched_tool = true;
+  905                                  break;
+  906                              }
+  907                          }
+  908                          tracing::warn!(
+  909                              tool_name = %call.function.name,
+  910                              call_id = %call.id,
+  911                              total_objects = total_count,
+  912                              selected_index,
+  913                              matched_named_tool = matched_tool,
+  914                              &quot;Detected concatenated JSON in tool arguments — \
+  915                              extracting best matching object (index {selected_index}/{total_count}). \
+  916                              The model should use separate tool calls instead of \
+  917                              concatenating JSON objects.&quot;
+  918                          );
+  919                          concatenated_json_count = total_count;
+  920                          best_match
+  921                      }
+  922                  } else {
+  923                      tracing::warn!(
+  924                          &quot;Failed to parse arguments as JSON ({}), wrapping in &#39;raw&#39; field&quot;,
+  925                          e
+  926                      );
+  927                      json!({ &quot;raw&quot;: call.function.arguments.clone() })
+  928                  }
+  929              }
+  930          };
+  931          let tool_input = match self
+  932              .agent
+  933              .borrow()
+  934              .tool_bridge()
+  935              .try_parse(&amp;call.function.name, raw_input.clone())
+  936              .await
+  937          {
+  938              Ok(input) =&gt; input,
+  939              Err(err) =&gt; {
+  940                  self.handle_tool_parse_error(
+  941                      &amp;tool_call_id,
+  942                      &amp;call.id,
+  943                      &amp;call.function.name,
+  944                      err,
+  945                      &amp;call.function.arguments,
+  946                      &amp;model_id_str,
+  947                  )
+  948                  .await?;
+  949                  return Ok(Err(ToolLoop::ToolParsingError));
+  950              }
+  951          };
+  952          let access_kind = AccessKind::from(&amp;tool_input);
+  953          let plan_gate = plan_mode_edit_gate(&amp;self.plan_mode.lock(), &amp;tool_input, &amp;access_kind);
+  954          if plan_gate != PlanEditGate::Allow {
+  955              tracing::info_span!(
+  956                  &quot;tool.decision&quot;,
+  957                  tool_name = %call.function.name,
+  958                  tool_use_id = %call.id,
+  959                  decision = &quot;deny&quot;,
+  960                  source = &quot;plan_mode&quot;,
+  961                  wait_ms = 0_i64,
+  962              )
+  963              .in_scope(|| {});
+  964              let msg = self.plan_mode_edit_rejected_message().await;
+  965              self.handle_tool_not_executed(&amp;call.id, &amp;tool_call_id, msg)
+  966                  .await?;
+  967              return Ok(Err(ToolLoop::Continue));
+  968          }
+  969          let tool_call_display = self
+  970              .send_tool_call_start(&amp;tool_call_id, &amp;call.function.name, tool_input.clone())
+  971              .await;
+  972          let _recovered_raw_input = if concatenated_json_count &gt; 0 {
+  973              Some(raw_input.clone())
+  974          } else {
+  975              None
+  976          };
+  977          let dispatch_target_name = tool_input.dispatch_target_name();
+  978          let resolved_tool_name = dispatch_target_name
+  979              .clone()
+  980              .unwrap_or_else(|| call.function.name.clone());
+  981          if self.hook_event_active(xai_grok_hooks::event::HookEventName::PreToolUse) {
+  982              let (hook_tool_input, hook_tool_input_truncated) =
+  983                  xai_grok_hooks::event::truncate_payload(raw_input.clone());
+  984              let envelope = self.make_hook_envelope(
+  985                  xai_grok_hooks::event::HookEventName::PreToolUse,
+  986                  None,
+  987                  xai_grok_hooks::event::HookPayload::PreToolUse {
+  988                      tool_name: resolved_tool_name.clone(),
+  989                      tool_use_id: call.id.clone(),
+  990                      tool_input: hook_tool_input,
+  991                      tool_input_truncated: hook_tool_input_truncated,
+  992                      subagent_type: self.subagent_type_label(),
+  993                  },
+  994              );
+  995              let hook_registry_snapshot = self.hook_registry.borrow().clone();
+  996              if let Some(registry) = hook_registry_snapshot {
+  997                  let ctx = self.hook_run_ctx();
+  998                  let pre_result =
+  999                      xai_grok_hooks::dispatcher::dispatch_pre_tool_use(&amp;registry, &amp;envelope, &amp;ctx)
+ 1000                          .await;
+ 1001                  self.send_hook_execution(
+ 1002                      &quot;pre_tool_use&quot;,
+ 1003                      Some(&amp;resolved_tool_name),
+ 1004                      None,
+ 1005                      &amp;pre_result.results,
+ 1006                  )
+ 1007                  .await;
+ 1008                  self.emit_hook_executed_telemetry(
+ 1009                      &quot;pre_tool_use&quot;,
+ 1010                      Some(&amp;resolved_tool_name),
+ 1011                      &amp;pre_result.results,
+ 1012                  )
+ 1013                  .await;
+ 1014                  if let xai_grok_hooks::result::HookDecision::Deny { reason, hook_name } =
+ 1015                      pre_result.decision
+ 1016                  {
+ 1017                      return Ok(Err(self
+ 1018                          .deny_tool(
+ 1019                              &amp;call.id,
+ 1020                              &amp;tool_call_id,
+ 1021                              resolved_tool_name.clone(),</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  878                  serde_json::from_str::&lt;serde_json::Value&gt;(&amp;call.function.arguments).ok();
+  879              let subagent_background =
+  880                  xai_grok_tools::is_task_tool_id(&amp;call.function.name).then(|| {
+  881                      early_raw_input
+  882                          .as_ref()
+  883                          .and_then(|v| v.get(&quot;run_in_background&quot;).or_else(|| v.get(&quot;background&quot;)))
+  884                          .and_then(serde_json::Value::as_bool)
+  885                          .unwrap_or(true)
+  886                  });
+  887              let mut meta = self.stamp_tool_meta(None, &amp;call.function.name, None);
+  888              if let Some(bg) = subagent_background {
+  889                  meta.get_or_insert_with(serde_json::Map::new).insert(
+  890                      &quot;subagentBackground&quot;.to_string(),
+  891                      serde_json::Value::Bool(bg),
+  892                  );
+  893              }
+  894              self.send_update(
+  895                  acp::SessionUpdate::ToolCall(
+  896                      acp::ToolCall::new(tool_call_id.clone(), call.function.name.clone())
+  897                          .kind(acp::ToolKind::Other)
+  898                          .status(acp::ToolCallStatus::Pending)
+  899                          .raw_input(early_raw_input)
+  900                          .meta(meta),
+  901                  ),
+  902                  None,
+  903              )
+  904              .await;
+  905          }
+  906          let mcp_parts = parse_mcp_tool_name(&amp;call.function.name);
+  907          let is_mcp_tool = mcp_parts.is_some();
+  908          if is_mcp_tool &amp;&amp; !self.mcp_state.lock().await.is_initialized() {
+  909              match self.mcp_strategy.get() {
+  910                  McpInitStrategy::Blocking =&gt; {
+  911                      let _span = tracing::info_span!(&quot;tool.wait_mcp_init&quot;).entered();
+  912                      self.wait_for_mcp_initialized().await;
+  913                  }
+  914                  McpInitStrategy::Progressive =&gt; {
+  915                      let err = anyhow::anyhow!(
+  916                          &quot;Tool not available. Use search_tool to find available tools.&quot;
+  917                      );
+  918                      let followups = self
+  919                          .handle_tool_error(
+  920                              &amp;tool_call_id,
+  921                              &amp;call.id,
+  922                              &amp;call.function.name,
+  923                              None,
+  924                              &amp;err,
+  925                              &amp;model_id_str,
+  926                          )
+  927                          .await;
+  928                      deferred_followups.extend(followups);
+  929                      return Ok(Err(ToolLoop::NonExistingTool));
+  930                  }
+  931              }
+  932          }
+  933          let args_str = crate::session::helpers::tool_input_parsing::normalize_empty_arguments(
+  934              &amp;call.function.arguments,
+  935          );
+  936          let parse_result = serde_json::from_str::&lt;serde_json::Value&gt;(args_str);
+  937          let mut concatenated_json_count: usize = 0;
+  938          let raw_input = match &amp;parse_result {
+  939              Ok(value) =&gt; value.clone(),
+  940              Err(e) =&gt; {
+  941                  if let Some(objects) = crate::session::helpers::tool_input_parsing::try_extract_concatenated_json_objects(
+  942                      &amp;call.function.arguments,
+  943                  ) {
+  944                      let total_count = objects.len();
+  945                      if objects.is_empty() {
+  946                          json!({ &quot;raw&quot;: call.function.arguments.clone() })
+  947                      } else {
+  948                          let best_match = objects[0].clone();
+  949                          let mut selected_index = 0;
+  950                          let mut matched_tool = false;
+  951                          let bridge = self.agent.borrow().tool_bridge().clone();
+  952                          for (idx, obj) in objects.iter().enumerate() {
+  953                              if bridge
+  954                                  .try_parse(&amp;call.function.name, obj.clone())
+  955                                  .await
+  956                                  .is_ok()
+  957                              {
+  958                                  selected_index = idx;
+  959                                  matched_tool = true;
+  960                                  break;
+  961                              }
+  962                          }
+  963                          tracing::warn!(
+  964                              tool_name = %call.function.name,
+  965                              call_id = %call.id,
+  966                              total_objects = total_count,
+  967                              selected_index,
+  968                              matched_named_tool = matched_tool,
+  969                              &quot;Detected concatenated JSON in tool arguments — \
+  970                              extracting best matching object (index {selected_index}/{total_count}). \
+  971                              The model should use separate tool calls instead of \
+  972                              concatenating JSON objects.&quot;
+  973                          );
+  974                          concatenated_json_count = total_count;
+  975                          best_match
+  976                      }
+  977                  } else {
+  978                      tracing::warn!(
+  979                          &quot;Failed to parse arguments as JSON ({}), wrapping in &#39;raw&#39; field&quot;,
+  980                          e
+  981                      );
+  982                      json!({ &quot;raw&quot;: call.function.arguments.clone() })
+  983                  }
+  984              }
+  985          };
+  986          let tool_input = match self
+  987              .agent
+  988              .borrow()
+  989              .tool_bridge()
+  990              .try_parse(&amp;call.function.name, raw_input.clone())
+  991              .await
+  992          {
+  993              Ok(input) =&gt; input,
+  994              Err(err) =&gt; {
+  995                  self.handle_tool_parse_error(
+  996                      &amp;tool_call_id,
+  997                      &amp;call.id,
+  998                      &amp;call.function.name,
+  999                      err,
+ 1000                      &amp;call.function.arguments,
+ 1001                      &amp;model_id_str,
+ 1002                  )
+ 1003                  .await?;
+ 1004                  return Ok(Err(ToolLoop::ToolParsingError));
+ 1005              }
+ 1006          };
+ 1007          let access_kind = AccessKind::from(&amp;tool_input);
+ 1008          let plan_gate = plan_mode_edit_gate(&amp;self.plan_mode.lock(), &amp;tool_input, &amp;access_kind);
+ 1009          if plan_gate != PlanEditGate::Allow {
+ 1010              tracing::info_span!(
+ 1011                  &quot;tool.decision&quot;,
+ 1012                  tool_name = %call.function.name,
+ 1013                  tool_use_id = %call.id,
+ 1014                  decision = &quot;deny&quot;,
+ 1015                  source = &quot;plan_mode&quot;,
+ 1016                  wait_ms = 0_i64,
+ 1017              )
+ 1018              .in_scope(|| {});
+ 1019              let msg = self.plan_mode_edit_rejected_message().await;
+ 1020              self.handle_tool_not_executed(&amp;call.id, &amp;tool_call_id, msg)
+ 1021                  .await?;</code></pre></details></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">TOOLS · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>execute_tool_calls_batch 先逐个解析、运行 Plan gate、hooks 和权限；批准后用 FuturesUnordered 并发执行，写同一路径的工具共享 Mutex 串行；完成后按原 slot 做事件和结果处理。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L355-L449" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:355–449 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>prepare_tool_call 会规范空参数、尝试解析 JSON；遇到拼接的多个 JSON 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 ToolParsingError。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878–950 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>prepare_tool_call 会规范空参数、尝试解析 JSON；遇到拼接的多个 JSON 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 ToolParsingError。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878–950 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>prepare_tool_call 会规范空参数、尝试解析 JSON；遇到拼接的多个 JSON 对象会逐个试配工具 schema，选出匹配对象；仍无法解析才产生 ToolParsingError。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L878-L950" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:878–950 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Grok Build sequence" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← Models and messages: turning streams into state</a><a href="ch06-context.html">Context: keeping long tasks coherent →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,1 +1,727 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How are model output, messages, and errors captured?"><title>Prime Agent · M04 · Models and messages: turning streams into state</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch04-model.html">中</a><a href="ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="active" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · Prime Agent · 7787f07415d8</p><h1>Models and messages: turning streams into state</h1><p class="lede">How are model output, messages, and errors captured?</p><div class="chapter-meta"><span>Chapter 4 / 10</span><span>6 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>Prime Agent · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/prime-agent/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/prime-agent/ch04-model.srt" data-video-status="published">SRT</a><em>7787f07415d8</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>The model is a colleague on the phone; the harness turns streaming fragments into ordered messages and actions.</p></div><h2>Answer the chapter question first</h2><p>How are model output, messages, and errors captured? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 6 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="prime-arch-002" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · Provider 边界前才做上下文变换和密钥解析</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>streamAssistantResponse 在每次 provider 请求前依次执行 transformContext、convertToLlm、动态 getApiKey、动态 system prompt，然后把 Context 交给 streamFunction；流事件逐步回写 context.messages，并对 abort 生成最终 aborted message。</p></section><section><span>PLAIN LANGUAGE</span><p>上下文不会在会话开始时被一次性拍扁，长任务中每次请求都可以重新裁剪、换系统提示和刷新短期 token。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文压缩、OAuth refresh 和 provider 适配应放在真正发请求的边界，避免 token 过期或 stale prompt。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:467–521</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>transformContext、convertToLlm、getApiKey 和 Context 组装。</code></pre></div></div></article><article class="finding-card compact" id="prime-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 默认压缩预留 16384 token，尾部保留 20000 token</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>DEFAULT_COMPACTION_SETTINGS 将 enabled 设为 true、reserveTokens 设为 16384、keepRecentTokens 设为 20000；shouldCompact 在 contextTokens &gt; contextWindow - reserveTokens 时触发。</p></section><section><span>PLAIN LANGUAGE</span><p>它不会等到 provider 报 context overflow 才处理，而是提前留出一块回答空间，再保留最近工作集。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>自研应把 reserve/keep 做成可见配置并在模型切换时重新计算，不要硬编码单一窗口。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L122-L132" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:467–521 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:122–132</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L122-L132" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>压缩默认值。</code></pre></div></div></article><article class="finding-card compact" id="prime-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · Token 估算融合 provider usage 与 trailing message 估算</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>estimateContextTokens 使用最后一个有效 assistant usage 作为锚点，对其后的消息用 estimateTokens 累加；没有 usage 时按角色估算，文本采用 chars/4，图片按约 4800 字符计。</p></section><section><span>PLAIN LANGUAGE</span><p>刚从模型拿到真实 token 账单就用真实数，刚塞进来的工具结果还没账单就先用保守估算，不会因为只看旧 usage 而漏算最新输入。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文预算应允许“真实 usage + 未结算尾巴”混合，且图片/工具输出需要有明确估算策略。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L138-L147" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:467–521 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:138–147</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L138-L147" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>usage totalTokens 或分项求和。</code></pre></div></div></article><article class="finding-card compact" id="prime-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · Cut point 避开孤立 tool result，保留完整 tool turn</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>findValidCutPoints 允许在 user/assistant/custom/bashExecution 等消息切分，明确跳过 toolResult；findCutPoint 还能检测切在 turn 中间的情况并保留 turn prefix。</p></section><section><span>PLAIN LANGUAGE</span><p>压缩不会只删掉工具调用上半段或回执下半段，避免下一轮看到一张没有出处的工具结果。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>对话裁剪需要 message role invariant；“按 N 条消息截断”对 coding agent 不够安全。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L303-L339" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:467–521 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:303–339</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L303-L339" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>合法 cut point 与 toolResult 排除。</code></pre></div></div></article><article class="finding-card compact" id="prime-context-004" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 摘要提示词固定为可恢复的结构化 checkpoint</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>SUMMARIZATION_PROMPT 强制 Goal、Constraints &amp; Preferences、Progress/Done/In Progress/Blocked、Key Decisions、Next Steps、Critical Context 七个区块，并要求保留精确路径、函数名和错误信息；更新摘要会合并 previous-summary。</p></section><section><span>PLAIN LANGUAGE</span><p>摘要不是一句“我们做了很多事”，而是下一任模型可以按清单接手的交接卡。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长任务的摘要模板应和恢复协议一起版本化，并对路径、错误和下一步做保真约束。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L465-L496" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:467–521 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:465–496</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L465-L496" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>固定摘要格式和精确上下文要求。</code></pre></div></div></article><article class="finding-card compact" id="prime-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>06 · 运行时支持 provider 动态系统提示和过期 token 刷新</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>AgentLoopConfig 文档明确 getSystemPrompt 每次 LLM call 解析，getApiKey 可为每次调用获取短期 OAuth token；streamAssistantResponse 在请求前执行两者。</p></section><section><span>PLAIN LANGUAGE</span><p>长时间工具执行后，下一次模型调用仍能拿到最新授权和最新资源说明。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多 provider harness 应把 credential refresh 和 system prompt resolution 做成 request-time hook，而不是启动时静态读取。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L170-L183" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:467–521 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/types.ts:170–183</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L170-L183" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>动态 system prompt/API key 设计目的。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Prime Agent architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← The loop: why work keeps moving</a><a href="ch05-tools.html">Tools: registering the agent&#39;s hands →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="How are model output, messages, and errors captured?"><title>Prime Agent · M04 · Models and messages: turning streams into state</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch04-model.html">中</a><a href="ch04-model.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="active" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M04 · Prime Agent · 7787f07415d8</p><h1>Models and messages: turning streams into state</h1><p class="lede">How are model output, messages, and errors captured?</p><div class="chapter-meta"><span>Chapter 4 / 10</span><span>7 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M04</span><b>Prime Agent · M04 · 模型与消息：流式结果如何进入状态</b></div><div class="video-links"><a href="../../../../videos/prime-agent/ch04-model.mp4" data-video-status="published">MP4</a><a href="../../../../videos/prime-agent/ch04-model.srt" data-video-status="published">SRT</a><em>7787f07415d8</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>The model is a colleague on the phone; the harness turns streaming fragments into ordered messages and actions.</p></div><h2>Answer the chapter question first</h2><p>How are model output, messages, and errors captured? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 7 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="prime-arch-002" data-finding-dimension="modelContext"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>01 · Provider 边界前才做上下文变换和密钥解析</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>streamAssistantResponse 在每次 provider 请求前依次执行 transformContext、convertToLlm、动态 getApiKey、动态 system prompt，然后把 Context 交给 streamFunction；流事件逐步回写 context.messages，并对 abort 生成最终 aborted message。</p></section><section><span>PLAIN LANGUAGE</span><p>上下文不会在会话开始时被一次性拍扁，长任务中每次请求都可以重新裁剪、换系统提示和刷新短期 token。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文压缩、OAuth refresh 和 provider 适配应放在真正发请求的边界，避免 token 过期或 stale prompt。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>467–493</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>494–521</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:467–521</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  467  async function streamAssistantResponse(
+  468  	context: AgentContext,
+  469  	config: AgentLoopConfig,
+  470  	signal: AbortSignal | undefined,
+  471  	emit: AgentEventSink,
+  472  	streamFn?: StreamFn,
+  473  ): Promise&lt;AssistantMessage&gt; {
+  474  	let partialMessage: AssistantMessage | null = null;
+  475  	let addedPartial = false;
+  476  	const finishAbortedMessage = async () =&gt; {
+  477  		const finalMessage = createAbortedAssistantMessage(config, partialMessage);
+  478  		if (addedPartial) {
+  479  			context.messages[context.messages.length - 1] = finalMessage;
+  480  		} else {
+  481  			context.messages.push(finalMessage);
+  482  			await emit({ type: &quot;message_start&quot;, message: { ...finalMessage } });
+  483  		}
+  484  		await emit({ type: &quot;message_end&quot;, message: finalMessage });
+  485  		return finalMessage;
+  486  	};
+  487
+  488  	try {
+  489  		throwIfAborted(signal);
+  490  		// Apply context transform if configured (AgentMessage[] → AgentMessage[])
+  491  		let messages = context.messages;
+  492  		if (config.transformContext) {
+  493  			messages = await maybePromiseWithAbort(config.transformContext(messages, signal), signal);
+  494  		}
+  495
+  496  		// Convert to LLM-compatible messages (AgentMessage[] → Message[])
+  497  		const llmMessages = await maybePromiseWithAbort(config.convertToLlm(messages), signal);
+  498
+  499  		const streamFunction = streamFn || streamSimple;
+  500
+  501  		// Resolve API key (important for expiring tokens)
+  502  		const resolvedApiKey =
+  503  			(config.getApiKey
+  504  				? await maybePromiseWithAbort(config.getApiKey(config.model.provider), signal)
+  505  				: undefined) || config.apiKey;
+  506
+  507  		// Build LLM context immediately before starting the provider call.
+  508  		const llmContext: Context = {
+  509  			systemPrompt: config.getSystemPrompt?.() ?? context.systemPrompt,
+  510  			messages: llmMessages,
+  511  			tools: context.tools,
+  512  		};
+  513
+  514  		const response = await maybePromiseWithAbort(
+  515  			streamFunction(config.model, llmContext, {
+  516  				...config,
+  517  				apiKey: resolvedApiKey,
+  518  				signal,
+  519  			}),
+  520  			signal,
+  521  		);
+  522  		const iterator = response[Symbol.asyncIterator]();
+  523  		const closeIterator = () =&gt; {
+  524  			void Promise.resolve(iterator.return?.()).catch(() =&gt; undefined);
+  525  		};
+  526  		while (true) {
+  527  			const next = await raceWithAbort&lt;IteratorResult&lt;AssistantMessageEvent&gt;&gt;(
+  528  				iterator.next(),
+  529  				signal,
+  530  				closeIterator,
+  531  			);
+  532  			if (next.done) {
+  533  				break;
+  534  			}
+  535  			const event = next.value;
+  536  			switch (event.type) {
+  537  				case &quot;start&quot;:
+  538  					partialMessage = event.partial;
+  539  					context.messages.push(partialMessage);
+  540  					addedPartial = true;
+  541  					await emit({ type: &quot;message_start&quot;, message: { ...partialMessage } });
+  542  					break;
+  543
+  544  				case &quot;text_start&quot;:
+  545  				case &quot;text_delta&quot;:
+  546  				case &quot;text_end&quot;:
+  547  				case &quot;thinking_start&quot;:
+  548  				case &quot;thinking_delta&quot;:
+  549  				case &quot;thinking_end&quot;:
+  550  				case &quot;toolcall_start&quot;:
+  551  				case &quot;toolcall_delta&quot;:
+  552  				case &quot;toolcall_end&quot;:
+  553  					if (partialMessage) {
+  554  						partialMessage = event.partial;
+  555  						context.messages[context.messages.length - 1] = partialMessage;
+  556  						await emit({
+  557  							type: &quot;message_update&quot;,
+  558  							assistantMessageEvent: event,
+  559  							message: { ...partialMessage },
+  560  						});
+  561  					}
+  562  					break;
+  563
+  564  				case &quot;done&quot;:
+  565  				case &quot;error&quot;: {
+  566  					let finalMessage = getTerminalMessage(event);
+  567  					try {
+  568  						finalMessage = await maybePromiseWithAbort(response.result(), signal);
+  569  					} catch (error) {
+  570  						if (!signal?.aborted || !isAbortError(error)) {
+  571  							throw error;
+  572  						}
+  573  					}
+  574  					if (addedPartial) {
+  575  						context.messages[context.messages.length - 1] = finalMessage;
+  576  					} else {
+  577  						context.messages.push(finalMessage);
+  578  					}
+  579  					if (!addedPartial) {
+  580  						await emit({ type: &quot;message_start&quot;, message: { ...finalMessage } });
+  581  					}
+  582  					await emit({ type: &quot;message_end&quot;, message: finalMessage });
+  583  					return finalMessage;
+  584  				}
+  585  			}
+  586  		}
+  587
+  588  		const finalMessage = await maybePromiseWithAbort(response.result(), signal);
+  589  		if (addedPartial) {
+  590  			context.messages[context.messages.length - 1] = finalMessage;
+  591  		} else {
+  592  			context.messages.push(finalMessage);</code></pre></div></div></article><article class="finding-card compact" id="prime-context-001" data-finding-dimension="modelContext"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>02 · 默认压缩预留 16384 token，尾部保留 20000 token</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>DEFAULT_COMPACTION_SETTINGS 将 enabled 设为 true、reserveTokens 设为 16384、keepRecentTokens 设为 20000；shouldCompact 在 contextTokens &gt; contextWindow - reserveTokens 时触发。</p></section><section><span>PLAIN LANGUAGE</span><p>它不会等到 provider 报 context overflow 才处理，而是提前留出一块回答空间，再保留最近工作集。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>自研应把 reserve/keep 做成可见配置并在模型切换时重新计算，不要硬编码单一窗口。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>122–126</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>127–132</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L122-L132" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:122–132</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L122-L132" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  122  export interface CompactionSettings {
+  123  	enabled: boolean;
+  124  	reserveTokens: number;
+  125  	keepRecentTokens: number;
+  126  }
+  127
+  128  export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
+  129  	enabled: true,
+  130  	reserveTokens: 16384,
+  131  	keepRecentTokens: 20000,
+  132  };
+  133
+  134  // ============================================================================
+  135  // Token calculation
+  136  // ============================================================================
+  137
+  138  /**
+  139   * Calculate total context tokens from usage.
+  140   * Uses the native totalTokens field when available, falls back to computing from components.
+  141   *
+  142   * Includes output: the assistant&#39;s response becomes part of the prompt on the next
+  143   * request, so it counts toward the context the next turn will send.
+  144   */
+  145  export function calculateContextTokens(usage: Usage): number {
+  146  	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  147  }
+  148
+  149  /**
+  150   * Get usage from an assistant message if available.
+  151   * Skips aborted and error messages as they don&#39;t have valid usage data.
+  152   */
+  153  function getAssistantUsage(msg: AgentMessage): Usage | undefined {
+  154  	if (msg.role === &quot;assistant&quot; &amp;&amp; &quot;usage&quot; in msg) {
+  155  		const assistantMsg = msg as AssistantMessage;
+  156  		if (assistantMsg.stopReason !== &quot;aborted&quot; &amp;&amp; assistantMsg.stopReason !== &quot;error&quot; &amp;&amp; assistantMsg.usage) {
+  157  			return assistantMsg.usage;
+  158  		}
+  159  	}
+  160  	return undefined;
+  161  }
+  162
+  163  /**
+  164   * Find the last non-aborted assistant message usage from session entries.
+  165   */
+  166  export function getLastAssistantUsage(entries: SessionEntry[]): Usage | undefined {
+  167  	for (let i = entries.length - 1; i &gt;= 0; i--) {
+  168  		const entry = entries[i];
+  169  		if (entry.type === &quot;message&quot;) {
+  170  			const usage = getAssistantUsage(entry.message);
+  171  			if (usage) return usage;
+  172  		}
+  173  	}
+  174  	return undefined;
+  175  }
+  176
+  177  export interface ContextUsageEstimate {
+  178  	tokens: number;
+  179  	usageTokens: number;
+  180  	trailingTokens: number;
+  181  	lastUsageIndex: number | null;
+  182  }
+  183
+  184  function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
+  185  	for (let i = messages.length - 1; i &gt;= 0; i--) {
+  186  		const usage = getAssistantUsage(messages[i]);
+  187  		if (usage) return { usage, index: i };
+  188  	}
+  189  	return undefined;
+  190  }
+  191
+  192  /**
+  193   * Estimate context tokens from messages, using the last assistant usage when available.
+  194   * If there are messages after the last usage, estimate their tokens with estimateTokens.
+  195   */
+  196  export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
+  197  	const usageInfo = getLastAssistantUsageInfo(messages);
+  198
+  199  	if (!usageInfo) {
+  200  		let estimated = 0;
+  201  		for (const message of messages) {
+  202  			estimated += estimateTokens(message);
+  203  		}</code></pre></div></div></article><article class="finding-card compact" id="prime-context-002" data-finding-dimension="modelContext"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>03 · Token 估算融合 provider usage 与 trailing message 估算</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>estimateContextTokens 使用最后一个有效 assistant usage 作为锚点，对其后的消息用 estimateTokens 累加；没有 usage 时按角色估算，文本采用 chars/4，图片按约 4800 字符计。</p></section><section><span>PLAIN LANGUAGE</span><p>刚从模型拿到真实 token 账单就用真实数，刚塞进来的工具结果还没账单就先用保守估算，不会因为只看旧 usage 而漏算最新输入。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>上下文预算应允许“真实 usage + 未结算尾巴”混合，且图片/工具输出需要有明确估算策略。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>138–141</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>142–147</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L138-L147" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:138–147</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L138-L147" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  138  /**
+  139   * Calculate total context tokens from usage.
+  140   * Uses the native totalTokens field when available, falls back to computing from components.
+  141   *
+  142   * Includes output: the assistant&#39;s response becomes part of the prompt on the next
+  143   * request, so it counts toward the context the next turn will send.
+  144   */
+  145  export function calculateContextTokens(usage: Usage): number {
+  146  	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  147  }
+  148
+  149  /**
+  150   * Get usage from an assistant message if available.
+  151   * Skips aborted and error messages as they don&#39;t have valid usage data.
+  152   */
+  153  function getAssistantUsage(msg: AgentMessage): Usage | undefined {
+  154  	if (msg.role === &quot;assistant&quot; &amp;&amp; &quot;usage&quot; in msg) {
+  155  		const assistantMsg = msg as AssistantMessage;
+  156  		if (assistantMsg.stopReason !== &quot;aborted&quot; &amp;&amp; assistantMsg.stopReason !== &quot;error&quot; &amp;&amp; assistantMsg.usage) {
+  157  			return assistantMsg.usage;
+  158  		}
+  159  	}
+  160  	return undefined;
+  161  }
+  162
+  163  /**
+  164   * Find the last non-aborted assistant message usage from session entries.
+  165   */
+  166  export function getLastAssistantUsage(entries: SessionEntry[]): Usage | undefined {
+  167  	for (let i = entries.length - 1; i &gt;= 0; i--) {
+  168  		const entry = entries[i];
+  169  		if (entry.type === &quot;message&quot;) {
+  170  			const usage = getAssistantUsage(entry.message);
+  171  			if (usage) return usage;
+  172  		}
+  173  	}
+  174  	return undefined;
+  175  }
+  176
+  177  export interface ContextUsageEstimate {
+  178  	tokens: number;
+  179  	usageTokens: number;
+  180  	trailingTokens: number;
+  181  	lastUsageIndex: number | null;
+  182  }
+  183
+  184  function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
+  185  	for (let i = messages.length - 1; i &gt;= 0; i--) {
+  186  		const usage = getAssistantUsage(messages[i]);
+  187  		if (usage) return { usage, index: i };
+  188  	}
+  189  	return undefined;
+  190  }
+  191
+  192  /**
+  193   * Estimate context tokens from messages, using the last assistant usage when available.
+  194   * If there are messages after the last usage, estimate their tokens with estimateTokens.
+  195   */
+  196  export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
+  197  	const usageInfo = getLastAssistantUsageInfo(messages);
+  198
+  199  	if (!usageInfo) {
+  200  		let estimated = 0;
+  201  		for (const message of messages) {
+  202  			estimated += estimateTokens(message);
+  203  		}
+  204  		return {
+  205  			tokens: estimated,
+  206  			usageTokens: 0,
+  207  			trailingTokens: estimated,
+  208  			lastUsageIndex: null,
+  209  		};
+  210  	}
+  211
+  212  	const usageTokens = calculateContextTokens(usageInfo.usage);
+  213  	let trailingTokens = 0;
+  214  	for (let i = usageInfo.index + 1; i &lt; messages.length; i++) {
+  215  		trailingTokens += estimateTokens(messages[i]);
+  216  	}
+  217
+  218  	return {</code></pre></div></div></article><article class="finding-card compact" id="prime-context-003" data-finding-dimension="modelContext"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>04 · Cut point 避开孤立 tool result，保留完整 tool turn</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>findValidCutPoints 允许在 user/assistant/custom/bashExecution 等消息切分，明确跳过 toolResult；findCutPoint 还能检测切在 turn 中间的情况并保留 turn prefix。</p></section><section><span>PLAIN LANGUAGE</span><p>压缩不会只删掉工具调用上半段或回执下半段，避免下一轮看到一张没有出处的工具结果。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>对话裁剪需要 message role invariant；“按 N 条消息截断”对 coding agent 不够安全。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>303–320</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>321–339</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L303-L339" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:303–339</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L303-L339" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  303  /**
+  304   * Find valid cut points: indices of user, assistant, custom, or bashExecution messages.
+  305   * Never cut at tool results (they must follow their tool call).
+  306   * When we cut at an assistant message with tool calls, its tool results follow it
+  307   * and will be kept.
+  308   * BashExecutionMessage is treated like a user message (user-initiated context).
+  309   */
+  310  function findValidCutPoints(entries: SessionEntry[], startIndex: number, endIndex: number): number[] {
+  311  	const cutPoints: number[] = [];
+  312  	for (let i = startIndex; i &lt; endIndex; i++) {
+  313  		const entry = entries[i];
+  314  		switch (entry.type) {
+  315  			case &quot;message&quot;: {
+  316  				const role = entry.message.role;
+  317  				switch (role) {
+  318  					case &quot;bashExecution&quot;:
+  319  					case &quot;custom&quot;:
+  320  					case &quot;branchSummary&quot;:
+  321  					case &quot;compactionSummary&quot;:
+  322  					case &quot;user&quot;:
+  323  					case &quot;assistant&quot;:
+  324  						cutPoints.push(i);
+  325  						break;
+  326  					case &quot;toolResult&quot;:
+  327  						break;
+  328  				}
+  329  				break;
+  330  			}
+  331  			case &quot;thinking_level_change&quot;:
+  332  			case &quot;model_change&quot;:
+  333  			case &quot;compaction&quot;:
+  334  			case &quot;branch_summary&quot;:
+  335  			case &quot;custom&quot;:
+  336  			case &quot;custom_message&quot;:
+  337  			case &quot;label&quot;:
+  338  			case &quot;session_info&quot;:
+  339  				break;
+  340  		}
+  341
+  342  		// branch_summary and custom_message are user-role messages, valid cut points
+  343  		if (entry.type === &quot;branch_summary&quot; || entry.type === &quot;custom_message&quot;) {
+  344  			cutPoints.push(i);
+  345  		}
+  346  	}
+  347  	return cutPoints;
+  348  }
+  349
+  350  /**
+  351   * Find the user message (or bashExecution) that starts the turn containing the given entry index.
+  352   * Returns -1 if no turn start found before the index.
+  353   * BashExecutionMessage is treated like a user message for turn boundaries.
+  354   */
+  355  export function findTurnStartIndex(entries: SessionEntry[], entryIndex: number, startIndex: number): number {
+  356  	for (let i = entryIndex; i &gt;= startIndex; i--) {
+  357  		const entry = entries[i];
+  358  		// branch_summary and custom_message are user-role messages, can start a turn
+  359  		if (entry.type === &quot;branch_summary&quot; || entry.type === &quot;custom_message&quot;) {
+  360  			return i;
+  361  		}
+  362  		if (entry.type === &quot;message&quot;) {
+  363  			const role = entry.message.role;
+  364  			if (role === &quot;user&quot; || role === &quot;bashExecution&quot;) {
+  365  				return i;
+  366  			}
+  367  		}
+  368  	}
+  369  	return -1;
+  370  }
+  371
+  372  export interface CutPointResult {
+  373  	/** Index of first entry to keep */
+  374  	firstKeptEntryIndex: number;
+  375  	/** Index of user message that starts the turn being split, or -1 if not splitting */
+  376  	turnStartIndex: number;
+  377  	/** Whether this cut splits a turn (cut point is not a user message) */
+  378  	isSplitTurn: boolean;
+  379  }
+  380
+  381  /**
+  382   * Find the cut point in session entries that keeps approximately `keepRecentTokens`.
+  383   *
+  384   * Algorithm: Walk backwards from newest, accumulating estimated message sizes.
+  385   * Stop when we&#39;ve accumulated &gt;= keepRecentTokens. Cut at that point.
+  386   *
+  387   * Can cut at user OR assistant messages (never tool results). When cutting at an
+  388   * assistant message with tool calls, its tool results come after and will be kept.
+  389   *
+  390   * Returns CutPointResult with:
+  391   * - firstKeptEntryIndex: the entry index to start keeping from
+  392   * - turnStartIndex: if cutting mid-turn, the user message that started that turn
+  393   * - isSplitTurn: whether we&#39;re cutting in the middle of a turn
+  394   *
+  395   * Only considers entries between `startIndex` and `endIndex` (exclusive).
+  396   */
+  397  export function findCutPoint(
+  398  	entries: SessionEntry[],
+  399  	startIndex: number,
+  400  	endIndex: number,
+  401  	keepRecentTokens: number,
+  402  ): CutPointResult {
+  403  	const cutPoints = findValidCutPoints(entries, startIndex, endIndex);
+  404
+  405  	if (cutPoints.length === 0) {
+  406  		return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
+  407  	}
+  408
+  409  	// Walk backwards from newest, accumulating estimated message sizes
+  410  	let accumulatedTokens = 0;</code></pre></div></div></article><article class="finding-card compact" id="prime-context-004" data-finding-dimension="modelContext"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>05 · 摘要提示词固定为可恢复的结构化 checkpoint</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>SUMMARIZATION_PROMPT 强制 Goal、Constraints &amp; Preferences、Progress/Done/In Progress/Blocked、Key Decisions、Next Steps、Critical Context 七个区块，并要求保留精确路径、函数名和错误信息；更新摘要会合并 previous-summary。</p></section><section><span>PLAIN LANGUAGE</span><p>摘要不是一句“我们做了很多事”，而是下一任模型可以按清单接手的交接卡。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>长任务的摘要模板应和恢复协议一起版本化，并对路径、错误和下一步做保真约束。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>465–479</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>480–496</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L465-L496" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:465–496</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L465-L496" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  465  const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+  466
+  467  Use this EXACT format:
+  468
+  469  ## Goal
+  470  [What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+  471
+  472  ## Constraints &amp; Preferences
+  473  - [Any constraints, preferences, or requirements mentioned by user]
+  474  - [Or &quot;(none)&quot; if none were mentioned]
+  475
+  476  ## Progress
+  477  ### Done
+  478  - [x] [Completed tasks/changes]
+  479
+  480  ### In Progress
+  481  - [ ] [Current work]
+  482
+  483  ### Blocked
+  484  - [Issues preventing progress, if any]
+  485
+  486  ## Key Decisions
+  487  - **[Decision]**: [Brief rationale]
+  488
+  489  ## Next Steps
+  490  1. [Ordered list of what should happen next]
+  491
+  492  ## Critical Context
+  493  - [Any data, examples, or references needed to continue]
+  494  - [Or &quot;(none)&quot; if not applicable]
+  495
+  496  Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+  497
+  498  const KERNEL_PERSIST_SUMMARY_NOTE =
+  499  	&quot;Note: the IPython kernel keeps running after this summary — every Python variable, import, and helper you defined stays available. The cells that defined them won&#39;t appear above, so record in the summary any names worth remembering so you reuse them instead of redefining them.&quot;;
+  500
+  501  const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in &lt;previous-summary&gt; tags.
+  502
+  503  Update the existing structured summary with new information. RULES:
+  504  - PRESERVE all existing information from the previous summary
+  505  - ADD new progress, decisions, and context from the new messages
+  506  - UPDATE the Progress section: move items from &quot;In Progress&quot; to &quot;Done&quot; when completed
+  507  - UPDATE &quot;Next Steps&quot; based on what was accomplished
+  508  - PRESERVE exact file paths, function names, and error messages
+  509  - If something is no longer relevant, you may remove it
+  510
+  511  Use this EXACT format:
+  512
+  513  ## Goal
+  514  [Preserve existing goals, add new ones if the task expanded]
+  515
+  516  ## Constraints &amp; Preferences
+  517  - [Preserve existing, add new ones discovered]
+  518
+  519  ## Progress
+  520  ### Done
+  521  - [x] [Include previously done items AND newly completed items]
+  522
+  523  ### In Progress
+  524  - [ ] [Current work - update based on progress]
+  525
+  526  ### Blocked
+  527  - [Current blockers - remove if resolved]
+  528
+  529  ## Key Decisions
+  530  - **[Decision]**: [Brief rationale] (preserve all previous, add new)
+  531
+  532  ## Next Steps
+  533  1. [Update based on current state]
+  534
+  535  ## Critical Context
+  536  - [Preserve important context, add new if needed]
+  537
+  538  Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+  539
+  540  /**
+  541   * Build the instruction portion of the summarization prompt: the initial or
+  542   * update template, optional user instructions, and the kernel persistence note.
+  543   */
+  544  export function buildSummarizationPrompt(customInstructions?: string, previousSummary?: string): string {
+  545  	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+  546  	if (customInstructions) {
+  547  		basePrompt += `\n\n&lt;user-instructions&gt;\nThe user provided these instructions for this summary. Follow them with high priority while keeping the section format above: emphasize what they ask to focus on, and preserve verbatim anything they ask to remember.\n${customInstructions}\n&lt;/user-instructions&gt;`;
+  548  	}
+  549  	return `${basePrompt}\n\n${KERNEL_PERSIST_SUMMARY_NOTE}`;
+  550  }
+  551
+  552  /**
+  553   * Generate a summary of the conversation using the LLM.
+  554   * If previousSummary is provided, uses the update prompt to merge.
+  555   */
+  556  export async function generateSummary(
+  557  	currentMessages: AgentMessage[],
+  558  	model: Model&lt;any&gt;,
+  559  	reserveTokens: number,
+  560  	apiKey: string,
+  561  	headers?: Record&lt;string, string&gt;,
+  562  	signal?: AbortSignal,
+  563  	customInstructions?: string,
+  564  	previousSummary?: string,
+  565  	thinkingLevel?: ThinkingLevel,
+  566  ): Promise&lt;string&gt; {
+  567  	const maxTokens = Math.floor(0.8 * reserveTokens);</code></pre></div></div></article><article class="finding-card compact" id="prime-provider-001" data-finding-dimension="modelContext"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>modelContext</span></div><h3>06 · 运行时支持 provider 动态系统提示和过期 token 刷新</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>AgentLoopConfig 文档明确 getSystemPrompt 每次 LLM call 解析，getApiKey 可为每次调用获取短期 OAuth token；streamAssistantResponse 在请求前执行两者。</p></section><section><span>PLAIN LANGUAGE</span><p>长时间工具执行后，下一次模型调用仍能拿到最新授权和最新资源说明。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>多 provider harness 应把 credential refresh 和 system prompt resolution 做成 request-time hook，而不是启动时静态读取。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>170–175</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>176–183</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L170-L183" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/types.ts:170–183</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/types.ts#L170-L183" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  170  	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) =&gt; Promise&lt;AgentMessage[]&gt;;
+  171
+  172  	/** Resolves the system prompt immediately before each LLM call. */
+  173  	getSystemPrompt?: () =&gt; string;
+  174
+  175  	/**
+  176  	 * Resolves an API key dynamically for each LLM call.
+  177  	 *
+  178  	 * Useful for short-lived OAuth tokens (e.g., GitHub Copilot) that may expire
+  179  	 * during long-running tool execution phases.
+  180  	 *
+  181  	 * Contract: must not throw or reject. Return undefined when no key is available.
+  182  	 */
+  183  	getApiKey?: (provider: string) =&gt; Promise&lt;string | undefined&gt; | string | undefined;
+  184
+  185  	/**
+  186  	 * Called after each turn fully completes and `turn_end` has been emitted.
+  187  	 *
+  188  	 * If it returns true, the loop emits `agent_end` and exits before polling steering or follow-up queues,
+  189  	 * without starting another LLM call. The current assistant response and any tool executions finish normally.
+  190  	 *
+  191  	 * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
+  192  	 *
+  193  	 * Contract: must not throw or reject. Throwing interrupts the low-level agent loop without producing a normal event sequence.
+  194  	 */
+  195  	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) =&gt; boolean | Promise&lt;boolean&gt;;
+  196
+  197  	/**
+  198  	 * Called synchronously after a completed turn and before polling work for another turn.
+  199  	 * Return true to emit `agent_end` without starting another provider call. Work returned by
+  200  	 * an asynchronous poll owns that boundary; queue owners must suppress stale continuation
+  201  	 * results if their higher-level stop condition changes while generating them.
+  202  	 * The hook is never checked before the initial assistant turn.
+  203  	 */
+  204  	shouldStopBeforeTurn?: () =&gt; boolean;
+  205
+  206  	/**
+  207  	 * Returns steering messages to inject into the conversation mid-run.
+  208  	 *
+  209  	 * Called after the current assistant turn finishes executing its tool calls, unless `shouldStopAfterTurn` exits first.
+  210  	 * If messages are returned, they are added to the context before the next LLM call.
+  211  	 * Tool calls from the current assistant message are not skipped.
+  212  	 *
+  213  	 * Use this for &quot;steering&quot; the agent while it&#39;s working.
+  214  	 *
+  215  	 * Contract: must not throw or reject. Return [] when no steering messages are available.
+  216  	 */
+  217  	getSteeringMessages?: () =&gt; Promise&lt;AgentMessage[]&gt;;
+  218
+  219  	/**
+  220  	 * Returns follow-up messages to process after the agent would otherwise stop.
+  221  	 *
+  222  	 * Called when the agent has no more tool calls and no steering messages.
+  223  	 * If messages are returned, they&#39;re added to the context and the agent
+  224  	 * continues with another turn.
+  225  	 *
+  226  	 * Use this for follow-up messages that should wait until the agent finishes.
+  227  	 *
+  228  	 * Contract: must not throw or reject. Return [] when no follow-up messages are available.
+  229  	 */
+  230  	getFollowUpMessages?: () =&gt; Promise&lt;AgentMessage[]&gt;;
+  231
+  232  	/**
+  233  	 * Returns continuation messages when the agent would otherwise stop.
+  234  	 *
+  235  	 * Called after follow-up messages have been polled and none are available.
+  236  	 * If messages are returned, they&#39;re added to the context and the agent
+  237  	 * continues with another turn.
+  238  	 *
+  239  	 * Use this for host-owned continuation policies such as long-running goals.
+  240  	 * Explicit follow-up messages always take precedence over continuation messages.
+  241  	 *
+  242  	 * Contract: must not throw or reject. Return [] when no continuation should run.
+  243  	 */
+  244  	getContinuationMessages?: (context: GetContinuationMessagesContext, signal?: AbortSignal) =&gt; Promise&lt;AgentMessage[]&gt;;
+  245
+  246  	/**
+  247  	 * Tool execution mode.
+  248  	 * - &quot;sequential&quot;: execute tool calls one by one
+  249  	 * - &quot;parallel&quot;: preflight tool calls sequentially, then execute allowed tools concurrently;
+  250  	 *   emit `tool_execution_end` in tool completion order after each tool is finalized,
+  251  	 *   then emit tool-result message artifacts later in assistant source order
+  252  	 *
+  253  	 * Default: &quot;parallel&quot;
+  254  	 */</code></pre></div></div></article><article class="finding-card compact" id="prime-recommend-002" data-finding-dimension="modelContext"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L2</b><span>inference</span><span>modelContext</span></div><h3>07 · 适合长程 coding，但要为宿主 shell 补强 sandbox policy</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>项目同时提供 request-time context transform、结构化 compaction、branch-aware JSONL、RLM/daemon continuation 和截断 artifact；但默认 bash 是 host spawn，隔离依赖 BashOperations 或更高层。</p></section><section><span>PLAIN LANGUAGE</span><p>它很适合做“能停下来、能恢复、能继续”的工程 Agent；真正接入不可信代码库时，安全边界要由部署方补齐。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>自研落地可以直接借鉴它的 loop/session/compaction 机制，同时把执行适配器设计成强制 sandbox backend，而不是默认本机 shell。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>636–673</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>674–712</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><div class="finding-caveat"><span>CAVEAT / RISK</span><ul><li>“适合长程”是基于实现组合的工程判断；不能替代对具体部署的安全评审。</li></ul></div><small class="finding-source-note">Narrative from historical evidence ledger · a3b3e753490d · <a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L636-L712" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/compaction/compaction.ts:636–712</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L636-L712" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  636  export function prepareCompaction(
+  637  	pathEntries: SessionEntry[],
+  638  	settings: CompactionSettings,
+  639  ): CompactionPreparation | undefined {
+  640  	if (pathEntries.length &gt; 0 &amp;&amp; pathEntries[pathEntries.length - 1].type === &quot;compaction&quot;) {
+  641  		return undefined;
+  642  	}
+  643
+  644  	let prevCompactionIndex = -1;
+  645  	for (let i = pathEntries.length - 1; i &gt;= 0; i--) {
+  646  		if (pathEntries[i].type === &quot;compaction&quot;) {
+  647  			prevCompactionIndex = i;
+  648  			break;
+  649  		}
+  650  	}
+  651
+  652  	let previousSummary: string | undefined;
+  653  	let boundaryStart = 0;
+  654  	if (prevCompactionIndex &gt;= 0) {
+  655  		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
+  656  		previousSummary = prevCompaction.summary;
+  657  		const firstKeptEntryIndex = pathEntries.findIndex((entry) =&gt; entry.id === prevCompaction.firstKeptEntryId);
+  658  		boundaryStart = firstKeptEntryIndex &gt;= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
+  659  	}
+  660  	const boundaryEnd = pathEntries.length;
+  661
+  662  	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages).tokens;
+  663
+  664  	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
+  665
+  666  	// Get UUID of first kept entry
+  667  	const firstKeptEntry = pathEntries[cutPoint.firstKeptEntryIndex];
+  668  	if (!firstKeptEntry?.id) {
+  669  		return undefined; // Session needs migration
+  670  	}
+  671  	const firstKeptEntryId = firstKeptEntry.id;
+  672
+  673  	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
+  674
+  675  	// Messages to summarize (will be discarded after summary)
+  676  	const messagesToSummarize: AgentMessage[] = [];
+  677  	for (let i = boundaryStart; i &lt; historyEnd; i++) {
+  678  		const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+  679  		if (msg) messagesToSummarize.push(msg);
+  680  	}
+  681
+  682  	// Messages for turn prefix summary (if splitting a turn)
+  683  	const turnPrefixMessages: AgentMessage[] = [];
+  684  	if (cutPoint.isSplitTurn) {
+  685  		for (let i = cutPoint.turnStartIndex; i &lt; cutPoint.firstKeptEntryIndex; i++) {
+  686  			const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+  687  			if (msg) turnPrefixMessages.push(msg);
+  688  		}
+  689  	}
+  690
+  691  	// Everything fits in the keep-recent window and there is no previous summary
+  692  	// to carry forward — compacting would summarize an empty conversation.
+  693  	if (messagesToSummarize.length === 0 &amp;&amp; turnPrefixMessages.length === 0 &amp;&amp; !previousSummary) {
+  694  		return undefined;
+  695  	}
+  696
+  697  	// Extract file operations from messages and previous compaction
+  698  	const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
+  699
+  700  	// Also extract file ops from turn prefix if splitting
+  701  	if (cutPoint.isSplitTurn) {
+  702  		for (const msg of turnPrefixMessages) {
+  703  			extractFileOpsFromMessage(msg, fileOps);
+  704  		}
+  705  	}
+  706
+  707  	return {
+  708  		firstKeptEntryId,
+  709  		messagesToSummarize,
+  710  		turnPrefixMessages,
+  711  		isSplitTurn: cutPoint.isSplitTurn,
+  712  		tokensBefore,
+  713  		previousSummary,
+  714  		fileOps,
+  715  		settings,
+  716  	};
+  717  }
+  718
+  719  // ============================================================================
+  720  // Main compaction function
+  721  // ============================================================================
+  722
+  723  const TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
+  724
+  725  Summarize the prefix to provide context for the retained suffix:
+  726
+  727  ## Original Request
+  728  [What did the user ask for in this turn?]
+  729
+  730  ## Early Progress
+  731  - [Key decisions and work done in the prefix]
+  732
+  733  ## Context for Suffix
+  734  - [Information needed to understand the retained recent work]
+  735
+  736  Be concise. Focus on what&#39;s needed to understand the kept suffix.`;
+  737
+  738  /**
+  739   * Generate summaries for compaction using prepared data.
+  740   * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
+  741   *
+  742   * @param preparation - Pre-calculated preparation from prepareCompaction()
+  743   * @param customInstructions - Optional custom focus for the summary
+  744   */
+  745  export async function compact(
+  746  	preparation: CompactionPreparation,
+  747  	model: Model&lt;any&gt;,
+  748  	apiKey: string,
+  749  	headers?: Record&lt;string, string&gt;,
+  750  	customInstructions?: string,
+  751  	signal?: AbortSignal,
+  752  	thinkingLevel?: ThinkingLevel,
+  753  ): Promise&lt;CompactionResult&gt; {
+  754  	const {
+  755  		firstKeptEntryId,
+  756  		messagesToSummarize,
+  757  		turnPrefixMessages,
+  758  		isSplitTurn,
+  759  		tokensBefore,
+  760  		previousSummary,
+  761  		fileOps,
+  762  		settings,
+  763  	} = preparation;
+  764
+  765  	// Generate summaries (can be parallel if both needed) and merge into one
+  766  	let summary: string;
+  767
+  768  	if (isSplitTurn &amp;&amp; turnPrefixMessages.length &gt; 0) {
+  769  		// Generate both summaries in parallel
+  770  		const [historyResult, turnPrefixResult] = await Promise.all([
+  771  			messagesToSummarize.length &gt; 0
+  772  				? generateSummary(
+  773  						messagesToSummarize,
+  774  						model,
+  775  						settings.reserveTokens,
+  776  						apiKey,
+  777  						headers,
+  778  						signal,
+  779  						customInstructions,
+  780  						previousSummary,
+  781  						thinkingLevel,
+  782  					)
+  783  				: Promise.resolve(&quot;No prior history.&quot;),</code></pre></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">MODEL · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>streamAssistantResponse 在每次 provider 请求前依次执行 transformContext、convertToLlm、动态 getApiKey、动态 system prompt，然后把 Context 交给 streamFunction；流事件逐步回写 context.messages，并对 abort 生成最终 aborted message。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/agent/src/agent-loop.ts#L467-L521" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:467–521 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>DEFAULT_COMPACTION_SETTINGS 将 enabled 设为 true、reserveTokens 设为 16384、keepRecentTokens 设为 20000；shouldCompact 在 contextTokens &gt; contextWindow - reserveTokens 时触发。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L122-L132" target="_blank" rel="noreferrer">packages/coding-agent/src/core/compaction/compaction.ts:122–132 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>estimateContextTokens 使用最后一个有效 assistant usage 作为锚点，对其后的消息用 estimateTokens 累加；没有 usage 时按角色估算，文本采用 chars/4，图片按约 4800 字符计。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L138-L147" target="_blank" rel="noreferrer">packages/coding-agent/src/core/compaction/compaction.ts:138–147 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>findValidCutPoints 允许在 user/assistant/custom/bashExecution 等消息切分，明确跳过 toolResult；findCutPoint 还能检测切在 turn 中间的情况并保留 turn prefix。</blockquote><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/a3b3e753490d0a6ed180e905200c1a6690d78608/packages/coding-agent/src/core/compaction/compaction.ts#L303-L339" target="_blank" rel="noreferrer">packages/coding-agent/src/core/compaction/compaction.ts:303–339 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Prime Agent architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch03-loop.html">← The loop: why work keeps moving</a><a href="ch05-tools.html">Tools: registering the agent&#39;s hands →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

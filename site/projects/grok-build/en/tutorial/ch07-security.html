@@ -1,1 +1,1531 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>Grok Build · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Grok Build · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Grok Build</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>e5fd4816d432</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Grok Build · e5fd4816d432</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>3 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Grok Build · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/grok-build/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/grok-build/ch07-security.srt" data-video-status="published">SRT</a><em>e5fd4816d432</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 3 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="grok-plan-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · Plan Mode 的只读约束独立于 Always Approve</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>plan_mode_edit_gate 在权限管理器之前执行，即使 YOLO/always-approve 也不能绕过；普通编辑只允许计划文件，apply_patch 因无法预知目标而保守拒绝，未知退出结果默认取消。</p></section><section><span>PLAIN LANGUAGE</span><p>“全部自动批准”也不等于“计划阶段可以乱改代码”。计划模式另有一把更早、更硬的锁。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>工作流阶段约束不能依赖通用权限模式，否则高权限模式会破坏阶段不变量。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157–205</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>Plan gate 规则、apply_patch 保守拒绝与独立于 YOLO 的原因。</code></pre></div></div></article><article class="finding-card compact" id="grok-permission-001" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 权限判断理解访问类型和会话上下文</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具被分类为 Read、Edit、Bash、Grep、MCP、Web；Ask/Auto/Always Approve 三种模式分别走交互、带最近对话的分类器或快速放行，决定来源与等待时间进入 trace 和 telemetry。</p></section><section><span>PLAIN LANGUAGE</span><p>它不是只看工具名，而是知道“这是读哪个路径、改哪个文件、跑什么命令、访问哪个网站”，自动模式还会参考最近几轮对话。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>权限系统既是策略引擎，也是可观测的决策服务。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157–205 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1035–1102</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>访问类型映射和三种 permission mode。</code></pre></div></div></article><article class="finding-card compact" id="grok-hooks-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · PreToolUse Hook 可在权限前阻断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具解析和 Plan gate 后，运行服务端/客户端 PreToolUse hooks；任一 hook 的 Deny 会产生 HookDenied，不再进入权限请求和 dispatch。</p></section><section><span>PLAIN LANGUAGE</span><p>企业策略脚本可以比用户批准更早说“不”，避免用户误点同意覆盖组织规则。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Hook 是治理层而不仅是通知回调。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157–205 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:977–1034</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>构造截断 payload，派发 PreToolUse，Deny 立即返回。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Grok Build architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>Grok Build · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Grok Build · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Grok Build</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>e5fd4816d432</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Grok Build · e5fd4816d432</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>7 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Grok Build · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/grok-build/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/grok-build/ch07-security.srt" data-video-status="published">SRT</a><em>e5fd4816d432</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 7 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="grok-plan-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · Plan Mode 的只读约束独立于 Always Approve</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>plan_mode_edit_gate 在权限管理器之前执行，即使 YOLO/always-approve 也不能绕过；普通编辑只允许计划文件，apply_patch 因无法预知目标而保守拒绝，未知退出结果默认取消。</p></section><section><span>PLAIN LANGUAGE</span><p>“全部自动批准”也不等于“计划阶段可以乱改代码”。计划模式另有一把更早、更硬的锁。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>工作流阶段约束不能依赖通用权限模式，否则高权限模式会破坏阶段不变量。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>157–180</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>181–205</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157–205</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  157  /// Verdict for a tool call evaluated against the plan-mode edit gate.
+  158  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  159  pub(super) enum PlanEditGate {
+  160      /// Execute normally (plan mode inactive, not an edit, or allowed target).
+  161      Allow,
+  162      /// Grok-toolset edit outside the plan file (plan-file-only rule).
+  163      RejectNonPlanFile,
+  164  }
+  165  /// Gate edit-class tool calls while plan mode is active.
+  166  ///
+  167  /// Plan mode is read-only **in every permission mode, including
+  168  /// always-approve**: the permission manager&#39;s YOLO fast path deliberately
+  169  /// knows nothing about plan mode, so this gate — not the permission system —
+  170  /// is what enforces it. Two rules, matching the two toolsets&#39; contracts:
+  171  ///
+  172  /// - **Compat-toolset `Write`/`StrReplace`**: any markdown
+  173  ///   file is editable in plan mode (plan docs are written with these
+  174  ///   same tools); everything else is rejected. Pre-existing behavior.
+  175  /// - **Compat-toolset `Delete`** is **not** on the markdown carve-out: it maps to
+  176  ///   `AccessKind::Edit` and is plan-file-only (same as grok edits). Deleting
+  177  ///   an arbitrary `.md` in plan mode must not pass.
+  178  /// - **Every other edit tool** (`AccessKind::Edit`) is restricted to the plan
+  179  ///   file itself, via the same predicate that auto-approves plan-file edits
+  180  ///   ([`PlanModeTracker::should_auto_approve_edit`]) so the gate and the
+  181  ///   permission bypass can never disagree.
+  182  ///
+  183  /// `apply_patch` maps to a placeholder `AccessKind::Edit(&quot;apply_patch&quot;)` and
+  184  /// therefore never matches the plan file: it is always rejected in plan mode
+  185  /// (conservative — per-file targets are only known after patch parsing).
+  186  /// Non-edit tools (bash, read, grep, MCP, web) are never gated here; they
+  187  /// flow to the normal permission path, where yolo may still auto-approve
+  188  /// them. `enter_plan_mode` / `exit_plan_mode` map to `AccessKind::Read` and
+  189  /// are likewise never gated.
+  190  pub(super) fn plan_mode_edit_gate(
+  191      tracker: &amp;crate::session::plan_mode::PlanModeTracker,
+  192      tool_input: &amp;ToolInput,
+  193      access_kind: &amp;AccessKind,
+  194  ) -&gt; PlanEditGate {
+  195      if !tracker.is_active() {
+  196          return PlanEditGate::Allow;
+  197      }
+  198      let _ = tool_input;
+  199      match access_kind {
+  200          AccessKind::Edit(path) if !tracker.should_auto_approve_edit(Path::new(path)) =&gt; {
+  201              PlanEditGate::RejectNonPlanFile
+  202          }
+  203          _ =&gt; PlanEditGate::Allow,
+  204      }
+  205  }
+  206  /// Typed view of an `exit_plan_mode` approval decision. The wire type
+  207  /// (`ExitPlanModeExtResponse`) carries `outcome` as a string; both the mid-turn
+  208  /// intercept and the resume re-park match on this enum instead. Unknown /
+  209  /// unrecognized outcomes map to [`Cancelled`](Self::Cancelled) so the session
+  210  /// fails CLOSED (stays in plan mode) rather than auto-approving.
+  211  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  212  pub(super) enum PlanApprovalOutcome {
+  213      Approved,
+  214      Cancelled,
+  215      Abandoned,
+  216  }
+  217  impl PlanApprovalOutcome {
+  218      fn from_response(
+  219          resp: &amp;xai_grok_tools::implementations::grok_build::exit_plan_mode::ExitPlanModeExtResponse,
+  220      ) -&gt; Self {
+  221          match resp.outcome.as_str() {
+  222              &quot;approved&quot; =&gt; Self::Approved,
+  223              &quot;abandoned&quot; =&gt; Self::Abandoned,
+  224              _ =&gt; Self::Cancelled,
+  225          }
+  226      }
+  227  }
+  228  /// Classify an `ext_method` failure: `true` when the reverse-request could not
+  229  /// be DELIVERED to any client (no interactive client wired — headless / SDK),
+  230  /// `false` when it was delivered but the client went away before answering
+  231  /// (quit / disconnect / leader restart).
+  232  ///
+  233  /// Uses `xai_acp_lib`&#39;s TYPED [`AcpChannelFailure`](xai_acp_lib::AcpChannelFailure)
+  234  /// discriminant (carried in the error&#39;s `data`) rather than substring-matching
+  235  /// another crate&#39;s message text: `SendFailed` (enqueue failed → no connection) →
+  236  /// `true`; `RecvFailed` (delivered then dropped) → `false`. Any other error
+  237  /// (including a non-`acp_send` error) defaults to `false` so the approval is
+  238  /// kept pending and never auto-approved.
+  239  fn ext_method_no_client(err: &amp;acp::Error) -&gt; bool {
+  240      matches!(
+  241          xai_acp_lib::acp_channel_failure(err),
+  242          Some(xai_acp_lib::AcpChannelFailure::SendFailed)
+  243      )
+  244  }
+  245  /// Model-facing turn injected after a resumed plan is approved.
+  246  const PLAN_APPROVED_IMPLEMENT_MESSAGE: &amp;str =
+  247      &quot;The user approved the plan. Implement the plan in plan.md.&quot;;
+  248  /// Shared &quot;revise the plan&quot; message for the request-changes outcome, used by
+  249  /// both the mid-turn intercept and the resume re-park.
+  250  fn revise_plan_message(feedback: &amp;str) -&gt; String {
+  251      let feedback = feedback.trim();
+  252      if feedback.is_empty() {
+  253          &quot;The user wants to revise the plan. \
+  254           Ask the user what changes they would like to make.&quot;
+  255              .to_string()
+  256      } else {
+  257          format!(&quot;The user wants to revise the plan. The user said:\n{feedback}&quot;)
+  258      }
+  259  }
+  260  /// What the resume re-park does with the user&#39;s decision. Extracted
+  261  /// from `resume_plan_approval` so the branch logic is unit-testable without
+  262  /// driving a real turn.
+  263  #[derive(Debug, Clone, PartialEq, Eq)]
+  264  pub(super) enum ResumeAction {
+  265      /// Approved: leave plan mode and start an implement turn (Agent mode).
+  266      LeaveAndImplement,
+  267      /// Request changes: stay in plan mode and start a revise turn (Plan mode).
+  268      StayAndRevise(String),
+  269      /// Abandoned: leave plan mode and wait for the user (no turn).
+  270      LeaveOnly,
+  271  }
+  272  fn resume_action_for(outcome: PlanApprovalOutcome, feedback: Option&lt;String&gt;) -&gt; ResumeAction {
+  273      match outcome {
+  274          PlanApprovalOutcome::Approved =&gt; ResumeAction::LeaveAndImplement,
+  275          PlanApprovalOutcome::Cancelled =&gt; {
+  276              ResumeAction::StayAndRevise(revise_plan_message(feedback.as_deref().unwrap_or(&quot;&quot;)))</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  157          Err(e) if e.kind() == std::io::ErrorKind::NotFound =&gt; PlanFileRead::Absent,
+  158          Err(_) =&gt; PlanFileRead::Unreadable,
+  159      }
+  160  }
+  161  /// Whether to intercept exit-plan tools for client-side plan approval.
+  162  ///
+  163  /// A mode-switch back to agent with `PlanFileRead::Absent` skips intercept
+  164  /// (leaving without approving is allowed). `Present` / `Unreadable` still intercept
+  165  /// (unreadable = fail-closed, empty approval UI rather than silent exit).
+  166  pub(super) fn should_intercept_exit_plan_approval(
+  167      is_exit_plan_mode: bool,
+  168      is_cursor_switch_to_agent: bool,
+  169      is_cursor_create_plan: bool,
+  170      plan_read: &amp;PlanFileRead,
+  171  ) -&gt; bool {
+  172      if !is_exit_plan_mode &amp;&amp; !is_cursor_switch_to_agent &amp;&amp; !is_cursor_create_plan {
+  173          return false;
+  174      }
+  175      if is_cursor_switch_to_agent &amp;&amp; matches!(plan_read, PlanFileRead::Absent) {
+  176          return false;
+  177      }
+  178      true
+  179  }
+  180  /// Whether this tool call exits file-backed plan mode (not inline plan creation).
+  181  pub(super) fn is_file_backed_exit_plan_input(tool_input: &amp;ToolInput) -&gt; bool {
+  182      if matches!(tool_input, ToolInput::ExitPlanMode(_)) {
+  183          return true;
+  184      }
+  185      false
+  186  }
+  187  pub(super) fn is_file_backed_exit_plan_kind(
+  188      kind: Option&lt;xai_grok_tools::types::tool::ToolKind&gt;,
+  189  ) -&gt; bool {
+  190      matches!(kind, Some(xai_grok_tools::types::tool::ToolKind::ExitPlan))
+  191  }
+  192  /// Split ExitPlan-kind calls into the tail so they run after the rest of the batch.
+  193  fn split_exit_plan_tail(
+  194      calls: Vec&lt;crate::sampling::types::ToolCallResponse&gt;,
+  195      kind_of: impl Fn(&amp;str) -&gt; Option&lt;xai_grok_tools::types::tool::ToolKind&gt;,
+  196  ) -&gt; (
+  197      Vec&lt;crate::sampling::types::ToolCallResponse&gt;,
+  198      Vec&lt;crate::sampling::types::ToolCallResponse&gt;,
+  199  ) {
+  200      calls
+  201          .into_iter()
+  202          .partition(|call| !is_file_backed_exit_plan_kind(kind_of(&amp;call.function.name)))
+  203  }
+  204  /// Verdict for a tool call evaluated against the plan-mode edit gate.
+  205  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  206  pub(super) enum PlanEditGate {
+  207      /// Execute normally (plan mode inactive, not an edit, or allowed target).
+  208      Allow,
+  209      /// Grok-toolset edit outside the plan file (plan-file-only rule).
+  210      RejectNonPlanFile,
+  211  }
+  212  /// Gate edit-class tool calls while plan mode is active.
+  213  ///
+  214  /// Plan mode is read-only **in every permission mode, including
+  215  /// always-approve**: the permission manager&#39;s YOLO fast path deliberately
+  216  /// knows nothing about plan mode, so this gate — not the permission system —
+  217  /// is what enforces it. Two rules, matching the two toolsets&#39; contracts:
+  218  ///
+  219  /// - **Compat-toolset `Write`/`StrReplace`**: any markdown
+  220  ///   file is editable in plan mode (plan docs are written with these
+  221  ///   same tools); everything else is rejected. Pre-existing behavior.
+  222  /// - **Compat-toolset `Delete`** is **not** on the markdown carve-out: it maps to
+  223  ///   `AccessKind::Edit` and is plan-file-only (same as grok edits). Deleting
+  224  ///   an arbitrary `.md` in plan mode must not pass.
+  225  /// - **Every other edit tool** (`AccessKind::Edit`) is restricted to the plan
+  226  ///   file itself, via the same predicate that auto-approves plan-file edits
+  227  ///   ([`PlanModeTracker::should_auto_approve_edit`]) so the gate and the
+  228  ///   permission bypass can never disagree.
+  229  ///
+  230  /// `apply_patch` maps to a placeholder `AccessKind::Edit(&quot;apply_patch&quot;)` and
+  231  /// therefore never matches the plan file: it is always rejected in plan mode
+  232  /// (conservative — per-file targets are only known after patch parsing).
+  233  /// Non-edit tools (bash, read, grep, MCP, web) are never gated here; they
+  234  /// flow to the normal permission path, where yolo may still auto-approve
+  235  /// them. `enter_plan_mode` / `exit_plan_mode` map to `AccessKind::Read` and
+  236  /// are likewise never gated.
+  237  pub(super) fn plan_mode_edit_gate(
+  238      tracker: &amp;crate::session::plan_mode::PlanModeTracker,
+  239      tool_input: &amp;ToolInput,
+  240      access_kind: &amp;AccessKind,
+  241  ) -&gt; PlanEditGate {
+  242      if !tracker.is_active() {
+  243          return PlanEditGate::Allow;
+  244      }
+  245      let _ = tool_input;
+  246      match access_kind {
+  247          AccessKind::Edit(path) if !tracker.should_auto_approve_edit(Path::new(path)) =&gt; {
+  248              PlanEditGate::RejectNonPlanFile
+  249          }
+  250          _ =&gt; PlanEditGate::Allow,
+  251      }
+  252  }
+  253  /// Typed view of an `exit_plan_mode` approval decision. The wire type
+  254  /// (`ExitPlanModeExtResponse`) carries `outcome` as a string; both the mid-turn
+  255  /// intercept and the resume re-park match on this enum instead. Unknown /
+  256  /// unrecognized outcomes map to [`Cancelled`](Self::Cancelled) so the session
+  257  /// fails CLOSED (stays in plan mode) rather than auto-approving.
+  258  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  259  pub(super) enum PlanApprovalOutcome {
+  260      Approved,
+  261      Cancelled,
+  262      Abandoned,
+  263  }
+  264  impl PlanApprovalOutcome {
+  265      fn from_response(
+  266          resp: &amp;xai_grok_tools::implementations::grok_build::exit_plan_mode::ExitPlanModeExtResponse,
+  267      ) -&gt; Self {
+  268          match resp.outcome.as_str() {
+  269              &quot;approved&quot; =&gt; Self::Approved,
+  270              &quot;abandoned&quot; =&gt; Self::Abandoned,
+  271              _ =&gt; Self::Cancelled,
+  272          }
+  273      }
+  274  }
+  275  /// Classify an `ext_method` failure: `true` when the reverse-request could not
+  276  /// be DELIVERED to any client (no interactive client wired — headless / SDK),</code></pre></details></div></div></article><article class="finding-card compact" id="grok-permission-001" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 权限判断理解访问类型和会话上下文</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具被分类为 Read、Edit、Bash、Grep、MCP、Web；Ask/Auto/Always Approve 三种模式分别走交互、带最近对话的分类器或快速放行，决定来源与等待时间进入 trace 和 telemetry。</p></section><section><span>PLAIN LANGUAGE</span><p>它不是只看工具名，而是知道“这是读哪个路径、改哪个文件、跑什么命令、访问哪个网站”，自动模式还会参考最近几轮对话。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>权限系统既是策略引擎，也是可观测的决策服务。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>1035–1067</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1068–1102</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1035–1102</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code> 1035          let plan_file_auto_approve = if let AccessKind::Edit(ref path) = access_kind {
+ 1036              self.plan_mode
+ 1037                  .lock()
+ 1038                  .should_auto_approve_edit(std::path::Path::new(path))
+ 1039          } else {
+ 1040              false
+ 1041          };
+ 1042          if plan_file_auto_approve {
+ 1043              tracing::info_span!(
+ 1044                  &quot;tool.decision&quot;,
+ 1045                  tool_name = %call.function.name,
+ 1046                  tool_use_id = %call.id,
+ 1047                  decision = &quot;allow&quot;,
+ 1048                  source = &quot;config&quot;,
+ 1049                  wait_ms = 0_i64,
+ 1050              )
+ 1051              .in_scope(|| {});
+ 1052          }
+ 1053          if !plan_file_auto_approve {
+ 1054              let (perm_title, perm_kind, perm_raw_input) = tool_call_display
+ 1055                  .as_ref()
+ 1056                  .map(|(t, k, r)| (Some(t.clone()), Some(*k), Some(r.clone())))
+ 1057                  .unwrap_or((None, None, None));
+ 1058              let tool_call_update = acp::ToolCallUpdate::new(
+ 1059                  tool_call_id.clone(),
+ 1060                  acp::ToolCallUpdateFields::new()
+ 1061                      .title(perm_title)
+ 1062                      .kind(perm_kind)
+ 1063                      .raw_input(perm_raw_input),
+ 1064              )
+ 1065              .meta(self.stamp_tool_meta(None, &amp;call.function.name, Some(&amp;tool_input)));
+ 1066              let (telemetry_access_kind, _access_detail) = match &amp;access_kind {
+ 1067                  xai_grok_workspace::permission::AccessKind::Read(p) =&gt; (
+ 1068                      xai_grok_telemetry::events::AccessKind::Read,
+ 1069                      p.clone().unwrap_or_default(),
+ 1070                  ),
+ 1071                  xai_grok_workspace::permission::AccessKind::Edit(p) =&gt; {
+ 1072                      (xai_grok_telemetry::events::AccessKind::Edit, p.clone())
+ 1073                  }
+ 1074                  xai_grok_workspace::permission::AccessKind::Bash(cmd) =&gt; {
+ 1075                      (xai_grok_telemetry::events::AccessKind::Bash, cmd.clone())
+ 1076                  }
+ 1077                  xai_grok_workspace::permission::AccessKind::Grep { path, glob } =&gt; (
+ 1078                      xai_grok_telemetry::events::AccessKind::Grep,
+ 1079                      path.clone().or_else(|| glob.clone()).unwrap_or_default(),
+ 1080                  ),
+ 1081                  xai_grok_workspace::permission::AccessKind::MCPTool { name, .. } =&gt; {
+ 1082                      (xai_grok_telemetry::events::AccessKind::Mcp, name.clone())
+ 1083                  }
+ 1084                  xai_grok_workspace::permission::AccessKind::WebFetch(u) =&gt; {
+ 1085                      (xai_grok_telemetry::events::AccessKind::Web, u.clone())
+ 1086                  }
+ 1087                  xai_grok_workspace::permission::AccessKind::WebSearch(q) =&gt; {
+ 1088                      (xai_grok_telemetry::events::AccessKind::Web, q.clone())
+ 1089                  }
+ 1090              };
+ 1091              let subagent_session_id = if self.startup_hints.is_subagent {
+ 1092                  Some(self.session_id_string())
+ 1093              } else {
+ 1094                  None
+ 1095              };
+ 1096              let perm_mode = if self.permissions.is_yolo_mode() {
+ 1097                  xai_grok_telemetry::enums::PermissionMode::AlwaysApprove
+ 1098              } else if self.permissions.is_auto_mode() {
+ 1099                  xai_grok_telemetry::enums::PermissionMode::Auto
+ 1100              } else {
+ 1101                  xai_grok_telemetry::enums::PermissionMode::Ask
+ 1102              };
+ 1103              xai_grok_telemetry::session_ctx::log_event(
+ 1104                  xai_grok_telemetry::events::PermissionPrompted {
+ 1105                      tool_name: call.function.name.clone(),
+ 1106                      access_kind: telemetry_access_kind,
+ 1107                      permission_mode: perm_mode,
+ 1108                      subagent_session_id: subagent_session_id.clone(),
+ 1109                      subagent_type: None,
+ 1110                  },
+ 1111              );
+ 1112              let perm_start = self.events.permission_requested(&amp;call.function.name);
+ 1113              debug_assert!(
+ 1114                  !self.session_info.id.0.is_empty(),
+ 1115                  &quot;permission reverse-request must carry a non-empty sessionId (design §5.4)&quot;
+ 1116              );
+ 1117              if !self.permissions.is_yolo_mode() {
+ 1118                  self.dispatch_notification_hook(
+ 1119                      &quot;permission_prompt&quot;,
+ 1120                      Some(&quot;Tool permission requested&quot;.into()),
+ 1121                      None,
+ 1122                      Some(&quot;info&quot;.into()),
+ 1123                  )
+ 1124                  .await;
+ 1125              }
+ 1126              if self.permissions.is_auto_mode() {
+ 1127                  let conv = self.chat_state_handle.get_conversation().await;
+ 1128                  let turns = super::build_classifier_turns(&amp;conv, super::CLASSIFIER_REFRESH_TURNS);
+ 1129                  if !turns.is_empty() {
+ 1130                      self.permissions.set_classifier_transcript(turns);
+ 1131                  }
+ 1132              }
+ 1133              let edit_path_context = matches!(&amp;access_kind, AccessKind::Edit(_)).then(|| {
+ 1134                  xai_grok_workspace::permission::types::EditPathContext {
+ 1135                      real_cwd: std::path::PathBuf::from(self.session_info.cwd.as_str()),
+ 1136                      display_cwd: self
+ 1137                          .display_cwd
+ 1138                          .get()
+ 1139                          .map(|cwd| std::path::PathBuf::from(cwd.as_str())),
+ 1140                  }
+ 1141              });
+ 1142              let decision = {
+ 1143                  let _pending_guard =
+ 1144                      crate::session::pending_interaction::PendingInteractionGuard::new(
+ 1145                          self.pending_interactions.clone(),
+ 1146                          self.notifications.gateway.clone(),
+ 1147                          self.session_info.id.clone(),
+ 1148                          tool_call_id.to_string(),
+ 1149                          crate::session::pending_interaction::PendingKind::Permission,
+ 1150                      );
+ 1151                  self.permissions
+ 1152                      .request_with_edit_path_context(
+ 1153                          access_kind.clone(),
+ 1154                          tool_call_update,
+ 1155                          edit_path_context,
+ 1156                          Some(self.session_info.id.0.to_string()),
+ 1157                          None,
+ 1158                          None,
+ 1159                      )
+ 1160                      .await
+ 1161              };
+ 1162              self.events.permission_resolved(
+ 1163                  &amp;call.function.name,
+ 1164                  match &amp;decision {
+ 1165                      Decision::Allow | Decision::Ask =&gt; {
+ 1166                          xai_file_utils::events::types::PermissionDecision::Allow
+ 1167                      }
+ 1168                      Decision::Reject(_) | Decision::PolicyDeny(_) =&gt; {
+ 1169                          xai_file_utils::events::types::PermissionDecision::Deny
+ 1170                      }
+ 1171                      Decision::Cancelled =&gt; {
+ 1172                          xai_file_utils::events::types::PermissionDecision::Cancelled
+ 1173                      }</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code> 1035              .unwrap_or_else(|| call.function.name.clone());
+ 1036          if self.hook_event_active(xai_grok_hooks::event::HookEventName::PreToolUse) {
+ 1037              let (hook_tool_input, hook_tool_input_truncated) =
+ 1038                  xai_grok_hooks::event::truncate_payload(raw_input.clone());
+ 1039              let envelope = self.make_hook_envelope(
+ 1040                  xai_grok_hooks::event::HookEventName::PreToolUse,
+ 1041                  None,
+ 1042                  xai_grok_hooks::event::HookPayload::PreToolUse {
+ 1043                      tool_name: resolved_tool_name.clone(),
+ 1044                      tool_use_id: call.id.clone(),
+ 1045                      tool_input: hook_tool_input,
+ 1046                      tool_input_truncated: hook_tool_input_truncated,
+ 1047                      subagent_type: self.subagent_type_label(),
+ 1048                  },
+ 1049              );
+ 1050              let hook_registry_snapshot = self.hook_registry.borrow().clone();
+ 1051              if let Some(registry) = hook_registry_snapshot {
+ 1052                  let ctx = self.hook_run_ctx();
+ 1053                  let pre_result =
+ 1054                      xai_grok_hooks::dispatcher::dispatch_pre_tool_use(&amp;registry, &amp;envelope, &amp;ctx)
+ 1055                          .await;
+ 1056                  self.send_hook_execution(
+ 1057                      &quot;pre_tool_use&quot;,
+ 1058                      Some(&amp;resolved_tool_name),
+ 1059                      None,
+ 1060                      &amp;pre_result.results,
+ 1061                  )
+ 1062                  .await;
+ 1063                  self.emit_hook_executed_telemetry(
+ 1064                      &quot;pre_tool_use&quot;,
+ 1065                      Some(&amp;resolved_tool_name),
+ 1066                      &amp;pre_result.results,
+ 1067                  )
+ 1068                  .await;
+ 1069                  if let xai_grok_hooks::result::HookDecision::Deny { reason, hook_name } =
+ 1070                      pre_result.decision
+ 1071                  {
+ 1072                      return Ok(Err(self
+ 1073                          .deny_tool(
+ 1074                              &amp;call.id,
+ 1075                              &amp;tool_call_id,
+ 1076                              resolved_tool_name.clone(),
+ 1077                              hook_name,
+ 1078                              reason,
+ 1079                          )
+ 1080                          .await?));
+ 1081                  }
+ 1082              }
+ 1083              if let Some(denied) = self
+ 1084                  .run_pre_tool_use_client_hook(&amp;call, &amp;tool_call_id, &amp;envelope)
+ 1085                  .await?
+ 1086              {
+ 1087                  return Ok(Err(denied));
+ 1088              }
+ 1089          }
+ 1090          let plan_file_auto_approve = if let AccessKind::Edit(ref path) = access_kind {
+ 1091              self.plan_mode
+ 1092                  .lock()
+ 1093                  .should_auto_approve_edit(std::path::Path::new(path))
+ 1094          } else {
+ 1095              false
+ 1096          };
+ 1097          if plan_file_auto_approve {
+ 1098              tracing::info_span!(
+ 1099                  &quot;tool.decision&quot;,
+ 1100                  tool_name = %call.function.name,
+ 1101                  tool_use_id = %call.id,
+ 1102                  decision = &quot;allow&quot;,
+ 1103                  source = &quot;config&quot;,
+ 1104                  wait_ms = 0_i64,
+ 1105              )
+ 1106              .in_scope(|| {});
+ 1107          }
+ 1108          if !plan_file_auto_approve {
+ 1109              let (perm_title, perm_kind, perm_raw_input) = tool_call_display
+ 1110                  .as_ref()
+ 1111                  .map(|(t, k, r)| (Some(t.clone()), Some(*k), Some(r.clone())))
+ 1112                  .unwrap_or((None, None, None));
+ 1113              let tool_call_update = acp::ToolCallUpdate::new(
+ 1114                  tool_call_id.clone(),
+ 1115                  acp::ToolCallUpdateFields::new()
+ 1116                      .title(perm_title)
+ 1117                      .kind(perm_kind)
+ 1118                      .raw_input(perm_raw_input),
+ 1119              )
+ 1120              .meta(self.stamp_tool_meta(None, &amp;call.function.name, Some(&amp;tool_input)));
+ 1121              let (telemetry_access_kind, _access_detail) = match &amp;access_kind {
+ 1122                  xai_grok_workspace::permission::AccessKind::Read(p) =&gt; (
+ 1123                      xai_grok_telemetry::events::AccessKind::Read,
+ 1124                      p.clone().unwrap_or_default(),
+ 1125                  ),
+ 1126                  xai_grok_workspace::permission::AccessKind::Edit(p) =&gt; {
+ 1127                      (xai_grok_telemetry::events::AccessKind::Edit, p.clone())
+ 1128                  }
+ 1129                  xai_grok_workspace::permission::AccessKind::Bash(cmd) =&gt; {
+ 1130                      (xai_grok_telemetry::events::AccessKind::Bash, cmd.clone())
+ 1131                  }
+ 1132                  xai_grok_workspace::permission::AccessKind::Grep { path, glob } =&gt; (
+ 1133                      xai_grok_telemetry::events::AccessKind::Grep,
+ 1134                      path.clone().or_else(|| glob.clone()).unwrap_or_default(),
+ 1135                  ),
+ 1136                  xai_grok_workspace::permission::AccessKind::MCPTool { name, .. } =&gt; {
+ 1137                      (xai_grok_telemetry::events::AccessKind::Mcp, name.clone())
+ 1138                  }
+ 1139                  xai_grok_workspace::permission::AccessKind::WebFetch(u) =&gt; {
+ 1140                      (xai_grok_telemetry::events::AccessKind::Web, u.clone())
+ 1141                  }
+ 1142                  xai_grok_workspace::permission::AccessKind::WebSearch(q) =&gt; {
+ 1143                      (xai_grok_telemetry::events::AccessKind::Web, q.clone())
+ 1144                  }
+ 1145              };
+ 1146              let subagent_session_id = if self.startup_hints.is_subagent {
+ 1147                  Some(self.session_id_string())
+ 1148              } else {
+ 1149                  None
+ 1150              };
+ 1151              let perm_mode = if self.permissions.is_yolo_mode() {
+ 1152                  xai_grok_telemetry::enums::PermissionMode::AlwaysApprove
+ 1153              } else if self.permissions.is_auto_mode() {
+ 1154                  xai_grok_telemetry::enums::PermissionMode::Auto
+ 1155              } else {
+ 1156                  xai_grok_telemetry::enums::PermissionMode::Ask
+ 1157              };
+ 1158              xai_grok_telemetry::session_ctx::log_event(
+ 1159                  xai_grok_telemetry::events::PermissionPrompted {
+ 1160                      tool_name: call.function.name.clone(),
+ 1161                      access_kind: telemetry_access_kind,
+ 1162                      permission_mode: perm_mode,
+ 1163                      subagent_session_id: subagent_session_id.clone(),
+ 1164                      subagent_type: None,
+ 1165                  },
+ 1166              );
+ 1167              let perm_start = self.events.permission_requested(&amp;call.function.name);
+ 1168              debug_assert!(
+ 1169                  !self.session_info.id.0.is_empty(),
+ 1170                  &quot;permission reverse-request must carry a non-empty sessionId (design §5.4)&quot;
+ 1171              );
+ 1172              let path_context = Some(xai_grok_workspace::permission::types::RequestPathContext {
+ 1173                  real_cwd: std::path::PathBuf::from(self.session_info.cwd.as_str()),</code></pre></details></div></div></article><article class="finding-card compact" id="grok-hooks-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · PreToolUse Hook 可在权限前阻断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>工具解析和 Plan gate 后，运行服务端/客户端 PreToolUse hooks；任一 hook 的 Deny 会产生 HookDenied，不再进入权限请求和 dispatch。</p></section><section><span>PLAIN LANGUAGE</span><p>企业策略脚本可以比用户批准更早说“不”，避免用户误点同意覆盖组织规则。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>Hook 是治理层而不仅是通知回调。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>977–1004</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>1005–1034</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:977–1034</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  977          let dispatch_target_name = tool_input.dispatch_target_name();
+  978          let resolved_tool_name = dispatch_target_name
+  979              .clone()
+  980              .unwrap_or_else(|| call.function.name.clone());
+  981          if self.hook_event_active(xai_grok_hooks::event::HookEventName::PreToolUse) {
+  982              let (hook_tool_input, hook_tool_input_truncated) =
+  983                  xai_grok_hooks::event::truncate_payload(raw_input.clone());
+  984              let envelope = self.make_hook_envelope(
+  985                  xai_grok_hooks::event::HookEventName::PreToolUse,
+  986                  None,
+  987                  xai_grok_hooks::event::HookPayload::PreToolUse {
+  988                      tool_name: resolved_tool_name.clone(),
+  989                      tool_use_id: call.id.clone(),
+  990                      tool_input: hook_tool_input,
+  991                      tool_input_truncated: hook_tool_input_truncated,
+  992                      subagent_type: self.subagent_type_label(),
+  993                  },
+  994              );
+  995              let hook_registry_snapshot = self.hook_registry.borrow().clone();
+  996              if let Some(registry) = hook_registry_snapshot {
+  997                  let ctx = self.hook_run_ctx();
+  998                  let pre_result =
+  999                      xai_grok_hooks::dispatcher::dispatch_pre_tool_use(&amp;registry, &amp;envelope, &amp;ctx)
+ 1000                          .await;
+ 1001                  self.send_hook_execution(
+ 1002                      &quot;pre_tool_use&quot;,
+ 1003                      Some(&amp;resolved_tool_name),
+ 1004                      None,
+ 1005                      &amp;pre_result.results,
+ 1006                  )
+ 1007                  .await;
+ 1008                  self.emit_hook_executed_telemetry(
+ 1009                      &quot;pre_tool_use&quot;,
+ 1010                      Some(&amp;resolved_tool_name),
+ 1011                      &amp;pre_result.results,
+ 1012                  )
+ 1013                  .await;
+ 1014                  if let xai_grok_hooks::result::HookDecision::Deny { reason, hook_name } =
+ 1015                      pre_result.decision
+ 1016                  {
+ 1017                      return Ok(Err(self
+ 1018                          .deny_tool(
+ 1019                              &amp;call.id,
+ 1020                              &amp;tool_call_id,
+ 1021                              resolved_tool_name.clone(),
+ 1022                              hook_name,
+ 1023                              reason,
+ 1024                          )
+ 1025                          .await?));
+ 1026                  }
+ 1027              }
+ 1028              if let Some(denied) = self
+ 1029                  .run_pre_tool_use_client_hook(&amp;call, &amp;tool_call_id, &amp;envelope)
+ 1030                  .await?
+ 1031              {
+ 1032                  return Ok(Err(denied));
+ 1033              }
+ 1034          }
+ 1035          let plan_file_auto_approve = if let AccessKind::Edit(ref path) = access_kind {
+ 1036              self.plan_mode
+ 1037                  .lock()
+ 1038                  .should_auto_approve_edit(std::path::Path::new(path))
+ 1039          } else {
+ 1040              false
+ 1041          };
+ 1042          if plan_file_auto_approve {
+ 1043              tracing::info_span!(
+ 1044                  &quot;tool.decision&quot;,
+ 1045                  tool_name = %call.function.name,
+ 1046                  tool_use_id = %call.id,
+ 1047                  decision = &quot;allow&quot;,
+ 1048                  source = &quot;config&quot;,
+ 1049                  wait_ms = 0_i64,
+ 1050              )
+ 1051              .in_scope(|| {});
+ 1052          }
+ 1053          if !plan_file_auto_approve {
+ 1054              let (perm_title, perm_kind, perm_raw_input) = tool_call_display
+ 1055                  .as_ref()
+ 1056                  .map(|(t, k, r)| (Some(t.clone()), Some(*k), Some(r.clone())))
+ 1057                  .unwrap_or((None, None, None));
+ 1058              let tool_call_update = acp::ToolCallUpdate::new(
+ 1059                  tool_call_id.clone(),
+ 1060                  acp::ToolCallUpdateFields::new()
+ 1061                      .title(perm_title)
+ 1062                      .kind(perm_kind)
+ 1063                      .raw_input(perm_raw_input),
+ 1064              )
+ 1065              .meta(self.stamp_tool_meta(None, &amp;call.function.name, Some(&amp;tool_input)));
+ 1066              let (telemetry_access_kind, _access_detail) = match &amp;access_kind {
+ 1067                  xai_grok_workspace::permission::AccessKind::Read(p) =&gt; (
+ 1068                      xai_grok_telemetry::events::AccessKind::Read,
+ 1069                      p.clone().unwrap_or_default(),
+ 1070                  ),
+ 1071                  xai_grok_workspace::permission::AccessKind::Edit(p) =&gt; {
+ 1072                      (xai_grok_telemetry::events::AccessKind::Edit, p.clone())
+ 1073                  }
+ 1074                  xai_grok_workspace::permission::AccessKind::Bash(cmd) =&gt; {
+ 1075                      (xai_grok_telemetry::events::AccessKind::Bash, cmd.clone())
+ 1076                  }
+ 1077                  xai_grok_workspace::permission::AccessKind::Grep { path, glob } =&gt; (
+ 1078                      xai_grok_telemetry::events::AccessKind::Grep,
+ 1079                      path.clone().or_else(|| glob.clone()).unwrap_or_default(),
+ 1080                  ),
+ 1081                  xai_grok_workspace::permission::AccessKind::MCPTool { name, .. } =&gt; {
+ 1082                      (xai_grok_telemetry::events::AccessKind::Mcp, name.clone())
+ 1083                  }
+ 1084                  xai_grok_workspace::permission::AccessKind::WebFetch(u) =&gt; {
+ 1085                      (xai_grok_telemetry::events::AccessKind::Web, u.clone())
+ 1086                  }
+ 1087                  xai_grok_workspace::permission::AccessKind::WebSearch(q) =&gt; {
+ 1088                      (xai_grok_telemetry::events::AccessKind::Web, q.clone())
+ 1089                  }
+ 1090              };
+ 1091              let subagent_session_id = if self.startup_hints.is_subagent {
+ 1092                  Some(self.session_id_string())
+ 1093              } else {
+ 1094                  None
+ 1095              };
+ 1096              let perm_mode = if self.permissions.is_yolo_mode() {
+ 1097                  xai_grok_telemetry::enums::PermissionMode::AlwaysApprove
+ 1098              } else if self.permissions.is_auto_mode() {
+ 1099                  xai_grok_telemetry::enums::PermissionMode::Auto
+ 1100              } else {
+ 1101                  xai_grok_telemetry::enums::PermissionMode::Ask
+ 1102              };
+ 1103              xai_grok_telemetry::session_ctx::log_event(
+ 1104                  xai_grok_telemetry::events::PermissionPrompted {
+ 1105                      tool_name: call.function.name.clone(),</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  977                  } else {
+  978                      tracing::warn!(
+  979                          &quot;Failed to parse arguments as JSON ({}), wrapping in &#39;raw&#39; field&quot;,
+  980                          e
+  981                      );
+  982                      json!({ &quot;raw&quot;: call.function.arguments.clone() })
+  983                  }
+  984              }
+  985          };
+  986          let tool_input = match self
+  987              .agent
+  988              .borrow()
+  989              .tool_bridge()
+  990              .try_parse(&amp;call.function.name, raw_input.clone())
+  991              .await
+  992          {
+  993              Ok(input) =&gt; input,
+  994              Err(err) =&gt; {
+  995                  self.handle_tool_parse_error(
+  996                      &amp;tool_call_id,
+  997                      &amp;call.id,
+  998                      &amp;call.function.name,
+  999                      err,
+ 1000                      &amp;call.function.arguments,
+ 1001                      &amp;model_id_str,
+ 1002                  )
+ 1003                  .await?;
+ 1004                  return Ok(Err(ToolLoop::ToolParsingError));
+ 1005              }
+ 1006          };
+ 1007          let access_kind = AccessKind::from(&amp;tool_input);
+ 1008          let plan_gate = plan_mode_edit_gate(&amp;self.plan_mode.lock(), &amp;tool_input, &amp;access_kind);
+ 1009          if plan_gate != PlanEditGate::Allow {
+ 1010              tracing::info_span!(
+ 1011                  &quot;tool.decision&quot;,
+ 1012                  tool_name = %call.function.name,
+ 1013                  tool_use_id = %call.id,
+ 1014                  decision = &quot;deny&quot;,
+ 1015                  source = &quot;plan_mode&quot;,
+ 1016                  wait_ms = 0_i64,
+ 1017              )
+ 1018              .in_scope(|| {});
+ 1019              let msg = self.plan_mode_edit_rejected_message().await;
+ 1020              self.handle_tool_not_executed(&amp;call.id, &amp;tool_call_id, msg)
+ 1021                  .await?;
+ 1022              return Ok(Err(ToolLoop::Continue));
+ 1023          }
+ 1024          let tool_call_display = self
+ 1025              .send_tool_call_start(&amp;tool_call_id, &amp;call.function.name, tool_input.clone())
+ 1026              .await;
+ 1027          let _recovered_raw_input = if concatenated_json_count &gt; 0 {
+ 1028              Some(raw_input.clone())
+ 1029          } else {
+ 1030              None
+ 1031          };
+ 1032          let dispatch_target_name = tool_input.dispatch_target_name();
+ 1033          let resolved_tool_name = dispatch_target_name
+ 1034              .clone()
+ 1035              .unwrap_or_else(|| call.function.name.clone());
+ 1036          if self.hook_event_active(xai_grok_hooks::event::HookEventName::PreToolUse) {
+ 1037              let (hook_tool_input, hook_tool_input_truncated) =
+ 1038                  xai_grok_hooks::event::truncate_payload(raw_input.clone());
+ 1039              let envelope = self.make_hook_envelope(
+ 1040                  xai_grok_hooks::event::HookEventName::PreToolUse,
+ 1041                  None,
+ 1042                  xai_grok_hooks::event::HookPayload::PreToolUse {
+ 1043                      tool_name: resolved_tool_name.clone(),
+ 1044                      tool_use_id: call.id.clone(),
+ 1045                      tool_input: hook_tool_input,
+ 1046                      tool_input_truncated: hook_tool_input_truncated,
+ 1047                      subagent_type: self.subagent_type_label(),
+ 1048                  },
+ 1049              );
+ 1050              let hook_registry_snapshot = self.hook_registry.borrow().clone();
+ 1051              if let Some(registry) = hook_registry_snapshot {
+ 1052                  let ctx = self.hook_run_ctx();
+ 1053                  let pre_result =
+ 1054                      xai_grok_hooks::dispatcher::dispatch_pre_tool_use(&amp;registry, &amp;envelope, &amp;ctx)
+ 1055                          .await;
+ 1056                  self.send_hook_execution(
+ 1057                      &quot;pre_tool_use&quot;,
+ 1058                      Some(&amp;resolved_tool_name),
+ 1059                      None,
+ 1060                      &amp;pre_result.results,
+ 1061                  )
+ 1062                  .await;
+ 1063                  self.emit_hook_executed_telemetry(
+ 1064                      &quot;pre_tool_use&quot;,
+ 1065                      Some(&amp;resolved_tool_name),
+ 1066                      &amp;pre_result.results,
+ 1067                  )
+ 1068                  .await;
+ 1069                  if let xai_grok_hooks::result::HookDecision::Deny { reason, hook_name } =
+ 1070                      pre_result.decision
+ 1071                  {
+ 1072                      return Ok(Err(self
+ 1073                          .deny_tool(
+ 1074                              &amp;call.id,
+ 1075                              &amp;tool_call_id,
+ 1076                              resolved_tool_name.clone(),
+ 1077                              hook_name,
+ 1078                              reason,
+ 1079                          )
+ 1080                          .await?));
+ 1081                  }
+ 1082              }
+ 1083              if let Some(denied) = self
+ 1084                  .run_pre_tool_use_client_hook(&amp;call, &amp;tool_call_id, &amp;envelope)
+ 1085                  .await?
+ 1086              {
+ 1087                  return Ok(Err(denied));
+ 1088              }
+ 1089          }
+ 1090          let plan_file_auto_approve = if let AccessKind::Edit(ref path) = access_kind {
+ 1091              self.plan_mode
+ 1092                  .lock()
+ 1093                  .should_auto_approve_edit(std::path::Path::new(path))
+ 1094          } else {
+ 1095              false
+ 1096          };
+ 1097          if plan_file_auto_approve {
+ 1098              tracing::info_span!(
+ 1099                  &quot;tool.decision&quot;,
+ 1100                  tool_name = %call.function.name,
+ 1101                  tool_use_id = %call.id,
+ 1102                  decision = &quot;allow&quot;,
+ 1103                  source = &quot;config&quot;,
+ 1104                  wait_ms = 0_i64,
+ 1105              )</code></pre></details></div></div></article><article class="finding-card compact" id="grok-sandbox-001" data-finding-dimension="execution"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>04 · 提供真正的内核级文件系统沙箱</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>默认 enforce feature 在 Unix 使用 nono，映射到 Landlock/Seatbelt；Profile capability set 控制全盘读、显式只读/读写、deny，应用后不可逆并覆盖进程内文件 API 与子进程。</p></section><section><span>PLAIN LANGUAGE</span><p>这不只是“执行前问一下”，操作系统内核会真的挡住不允许的文件访问。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>在这 14 个项目里，Grok Build 的安全边界属于更强的系统级设计。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>8–12</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>13–18</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/lib.rs:8–18</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    8  //! OS-level sandboxing for Grok Build via [nono](https://crates.io/crates/nono).
+    9  //!
+   10  //! Applied once at process startup. Covers in-process `tokio::fs` calls
+   11  //! and child processes. Network is left open at the process level (agent
+   12  //! needs LLM API); child network is blocked per-subprocess via seccomp.
+   13  //!
+   14  //! The `enforce` feature (on by default) pulls in `nono` for
+   15  //! kernel-enforced sandboxing (Landlock/Seatbelt). When disabled, the
+   16  //! crate still provides lightweight helpers (`log_violation`,
+   17  //! `should_restrict_child_network`, `child_net`) that compile on all
+   18  //! targets including musl.
+   19  //!
+   20  //! ```rust,no_run
+   21  //! use xai_grok_sandbox::{SandboxManager, ProfileName};
+   22  //! use std::path::Path;
+   23  //!
+   24  //! let workspace = Path::new(&quot;/home/user/project&quot;);
+   25  //! let mut sandbox = SandboxManager::new(ProfileName::Workspace, workspace);
+   26  //! sandbox.apply(workspace).expect(&quot;sandbox apply failed&quot;);
+   27  //! sandbox.install();
+   28  //! ```
+   29  pub mod child_net;
+   30  mod deny;
+   31  mod hook_write_deny;
+   32  mod logging;
+   33  mod network_policy;
+   34  mod paths;
+   35  mod profiles;
+   36  mod types;
+   37  pub use hook_write_deny::{profile_enforces_hook_write_deny, verify_hook_write_deny_enforced};
+   38  pub use logging::SandboxLogger;
+   39  pub use network_policy::{
+   40      ChildNetworkPolicy, NETWORK_POLICY_SNAPSHOT_VERSION, NetworkPolicySnapshot,
+   41      NetworkPolicySnapshotError, WebsiteAction, WebsiteOrigin, WebsiteOriginError, WebsitePolicy,
+   42  };
+   43  pub use profiles::{
+   44      ProfileName, SandboxConfig, SandboxProfile, load_sandbox_config, sandbox_profile_conflicts,
+   45  };
+   46  pub use types::{SandboxEvent, SandboxEventType, SandboxMetrics};
+   47  /// Whether this profile requires direct-hook write protection (non-devbox
+   48  /// enforcing profiles). Shell fails closed when protection cannot be applied.
+   49  pub fn requires_hook_write_deny(profile: &amp;ProfileName, workspace: &amp;Path) -&gt; bool {
+   50      if !profile_enforces_hook_write_deny(profile) || *profile == ProfileName::Off {
+   51          return false;
+   52      }
+   53      let config = profiles::load_sandbox_config(workspace);
+   54      match profile {
+   55          ProfileName::Custom(name) =&gt; {
+   56              config.profiles.get(name).and_then(|p| p.extends.as_deref()) != Some(&quot;devbox&quot;)
+   57          }
+   58          ProfileName::Devbox =&gt; false,
+   59          _ =&gt; true,
+   60      }
+   61  }
+   62  #[cfg(all(feature = &quot;enforce&quot;, unix))]
+   63  use nono::Sandbox;
+   64  use std::path::{Path, PathBuf};
+   65  use std::sync::OnceLock;
+   66  use std::sync::atomic::{AtomicBool, Ordering};
+   67  static SANDBOX: OnceLock&lt;GlobalSandboxState&gt; = OnceLock::new();
+   68  static CONFIGURED_PROFILE: OnceLock&lt;String&gt; = OnceLock::new();
+   69  static AUTO_ALLOW_BASH: AtomicBool = AtomicBool::new(false);
+   70  const BWRAP_ENV_VAR: &amp;str = &quot;__GROK_INSIDE_BWRAP&quot;;
+   71  pub fn is_inside_bwrap() -&gt; bool {
+   72      std::env::var(BWRAP_ENV_VAR).is_ok()
+   73  }
+   74  pub fn trust_bwrap_marker_for_devbox() -&gt; bool {
+   75      false
+   76  }
+   77  struct GlobalSandboxState {
+   78      profile: String,
+   79      logger: SandboxLogger,
+   80      applied: bool,
+   81      restrict_network_at_known_linux_launches: bool,
+   82  }
+   83  fn restrict_network_at_known_linux_launches(applied: bool, configured: bool) -&gt; bool {
+   84      applied &amp;&amp; configured &amp;&amp; cfg!(target_os = &quot;linux&quot;)
+   85  }
+   86  /// Whether known Linux child launch paths should install the seccomp network filter.
+   87  pub fn should_restrict_child_network() -&gt; bool {
+   88      SANDBOX
+   89          .get()</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/lib.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>    8  //! OS-level sandboxing for Grok Build via [nono](https://crates.io/crates/nono).
+    9  //!
+   10  //! Applied once at process startup. Covers in-process `tokio::fs` calls
+   11  //! and child processes. Network is left open at the process level (agent
+   12  //! needs LLM API); child network is blocked per-subprocess via seccomp.
+   13  //!
+   14  //! The `enforce` feature (on by default) pulls in `nono` for
+   15  //! kernel-enforced sandboxing (Landlock/Seatbelt). When disabled, the
+   16  //! crate still provides lightweight helpers (`log_violation`,
+   17  //! `should_restrict_child_network`, `child_net`) that compile on all
+   18  //! targets including musl.
+   19  //!
+   20  //! ```rust,no_run
+   21  //! use xai_grok_sandbox::{SandboxManager, ProfileName};
+   22  //! use std::path::Path;
+   23  //!
+   24  //! let workspace = Path::new(&quot;/home/user/project&quot;);
+   25  //! let mut sandbox = SandboxManager::new(ProfileName::Workspace, workspace);
+   26  //! sandbox.apply(workspace).expect(&quot;sandbox apply failed&quot;);
+   27  //! sandbox.install();
+   28  //! ```
+   29  mod allow_path;
+   30  pub mod child_net;
+   31  mod deny;
+   32  mod hook_write_deny;
+   33  mod logging;
+   34  mod network_policy;
+   35  mod paths;
+   36  mod profiles;
+   37  mod types;
+   38  pub use hook_write_deny::{profile_enforces_hook_write_deny, verify_hook_write_deny_enforced};
+   39  pub use logging::SandboxLogger;
+   40  pub use network_policy::{
+   41      ChildNetworkPolicy, NETWORK_POLICY_SNAPSHOT_VERSION, NetworkPolicySnapshot,
+   42      NetworkPolicySnapshotError, WebsiteAction, WebsiteOrigin, WebsiteOriginError, WebsitePolicy,
+   43  };
+   44  pub use profiles::{
+   45      ProfileName, SandboxConfig, SandboxProfile, load_sandbox_config, sandbox_profile_conflicts,
+   46  };
+   47  pub use types::{SandboxEvent, SandboxEventType, SandboxMetrics};
+   48  /// Whether this profile requires direct-hook write protection (non-devbox
+   49  /// enforcing profiles). Shell fails closed when protection cannot be applied.
+   50  pub fn requires_hook_write_deny(profile: &amp;ProfileName, workspace: &amp;Path) -&gt; bool {
+   51      if !profile_enforces_hook_write_deny(profile) || *profile == ProfileName::Off {
+   52          return false;
+   53      }
+   54      let config = profiles::load_sandbox_config(workspace);
+   55      match profile {
+   56          ProfileName::Custom(name) =&gt; {
+   57              config.profiles.get(name).and_then(|p| p.extends.as_deref()) != Some(&quot;devbox&quot;)
+   58          }
+   59          ProfileName::Devbox =&gt; false,
+   60          _ =&gt; true,
+   61      }
+   62  }
+   63  #[cfg(all(feature = &quot;enforce&quot;, unix))]
+   64  use nono::Sandbox;
+   65  use std::path::Path;
+   66  #[cfg(any(target_os = &quot;linux&quot;, test))]
+   67  use std::path::PathBuf;
+   68  use std::sync::OnceLock;
+   69  use std::sync::atomic::{AtomicBool, Ordering};
+   70  static SANDBOX: OnceLock&lt;GlobalSandboxState&gt; = OnceLock::new();
+   71  static CONFIGURED_PROFILE: OnceLock&lt;String&gt; = OnceLock::new();
+   72  static AUTO_ALLOW_BASH: AtomicBool = AtomicBool::new(false);
+   73  const BWRAP_ENV_VAR: &amp;str = &quot;__GROK_INSIDE_BWRAP&quot;;
+   74  pub fn is_inside_bwrap() -&gt; bool {
+   75      std::env::var(BWRAP_ENV_VAR).is_ok()
+   76  }
+   77  pub fn trust_bwrap_marker_for_devbox() -&gt; bool {
+   78      false
+   79  }
+   80  struct GlobalSandboxState {
+   81      profile: String,
+   82      logger: SandboxLogger,
+   83      applied: bool,
+   84      restrict_network_at_known_linux_launches: bool,
+   85  }
+   86  fn restrict_network_at_known_linux_launches(applied: bool, configured: bool) -&gt; bool {
+   87      applied &amp;&amp; configured &amp;&amp; cfg!(target_os = &quot;linux&quot;)
+   88  }
+   89  /// Whether known Linux child launch paths should install the seccomp network filter.</code></pre></details></div></div></article><article class="finding-card compact" id="grok-sandbox-002" data-finding-dimension="execution"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>execution</span></div><h3>05 · 沙箱不支持或应用失败时会降级继续</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>若平台不支持、apply 失败或构建关闭 enforce feature，SandboxManager 记录警告和 apply_failed 事件后返回 Ok，进程继续运行；is_active 可用于区分实际生效与仅请求。</p></section><section><span>PLAIN LANGUAGE</span><p>配置了沙箱不等于一定锁住；系统不支持时默认是“报警后继续”，不是整个 Agent 拒绝启动。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>企业部署必须把“sandbox requested”和“sandbox active”分开做启动门禁；需要 fail-closed 时应由外层策略强制。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>107–117</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>118–129</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L107-L129" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/lib.rs:107–129</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L107-L129" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  107  /// The non-`off` sandbox profile this process was **requested** with, if any.
+  108  ///
+  109  /// This is the configured request, not a report that enforcement succeeded —
+  110  /// `is_active()` can be false while the process is still confined (e.g. some
+  111  /// Linux bwrap paths), and a requested-but-unapplied profile already warns the
+  112  /// user. Keying on the request is the fail-closed choice.
+  113  pub fn requested_confinement_profile() -&gt; Option&lt;&amp;&#39;static str&gt; {
+  114      configured_profile_name().filter(|name| profile_confines(name))
+  115  }
+  116  fn profile_confines(name: &amp;str) -&gt; bool {
+  117      name.parse::&lt;ProfileName&gt;()
+  118          .is_ok_and(|profile| profile != ProfileName::Off)
+  119  }
+  120  /// Whether the sandbox was successfully applied to this process.
+  121  pub fn is_active() -&gt; bool {
+  122      SANDBOX.get().is_some_and(|s| s.applied)
+  123  }
+  124  /// The active sandbox profile name, or `None` if sandbox is not applied.
+  125  pub fn profile_name() -&gt; Option&lt;&amp;&#39;static str&gt; {
+  126      SANDBOX
+  127          .get()
+  128          .filter(|s| s.applied)
+  129          .map(|s| s.profile.as_str())
+  130  }
+  131  /// Log a sandbox violation. Immediately flushed to disk.
+  132  /// No-op if sandbox is not active.
+  133  pub fn log_violation(target: &amp;str, operation: &amp;str) {
+  134      if let Some(state) = SANDBOX.get() {
+  135          state.logger.log(SandboxEvent::fs_violation(
+  136              &amp;state.profile,
+  137              target,
+  138              operation,
+  139          ));
+  140          let _ = state.logger.flush_to_disk();
+  141      }
+  142  }
+  143  /// Flush sandbox events to disk. No-op if not initialized.
+  144  pub fn flush() {
+  145      if let Some(state) = SANDBOX.get()
+  146          &amp;&amp; let Err(e) = state.logger.flush_to_disk()
+  147      {
+  148          tracing::warn!(error = %e, &quot;Failed to flush sandbox events to disk&quot;);
+  149      }
+  150  }
+  151  /// Violation metrics, or `None` if sandbox is not active.
+  152  pub fn metrics() -&gt; Option&lt;&amp;&#39;static SandboxMetrics&gt; {
+  153      SANDBOX.get().map(|s| s.logger.metrics())
+  154  }
+  155  /// Manages the OS-level sandbox. Call `apply()` then `install()`.
+  156  pub struct SandboxManager {
+  157      profile: ProfileName,
+  158      logger: SandboxLogger,
+  159      net_restricted: bool,
+  160      applied: bool,
+  161  }
+  162  impl SandboxManager {
+  163      /// Create a sandbox manager. Does not apply until `apply()` is called.
+  164      pub fn new(profile: ProfileName, _workspace: &amp;Path) -&gt; Self {
+  165          let net_restricted = profile.restricts_network();
+  166          Self {
+  167              profile,
+  168              logger: SandboxLogger::new(),
+  169              net_restricted,
+  170              applied: false,
+  171          }
+  172      }
+  173      /// Apply the sandbox to the current process. **Irreversible.**
+  174      /// Degrades gracefully if the platform doesn&#39;t support it.
+  175      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  176      pub fn apply(&amp;mut self, workspace: &amp;Path) -&gt; anyhow::Result&lt;()&gt; {
+  177          if self.profile == ProfileName::Off {
+  178              tracing::info!(&quot;Sandbox disabled (profile: off)&quot;);
+  179              return Ok(());
+  180          }
+  181          if requires_hook_write_deny(&amp;self.profile, workspace) {
+  182              xai_grok_config::ensure_grok_hook_slots(paths::grok_home().as_path())
+  183                  .map_err(|e| anyhow::anyhow!(&quot;hook write-deny ensure failed: {e}&quot;))?;
+  184              hook_write_deny::maybe_install_namespace_lockdown_inside_bwrap(&amp;self.profile)
+  185                  .map_err(|e| anyhow::anyhow!(&quot;{e}&quot;))?;
+  186          }
+  187          let config = profiles::load_sandbox_config(workspace);
+  188          let mut resolved = self.profile.resolve_profile(workspace, &amp;config)?;
+  189          self.net_restricted = resolved.restrict_network;
+  190          let support = Sandbox::support_info();
+  191          if !support.is_supported {
+  192              tracing::warn!(
+  193                  details = %support.details,
+  194                  &quot;Sandbox not supported on this platform, continuing without sandbox&quot;
+  195              );
+  196              self.logger.log(SandboxEvent::apply_failed(
+  197                  &amp;self.profile.to_string(),
+  198                  workspace,
+  199                  &amp;support.details,
+  200              ));</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/lib.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-sandbox/src/lib.rs#L107-L129" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  107  pub fn configured_profile_name() -&gt; Option&lt;&amp;&#39;static str&gt; {
+  108      CONFIGURED_PROFILE.get().map(|s| s.as_str())
+  109  }
+  110  /// The non-`off` sandbox profile this process was **requested** with, if any.
+  111  ///
+  112  /// This is the configured request, not a report that enforcement succeeded —
+  113  /// `is_active()` can be false while the process is still confined (e.g. some
+  114  /// Linux bwrap paths), and a requested-but-unapplied profile already warns the
+  115  /// user. Keying on the request is the fail-closed choice.
+  116  pub fn requested_confinement_profile() -&gt; Option&lt;&amp;&#39;static str&gt; {
+  117      configured_profile_name().filter(|name| profile_confines(name))
+  118  }
+  119  fn profile_confines(name: &amp;str) -&gt; bool {
+  120      name.parse::&lt;ProfileName&gt;()
+  121          .is_ok_and(|profile| profile != ProfileName::Off)
+  122  }
+  123  /// Whether the sandbox was successfully applied to this process.
+  124  pub fn is_active() -&gt; bool {
+  125      SANDBOX.get().is_some_and(|s| s.applied)
+  126  }
+  127  /// The active sandbox profile name, or `None` if sandbox is not applied.
+  128  pub fn profile_name() -&gt; Option&lt;&amp;&#39;static str&gt; {
+  129      SANDBOX
+  130          .get()
+  131          .filter(|s| s.applied)
+  132          .map(|s| s.profile.as_str())
+  133  }
+  134  /// Log a sandbox violation. Immediately flushed to disk.
+  135  /// No-op if sandbox is not active.
+  136  pub fn log_violation(target: &amp;str, operation: &amp;str) {
+  137      if let Some(state) = SANDBOX.get() {
+  138          state.logger.log(SandboxEvent::fs_violation(
+  139              &amp;state.profile,
+  140              target,
+  141              operation,
+  142          ));
+  143          let _ = state.logger.flush_to_disk();
+  144      }
+  145  }
+  146  /// Flush sandbox events to disk. No-op if not initialized.
+  147  pub fn flush() {
+  148      if let Some(state) = SANDBOX.get()
+  149          &amp;&amp; let Err(e) = state.logger.flush_to_disk()
+  150      {
+  151          tracing::warn!(error = %e, &quot;Failed to flush sandbox events to disk&quot;);
+  152      }
+  153  }
+  154  /// Violation metrics, or `None` if sandbox is not active.
+  155  pub fn metrics() -&gt; Option&lt;&amp;&#39;static SandboxMetrics&gt; {
+  156      SANDBOX.get().map(|s| s.logger.metrics())
+  157  }
+  158  /// Manages the OS-level sandbox. Call `apply()` then `install()`.
+  159  pub struct SandboxManager {
+  160      profile: ProfileName,
+  161      logger: SandboxLogger,
+  162      net_restricted: bool,
+  163      applied: bool,
+  164  }
+  165  impl SandboxManager {
+  166      /// Create a sandbox manager. Does not apply until `apply()` is called.
+  167      pub fn new(profile: ProfileName, _workspace: &amp;Path) -&gt; Self {
+  168          let net_restricted = profile.restricts_network();
+  169          Self {
+  170              profile,
+  171              logger: SandboxLogger::new(),
+  172              net_restricted,
+  173              applied: false,
+  174          }
+  175      }
+  176      /// Apply the sandbox to the current process. **Irreversible.**
+  177      /// Degrades gracefully if the platform doesn&#39;t support it.
+  178      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  179      pub fn apply(&amp;mut self, workspace: &amp;Path) -&gt; anyhow::Result&lt;()&gt; {
+  180          if self.profile == ProfileName::Off {
+  181              tracing::info!(&quot;Sandbox disabled (profile: off)&quot;);
+  182              return Ok(());
+  183          }
+  184          if requires_hook_write_deny(&amp;self.profile, workspace) {
+  185              xai_grok_config::ensure_grok_hook_slots(paths::grok_home().as_path())
+  186                  .map_err(|e| anyhow::anyhow!(&quot;hook write-deny ensure failed: {e}&quot;))?;
+  187              hook_write_deny::maybe_install_namespace_lockdown_inside_bwrap(&amp;self.profile)
+  188                  .map_err(|e| anyhow::anyhow!(&quot;{e}&quot;))?;
+  189          }
+  190          let config = profiles::load_sandbox_config(workspace);
+  191          let mut resolved = self.profile.resolve_profile(workspace, &amp;config)?;
+  192          self.net_restricted = resolved.restrict_network;
+  193          let support = Sandbox::support_info();
+  194          if !support.is_supported {
+  195              tracing::warn!(
+  196                  details = %support.details,
+  197                  &quot;Sandbox not supported on this platform, continuing without sandbox&quot;
+  198              );
+  199              self.logger.log(SandboxEvent::apply_failed(
+  200                  &amp;self.profile.to_string(),</code></pre></details></div></div></article><article class="finding-card compact" id="grok-sandbox-003" data-finding-dimension="execution"><header><span class="finding-index">06</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>06 · 子进程网络隔离与主进程网络分离</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>主进程保留网络供 LLM API；ReadOnly/Strict profile 在已生效的 Linux 沙箱中，对已知子进程启动路径安装 seccomp 网络过滤，并额外锁定 namespace 逃逸 syscall。</p></section><section><span>PLAIN LANGUAGE</span><p>Agent 自己可以连模型服务，但它启动的 bash 不一定能上网，减少 curl 下载执行或数据外传风险。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>网络隔离需要按进程角色拆分；完全断主进程网络会破坏云模型调用。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>8–12</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>13–18</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/lib.rs:8–18</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>    8  //! OS-level sandboxing for Grok Build via [nono](https://crates.io/crates/nono).
+    9  //!
+   10  //! Applied once at process startup. Covers in-process `tokio::fs` calls
+   11  //! and child processes. Network is left open at the process level (agent
+   12  //! needs LLM API); child network is blocked per-subprocess via seccomp.
+   13  //!
+   14  //! The `enforce` feature (on by default) pulls in `nono` for
+   15  //! kernel-enforced sandboxing (Landlock/Seatbelt). When disabled, the
+   16  //! crate still provides lightweight helpers (`log_violation`,
+   17  //! `should_restrict_child_network`, `child_net`) that compile on all
+   18  //! targets including musl.
+   19  //!
+   20  //! ```rust,no_run
+   21  //! use xai_grok_sandbox::{SandboxManager, ProfileName};
+   22  //! use std::path::Path;
+   23  //!
+   24  //! let workspace = Path::new(&quot;/home/user/project&quot;);
+   25  //! let mut sandbox = SandboxManager::new(ProfileName::Workspace, workspace);
+   26  //! sandbox.apply(workspace).expect(&quot;sandbox apply failed&quot;);
+   27  //! sandbox.install();
+   28  //! ```
+   29  pub mod child_net;
+   30  mod deny;
+   31  mod hook_write_deny;
+   32  mod logging;
+   33  mod network_policy;
+   34  mod paths;
+   35  mod profiles;
+   36  mod types;
+   37  pub use hook_write_deny::{profile_enforces_hook_write_deny, verify_hook_write_deny_enforced};
+   38  pub use logging::SandboxLogger;
+   39  pub use network_policy::{
+   40      ChildNetworkPolicy, NETWORK_POLICY_SNAPSHOT_VERSION, NetworkPolicySnapshot,
+   41      NetworkPolicySnapshotError, WebsiteAction, WebsiteOrigin, WebsiteOriginError, WebsitePolicy,
+   42  };
+   43  pub use profiles::{
+   44      ProfileName, SandboxConfig, SandboxProfile, load_sandbox_config, sandbox_profile_conflicts,
+   45  };
+   46  pub use types::{SandboxEvent, SandboxEventType, SandboxMetrics};
+   47  /// Whether this profile requires direct-hook write protection (non-devbox
+   48  /// enforcing profiles). Shell fails closed when protection cannot be applied.
+   49  pub fn requires_hook_write_deny(profile: &amp;ProfileName, workspace: &amp;Path) -&gt; bool {
+   50      if !profile_enforces_hook_write_deny(profile) || *profile == ProfileName::Off {
+   51          return false;
+   52      }
+   53      let config = profiles::load_sandbox_config(workspace);
+   54      match profile {
+   55          ProfileName::Custom(name) =&gt; {
+   56              config.profiles.get(name).and_then(|p| p.extends.as_deref()) != Some(&quot;devbox&quot;)
+   57          }
+   58          ProfileName::Devbox =&gt; false,
+   59          _ =&gt; true,
+   60      }
+   61  }
+   62  #[cfg(all(feature = &quot;enforce&quot;, unix))]
+   63  use nono::Sandbox;
+   64  use std::path::{Path, PathBuf};
+   65  use std::sync::OnceLock;
+   66  use std::sync::atomic::{AtomicBool, Ordering};
+   67  static SANDBOX: OnceLock&lt;GlobalSandboxState&gt; = OnceLock::new();
+   68  static CONFIGURED_PROFILE: OnceLock&lt;String&gt; = OnceLock::new();
+   69  static AUTO_ALLOW_BASH: AtomicBool = AtomicBool::new(false);
+   70  const BWRAP_ENV_VAR: &amp;str = &quot;__GROK_INSIDE_BWRAP&quot;;
+   71  pub fn is_inside_bwrap() -&gt; bool {
+   72      std::env::var(BWRAP_ENV_VAR).is_ok()
+   73  }
+   74  pub fn trust_bwrap_marker_for_devbox() -&gt; bool {
+   75      false
+   76  }
+   77  struct GlobalSandboxState {
+   78      profile: String,
+   79      logger: SandboxLogger,
+   80      applied: bool,
+   81      restrict_network_at_known_linux_launches: bool,
+   82  }
+   83  fn restrict_network_at_known_linux_launches(applied: bool, configured: bool) -&gt; bool {
+   84      applied &amp;&amp; configured &amp;&amp; cfg!(target_os = &quot;linux&quot;)
+   85  }
+   86  /// Whether known Linux child launch paths should install the seccomp network filter.
+   87  pub fn should_restrict_child_network() -&gt; bool {
+   88      SANDBOX
+   89          .get()</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/lib.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>    8  //! OS-level sandboxing for Grok Build via [nono](https://crates.io/crates/nono).
+    9  //!
+   10  //! Applied once at process startup. Covers in-process `tokio::fs` calls
+   11  //! and child processes. Network is left open at the process level (agent
+   12  //! needs LLM API); child network is blocked per-subprocess via seccomp.
+   13  //!
+   14  //! The `enforce` feature (on by default) pulls in `nono` for
+   15  //! kernel-enforced sandboxing (Landlock/Seatbelt). When disabled, the
+   16  //! crate still provides lightweight helpers (`log_violation`,
+   17  //! `should_restrict_child_network`, `child_net`) that compile on all
+   18  //! targets including musl.
+   19  //!
+   20  //! ```rust,no_run
+   21  //! use xai_grok_sandbox::{SandboxManager, ProfileName};
+   22  //! use std::path::Path;
+   23  //!
+   24  //! let workspace = Path::new(&quot;/home/user/project&quot;);
+   25  //! let mut sandbox = SandboxManager::new(ProfileName::Workspace, workspace);
+   26  //! sandbox.apply(workspace).expect(&quot;sandbox apply failed&quot;);
+   27  //! sandbox.install();
+   28  //! ```
+   29  mod allow_path;
+   30  pub mod child_net;
+   31  mod deny;
+   32  mod hook_write_deny;
+   33  mod logging;
+   34  mod network_policy;
+   35  mod paths;
+   36  mod profiles;
+   37  mod types;
+   38  pub use hook_write_deny::{profile_enforces_hook_write_deny, verify_hook_write_deny_enforced};
+   39  pub use logging::SandboxLogger;
+   40  pub use network_policy::{
+   41      ChildNetworkPolicy, NETWORK_POLICY_SNAPSHOT_VERSION, NetworkPolicySnapshot,
+   42      NetworkPolicySnapshotError, WebsiteAction, WebsiteOrigin, WebsiteOriginError, WebsitePolicy,
+   43  };
+   44  pub use profiles::{
+   45      ProfileName, SandboxConfig, SandboxProfile, load_sandbox_config, sandbox_profile_conflicts,
+   46  };
+   47  pub use types::{SandboxEvent, SandboxEventType, SandboxMetrics};
+   48  /// Whether this profile requires direct-hook write protection (non-devbox
+   49  /// enforcing profiles). Shell fails closed when protection cannot be applied.
+   50  pub fn requires_hook_write_deny(profile: &amp;ProfileName, workspace: &amp;Path) -&gt; bool {
+   51      if !profile_enforces_hook_write_deny(profile) || *profile == ProfileName::Off {
+   52          return false;
+   53      }
+   54      let config = profiles::load_sandbox_config(workspace);
+   55      match profile {
+   56          ProfileName::Custom(name) =&gt; {
+   57              config.profiles.get(name).and_then(|p| p.extends.as_deref()) != Some(&quot;devbox&quot;)
+   58          }
+   59          ProfileName::Devbox =&gt; false,
+   60          _ =&gt; true,
+   61      }
+   62  }
+   63  #[cfg(all(feature = &quot;enforce&quot;, unix))]
+   64  use nono::Sandbox;
+   65  use std::path::Path;
+   66  #[cfg(any(target_os = &quot;linux&quot;, test))]
+   67  use std::path::PathBuf;
+   68  use std::sync::OnceLock;
+   69  use std::sync::atomic::{AtomicBool, Ordering};
+   70  static SANDBOX: OnceLock&lt;GlobalSandboxState&gt; = OnceLock::new();
+   71  static CONFIGURED_PROFILE: OnceLock&lt;String&gt; = OnceLock::new();
+   72  static AUTO_ALLOW_BASH: AtomicBool = AtomicBool::new(false);
+   73  const BWRAP_ENV_VAR: &amp;str = &quot;__GROK_INSIDE_BWRAP&quot;;
+   74  pub fn is_inside_bwrap() -&gt; bool {
+   75      std::env::var(BWRAP_ENV_VAR).is_ok()
+   76  }
+   77  pub fn trust_bwrap_marker_for_devbox() -&gt; bool {
+   78      false
+   79  }
+   80  struct GlobalSandboxState {
+   81      profile: String,
+   82      logger: SandboxLogger,
+   83      applied: bool,
+   84      restrict_network_at_known_linux_launches: bool,
+   85  }
+   86  fn restrict_network_at_known_linux_launches(applied: bool, configured: bool) -&gt; bool {
+   87      applied &amp;&amp; configured &amp;&amp; cfg!(target_os = &quot;linux&quot;)
+   88  }
+   89  /// Whether known Linux child launch paths should install the seccomp network filter.</code></pre></details></div></div></article><article class="finding-card compact" id="grok-sandbox-004" data-finding-dimension="execution"><header><span class="finding-index">07</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>07 · 项目不能覆写同名全局安全 Profile</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>全局 ~/.grok/sandbox.toml 先加载；项目 .grok/sandbox.toml 只能新增自定义 profile，若名称已存在则忽略项目定义。</p></section><section><span>PLAIN LANGUAGE</span><p>恶意仓库不能悄悄做一个同名“strict”配置，把你信任的全局规则掏空。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>配置合并本身也是信任边界，不能简单 last-write-wins。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>113–139</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>140–167</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · 02d9359435d0 · <a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/profiles.rs#L113-L167" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/profiles.rs:113–167</span><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/profiles.rs#L113-L167" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  113  /// Load sandbox config from `~/.grok/sandbox.toml` and `.grok/sandbox.toml`.
+  114  ///
+  115  /// Project config may **add** new profile names only. It cannot redefine a
+  116  /// name already present in the global config — last-write-wins would let a
+  117  /// malicious workspace hollow out a user/enterprise custom profile (e.g.
+  118  /// empty `deny` / broad `read_write`) while keeping the trusted name.
+  119  pub fn load_sandbox_config(workspace: &amp;Path) -&gt; SandboxConfig {
+  120      let mut config = SandboxConfig::default();
+  121
+  122      // Global config: ~/.grok/sandbox.toml
+  123      let global_path = grok_home().join(&quot;sandbox.toml&quot;);
+  124      if let Some(global) = load_config_file(&amp;global_path) {
+  125          config = global;
+  126      }
+  127
+  128      // Project config: &lt;workspace&gt;/.grok/sandbox.toml (additive only)
+  129      let project_path = workspace.join(&quot;.grok&quot;).join(&quot;sandbox.toml&quot;);
+  130      if let Some(project) = load_config_file(&amp;project_path) {
+  131          merge_project_profiles(&amp;mut config, project);
+  132      }
+  133
+  134      config
+  135  }
+  136
+  137  pub fn sandbox_profile_conflicts(workspace: &amp;Path) -&gt; Vec&lt;String&gt; {
+  138      let global = load_config_file(&amp;grok_home().join(&quot;sandbox.toml&quot;)).unwrap_or_default();
+  139      let project =
+  140          load_config_file(&amp;workspace.join(&quot;.grok&quot;).join(&quot;sandbox.toml&quot;)).unwrap_or_default();
+  141      mismatched_profile_names(&amp;global, &amp;project)
+  142  }
+  143
+  144  fn mismatched_profile_names(global: &amp;SandboxConfig, project: &amp;SandboxConfig) -&gt; Vec&lt;String&gt; {
+  145      let mut names: Vec&lt;String&gt; = project
+  146          .profiles
+  147          .iter()
+  148          .filter(|(name, _)| matches!(name.parse(), Ok(ProfileName::Custom(_))))
+  149          .filter_map(|(name, project_profile)| {
+  150              global
+  151                  .profiles
+  152                  .get(name)
+  153                  .filter(|global_profile| *global_profile != project_profile)
+  154                  .map(|_| name.to_owned())
+  155          })
+  156          .collect();
+  157      names.sort_unstable();
+  158      names
+  159  }
+  160
+  161  /// Merge project profiles into `config`. Names already defined globally are
+  162  /// ignored so a workspace cannot replace a global custom profile&#39;s policy.
+  163  fn merge_project_profiles(config: &amp;mut SandboxConfig, project: SandboxConfig) {
+  164      for (name, profile) in project.profiles {
+  165          config.profiles.entry(name).or_insert(profile);
+  166      }
+  167  }
+  168
+  169  fn load_config_file(path: &amp;Path) -&gt; Option&lt;SandboxConfig&gt; {
+  170      let content = std::fs::read_to_string(path).ok()?;
+  171      match toml::from_str(&amp;content) {
+  172          Ok(config) =&gt; Some(config),
+  173          Err(e) =&gt; {
+  174              tracing::warn!(path = %path.display(), error = %e, &quot;Failed to parse sandbox config&quot;);
+  175              None
+  176          }
+  177      }
+  178  }
+  179
+  180  /// Whether a device **file** entry is safe to pass to `allow_file` / Landlock
+  181  /// PathFd materialization.
+  182  ///
+  183  /// `/dev/tty` always exists, but without a controlling terminal `open()` returns
+  184  /// ENXIO and nono&#39;s apply aborts the **entire** ruleset. Built-in profiles fail
+  185  /// open, which was a silent sandbox bypass under `setsid`/CI/headless launches.
+  186  ///
+  187  /// Only that class of failure (and missing nodes) is filtered here. Other open
+  188  /// errors — notably **EISDIR** on directory nodes — must not drop the path:
+  189  /// directories are granted via [`DEVICE_DIRS`] / `allow_path`, and a plain
+  190  /// `File::open` EISDIR does not mean Landlock would reject the grant.
+  191  #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  192  fn device_file_openable(path: &amp;Path) -&gt; bool {
+  193      match std::fs::File::open(path) {
+  194          Ok(_) =&gt; true,
+  195          Err(e) if e.kind() == std::io::ErrorKind::NotFound =&gt; false,
+  196          // ENXIO/ENODEV: e.g. /dev/tty with no controlling terminal — PathFd
+  197          // materialization would abort the whole Landlock ruleset.
+  198          Err(e) if matches!(e.raw_os_error(), Some(libc::ENXIO) | Some(libc::ENODEV)) =&gt; false,
+  199          // EISDIR, EACCES, etc.: still attempt the grant path. allow_file may
+  200          // reject ExpectedFile; that only skips this entry, not the whole apply.
+  201          Err(_) =&gt; true,
+  202      }
+  203  }
+  204
+  205  impl ProfileName {
+  206      /// Convert this profile into a nono `CapabilitySet` for the given workspace.
+  207      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  208      pub fn to_capability_set(&amp;self, workspace: &amp;Path) -&gt; anyhow::Result&lt;CapabilitySet&gt; {
+  209          let config = load_sandbox_config(workspace);
+  210          self.to_capability_set_with_config(workspace, &amp;config)
+  211      }
+  212
+  213      /// Convert using an already-loaded config (avoids re-reading disk).
+  214      ///
+  215      /// A custom profile&#39;s own `deny` list is kernel-enforced (read + write/rename)
+  216      /// on top of the base profile.
+  217      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  218      pub fn to_capability_set_with_config(
+  219          &amp;self,
+  220          workspace: &amp;Path,
+  221          config: &amp;SandboxConfig,
+  222      ) -&gt; anyhow::Result&lt;CapabilitySet&gt; {
+  223          if *self == Self::Off {
+  224              return Ok(CapabilitySet::new());
+  225          }
+  226
+  227          let profile = self.resolve_profile(workspace, config)?;
+  228          Self::capability_set_from_profile(workspace, &amp;profile)
+  229      }
+  230
+  231      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  232      pub(crate) fn capability_set_from_profile(
+  233          workspace: &amp;Path,
+  234          profile: &amp;SandboxProfile,
+  235      ) -&gt; anyhow::Result&lt;CapabilitySet&gt; {
+  236          let mut caps = CapabilitySet::new();
+  237
+  238          // Default read access</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>crates/codegen/xai-grok-sandbox/src/profiles.rs · e5fd4816d432</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-sandbox/src/profiles.rs#L113-L167" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  113
+  114  /// Load sandbox config from `~/.grok/sandbox.toml` and `.grok/sandbox.toml`.
+  115  ///
+  116  /// Project config may **add** new profile names only. It cannot redefine a
+  117  /// name already present in the global config — last-write-wins would let a
+  118  /// malicious workspace hollow out a user/enterprise custom profile (e.g.
+  119  /// empty `deny` / broad `read_write`) while keeping the trusted name.
+  120  pub fn load_sandbox_config(workspace: &amp;Path) -&gt; SandboxConfig {
+  121      let mut config = SandboxConfig::default();
+  122
+  123      // Global config: ~/.grok/sandbox.toml
+  124      let global_path = grok_home().join(&quot;sandbox.toml&quot;);
+  125      if let Some(global) = load_config_file(&amp;global_path) {
+  126          config = global;
+  127      }
+  128
+  129      // Project config: &lt;workspace&gt;/.grok/sandbox.toml (additive only)
+  130      let project_path = workspace.join(&quot;.grok&quot;).join(&quot;sandbox.toml&quot;);
+  131      if let Some(project) = load_config_file(&amp;project_path) {
+  132          merge_project_profiles(&amp;mut config, project);
+  133      }
+  134
+  135      config
+  136  }
+  137
+  138  pub fn sandbox_profile_conflicts(workspace: &amp;Path) -&gt; Vec&lt;String&gt; {
+  139      let global = load_config_file(&amp;grok_home().join(&quot;sandbox.toml&quot;)).unwrap_or_default();
+  140      let project =
+  141          load_config_file(&amp;workspace.join(&quot;.grok&quot;).join(&quot;sandbox.toml&quot;)).unwrap_or_default();
+  142      mismatched_profile_names(&amp;global, &amp;project)
+  143  }
+  144
+  145  fn mismatched_profile_names(global: &amp;SandboxConfig, project: &amp;SandboxConfig) -&gt; Vec&lt;String&gt; {
+  146      let mut names: Vec&lt;String&gt; = project
+  147          .profiles
+  148          .iter()
+  149          .filter(|(name, _)| matches!(name.parse(), Ok(ProfileName::Custom(_))))
+  150          .filter_map(|(name, project_profile)| {
+  151              global
+  152                  .profiles
+  153                  .get(name)
+  154                  .filter(|global_profile| *global_profile != project_profile)
+  155                  .map(|_| name.to_owned())
+  156          })
+  157          .collect();
+  158      names.sort_unstable();
+  159      names
+  160  }
+  161
+  162  /// Merge project profiles into `config`. Names already defined globally are
+  163  /// ignored so a workspace cannot replace a global custom profile&#39;s policy.
+  164  fn merge_project_profiles(config: &amp;mut SandboxConfig, project: SandboxConfig) {
+  165      for (name, profile) in project.profiles {
+  166          config.profiles.entry(name).or_insert(profile);
+  167      }
+  168  }
+  169
+  170  fn load_config_file(path: &amp;Path) -&gt; Option&lt;SandboxConfig&gt; {
+  171      let content = std::fs::read_to_string(path).ok()?;
+  172      match toml::from_str(&amp;content) {
+  173          Ok(config) =&gt; Some(config),
+  174          Err(e) =&gt; {
+  175              tracing::warn!(path = %path.display(), error = %e, &quot;Failed to parse sandbox config&quot;);
+  176              None
+  177          }
+  178      }
+  179  }
+  180
+  181  /// Whether a device **file** entry is safe to pass to `allow_file` / Landlock
+  182  /// PathFd materialization.
+  183  ///
+  184  /// `/dev/tty` always exists, but without a controlling terminal `open()` returns
+  185  /// ENXIO and nono&#39;s apply aborts the **entire** ruleset. Built-in profiles fail
+  186  /// open, which was a silent sandbox bypass under `setsid`/CI/headless launches.
+  187  ///
+  188  /// Only that class of failure (and missing nodes) is filtered here. Other open
+  189  /// errors — notably **EISDIR** on directory nodes — must not drop the path:
+  190  /// directories are granted via [`DEVICE_DIRS`] / `allow_path`, and a plain
+  191  /// `File::open` EISDIR does not mean Landlock would reject the grant.
+  192  #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  193  fn device_file_openable(path: &amp;Path) -&gt; bool {
+  194      match std::fs::File::open(path) {
+  195          Ok(_) =&gt; true,
+  196          Err(e) if e.kind() == std::io::ErrorKind::NotFound =&gt; false,
+  197          // ENXIO/ENODEV: e.g. /dev/tty with no controlling terminal — PathFd
+  198          // materialization would abort the whole Landlock ruleset.
+  199          Err(e) if matches!(e.raw_os_error(), Some(libc::ENXIO) | Some(libc::ENODEV)) =&gt; false,
+  200          // EISDIR, EACCES, etc.: still attempt the grant path. allow_file may
+  201          // reject ExpectedFile; that only skips this entry, not the whole apply.
+  202          Err(_) =&gt; true,
+  203      }
+  204  }
+  205
+  206  impl ProfileName {
+  207      /// Convert this profile into a nono `CapabilitySet` for the given workspace.
+  208      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  209      pub fn to_capability_set(&amp;self, workspace: &amp;Path) -&gt; anyhow::Result&lt;CapabilitySet&gt; {
+  210          let config = load_sandbox_config(workspace);
+  211          self.to_capability_set_with_config(workspace, &amp;config)
+  212      }
+  213
+  214      /// Convert using an already-loaded config (avoids re-reading disk).
+  215      ///
+  216      /// A custom profile&#39;s own `deny` list is kernel-enforced (read + write/rename)
+  217      /// on top of the base profile.
+  218      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  219      pub fn to_capability_set_with_config(
+  220          &amp;self,
+  221          workspace: &amp;Path,
+  222          config: &amp;SandboxConfig,
+  223      ) -&gt; anyhow::Result&lt;CapabilitySet&gt; {
+  224          if *self == Self::Off {
+  225              return Ok(CapabilitySet::new());
+  226          }
+  227
+  228          let profile = self.resolve_profile(workspace, config)?;
+  229          Self::capability_set_from_profile(workspace, &amp;profile)
+  230      }
+  231
+  232      #[cfg(all(feature = &quot;enforce&quot;, unix))]
+  233      pub(crate) fn capability_set_from_profile(
+  234          workspace: &amp;Path,
+  235          profile: &amp;SandboxProfile,
+  236      ) -&gt; anyhow::Result&lt;CapabilitySet&gt; {
+  237          let mut caps = CapabilitySet::new();
+  238</code></pre></details></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>plan_mode_edit_gate 在权限管理器之前执行，即使 YOLO/always-approve 也不能绕过；普通编辑只允许计划文件，apply_patch 因无法预知目标而保守拒绝，未知退出结果默认取消。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:157–205 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>工具被分类为 Read、Edit、Bash、Grep、MCP、Web；Ask/Auto/Always Approve 三种模式分别走交互、带最近对话的分类器或快速放行，决定来源与等待时间进入 trace 和 telemetry。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L1035-L1102" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:1035–1102 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>工具解析和 Plan gate 后，运行服务端/客户端 PreToolUse hooks；任一 hook 的 Deny 会产生 HookDenied，不再进入权限请求和 dispatch。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L977-L1034" target="_blank" rel="noreferrer">crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:977–1034 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>默认 enforce feature 在 Unix 使用 nono，映射到 Landlock/Seatbelt；Profile capability set 控制全盘读、显式只读/读写、deny，应用后不可逆并覆盖进程内文件 API 与子进程。</blockquote><a href="https://github.com/xai-org/grok-build/blob/02d9359435d0e9c20a20945679389cdce441e431/crates/codegen/xai-grok-sandbox/src/lib.rs#L8-L18" target="_blank" rel="noreferrer">crates/codegen/xai-grok-sandbox/src/lib.rs:8–18 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Grok Build architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

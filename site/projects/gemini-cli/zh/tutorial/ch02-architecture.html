@@ -1,1 +1,366 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>Gemini CLI · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Gemini CLI · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Gemini CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>1ac337739586</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Gemini CLI · 1ac337739586</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Gemini CLI · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/gemini-cli/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/gemini-cli/ch02-architecture.srt" data-video-status="published">SRT</a><em>1ac337739586</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="gemini-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。</p></section><section><span>白话解释</span><p>一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>控制流直观，递归路径共享 prompt_id 和 hook state，需要严格做 activeCalls 记账。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:614–715 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:79–111</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>MAX_TURNS 和 loop/compression/hook 状态。</code></pre></div></div></article><article class="finding-card compact" id="gemini-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。</p></section><section><span>白话解释</span><p>开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文与模型选择顺序清楚，工具描述可随模型变化且同一 sequence 保持模型粘性。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:614–715</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>context、masking 和 token overflow。</code></pre></div></div></article><article class="finding-card compact" id="gemini-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 循环检测能先恢复一次，再判定硬循环</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</p></section><section><span>白话解释</span><p>第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>比仅靠 turn 上限更早止损，并保留一次自恢复空间。</p></section><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/google-gemini/gemini-cli/blob/1ac3377395868295e128b96726d605a900b5946b/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:614–715 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:744–763</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>turn-start loop detection。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Gemini CLI sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>Gemini CLI · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Gemini CLI · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Gemini CLI</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>1ac337739586</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Gemini CLI · 1ac337739586</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Gemini CLI · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/gemini-cli/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/gemini-cli/ch02-architecture.srt" data-video-status="published">SRT</a><em>1ac337739586</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="gemini-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 主 Harness 用递归 sendMessageStream 驱动多 turn，硬上限为 100</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。</p></section><section><span>白话解释</span><p>一次用户请求可以连续让模型说、用工具、再说；但最多转 100 圈，避免无尽自言自语。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>控制流直观，递归路径共享 prompt_id 和 hook state，需要严格做 activeCalls 记账。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>79–94</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>95–111</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:79–111</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   79  const MAX_TURNS = 100;
+   80
+   81  type BeforeAgentHookReturn =
+   82    | {
+   83        type: GeminiEventType.AgentExecutionStopped;
+   84        value: { reason: string; systemMessage?: string };
+   85      }
+   86    | {
+   87        type: GeminiEventType.AgentExecutionBlocked;
+   88        value: { reason: string; systemMessage?: string };
+   89      }
+   90    | { additionalContext: string | undefined }
+   91    | undefined;
+   92
+   93  export class GeminiClient {
+   94    private chat?: GeminiChat;
+   95    private sessionTurnCount = 0;
+   96
+   97    private readonly loopDetector: LoopDetectionService;
+   98    private readonly compressionService: ChatCompressionService;
+   99    private readonly agentHistoryProvider: AgentHistoryProvider;
+  100    private readonly toolOutputMaskingService: ToolOutputMaskingService;
+  101    private contextManager?: ContextManager;
+  102    private lastPromptId: string;
+  103    private currentSequenceModel: string | null = null;
+  104    private lastSentIdeContext: IdeContext | undefined;
+  105    private forceFullIdeContext = true;
+  106
+  107    /**
+  108     * At any point in this conversation, was compression triggered without
+  109     * being forced and did it fail?
+  110     */
+  111    private hasFailedCompressionAttempt = false;
+  112
+  113    constructor(private readonly context: AgentLoopContext) {
+  114      this.loopDetector = new LoopDetectionService(this.config);
+  115      this.compressionService = new ChatCompressionService();
+  116      this.agentHistoryProvider = new AgentHistoryProvider(
+  117        this.config.agentHistoryProviderConfig,
+  118        this.config,
+  119      );
+  120      this.toolOutputMaskingService = new ToolOutputMaskingService();
+  121      this.lastPromptId = this.config.getSessionId();
+  122
+  123      coreEvents.on(CoreEvent.ModelChanged, this.handleModelChanged);
+  124      coreEvents.on(CoreEvent.MemoryChanged, this.handleMemoryChanged);
+  125      coreEvents.on(
+  126        CoreEvent.ApprovalModeChanged,
+  127        this.handleApprovalModeChanged,
+  128      );
+  129    }
+  130
+  131    private get config(): Config {
+  132      return this.context.config;
+  133    }
+  134
+  135    private handleModelChanged = () =&gt; {
+  136      this.currentSequenceModel = null;
+  137    };
+  138
+  139    private handleMemoryChanged = () =&gt; {
+  140      this.updateSystemInstruction();
+  141    };
+  142
+  143    private handleApprovalModeChanged = (payload: ApprovalModeChangedPayload) =&gt; {
+  144      if (payload.sessionId === this.config.getSessionId()) {
+  145        this.updateSystemInstruction();
+  146      }
+  147    };
+  148
+  149    clearCurrentSequenceModel(): void {
+  150      this.currentSequenceModel = null;
+  151    }
+  152
+  153    // Hook state to deduplicate BeforeAgent calls and track response for
+  154    // AfterAgent
+  155    private hookStateMap = new Map&lt;
+  156      string,
+  157      {
+  158        hasFiredBeforeAgent: boolean;
+  159        cumulativeResponse: string;
+  160        activeCalls: number;
+  161        originalRequest: PartListUnion;
+  162      }
+  163    &gt;();
+  164
+  165    private async fireBeforeAgentHookSafe(
+  166      request: PartListUnion,
+  167      prompt_id: string,
+  168    ): Promise&lt;BeforeAgentHookReturn&gt; {
+  169      let hookState = this.hookStateMap.get(prompt_id);
+  170      if (!hookState) {
+  171        hookState = {
+  172          hasFiredBeforeAgent: false,
+  173          cumulativeResponse: &#39;&#39;,
+  174          activeCalls: 0,
+  175          originalRequest: request,
+  176        };
+  177        this.hookStateMap.set(prompt_id, hookState);
+  178      }
+  179
+  180      // Increment active calls for this prompt_id
+  181      // This is called at the start of sendMessageStream, so it acts as an entry
+  182      // counter. We increment here, assuming this helper is ALWAYS called at</code></pre></div></div></article><article class="finding-card compact" id="gemini-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 每轮先做上下文、溢出、IDE 配对和 loop 检测，再锁定模型与工具</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。</p></section><section><span>白话解释</span><p>开口前先整理历史、确认装得下、保证工具回执不被编辑器消息插队，然后才选本轮模型和工具箱。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文与模型选择顺序清楚，工具描述可随模型变化且同一 sequence 保持模型粘性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>614–663</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>664–715</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:614–715</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  614    private async *processTurn(
+  615      request: PartListUnion,
+  616      signal: AbortSignal,
+  617      prompt_id: string,
+  618      boundedTurns: number,
+  619      displayContent?: PartListUnion,
+  620    ): AsyncGenerator&lt;ServerGeminiStreamEvent, Turn&gt; {
+  621      // Re-initialize turn (it was empty before if in loop, or new instance)
+  622      let turn = new Turn(this.getChat(), prompt_id);
+  623
+  624      this.sessionTurnCount++;
+  625      if (
+  626        this.config.getMaxSessionTurns() &gt; 0 &amp;&amp;
+  627        this.sessionTurnCount &gt; this.config.getMaxSessionTurns()
+  628      ) {
+  629        yield { type: GeminiEventType.MaxSessionTurns };
+  630        return turn;
+  631      }
+  632
+  633      if (!boundedTurns) {
+  634        return turn;
+  635      }
+  636
+  637      // Check for context window overflow
+  638      const modelForLimitCheck = this._getActiveModelForCurrentTurn();
+  639
+  640      let currentBaseUnits = 0;
+  641      let apiHistoryOverride: Content[] | undefined = undefined;
+  642
+  643      if (this.config.getContextManagementConfig().enabled) {
+  644        if (this.contextManager) {
+  645          const rawPendingRequest = createUserContent(request);
+  646          const pendingRequest = {
+  647            id: randomUUID(),
+  648            content: rawPendingRequest,
+  649          };
+  650          const {
+  651            history: newHistory,
+  652            apiHistory,
+  653            pendingApiHistory,
+  654            baseUnits,
+  655          } = await this.contextManager.renderHistory(
+  656            pendingRequest,
+  657            undefined,
+  658            signal,
+  659          );
+  660
+  661          currentBaseUnits = baseUnits;
+  662
+  663          // Use the PROCESSED pending content if available (e.g. if cleaned or distilled)
+  664          const finalPendingContent =
+  665            pendingApiHistory.length &gt; 0
+  666              ? pendingApiHistory[0]
+  667              : rawPendingRequest;
+  668
+  669          // Late-bind the prompt: Append the active request to the managed history
+  670          // only for the purpose of the upcoming API call.
+  671          apiHistoryOverride = [...apiHistory, finalPendingContent];
+  672
+  673          this.getChat().setHistory(newHistory);
+  674
+  675          // Use the original request for display/recording,
+  676          // but the processed one for the API and durable history.
+  677          displayContent = rawPendingRequest.parts || [];
+  678          request = finalPendingContent.parts || [];
+  679        } else {
+  680          const newHistory = await this.agentHistoryProvider.manageHistory(
+  681            this.getHistory(),
+  682            signal,
+  683          );
+  684          if (newHistory.length !== this.getHistory().length) {
+  685            this.getChat().setHistory(newHistory);
+  686          }
+  687        }
+  688      } else {
+  689        const compressed = await this.tryCompressChat(prompt_id, false, signal);
+  690
+  691        if (compressed.compressionStatus === CompressionStatus.COMPRESSED) {
+  692          yield { type: GeminiEventType.ChatCompressed, value: compressed };
+  693        }
+  694      }
+  695
+  696      const remainingTokenCount =
+  697        tokenLimit(modelForLimitCheck) - this.getChat().getLastPromptTokenCount();
+  698
+  699      await this.tryMaskToolOutputs(this.getHistory());
+  700
+  701      // Estimate tokens. For text-only requests, we estimate based on character length.
+  702      // For requests with non-text parts (like images, tools), we use the countTokens API.
+  703      const estimatedRequestTokenCount = await calculateRequestTokenCount(
+  704        request,
+  705        this.getContentGeneratorOrFail(),
+  706        modelForLimitCheck,
+  707      );
+  708
+  709      if (estimatedRequestTokenCount &gt; remainingTokenCount) {
+  710        yield {
+  711          type: GeminiEventType.ContextWindowWillOverflow,
+  712          value: { estimatedRequestTokenCount, remainingTokenCount },
+  713        };
+  714        return turn;
+  715      }
+  716
+  717      // Prevent context updates from being sent while a tool call is
+  718      // waiting for a response. The Gemini API requires that a functionResponse
+  719      // part from the user immediately follows a functionCall part from the model
+  720      // in the conversation history . The IDE context is not discarded; it will
+  721      // be included in the next regular message sent to the model.
+  722      const history = this.getHistory();
+  723      const lastMessage =
+  724        history.length &gt; 0 ? history[history.length - 1] : undefined;
+  725      const hasPendingToolCall =
+  726        !!lastMessage &amp;&amp;
+  727        lastMessage.role === &#39;model&#39; &amp;&amp;
+  728        (lastMessage.parts?.some((p) =&gt; &#39;functionCall&#39; in p) || false);
+  729
+  730      if (this.config.getIdeMode() &amp;&amp; !hasPendingToolCall) {
+  731        const { contextParts, newIdeContext } = this.getIdeContextParts(
+  732          this.forceFullIdeContext || history.length === 0,
+  733        );
+  734        if (contextParts.length &gt; 0) {
+  735          this.getChat().addHistory({
+  736            role: &#39;user&#39;,
+  737            parts: [{ text: contextParts.join(&#39;\n&#39;) }],
+  738          });
+  739        }
+  740        this.lastSentIdeContext = newIdeContext;
+  741        this.forceFullIdeContext = false;
+  742      }
+  743
+  744      // Re-initialize turn with fresh history
+  745      turn = new Turn(this.getChat(), prompt_id);
+  746
+  747      const loopResult = await this.loopDetector.turnStarted(signal);
+  748      if (loopResult.count &gt; 1) {
+  749        yield { type: GeminiEventType.LoopDetected };
+  750        return turn;
+  751      } else if (loopResult.count === 1) {
+  752        if (boundedTurns &lt;= 1) {
+  753          yield { type: GeminiEventType.MaxSessionTurns };
+  754          return turn;
+  755        }
+  756        return yield* this._recoverFromLoop(
+  757          loopResult,
+  758          signal,
+  759          prompt_id,
+  760          boundedTurns,
+  761          displayContent,
+  762        );
+  763      }
+  764
+  765      const routingContext: RoutingContext = {
+  766        history: this.getChat().getHistory(/*curated=*/ true),
+  767        request,
+  768        signal,
+  769        requestedModel: this.config.getModel(),
+  770      };
+  771
+  772      let modelToUse: string;
+  773
+  774      // Determine Model (Stickiness vs. Routing)
+  775      if (this.currentSequenceModel) {
+  776        modelToUse = this.currentSequenceModel;
+  777      } else {
+  778        const router = this.config.getModelRouterService();
+  779        const decision = await router.route(routingContext);
+  780        modelToUse = decision.model;
+  781      }
+  782
+  783      // availability logic
+  784      const modelConfigKey: ModelConfigKey = {
+  785        model: modelToUse,
+  786        isChatModel: true,</code></pre></div></div></article><article class="finding-card compact" id="gemini-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 循环检测能先恢复一次，再判定硬循环</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</p></section><section><span>白话解释</span><p>第一次怀疑绕圈会给模型一次纠偏机会，第二次还绕就停。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>比仅靠 turn 上限更早止损，并保留一次自恢复空间。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>744–752</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>753–763</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · bef6119500b0 · <a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/core/src/core/client.ts:744–763</span><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  744      // Re-initialize turn with fresh history
+  745      turn = new Turn(this.getChat(), prompt_id);
+  746
+  747      const loopResult = await this.loopDetector.turnStarted(signal);
+  748      if (loopResult.count &gt; 1) {
+  749        yield { type: GeminiEventType.LoopDetected };
+  750        return turn;
+  751      } else if (loopResult.count === 1) {
+  752        if (boundedTurns &lt;= 1) {
+  753          yield { type: GeminiEventType.MaxSessionTurns };
+  754          return turn;
+  755        }
+  756        return yield* this._recoverFromLoop(
+  757          loopResult,
+  758          signal,
+  759          prompt_id,
+  760          boundedTurns,
+  761          displayContent,
+  762        );
+  763      }
+  764
+  765      const routingContext: RoutingContext = {
+  766        history: this.getChat().getHistory(/*curated=*/ true),
+  767        request,
+  768        signal,
+  769        requestedModel: this.config.getModel(),
+  770      };
+  771
+  772      let modelToUse: string;
+  773
+  774      // Determine Model (Stickiness vs. Routing)
+  775      if (this.currentSequenceModel) {
+  776        modelToUse = this.currentSequenceModel;
+  777      } else {
+  778        const router = this.config.getModelRouterService();
+  779        const decision = await router.route(routingContext);
+  780        modelToUse = decision.model;
+  781      }
+  782
+  783      // availability logic
+  784      const modelConfigKey: ModelConfigKey = {
+  785        model: modelToUse,
+  786        isChatModel: true,
+  787      };
+  788      const { model: finalModel } = applyModelSelection(
+  789        this.config,
+  790        modelConfigKey,
+  791        { consumeAttempt: false },
+  792      );
+  793      modelToUse = finalModel;
+  794
+  795      if (!signal.aborted &amp;&amp; !this.currentSequenceModel) {
+  796        yield { type: GeminiEventType.ModelInfo, value: modelToUse };
+  797      }
+  798      this.currentSequenceModel = modelToUse;
+  799
+  800      // Update tools with the final modelId to ensure model-dependent descriptions are used.
+  801      await this.setTools(modelToUse);
+  802
+  803      const resultStream = turn.run(modelConfigKey, request, signal, {
+  804        displayContent,
+  805        role: LlmRole.MAIN,
+  806        apiHistoryOverride,
+  807      });
+  808      let isError = false;
+  809
+  810      let loopDetectedAbort = false;
+  811      let loopRecoverResult: { detail?: string } | undefined;
+  812      for await (const event of resultStream) {
+  813        const loopResult = this.loopDetector.addAndCheck(event);
+  814        if (loopResult.count &gt; 1) {
+  815          yield { type: GeminiEventType.LoopDetected };
+  816          loopDetectedAbort = true;
+  817          break;
+  818        } else if (loopResult.count === 1) {
+  819          if (boundedTurns &lt;= 1) {
+  820            yield { type: GeminiEventType.MaxSessionTurns };
+  821            loopDetectedAbort = true;
+  822            break;
+  823          }
+  824          loopRecoverResult = loopResult;
+  825          break;
+  826        }
+  827        yield event;
+  828
+  829        if (event.type === GeminiEventType.Finished &amp;&amp; this.contextManager) {
+  830          const usageMetadata = event.value.usageMetadata;
+  831          if (usageMetadata &amp;&amp; usageMetadata.promptTokenCount !== undefined) {
+  832            this.contextManager.getEnvironment().eventBus.emitTokenGroundTruth({
+  833              actualTokens: usageMetadata.promptTokenCount,
+  834              promptBaseUnits: currentBaseUnits,</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>GeminiClient 将单次 turn 交给 processTurn；若 next-speaker 判定模型应继续，或 AfterAgent hook 返回继续原因，就递归调用 sendMessageStream 并递减 boundedTurns，入口始终 clamp 到 MAX_TURNS=100。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L79-L111" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:79–111 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>processTurn 先运行 context management/压缩与工具输出 masking，估算请求 token；为保持 functionCall→functionResponse 紧邻，会延迟 IDE context；随后 loop detector、model router/availability 和 model-dependent tool declarations 才进入 Turn.run。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L614-L715" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:614–715 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:744–763 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>turnStarted 和每个流事件都送入 LoopDetectionService；count=1 进入 _recoverFromLoop，count&gt;1 发 LoopDetected 并终止，剩余 turn 不足时转 MaxSessionTurns。</blockquote><a href="https://github.com/google-gemini/gemini-cli/blob/bef6119500b0238ad84f6396d2a6cabda9991554/packages/core/src/core/client.ts#L744-L763" target="_blank" rel="noreferrer">packages/core/src/core/client.ts:744–763 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Gemini CLI sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

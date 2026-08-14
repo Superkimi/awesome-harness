@@ -1,1 +1,449 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>Open Interpreter · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Open Interpreter · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Open Interpreter</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>984acc698cd0</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Open Interpreter · 984acc698cd0</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>2 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Open Interpreter · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/openinterpreter/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/openinterpreter/ch07-security.srt" data-video-status="published">SRT</a><em>984acc698cd0</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 2 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="oi-security-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · Harness 文件工具先过策略，且同时检查原路径与规范化路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>checked_read_path/checked_write_path 解析相对 cwd 后调用 file_system_sandbox_policy；policy_candidates_for_path 同时检查输入路径、canonical path，目标不存在时检查 canonical parent+filename，防止 symlink/别名绕过。</p></section><section><span>PLAIN LANGUAGE</span><p>即使换成 Claude/Pi 风格的 Read/Write，也不能因为路径里有软链接或奇怪别名绕过沙箱。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>兼容层与原生工具共享安全边界；搜索 walk 还跳过 symlink、限制 64 层和 5 万项。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · aaf0aebf8203 · <a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/tools/handlers/harness_fs.rs#L39-L94" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/handlers/harness_fs.rs:39–94</span><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/tools/handlers/harness_fs.rs#L39-L94" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>路径解析与读写 policy gate。</code></pre></div></div></article><article class="finding-card compact" id="oi-security-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 审批和能力授权是两条轴，OS 沙箱是真实进程变换</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>配置将 approval policy 与 permission profile 分开编译；执行时根据平台把命令变换成 macOS sandbox-exec/Seatbelt、Linux seccomp+bubblewrap/landlock 或 Windows restricted token/private desktop，SandboxType::None 才是不变换。</p></section><section><span>PLAIN LANGUAGE</span><p>“要不要先问你”与“即使你同意，它最多能碰哪里”是两回事；后者不是提示词，而是操作系统级限制。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>这是该分叉继承的最重要企业能力之一；选择 danger/full access 或 SandboxType::None 会主动撤掉这层保护。</p></section><small class="finding-source-note">Narrative from historical evidence ledger · aaf0aebf8203 · <a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">open ledger commit ↗</a></small><small class="finding-source-note">Current refreshed snapshot · <a href="https://github.com/openinterpreter/openinterpreter/blob/984acc698cd038885ecb0b82721402b01e11a5ad/codex-rs/core/src/tools/handlers/harness_fs.rs#L39-L94" target="_blank" rel="noreferrer">codex-rs/core/src/tools/handlers/harness_fs.rs:39–94 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/config/permissions.rs:170–260</span><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>permission profile 与 sandbox policy 编译。</code></pre></div></div></article></div><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Open Interpreter architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="What do approval, capability restriction, and isolation each solve?"><title>Open Interpreter · M07 · Security: approvals, permissions, boundaries</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../en/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Open Interpreter · English</span><nav><a href="../../../../en/index.html">Overview</a><a href="../analysis.html">Analysis</a><a href="index.html">Tutorial</a><a href="../../zh/tutorial/ch07-security.html">中</a><a href="ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Open Interpreter</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">Technical analysis</a><div class="side-label">CHAPTERS</div><a class="" href="ch01-overview.html"><span>M01</span>Overview: start with the problem</a><a class="" href="ch02-architecture.html"><span>M02</span>Architecture: layers and ownership</a><a class="" href="ch03-loop.html"><span>M03</span>The loop: why work keeps moving</a><a class="" href="ch04-model.html"><span>M04</span>Models and messages: turning streams into state</a><a class="" href="ch05-tools.html"><span>M05</span>Tools: registering the agent&#39;s hands</a><a class="" href="ch06-context.html"><span>M06</span>Context: keeping long tasks coherent</a><a class="active" href="ch07-security.html"><span>M07</span>Security: approvals, permissions, boundaries</a><a class="" href="ch08-ecosystem.html"><span>M08</span>Extensions: MCP, Skills, and plugins</a><a class="" href="ch09-collaboration.html"><span>M09</span>Collaboration: sub-agents and workflows</a><a class="" href="ch10-evidence.html"><span>M10</span>Evidence and trade-offs: bringing lessons home</a><div class="side-foot">main<br>984acc698cd0</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Open Interpreter · 984acc698cd0</p><h1>Security: approvals, permissions, boundaries</h1><p class="lede">What do approval, capability restriction, and isolation each solve?</p><div class="chapter-meta"><span>Chapter 7 / 10</span><span>2 source findings</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>VIDEO + SUBTITLES</span><h2>Turn the source reading into a reviewable short video</h2></div><p>The videos promise only what the page and source can prove; script, frames, SRT, and MP4 stay versioned together.</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Open Interpreter · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/openinterpreter/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/openinterpreter/ch07-security.srt" data-video-status="published">SRT</a><em>984acc698cd0</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>ROUTE</span><b>Question</b><i>→</i><b>Analogy</b><i>→</i><b>Evidence board</b><i>→</i><b>Four questions</b><i>→</i><b>Map</b><i>→</i><b>Exercise</b></div><div class="callout"><b>Start with a concrete analogy</b><p>Approval is a guard checking a booking, permissions are an access card, and a sandbox is a designated room.</p></div><h2>Answer the chapter question first</h2><p>What do approval, capability restriction, and isolation each solve? Read the implementation as input, state, tool effect, receipt, and recovery—not as a feature list.</p><h2>Evidence board: 2 findings</h2><p>Do not treat one code block as the whole system. Each card separates fact, plain language, engineering impact, caveat, and a clickable pinned source.</p><div class="finding-stack"><article class="finding-card compact" id="oi-security-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · Harness 文件工具先过策略，且同时检查原路径与规范化路径</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>checked_read_path/checked_write_path 解析相对 cwd 后调用 file_system_sandbox_policy；policy_candidates_for_path 同时检查输入路径、canonical path，目标不存在时检查 canonical parent+filename，防止 symlink/别名绕过。</p></section><section><span>PLAIN LANGUAGE</span><p>即使换成 Claude/Pi 风格的 Read/Write，也不能因为路径里有软链接或奇怪别名绕过沙箱。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>兼容层与原生工具共享安全边界；搜索 walk 还跳过 symlink、限制 64 层和 5 万项。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>39–65</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>66–94</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · aaf0aebf8203 · <a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/tools/handlers/harness_fs.rs#L39-L94" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/handlers/harness_fs.rs:39–94</span><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/tools/handlers/harness_fs.rs#L39-L94" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>   39  pub(crate) fn resolve_model_path(
+   40      invocation: &amp;ToolInvocation,
+   41      path: &amp;str,
+   42  ) -&gt; Result&lt;PathBuf, FunctionCallError&gt; {
+   43      let path = normalize_model_path_text(path);
+   44      let path = PathBuf::from(path);
+   45      if path.is_absolute() {
+   46          Ok(path)
+   47      } else {
+   48          Ok(primary_cwd(invocation).join(path))
+   49      }
+   50  }
+   51
+   52  pub(crate) fn checked_read_path(
+   53      invocation: &amp;ToolInvocation,
+   54      path: &amp;str,
+   55      operation: &amp;str,
+   56  ) -&gt; Result&lt;PathBuf, FunctionCallError&gt; {
+   57      let path = resolve_model_path(invocation, path)?;
+   58      ensure_read_allowed(invocation, &amp;path, operation)?;
+   59      Ok(path)
+   60  }
+   61
+   62  pub(crate) fn checked_write_path(
+   63      invocation: &amp;ToolInvocation,
+   64      path: &amp;str,
+   65      operation: &amp;str,
+   66  ) -&gt; Result&lt;PathBuf, FunctionCallError&gt; {
+   67      let path = resolve_model_path(invocation, path)?;
+   68      ensure_write_allowed(invocation, &amp;path, operation)?;
+   69      Ok(path)
+   70  }
+   71
+   72  pub(crate) fn ensure_read_allowed(
+   73      invocation: &amp;ToolInvocation,
+   74      path: &amp;Path,
+   75      operation: &amp;str,
+   76  ) -&gt; Result&lt;(), FunctionCallError&gt; {
+   77      ensure_allowed(invocation, path, AccessKind::Read, operation)
+   78  }
+   79
+   80  pub(crate) fn ensure_write_allowed(
+   81      invocation: &amp;ToolInvocation,
+   82      path: &amp;Path,
+   83      operation: &amp;str,
+   84  ) -&gt; Result&lt;(), FunctionCallError&gt; {
+   85      ensure_allowed(invocation, path, AccessKind::Write, operation)
+   86  }
+   87
+   88  pub(crate) fn read_search_file(path: &amp;Path) -&gt; Option&lt;String&gt; {
+   89      let metadata = fs::symlink_metadata(path).ok()?;
+   90      let file_type = metadata.file_type();
+   91      if !file_type.is_file() || file_type.is_symlink() || metadata.len() &gt; MAX_SEARCH_FILE_BYTES {
+   92          return None;
+   93      }
+   94      fs::read_to_string(path).ok()
+   95  }
+   96
+   97  pub(crate) fn bounded_walk(root: &amp;Path) -&gt; io::Result&lt;Vec&lt;WalkEntry&gt;&gt; {
+   98      let root_metadata = fs::symlink_metadata(root)?;
+   99      if root_metadata.file_type().is_symlink() {
+  100          return Ok(Vec::new());
+  101      }
+  102      if root_metadata.is_file() {
+  103          return Ok(vec![WalkEntry {
+  104              path: root.to_path_buf(),
+  105              kind: WalkEntryKind::File,
+  106          }]);
+  107      }
+  108      if !root_metadata.is_dir() || is_ignored_dir(root) {
+  109          return Ok(Vec::new());
+  110      }
+  111
+  112      let mut entries = Vec::new();
+  113      let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
+  114      while let Some((dir, depth)) = queue.pop_front() {
+  115          if depth &gt;= MAX_WALK_DEPTH || entries.len() &gt;= MAX_WALK_ENTRIES {
+  116              continue;
+  117          }
+  118          for entry in fs::read_dir(&amp;dir)? {
+  119              let entry = entry?;
+  120              let path = entry.path();
+  121              let metadata = fs::symlink_metadata(&amp;path)?;
+  122              let file_type = metadata.file_type();
+  123              if file_type.is_symlink() {
+  124                  continue;
+  125              }
+  126              if file_type.is_file() {
+  127                  entries.push(WalkEntry {
+  128                      path,
+  129                      kind: WalkEntryKind::File,
+  130                  });
+  131              } else if file_type.is_dir() &amp;&amp; !is_ignored_dir(&amp;path) {
+  132                  entries.push(WalkEntry {
+  133                      path: path.clone(),
+  134                      kind: WalkEntryKind::Directory,
+  135                  });
+  136                  queue.push_back((path, depth + 1));
+  137              }
+  138              if entries.len() &gt;= MAX_WALK_ENTRIES {
+  139                  break;
+  140              }
+  141          }
+  142      }
+  143      Ok(entries)
+  144  }
+  145
+  146  pub(crate) fn is_ignored_dir(path: &amp;Path) -&gt; bool {
+  147      path.file_name()
+  148          .and_then(|name| name.to_str())
+  149          .is_some_and(|name| matches!(name, &quot;.git&quot; | &quot;node_modules&quot; | &quot;target&quot; | &quot;.venv&quot;))
+  150  }
+  151
+  152  #[derive(Clone, Copy)]
+  153  enum AccessKind {
+  154      Read,
+  155      Write,
+  156  }
+  157
+  158  fn ensure_allowed(
+  159      invocation: &amp;ToolInvocation,
+  160      path: &amp;Path,
+  161      access: AccessKind,
+  162      operation: &amp;str,
+  163  ) -&gt; Result&lt;(), FunctionCallError&gt; {
+  164      let cwd = primary_cwd(invocation);
+  165      let policy = invocation.turn.file_system_sandbox_policy();</code></pre></div></div></article><article class="finding-card compact" id="oi-security-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 审批和能力授权是两条轴，OS 沙箱是真实进程变换</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>SOURCE FACT</span><p>配置将 approval policy 与 permission profile 分开编译；执行时根据平台把命令变换成 macOS sandbox-exec/Seatbelt、Linux seccomp+bubblewrap/landlock 或 Windows restricted token/private desktop，SandboxType::None 才是不变换。</p></section><section><span>PLAIN LANGUAGE</span><p>“要不要先问你”与“即使你同意，它最多能碰哪里”是两回事；后者不是提示词，而是操作系统级限制。</p></section><section class="finding-impact"><span>IMPLICATION</span><p>这是该分叉继承的最重要企业能力之一；选择 danger/full access 或 SandboxType::None 会主动撤掉这层保护。</p></section><div class="line-guide"><span>LINE-BY-LINE READING</span><ol><li><code>170–214</code><div><b>Inputs, configuration, and state</b><p>Identify who owns the input, which configuration is read, and which state is created.</p></div></li><li><code>215–260</code><div><b>Branches, effects, and receipts</b><p>Trace conditions, external calls, event writes, and failure exits instead of reading only names.</p></div></li><li><code>after</code><div><b>Return to the caller</b><p>Follow the caller and the next event to see how this code&#39;s result is consumed.</p></div></li></ol></div><small class="finding-source-note">Narrative from historical evidence ledger · aaf0aebf8203 · <a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">open ledger commit ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/config/permissions.rs:170–260</span><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">PINNED ↗</a></div><pre><code>  170          unix_sockets: feature_config.unix_sockets.as_ref().map(|unix_sockets| {
+  171              NetworkUnixSocketPermissionsToml {
+  172                  entries: unix_sockets
+  173                      .iter()
+  174                      .map(|(path, permission)| {
+  175                          let permission = match permission {
+  176                              NetworkProxyUnixSocketPermissionToml::Allow =&gt; {
+  177                                  NetworkUnixSocketPermissionToml::Allow
+  178                              }
+  179                              NetworkProxyUnixSocketPermissionToml::Deny =&gt; {
+  180                                  NetworkUnixSocketPermissionToml::Deny
+  181                              }
+  182                          };
+  183                          (path.clone(), permission)
+  184                      })
+  185                      .collect(),
+  186              }
+  187          }),
+  188          allow_local_binding: feature_config.allow_local_binding,
+  189          mitm: None,
+  190      }
+  191      .apply_to_network_proxy_config(config);
+  192  }
+  193
+  194  pub(crate) fn resolve_permission_profile(
+  195      permissions: &amp;PermissionsToml,
+  196      profile_name: &amp;str,
+  197  ) -&gt; io::Result&lt;PermissionProfileToml&gt; {
+  198      permissions
+  199          .resolve_profile(profile_name, extensible_builtin_parent_profile)
+  200          .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))
+  201  }
+  202
+  203  fn extensible_builtin_parent_profile(profile_name: &amp;str) -&gt; Option&lt;PermissionProfileToml&gt; {
+  204      let file_system = match profile_name {
+  205          BUILT_IN_READ_ONLY_PROFILE =&gt; FileSystemSandboxPolicy::read_only(),
+  206          BUILT_IN_WORKSPACE_PROFILE =&gt; FileSystemSandboxPolicy::workspace_write(
+  207              &amp;[],
+  208              /*exclude_tmpdir_env_var*/ false,
+  209              /*exclude_slash_tmp*/ false,
+  210          ),
+  211          _ =&gt; return None,
+  212      };
+  213      Some(permission_profile_toml_from_file_system_policy(file_system))
+  214  }
+  215
+  216  fn permission_profile_toml_from_file_system_policy(
+  217      file_system: FileSystemSandboxPolicy,
+  218  ) -&gt; PermissionProfileToml {
+  219      let mut filesystem = FilesystemPermissionsToml {
+  220          glob_scan_max_depth: file_system.glob_scan_max_depth,
+  221          entries: BTreeMap::new(),
+  222      };
+  223      for entry in file_system.entries {
+  224          insert_filesystem_permission_toml(&amp;mut filesystem.entries, entry);
+  225      }
+  226      PermissionProfileToml {
+  227          description: None,
+  228          extends: None,
+  229          workspace_roots: None,
+  230          filesystem: Some(filesystem),
+  231          network: None,
+  232      }
+  233  }
+  234
+  235  fn insert_filesystem_permission_toml(
+  236      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  237      entry: FileSystemSandboxEntry,
+  238  ) {
+  239      match entry.path {
+  240          FileSystemPath::Path { path } =&gt; {
+  241              entries.insert(
+  242                  path.into_path_buf().to_string_lossy().into_owned(),
+  243                  FilesystemPermissionToml::Access(entry.access),
+  244              );
+  245          }
+  246          FileSystemPath::GlobPattern { pattern } =&gt; {
+  247              entries.insert(pattern, FilesystemPermissionToml::Access(entry.access));
+  248          }
+  249          FileSystemPath::Special { value } =&gt; {
+  250              insert_special_filesystem_permission_toml(entries, value, entry.access);
+  251          }
+  252      }
+  253  }
+  254
+  255  fn insert_special_filesystem_permission_toml(
+  256      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  257      value: FileSystemSpecialPath,
+  258      access: FileSystemAccessMode,
+  259  ) {
+  260      match value {
+  261          FileSystemSpecialPath::Root =&gt; {
+  262              entries.insert(
+  263                  &quot;:root&quot;.to_string(),
+  264                  FilesystemPermissionToml::Access(access),
+  265              );
+  266          }
+  267          FileSystemSpecialPath::Minimal =&gt; {
+  268              entries.insert(
+  269                  &quot;:minimal&quot;.to_string(),
+  270                  FilesystemPermissionToml::Access(access),
+  271              );
+  272          }
+  273          FileSystemSpecialPath::ProjectRoots { subpath } =&gt; {
+  274              insert_scoped_filesystem_permission_toml(
+  275                  entries,
+  276                  &quot;:workspace_roots&quot;.to_string(),
+  277                  subpath.unwrap_or_else(|| &quot;.&quot;.to_string()),
+  278                  access,
+  279              );
+  280          }
+  281          FileSystemSpecialPath::Tmpdir =&gt; {
+  282              entries.insert(
+  283                  &quot;:tmpdir&quot;.to_string(),
+  284                  FilesystemPermissionToml::Access(access),
+  285              );
+  286          }
+  287          FileSystemSpecialPath::SlashTmp =&gt; {
+  288              entries.insert(
+  289                  &quot;:slash_tmp&quot;.to_string(),
+  290                  FilesystemPermissionToml::Access(access),
+  291              );
+  292          }
+  293          FileSystemSpecialPath::Unknown { path, subpath } =&gt; {
+  294              if let Some(subpath) = subpath {
+  295                  insert_scoped_filesystem_permission_toml(entries, path, subpath, access);
+  296              } else {
+  297                  entries.insert(path, FilesystemPermissionToml::Access(access));
+  298              }
+  299          }
+  300      };
+  301  }
+  302
+  303  fn insert_scoped_filesystem_permission_toml(
+  304      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  305      path: String,
+  306      subpath: String,
+  307      access: FileSystemAccessMode,
+  308  ) {
+  309      let permission = entries
+  310          .entry(path)
+  311          .or_insert_with(|| FilesystemPermissionToml::Scoped(BTreeMap::new()));
+  312      match permission {
+  313          FilesystemPermissionToml::Scoped(scoped_entries) =&gt; {
+  314              scoped_entries.insert(subpath, access);
+  315          }
+  316          FilesystemPermissionToml::Access(_) =&gt; {
+  317              *permission = FilesystemPermissionToml::Scoped(BTreeMap::from([(subpath, access)]));
+  318          }
+  319      }
+  320  }
+  321
+  322  pub(crate) fn network_proxy_config_for_profile_selection(
+  323      permissions: Option&lt;&amp;PermissionsToml&gt;,
+  324      profile_name: &amp;str,
+  325  ) -&gt; io::Result&lt;NetworkProxyConfig&gt; {
+  326      if is_builtin_permission_profile_name(profile_name) {
+  327          return Ok(NetworkProxyConfig::default());
+  328      }
+  329      reject_unknown_builtin_permission_profile(profile_name)?;
+  330
+  331      let permissions = permissions.ok_or_else(|| {</code></pre><details class="current-source"><summary>Show the same path from the refreshed commit</summary><div class="finding-code-head"><span>codex-rs/core/src/config/permissions.rs · 984acc698cd0</span><a href="https://github.com/openinterpreter/openinterpreter/blob/984acc698cd038885ecb0b82721402b01e11a5ad/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">CURRENT ↗</a></div><pre><code>  170          unix_sockets: feature_config.unix_sockets.as_ref().map(|unix_sockets| {
+  171              NetworkUnixSocketPermissionsToml {
+  172                  entries: unix_sockets
+  173                      .iter()
+  174                      .map(|(path, permission)| {
+  175                          let permission = match permission {
+  176                              NetworkProxyUnixSocketPermissionToml::Allow =&gt; {
+  177                                  NetworkUnixSocketPermissionToml::Allow
+  178                              }
+  179                              NetworkProxyUnixSocketPermissionToml::Deny =&gt; {
+  180                                  NetworkUnixSocketPermissionToml::Deny
+  181                              }
+  182                          };
+  183                          (path.clone(), permission)
+  184                      })
+  185                      .collect(),
+  186              }
+  187          }),
+  188          allow_local_binding: feature_config.allow_local_binding,
+  189          mitm: None,
+  190      }
+  191      .apply_to_network_proxy_config(config);
+  192  }
+  193
+  194  pub(crate) fn resolve_permission_profile(
+  195      permissions: &amp;PermissionsToml,
+  196      profile_name: &amp;str,
+  197  ) -&gt; io::Result&lt;PermissionProfileToml&gt; {
+  198      permissions
+  199          .resolve_profile(profile_name, extensible_builtin_parent_profile)
+  200          .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))
+  201  }
+  202
+  203  fn extensible_builtin_parent_profile(profile_name: &amp;str) -&gt; Option&lt;PermissionProfileToml&gt; {
+  204      let file_system = match profile_name {
+  205          BUILT_IN_READ_ONLY_PROFILE =&gt; FileSystemSandboxPolicy::read_only(),
+  206          BUILT_IN_WORKSPACE_PROFILE =&gt; FileSystemSandboxPolicy::workspace_write(
+  207              &amp;[],
+  208              /*exclude_tmpdir_env_var*/ false,
+  209              /*exclude_slash_tmp*/ false,
+  210          ),
+  211          _ =&gt; return None,
+  212      };
+  213      Some(permission_profile_toml_from_file_system_policy(file_system))
+  214  }
+  215
+  216  fn permission_profile_toml_from_file_system_policy(
+  217      file_system: FileSystemSandboxPolicy,
+  218  ) -&gt; PermissionProfileToml {
+  219      let mut filesystem = FilesystemPermissionsToml {
+  220          glob_scan_max_depth: file_system.glob_scan_max_depth,
+  221          entries: BTreeMap::new(),
+  222      };
+  223      for entry in file_system.entries {
+  224          insert_filesystem_permission_toml(&amp;mut filesystem.entries, entry);
+  225      }
+  226      PermissionProfileToml {
+  227          description: None,
+  228          extends: None,
+  229          workspace_roots: None,
+  230          filesystem: Some(filesystem),
+  231          network: None,
+  232      }
+  233  }
+  234
+  235  fn insert_filesystem_permission_toml(
+  236      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  237      entry: FileSystemSandboxEntry,
+  238  ) {
+  239      if entry.skips_missing_path() {
+  240          return;
+  241      }
+  242
+  243      match entry.path {
+  244          FileSystemPath::Path { path } =&gt; {
+  245              entries.insert(
+  246                  path.into_path_buf().to_string_lossy().into_owned(),
+  247                  FilesystemPermissionToml::Access(entry.access),
+  248              );
+  249          }
+  250          FileSystemPath::GlobPattern { pattern } =&gt; {
+  251              entries.insert(pattern, FilesystemPermissionToml::Access(entry.access));
+  252          }
+  253          FileSystemPath::Special { value } =&gt; {
+  254              insert_special_filesystem_permission_toml(entries, value, entry.access);
+  255          }
+  256      }
+  257  }
+  258
+  259  fn insert_special_filesystem_permission_toml(
+  260      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  261      value: FileSystemSpecialPath,
+  262      access: FileSystemAccessMode,
+  263  ) {
+  264      match value {
+  265          FileSystemSpecialPath::Root =&gt; {
+  266              entries.insert(
+  267                  &quot;:root&quot;.to_string(),
+  268                  FilesystemPermissionToml::Access(access),
+  269              );
+  270          }
+  271          FileSystemSpecialPath::Minimal =&gt; {
+  272              entries.insert(
+  273                  &quot;:minimal&quot;.to_string(),
+  274                  FilesystemPermissionToml::Access(access),
+  275              );
+  276          }
+  277          FileSystemSpecialPath::ProjectRoots { subpath } =&gt; {
+  278              insert_scoped_filesystem_permission_toml(
+  279                  entries,
+  280                  &quot;:workspace_roots&quot;.to_string(),
+  281                  subpath.unwrap_or_else(|| &quot;.&quot;.to_string()),
+  282                  access,
+  283              );
+  284          }
+  285          FileSystemSpecialPath::Tmpdir =&gt; {
+  286              entries.insert(
+  287                  &quot;:tmpdir&quot;.to_string(),
+  288                  FilesystemPermissionToml::Access(access),
+  289              );
+  290          }
+  291          FileSystemSpecialPath::SlashTmp =&gt; {
+  292              entries.insert(
+  293                  &quot;:slash_tmp&quot;.to_string(),
+  294                  FilesystemPermissionToml::Access(access),
+  295              );
+  296          }
+  297          FileSystemSpecialPath::Unknown { path, subpath } =&gt; {
+  298              if let Some(subpath) = subpath {
+  299                  insert_scoped_filesystem_permission_toml(entries, path, subpath, access);
+  300              } else {
+  301                  entries.insert(path, FilesystemPermissionToml::Access(access));
+  302              }
+  303          }
+  304      };
+  305  }
+  306
+  307  fn insert_scoped_filesystem_permission_toml(
+  308      entries: &amp;mut BTreeMap&lt;String, FilesystemPermissionToml&gt;,
+  309      path: String,
+  310      subpath: String,
+  311      access: FileSystemAccessMode,
+  312  ) {
+  313      let permission = entries
+  314          .entry(path)
+  315          .or_insert_with(|| FilesystemPermissionToml::Scoped(BTreeMap::new()));
+  316      match permission {
+  317          FilesystemPermissionToml::Scoped(scoped_entries) =&gt; {
+  318              scoped_entries.insert(subpath, access);
+  319          }
+  320          FilesystemPermissionToml::Access(_) =&gt; {
+  321              *permission = FilesystemPermissionToml::Scoped(BTreeMap::from([(subpath, access)]));
+  322          }
+  323      }
+  324  }
+  325
+  326  pub(crate) fn network_proxy_config_for_profile_selection(
+  327      permissions: Option&lt;&amp;PermissionsToml&gt;,
+  328      profile_name: &amp;str,
+  329  ) -&gt; io::Result&lt;NetworkProxyConfig&gt; {
+  330      if is_builtin_permission_profile_name(profile_name) {
+  331          return Ok(NetworkProxyConfig::default());</code></pre></details></div></div></article></div><h2>Four questions: from code to execution semantics</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · FOUR IMPLEMENTATION QUESTIONS</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>Entry / registration</h3><p>Locate who creates the run, registers capabilities, and turns input into state.</p><blockquote>checked_read_path/checked_write_path 解析相对 cwd 后调用 file_system_sandbox_policy；policy_candidates_for_path 同时检查输入路径、canonical path，目标不存在时检查 canonical parent+filename，防止 symlink/别名绕过。</blockquote><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/tools/handlers/harness_fs.rs#L39-L94" target="_blank" rel="noreferrer">codex-rs/core/src/tools/handlers/harness_fs.rs:39–94 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>State / projection</h3><p>Find ownership of sessions, context, queues, or projections; UI copy is not state.</p><blockquote>配置将 approval policy 与 permission profile 分开编译；执行时根据平台把命令变换成 macOS sandbox-exec/Seatbelt、Linux seccomp+bubblewrap/landlock 或 Windows restricted token/private desktop，SandboxType::None 才是不变换。</blockquote><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">codex-rs/core/src/config/permissions.rs:170–260 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>Operation / transaction</h3><p>Separate model output, tool effects, policy checks, and receipts.</p><blockquote>配置将 approval policy 与 permission profile 分开编译；执行时根据平台把命令变换成 macOS sandbox-exec/Seatbelt、Linux seccomp+bubblewrap/landlock 或 Windows restricted token/private desktop，SandboxType::None 才是不变换。</blockquote><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">codex-rs/core/src/config/permissions.rs:170–260 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>Failure / recovery</h3><p>Trace retry, compaction, cancellation, rollback, persistence, or human takeover.</p><blockquote>配置将 approval policy 与 permission profile 分开编译；执行时根据平台把命令变换成 macOS sandbox-exec/Seatbelt、Linux seccomp+bubblewrap/landlock 或 Windows restricted token/private desktop，SandboxType::None 才是不变换。</blockquote><a href="https://github.com/openinterpreter/openinterpreter/blob/aaf0aebf8203559711df6ed25b265a3f096bd3ea/codex-rs/core/src/config/permissions.rs#L170-L260" target="_blank" rel="noreferrer">codex-rs/core/src/config/permissions.rs:170–260 ↗</a></article></div></section><h2>Place the evidence on the full chain</h2><div class="flow-strip"><span>Input / event</span><i>→</i><span>Rules / state</span><i>→</i><span>Model / tool</span><i>→</i><span>Receipt / persistence</span><i>→</i><span>Recovery / next</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="Open Interpreter architecture" loading="lazy"></iframe><h2>Exercise: do more than repeat</h2><div class="exercise"><p>Hide the plain-language blocks and read only the code: who creates state, who can mutate it, where do side effects occur, and what receipt is written on failure? Verify the answer against the pinned line link.</p><details><summary>Show hint</summary><ul><li>Find inputs and state before function names.</li><li>Keep policy, approval, and sandbox separate.</li><li>If a claim comes from a historical ledger, check the historical commit marker on the card.</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← Context: keeping long tasks coherent</a><a href="ch08-ecosystem.html">Extensions: MCP, Skills, and plugins →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

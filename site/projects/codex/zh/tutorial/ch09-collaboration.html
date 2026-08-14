@@ -1,1 +1,787 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="什么时候是工具，什么时候才是协作单元？"><title>OpenAI Codex · M09 · 协作：子 Agent 与工作流</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch09-collaboration.html">中</a><a href="../../en/tutorial/ch09-collaboration.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="active" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M09 · OpenAI Codex · 902bd9e06b3e</p><h1>协作：子 Agent 与工作流</h1><p class="lede">什么时候是工具，什么时候才是协作单元？</p><div class="chapter-meta"><span>第 9 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M09</span><b>OpenAI Codex · M09 · 协作：子 Agent 与工作流</b></div><div class="video-links"><a href="../../../../videos/codex/ch09-collaboration.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch09-collaboration.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>真正协作像派工单：要有负责的人、边界、预算、取消方式和可验收的交付物。</p></div><h2>先回答本章问题</h2><p>什么时候是工具，什么时候才是协作单元？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-agent-001" data-finding-dimension="collaboration"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>01 · 多 Agent 是共享控制面的线程树，不是主循环里的递归函数</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>每棵 root thread 树共享 AgentControl、registry、V2 residency、execution limiter 和 rollout budget；spawn 通过 ThreadManager 创建独立 thread，子线程继承环境与 exec policy。</p></section><section><span>白话解释</span><p>每个子 Agent 都有自己的会话账本，但兄弟们共用一张组织架构表、并发配额和总预算。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>隔离了对话状态，同时能做全树限流、恢复和协作观测。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/agent/control.rs:70–111</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>root-scoped control plane 状态。</code></pre></div></div></article><article class="finding-card compact" id="codex-agent-002" data-finding-dimension="collaboration"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>02 · fork 可选全历史、最近 N 轮或空白；消息可只入队也可触发 turn</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>spawn_agent V2 解析 fork_turns none/all/正整数，默认 all；send_message 只投递队列，followup 类通信可触发空闲 agent 开新 turn，wait 同时监听 mailbox、steer 和 timeout。</p></section><section><span>白话解释</span><p>派工时可把整本案卷、最近几页或一张白纸交给下属；便签可以只塞进邮箱，也可以按门铃让他立即处理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文成本可控，并避免普通消息总是打断正在执行的子任务。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">codex-rs/core/src/agent/control.rs:70–111 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs:39–165</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>spawn 参数、子配置和 telemetry。</code></pre></div></div></article><article class="finding-card compact" id="codex-agent-003" data-finding-dimension="collaboration"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>03 · 驻留上限与同时执行上限分离，V2 子 Agent 才受执行 limiter</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>V2 的 effective_agent_max_threads 从 max_concurrent_threads_per_session 减去 root；AgentExecutionLimiter 只在 V2 SubAgent 启动新 turn 时检查 active 数，已有 active turn 的消息不重复占槽，guard drop 释放名额。</p></section><section><span>白话解释</span><p>可以让许多子会话留在通讯录里，但只有有限几个同时开工；已经在干活的人收到补充便签不会再算一个工位。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>资源治理比单一 agent count 精细，恢复/驻留和运行并发可以独立调优。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">codex-rs/core/src/agent/control.rs:70–111 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/config/mod.rs:1547–1560</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>V2/legacy 有效线程数计算。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="OpenAI Codex capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch08-ecosystem.html">← 扩展：MCP、Skill、插件如何接入</a><a href="ch10-evidence.html">证据与取舍：把源码结论带回自研 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="什么时候是工具，什么时候才是协作单元？"><title>OpenAI Codex · M09 · 协作：子 Agent 与工作流</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch09-collaboration.html">中</a><a href="../../en/tutorial/ch09-collaboration.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="active" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M09 · OpenAI Codex · 902bd9e06b3e</p><h1>协作：子 Agent 与工作流</h1><p class="lede">什么时候是工具，什么时候才是协作单元？</p><div class="chapter-meta"><span>第 9 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M09</span><b>OpenAI Codex · M09 · 协作：子 Agent 与工作流</b></div><div class="video-links"><a href="../../../../videos/codex/ch09-collaboration.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch09-collaboration.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>真正协作像派工单：要有负责的人、边界、预算、取消方式和可验收的交付物。</p></div><h2>先回答本章问题</h2><p>什么时候是工具，什么时候才是协作单元？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-agent-001" data-finding-dimension="collaboration"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>01 · 多 Agent 是共享控制面的线程树，不是主循环里的递归函数</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>每棵 root thread 树共享 AgentControl、registry、V2 residency、execution limiter 和 rollout budget；spawn 通过 ThreadManager 创建独立 thread，子线程继承环境与 exec policy。</p></section><section><span>白话解释</span><p>每个子 Agent 都有自己的会话账本，但兄弟们共用一张组织架构表、并发配额和总预算。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>隔离了对话状态，同时能做全树限流、恢复和协作观测。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>70–89</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>90–111</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/agent/control.rs:70–111</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   70      pub(crate) fork_parent_spawn_call_id: Option&lt;String&gt;,
+   71      pub(crate) fork_mode: Option&lt;SpawnAgentForkMode&gt;,
+   72      pub(crate) parent_thread_id: Option&lt;ThreadId&gt;,
+   73      pub(crate) environments: Option&lt;Vec&lt;TurnEnvironmentSelection&gt;&gt;,
+   74  }
+   75
+   76  #[derive(Clone, Debug)]
+   77  pub(crate) struct LiveAgent {
+   78      pub(crate) thread_id: ThreadId,
+   79      pub(crate) metadata: AgentMetadata,
+   80      pub(crate) status: AgentStatus,
+   81  }
+   82
+   83  #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+   84  pub(crate) struct ListedAgent {
+   85      pub(crate) agent_name: String,
+   86      pub(crate) agent_status: AgentStatus,
+   87  }
+   88
+   89  /// Control-plane handle for multi-agent operations.
+   90  /// `AgentControl` is held by each session (via `SessionServices`). It provides capability to
+   91  /// spawn new agents and the inter-agent communication layer.
+   92  /// An `AgentControl` instance is intended to be created at most once per root thread/session
+   93  /// tree. That same `AgentControl` is then shared with every sub-agent spawned from that root,
+   94  /// which keeps the registry scoped to that root thread rather than the entire `ThreadManager`.
+   95  #[derive(Clone, Default)]
+   96  pub(crate) struct AgentControl {
+   97      /// ID shared by the whole agent control session. This means every sub-agents from a common
+   98      /// root share the same session ID.
+   99      session_id: SessionId,
+  100      /// Weak handle back to the global thread registry/state.
+  101      /// This is `Weak` to avoid reference cycles and shadow persistence of the form
+  102      /// `ThreadManagerState -&gt; CodexThread -&gt; Session -&gt; SessionServices -&gt; ThreadManagerState`.
+  103      manager: Weak&lt;ThreadManagerState&gt;,
+  104      state: Arc&lt;AgentRegistry&gt;,
+  105      v2_residency: Arc&lt;V2Residency&gt;,
+  106      agent_execution_limiter: Arc&lt;AgentExecutionLimiter&gt;,
+  107      /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
+  108      rollout_budget: Arc&lt;RolloutBudget&gt;,
+  109  }
+  110
+  111  impl AgentControl {
+  112      /// Construct a new `AgentControl` that can spawn/message agents via the given manager state.
+  113      pub(crate) fn new(
+  114          manager: Weak&lt;ThreadManagerState&gt;,
+  115          rollout_budget: Option&lt;RolloutBudgetConfig&gt;,
+  116      ) -&gt; Self {
+  117          let control = Self {
+  118              manager,
+  119              ..Default::default()
+  120          };
+  121          if let Some(rollout_budget) = rollout_budget {
+  122              control.rollout_budget.configure(rollout_budget);
+  123          }
+  124          control
+  125      }
+  126
+  127      pub(crate) fn with_session_id(mut self, session_id: SessionId, max_threads: usize) -&gt; Self {
+  128          self.session_id = session_id;
+  129          self.agent_execution_limiter.initialize(max_threads);
+  130          self
+  131      }
+  132
+  133      pub(crate) fn session_id(&amp;self) -&gt; SessionId {
+  134          self.session_id
+  135      }
+  136
+  137      pub(crate) fn rollout_budget(&amp;self) -&gt; &amp;RolloutBudget {
+  138          self.rollout_budget.as_ref()
+  139      }
+  140
+  141      /// Send rich user input items to an existing agent thread.
+  142      pub(crate) async fn send_input(
+  143          &amp;self,
+  144          agent_id: ThreadId,
+  145          input: Vec&lt;UserInput&gt;,
+  146      ) -&gt; CodexResult&lt;String&gt; {
+  147          let state = self.upgrade()?;
+  148          self.ensure_execution_capacity_for_turn_start(agent_id, /*starts_turn*/ true)
+  149              .await?;
+  150          self.send_input_after_capacity_check(agent_id, &amp;state, input)
+  151              .await
+  152      }
+  153
+  154      async fn send_input_after_capacity_check(
+  155          &amp;self,
+  156          agent_id: ThreadId,
+  157          state: &amp;Arc&lt;ThreadManagerState&gt;,
+  158          input: Vec&lt;UserInput&gt;,
+  159      ) -&gt; CodexResult&lt;String&gt; {
+  160          self.handle_thread_request_result(
+  161              agent_id,
+  162              state,
+  163              state.send_op(agent_id, input.into()).await,
+  164          )
+  165          .await
+  166      }
+  167
+  168      pub(crate) async fn send_inter_agent_communication(
+  169          &amp;self,
+  170          agent_id: ThreadId,
+  171          communication: InterAgentCommunication,
+  172          agent_communication_context: AgentCommunicationContext,
+  173      ) -&gt; CodexResult&lt;String&gt; {
+  174          let state = self.upgrade()?;
+  175          self.ensure_execution_capacity_for_turn_start(agent_id, communication.trigger_turn)
+  176              .await?;
+  177          self.send_inter_agent_communication_after_capacity_check(
+  178              agent_id,
+  179              &amp;state,
+  180              communication,
+  181              agent_communication_context,
+  182          )</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/agent/control.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   70      FullHistory,
+   71      LastNTurns(usize),
+   72  }
+   73
+   74  #[derive(Clone, Debug, Default)]
+   75  pub(crate) struct SpawnAgentOptions {
+   76      pub(crate) fork_parent_spawn_call_id: Option&lt;String&gt;,
+   77      pub(crate) fork_mode: Option&lt;SpawnAgentForkMode&gt;,
+   78      pub(crate) parent_thread_id: Option&lt;ThreadId&gt;,
+   79      pub(crate) parent_turn_id: Option&lt;String&gt;,
+   80      pub(crate) root_turn_id: Option&lt;String&gt;,
+   81      pub(crate) environments: Option&lt;Vec&lt;TurnEnvironmentSelection&gt;&gt;,
+   82  }
+   83
+   84  #[derive(Clone, Debug)]
+   85  pub(crate) struct LiveAgent {
+   86      pub(crate) thread_id: ThreadId,
+   87      pub(crate) metadata: AgentMetadata,
+   88      pub(crate) status: AgentStatus,
+   89  }
+   90
+   91  #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+   92  pub(crate) struct ListedAgent {
+   93      pub(crate) agent_name: String,
+   94      pub(crate) agent_status: AgentStatus,
+   95  }
+   96
+   97  /// Control-plane handle for multi-agent operations.
+   98  /// `AgentControl` is held by each session (via `SessionServices`). It provides capability to
+   99  /// spawn new agents and the inter-agent communication layer.
+  100  /// An `AgentControl` instance is intended to be created at most once per root thread/session
+  101  /// tree. That same `AgentControl` is then shared with every sub-agent spawned from that root,
+  102  /// which keeps the registry scoped to that root thread rather than the entire `ThreadManager`.
+  103  #[derive(Clone)]
+  104  pub(crate) struct AgentControl {
+  105      /// ID shared by the whole agent control session. This means every sub-agents from a common
+  106      /// root share the same session ID.
+  107      session_id: SessionId,
+  108      /// Weak handle back to the global thread registry/state.
+  109      /// This is `Weak` to avoid reference cycles and shadow persistence of the form
+  110      /// `ThreadManagerState -&gt; CodexThread -&gt; Session -&gt; SessionServices -&gt; ThreadManagerState`.
+  111      manager: Weak&lt;ThreadManagerState&gt;,
+  112      /// Captured at construction so delegates retain their manager&#39;s allocation policy.
+  113      thread_id_generator: ThreadIdGenerator,
+  114      state: Arc&lt;AgentRegistry&gt;,
+  115      v2_residency: Arc&lt;V2Residency&gt;,
+  116      agent_execution_limiter: Arc&lt;AgentExecutionLimiter&gt;,
+  117      /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
+  118      rollout_budget: Arc&lt;RolloutBudget&gt;,
+  119  }
+  120
+  121  impl Default for AgentControl {
+  122      fn default() -&gt; Self {
+  123          Self::new(
+  124              Weak::default(),
+  125              default_thread_id_generator(),
+  126              /*rollout_budget*/ None,
+  127          )
+  128      }
+  129  }
+  130
+  131  impl AgentControl {
+  132      /// Construct a new `AgentControl` that can spawn/message agents via the given manager state.
+  133      pub(crate) fn new(
+  134          manager: Weak&lt;ThreadManagerState&gt;,
+  135          thread_id_generator: ThreadIdGenerator,
+  136          rollout_budget: Option&lt;RolloutBudgetConfig&gt;,
+  137      ) -&gt; Self {
+  138          let control = Self {
+  139              session_id: SessionId::default(),
+  140              manager,
+  141              thread_id_generator,
+  142              state: Arc::default(),
+  143              v2_residency: Arc::default(),
+  144              agent_execution_limiter: Arc::default(),
+  145              rollout_budget: Arc::default(),
+  146          };
+  147          if let Some(rollout_budget) = rollout_budget {
+  148              control.rollout_budget.configure(rollout_budget);
+  149          }
+  150          control
+  151      }
+  152
+  153      pub(crate) fn with_session_id(mut self, session_id: SessionId, max_threads: usize) -&gt; Self {
+  154          self.session_id = session_id;
+  155          self.agent_execution_limiter.initialize(max_threads);
+  156          self
+  157      }
+  158
+  159      pub(crate) fn session_id(&amp;self) -&gt; SessionId {
+  160          self.session_id
+  161      }
+  162
+  163      pub(crate) fn generate_thread_id(&amp;self) -&gt; ThreadId {
+  164          (self.thread_id_generator)()
+  165      }
+  166
+  167      pub(crate) fn rollout_budget(&amp;self) -&gt; &amp;RolloutBudget {
+  168          self.rollout_budget.as_ref()
+  169      }
+  170
+  171      /// Send rich user input items to an existing agent thread.
+  172      pub(crate) async fn send_input(
+  173          &amp;self,
+  174          agent_id: ThreadId,
+  175          input: Vec&lt;UserInput&gt;,
+  176          parent_turn_id: Option&lt;String&gt;,
+  177          root_turn_id: Option&lt;String&gt;,
+  178      ) -&gt; CodexResult&lt;String&gt; {
+  179          let state = self.upgrade()?;
+  180          let thread = state.get_thread(agent_id).await?;
+  181          let result = match thread
+  182              .start_or_steer_turn(</code></pre></details></div></div></article><article class="finding-card compact" id="codex-agent-002" data-finding-dimension="collaboration"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>02 · fork 可选全历史、最近 N 轮或空白；消息可只入队也可触发 turn</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>spawn_agent V2 解析 fork_turns none/all/正整数，默认 all；send_message 只投递队列，followup 类通信可触发空闲 agent 开新 turn，wait 同时监听 mailbox、steer 和 timeout。</p></section><section><span>白话解释</span><p>派工时可把整本案卷、最近几页或一张白纸交给下属；便签可以只塞进邮箱，也可以按门铃让他立即处理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>上下文成本可控，并避免普通消息总是打断正在执行的子任务。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>39–101</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>102–165</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs:39–165</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   39  async fn handle_spawn_agent(
+   40      invocation: ToolInvocation,
+   41  ) -&gt; Result&lt;SpawnAgentResult, FunctionCallError&gt; {
+   42      let ToolInvocation {
+   43          session,
+   44          turn,
+   45          payload,
+   46          call_id,
+   47          ..
+   48      } = invocation;
+   49      let arguments = function_arguments(payload)?;
+   50      let args: SpawnAgentArgs = parse_arguments(&amp;arguments)?;
+   51      let fork_mode = args.fork_mode()?;
+   52      let role_name = args
+   53          .agent_type
+   54          .as_deref()
+   55          .map(str::trim)
+   56          .filter(|role| !role.is_empty());
+   57
+   58      let message = message_content(args.message)?;
+   59      let session_source = turn.session_source.clone();
+   60      let child_depth = next_thread_spawn_depth(&amp;session_source);
+   61      let mut config =
+   62          build_agent_spawn_config(&amp;session.get_base_instructions().await, turn.as_ref())?;
+   63      if let Some(service_tier) = args.service_tier.as_ref() {
+   64          config.service_tier = Some(service_tier.clone());
+   65      }
+   66      let is_full_history_fork = matches!(fork_mode, Some(SpawnAgentForkMode::FullHistory));
+   67      if is_full_history_fork {
+   68          reject_full_fork_agent_type_override(role_name)?;
+   69      }
+   70      apply_requested_spawn_agent_model_overrides(
+   71          &amp;session,
+   72          turn.as_ref(),
+   73          &amp;mut config,
+   74          args.model.as_deref(),
+   75          args.reasoning_effort.clone(),
+   76      )
+   77      .await?;
+   78      if !is_full_history_fork {
+   79          apply_spawn_agent_role(&amp;session, &amp;mut config, role_name).await?;
+   80      }
+   81      apply_spawn_agent_service_tier(
+   82          &amp;session,
+   83          &amp;mut config,
+   84          turn.config.service_tier.as_deref(),
+   85          args.service_tier.as_deref(),
+   86      )
+   87      .await?;
+   88      apply_spawn_agent_runtime_overrides(&amp;mut config, turn.as_ref())?;
+   89
+   90      let spawn_source = thread_spawn_source(
+   91          session.thread_id,
+   92          &amp;turn.session_source,
+   93          child_depth,
+   94          role_name,
+   95          Some(args.task_name.clone()),
+   96      )?;
+   97      let new_agent_path = spawn_source.get_agent_path().ok_or_else(|| {
+   98          FunctionCallError::RespondToModel(
+   99              &quot;spawned agent is missing a canonical task name&quot;.to_string(),
+  100          )
+  101      })?;
+  102      let author = turn
+  103          .session_source
+  104          .get_agent_path()
+  105          .unwrap_or_else(AgentPath::root);
+  106      let communication = communication_from_tool_message(author, new_agent_path.clone(), message);
+  107      let context = AgentCommunicationContext::new(AgentCommunicationKind::Spawn, session.thread_id);
+  108      let spawned_agent = Box::pin(
+  109          session
+  110              .services
+  111              .agent_control
+  112              .spawn_agent_with_communication(
+  113                  config,
+  114                  communication,
+  115                  context,
+  116                  Some(spawn_source),
+  117                  SpawnAgentOptions {
+  118                      fork_parent_spawn_call_id: fork_mode.as_ref().map(|_| call_id.clone()),
+  119                      fork_mode,
+  120                      parent_thread_id: Some(session.thread_id),
+  121                      environments: Some(turn.environments.to_selections()),
+  122                  },
+  123              ),
+  124      )
+  125      .await
+  126      .map_err(collab_spawn_error)?;
+  127      let new_thread_id = spawned_agent.thread_id;
+  128      let agent_snapshot = session
+  129          .services
+  130          .agent_control
+  131          .get_agent_config_snapshot(new_thread_id)
+  132          .await;
+  133      let nickname = agent_snapshot
+  134          .as_ref()
+  135          .and_then(|snapshot| snapshot.session_source.get_nickname())
+  136          .or(spawned_agent.metadata.agent_nickname);
+  137      emit_sub_agent_activity(
+  138          &amp;session,
+  139          &amp;turn,
+  140          SubAgentActivityItem {
+  141              id: call_id,
+  142              agent_thread_id: new_thread_id,
+  143              agent_path: new_agent_path.clone(),
+  144              kind: SubAgentActivityKind::Started,
+  145          },
+  146      )
+  147      .await;
+  148      let role_tag = role_name.unwrap_or(DEFAULT_ROLE_NAME);
+  149      turn.session_telemetry.counter(
+  150          &quot;codex.multi_agent.spawn&quot;,
+  151          /*inc*/ 1,
+  152          &amp;[(&quot;role&quot;, role_tag), (&quot;version&quot;, &quot;v2&quot;)],
+  153      );
+  154      let task_name = String::from(new_agent_path);
+  155
+  156      let hide_agent_metadata = turn.config.multi_agent_v2.hide_spawn_agent_metadata;
+  157      if hide_agent_metadata {
+  158          Ok(SpawnAgentResult::HiddenMetadata { task_name })
+  159      } else {
+  160          Ok(SpawnAgentResult::WithNickname {
+  161              task_name,
+  162              nickname,
+  163          })
+  164      }
+  165  }
+  166
+  167  impl CoreToolRuntime for Handler {
+  168      fn matches_kind(&amp;self, payload: &amp;ToolPayload) -&gt; bool {
+  169          matches!(payload, ToolPayload::Function { .. })
+  170      }
+  171  }
+  172
+  173  #[derive(Debug, Deserialize)]
+  174  #[serde(deny_unknown_fields)]
+  175  struct SpawnAgentArgs {
+  176      message: String,
+  177      task_name: String,
+  178      agent_type: Option&lt;String&gt;,
+  179      model: Option&lt;String&gt;,
+  180      reasoning_effort: Option&lt;ReasoningEffort&gt;,
+  181      service_tier: Option&lt;String&gt;,
+  182      fork_turns: Option&lt;String&gt;,
+  183      fork_context: Option&lt;bool&gt;,
+  184  }
+  185
+  186  impl SpawnAgentArgs {
+  187      fn fork_mode(&amp;self) -&gt; Result&lt;Option&lt;SpawnAgentForkMode&gt;, FunctionCallError&gt; {
+  188          if self.fork_context.is_some() {
+  189              return Err(FunctionCallError::RespondToModel(
+  190                  &quot;fork_context is not supported in MultiAgentV2; use fork_turns instead&quot;.to_string(),
+  191              ));
+  192          }
+  193
+  194          let fork_turns = self
+  195              .fork_turns
+  196              .as_deref()
+  197              .map(str::trim)
+  198              .filter(|fork_turns| !fork_turns.is_empty())
+  199              .unwrap_or(&quot;all&quot;);
+  200
+  201          if fork_turns.eq_ignore_ascii_case(&quot;none&quot;) {
+  202              return Ok(None);
+  203          }
+  204          if fork_turns.eq_ignore_ascii_case(&quot;all&quot;) {
+  205              return Ok(Some(SpawnAgentForkMode::FullHistory));
+  206          }
+  207
+  208          let last_n_turns = fork_turns.parse::&lt;usize&gt;().map_err(|_| {
+  209              FunctionCallError::RespondToModel(
+  210                  &quot;fork_turns must be `none`, `all`, or a positive integer string&quot;.to_string(),
+  211              )
+  212          })?;
+  213          if last_n_turns == 0 {
+  214              return Err(FunctionCallError::RespondToModel(
+  215                  &quot;fork_turns must be `none`, `all`, or a positive integer string&quot;.to_string(),
+  216              ));
+  217          }
+  218
+  219          Ok(Some(SpawnAgentForkMode::LastNTurns(last_n_turns)))
+  220      }
+  221  }
+  222
+  223  #[derive(Debug, Serialize)]
+  224  #[serde(untagged)]
+  225  pub(crate) enum SpawnAgentResult {
+  226      WithNickname {
+  227          task_name: String,
+  228          nickname: Option&lt;String&gt;,
+  229      },
+  230      HiddenMetadata {
+  231          task_name: String,
+  232      },
+  233  }
+  234
+  235  impl ToolOutput for SpawnAgentResult {
+  236      fn log_preview(&amp;self) -&gt; String {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   39  async fn handle_spawn_agent(
+   40      invocation: ToolInvocation,
+   41  ) -&gt; Result&lt;SpawnAgentResult, FunctionCallError&gt; {
+   42      let ToolInvocation {
+   43          session,
+   44          step_context,
+   45          payload,
+   46          call_id,
+   47          source,
+   48          ..
+   49      } = invocation;
+   50      let turn = &amp;step_context.turn;
+   51      let arguments = function_arguments(payload)?;
+   52      let args: SpawnAgentArgs = parse_arguments(&amp;arguments)?;
+   53      let fork_mode = args.fork_mode()?;
+   54      let message = message_content(args.message)?;
+   55      let role_name = args
+   56          .agent_type
+   57          .as_deref()
+   58          .map(str::trim)
+   59          .filter(|role| !role.is_empty());
+   60
+   61      let session_source = turn.session_source.clone();
+   62      let child_depth = next_thread_spawn_depth(&amp;session_source);
+   63      let mut config = build_agent_spawn_config(
+   64          &amp;session.get_base_instructions().await,
+   65          turn.as_ref(),
+   66          step_context.environments.primary(),
+   67      )?;
+   68      if let Some(service_tier) = args.service_tier.as_ref() {
+   69          config.service_tier = Some(service_tier.clone());
+   70      }
+   71      let is_full_history_fork = matches!(fork_mode, Some(SpawnAgentForkMode::FullHistory));
+   72      apply_requested_spawn_agent_model_overrides(
+   73          &amp;session,
+   74          turn.as_ref(),
+   75          &amp;mut config,
+   76          args.model.as_deref(),
+   77          args.reasoning_effort.clone(),
+   78      )
+   79      .await?;
+   80      if !is_full_history_fork || role_name.is_some() {
+   81          apply_spawn_agent_role(&amp;session, &amp;mut config, role_name).await?;
+   82          if is_full_history_fork &amp;&amp; config.developer_instructions.is_none() {
+   83              config
+   84                  .developer_instructions
+   85                  .clone_from(&amp;turn.developer_instructions);
+   86          }
+   87      }
+   88      apply_spawn_agent_service_tier(
+   89          &amp;session,
+   90          &amp;mut config,
+   91          turn.config.service_tier.as_deref(),
+   92          args.service_tier.as_deref(),
+   93      )
+   94      .await?;
+   95      apply_spawn_agent_runtime_overrides(
+   96          &amp;mut config,
+   97          turn.as_ref(),
+   98          step_context.environments.primary(),
+   99      )?;
+  100
+  101      let spawn_source = thread_spawn_source(
+  102          session.thread_id,
+  103          &amp;turn.session_source,
+  104          child_depth,
+  105          role_name,
+  106          Some(args.task_name.clone()),
+  107      )?;
+  108      let new_agent_path = spawn_source.get_agent_path().ok_or_else(|| {
+  109          FunctionCallError::RespondToModel(
+  110              &quot;spawned agent is missing a canonical task name&quot;.to_string(),
+  111          )
+  112      })?;
+  113      let author = turn
+  114          .session_source
+  115          .get_agent_path()
+  116          .unwrap_or_else(AgentPath::root);
+  117      let communication = communication_from_tool_message(
+  118          author,
+  119          new_agent_path.clone(),
+  120          message,
+  121          &amp;source,
+  122          /*trigger_turn*/ true,
+  123      );
+  124      let context = AgentCommunicationContext::new(AgentCommunicationKind::Spawn, session.thread_id);
+  125      let spawned_agent = Box::pin(
+  126          session
+  127              .services
+  128              .agent_control
+  129              .spawn_agent_with_communication(
+  130                  config,
+  131                  communication,
+  132                  context,
+  133                  Some(spawn_source),
+  134                  SpawnAgentOptions {
+  135                      fork_parent_spawn_call_id: fork_mode.as_ref().map(|_| call_id.clone()),
+  136                      fork_mode,
+  137                      parent_thread_id: Some(session.thread_id),
+  138                      parent_turn_id: Some(turn.sub_id.clone()),
+  139                      root_turn_id: turn.turn_metadata_state.root_turn_id(),
+  140                      environments: Some(step_context.environments.to_selections()),
+  141                  },
+  142              ),
+  143      )
+  144      .await
+  145      .map_err(collab_spawn_error)?;
+  146      let new_thread_id = spawned_agent.thread_id;
+  147      let agent_snapshot = session
+  148          .services
+  149          .agent_control
+  150          .get_agent_config_snapshot(new_thread_id)
+  151          .await;
+  152      let nickname = agent_snapshot
+  153          .as_ref()
+  154          .and_then(|snapshot| snapshot.session_source.get_nickname())
+  155          .or(spawned_agent.metadata.agent_nickname);
+  156      emit_sub_agent_activity(
+  157          &amp;session,
+  158          turn,
+  159          SubAgentActivityItem {
+  160              id: call_id,
+  161              agent_thread_id: new_thread_id,
+  162              agent_path: new_agent_path.clone(),
+  163              kind: SubAgentActivityKind::Started,
+  164          },
+  165      )
+  166      .await;
+  167      let role_tag = role_name.unwrap_or(DEFAULT_ROLE_NAME);
+  168      turn.session_telemetry.counter(
+  169          &quot;codex.multi_agent.spawn&quot;,
+  170          /*inc*/ 1,
+  171          &amp;[(&quot;role&quot;, role_tag), (&quot;version&quot;, &quot;v2&quot;)],
+  172      );
+  173      let task_name = String::from(new_agent_path);
+  174
+  175      let hide_agent_metadata = turn.config.multi_agent_v2.hide_spawn_agent_metadata;
+  176      if hide_agent_metadata {
+  177          Ok(SpawnAgentResult::HiddenMetadata { task_name })
+  178      } else {
+  179          Ok(SpawnAgentResult::WithNickname {
+  180              task_name,
+  181              nickname,
+  182          })
+  183      }
+  184  }
+  185
+  186  impl CoreToolRuntime for Handler {
+  187      fn matches_kind(&amp;self, payload: &amp;ToolPayload) -&gt; bool {
+  188          matches!(payload, ToolPayload::Function { .. })
+  189      }
+  190  }
+  191
+  192  #[derive(Debug, Deserialize)]
+  193  #[serde(deny_unknown_fields)]
+  194  struct SpawnAgentArgs {
+  195      message: String,
+  196      task_name: String,
+  197      agent_type: Option&lt;String&gt;,
+  198      model: Option&lt;String&gt;,
+  199      reasoning_effort: Option&lt;ReasoningEffort&gt;,
+  200      service_tier: Option&lt;String&gt;,
+  201      fork_turns: Option&lt;String&gt;,
+  202      fork_context: Option&lt;bool&gt;,
+  203  }
+  204
+  205  impl SpawnAgentArgs {
+  206      fn fork_mode(&amp;self) -&gt; Result&lt;Option&lt;SpawnAgentForkMode&gt;, FunctionCallError&gt; {
+  207          if self.fork_context.is_some() {
+  208              return Err(FunctionCallError::RespondToModel(
+  209                  &quot;fork_context is not supported in MultiAgentV2; use fork_turns instead&quot;.to_string(),
+  210              ));
+  211          }
+  212
+  213          let fork_turns = self
+  214              .fork_turns
+  215              .as_deref()
+  216              .map(str::trim)
+  217              .filter(|fork_turns| !fork_turns.is_empty())
+  218              .unwrap_or(&quot;all&quot;);
+  219
+  220          if fork_turns.eq_ignore_ascii_case(&quot;none&quot;) {
+  221              return Ok(None);
+  222          }
+  223          if fork_turns.eq_ignore_ascii_case(&quot;all&quot;) {
+  224              return Ok(Some(SpawnAgentForkMode::FullHistory));
+  225          }
+  226
+  227          let last_n_turns = fork_turns.parse::&lt;usize&gt;().map_err(|_| {
+  228              FunctionCallError::RespondToModel(
+  229                  &quot;fork_turns must be `none`, `all`, or a positive integer string&quot;.to_string(),
+  230              )
+  231          })?;
+  232          if last_n_turns == 0 {
+  233              return Err(FunctionCallError::RespondToModel(
+  234                  &quot;fork_turns must be `none`, `all`, or a positive integer string&quot;.to_string(),
+  235              ));
+  236          }</code></pre></details></div></div></article><article class="finding-card compact" id="codex-agent-003" data-finding-dimension="collaboration"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>collaboration</span></div><h3>03 · 驻留上限与同时执行上限分离，V2 子 Agent 才受执行 limiter</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>V2 的 effective_agent_max_threads 从 max_concurrent_threads_per_session 减去 root；AgentExecutionLimiter 只在 V2 SubAgent 启动新 turn 时检查 active 数，已有 active turn 的消息不重复占槽，guard drop 释放名额。</p></section><section><span>白话解释</span><p>可以让许多子会话留在通讯录里，但只有有限几个同时开工；已经在干活的人收到补充便签不会再算一个工位。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>资源治理比单一 agent count 精细，恢复/驻留和运行并发可以独立调优。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1547–1552</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1553–1560</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/config/mod.rs:1547–1560</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1547      pub(crate) fn effective_agent_max_threads(
+ 1548          &amp;self,
+ 1549          multi_agent_version: MultiAgentVersion,
+ 1550      ) -&gt; Option&lt;usize&gt; {
+ 1551          match multi_agent_version {
+ 1552              MultiAgentVersion::V2 =&gt; Some(
+ 1553                  self.multi_agent_v2
+ 1554                      .max_concurrent_threads_per_session
+ 1555                      .saturating_sub(1),
+ 1556              ),
+ 1557              MultiAgentVersion::Disabled | MultiAgentVersion::V1 =&gt; {
+ 1558                  self.agent_max_threads.or(DEFAULT_AGENT_MAX_THREADS)
+ 1559              }
+ 1560          }
+ 1561      }
+ 1562
+ 1563      pub fn legacy_sandbox_policy(&amp;self) -&gt; SandboxPolicy {
+ 1564          self.permissions.legacy_sandbox_policy(self.cwd.as_path())
+ 1565      }
+ 1566
+ 1567      pub fn set_legacy_sandbox_policy(
+ 1568          &amp;mut self,
+ 1569          sandbox_policy: SandboxPolicy,
+ 1570      ) -&gt; ConstraintResult&lt;()&gt; {
+ 1571          self.workspace_roots_explicit = matches!(
+ 1572              &amp;sandbox_policy,
+ 1573              SandboxPolicy::WorkspaceWrite { writable_roots, .. } if !writable_roots.is_empty()
+ 1574          );
+ 1575          self.permissions
+ 1576              .set_legacy_sandbox_policy(sandbox_policy, self.cwd.as_path())?;
+ 1577          self.workspace_roots = self.permissions.workspace_roots().to_vec();
+ 1578          Ok(())
+ 1579      }
+ 1580
+ 1581      pub fn effective_workspace_roots(&amp;self) -&gt; Vec&lt;AbsolutePathBuf&gt; {
+ 1582          let mut workspace_roots = self.workspace_roots.clone();
+ 1583          workspace_roots.extend(self.permissions.profile_workspace_roots().iter().cloned());
+ 1584          dedupe_absolute_paths(&amp;mut workspace_roots);
+ 1585          workspace_roots
+ 1586      }
+ 1587
+ 1588      pub fn to_models_manager_config(&amp;self) -&gt; ModelsManagerConfig {
+ 1589          ModelsManagerConfig {
+ 1590              model_context_window: self.model_context_window,
+ 1591              model_auto_compact_token_limit: self.model_auto_compact_token_limit,
+ 1592              tool_output_token_limit: self.tool_output_token_limit,
+ 1593              base_instructions: self.base_instructions.clone(),
+ 1594              personality_enabled: self.features.enabled(Feature::Personality),
+ 1595              personality: self.personality,
+ 1596              model_catalog: self.model_catalog.clone(),
+ 1597          }
+ 1598      }
+ 1599
+ 1600      /// Returns auth routing resolved from the effective feature configuration.
+ 1601      pub fn auth_route_config(&amp;self) -&gt; AuthRouteConfig {
+ 1602          AuthRouteConfig::from_http_client_factory(self.http_client_factory())
+ 1603      }
+ 1604
+ 1605      /// Creates the HTTP client factory resolved from the effective feature configuration.
+ 1606      pub fn http_client_factory(&amp;self) -&gt; HttpClientFactory {
+ 1607          let outbound_proxy_policy = if self.respect_system_proxy {
+ 1608              OutboundProxyPolicy::RespectSystemProxy
+ 1609          } else {
+ 1610              OutboundProxyPolicy::ReqwestDefault
+ 1611          };
+ 1612          HttpClientFactory::new(outbound_proxy_policy)
+ 1613      }
+ 1614
+ 1615      /// Build the plugin-manager input from the effective config.
+ 1616      pub fn plugins_config_input(&amp;self) -&gt; PluginsConfigInput {
+ 1617          PluginsConfigInput::new(
+ 1618              self.config_layer_stack.clone(),
+ 1619              self.model_provider_id.clone(),
+ 1620              self.features.enabled(Feature::Plugins),
+ 1621              self.features.enabled(Feature::RemotePlugin),
+ 1622              self.chatgpt_base_url.clone(),
+ 1623              self.http_client_factory(),
+ 1624          )
+ 1625      }
+ 1626
+ 1627      /// Applies managed MCP requirements to servers supplied by one plugin.
+ 1628      pub fn apply_plugin_mcp_server_requirements(
+ 1629          &amp;self,
+ 1630          plugin_id: &amp;str,
+ 1631          mcp_servers: &amp;mut HashMap&lt;String, McpServerConfig&gt;,</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/config/mod.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/config/mod.rs#L1547-L1560" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code> 1547          self.multi_agent_version_override()
+ 1548              .or(model_multi_agent_version)
+ 1549              .unwrap_or_else(|| self.multi_agent_version_from_features())
+ 1550      }
+ 1551
+ 1552      pub(crate) fn effective_agent_max_threads(
+ 1553          &amp;self,
+ 1554          multi_agent_version: MultiAgentVersion,
+ 1555      ) -&gt; Option&lt;usize&gt; {
+ 1556          match multi_agent_version {
+ 1557              MultiAgentVersion::V2 =&gt; Some(
+ 1558                  self.multi_agent_v2
+ 1559                      .max_concurrent_threads_per_session
+ 1560                      .saturating_sub(1),
+ 1561              ),
+ 1562              MultiAgentVersion::Disabled | MultiAgentVersion::V1 =&gt; {
+ 1563                  self.agent_max_threads.or(DEFAULT_AGENT_MAX_THREADS)
+ 1564              }
+ 1565          }
+ 1566      }
+ 1567
+ 1568      pub fn legacy_sandbox_policy(&amp;self) -&gt; SandboxPolicy {
+ 1569          self.permissions.legacy_sandbox_policy(self.cwd.as_path())
+ 1570      }
+ 1571
+ 1572      pub fn set_legacy_sandbox_policy(
+ 1573          &amp;mut self,
+ 1574          sandbox_policy: SandboxPolicy,
+ 1575      ) -&gt; ConstraintResult&lt;()&gt; {
+ 1576          self.workspace_roots_explicit = matches!(
+ 1577              &amp;sandbox_policy,
+ 1578              SandboxPolicy::WorkspaceWrite { writable_roots, .. } if !writable_roots.is_empty()
+ 1579          );
+ 1580          self.permissions
+ 1581              .set_legacy_sandbox_policy(sandbox_policy, self.cwd.as_path())?;
+ 1582          self.workspace_roots = self.permissions.workspace_roots().to_vec();
+ 1583          Ok(())
+ 1584      }
+ 1585
+ 1586      pub fn effective_workspace_roots(&amp;self) -&gt; Vec&lt;AbsolutePathBuf&gt; {
+ 1587          let mut workspace_roots = self.workspace_roots.clone();
+ 1588          workspace_roots.extend(self.permissions.profile_workspace_roots().iter().cloned());
+ 1589          dedupe_absolute_paths(&amp;mut workspace_roots);
+ 1590          workspace_roots
+ 1591      }
+ 1592
+ 1593      pub fn to_models_manager_config(&amp;self) -&gt; ModelsManagerConfig {
+ 1594          ModelsManagerConfig {
+ 1595              model_context_window: self.model_context_window,
+ 1596              model_auto_compact_token_limit: self.model_auto_compact_token_limit,
+ 1597              tool_output_token_limit: self.tool_output_token_limit,
+ 1598              base_instructions: self.base_instructions.clone().filter(|_| {
+ 1599                  !matches!(
+ 1600                      self.base_instructions_provenance,
+ 1601                      Some(BaseInstructionsProvenance::Model { .. })
+ 1602                  )
+ 1603              }),
+ 1604              personality_enabled: self.features.enabled(Feature::Personality),
+ 1605              personality: self.personality,
+ 1606              model_catalog: self.model_catalog.clone(),
+ 1607          }
+ 1608      }
+ 1609
+ 1610      /// Returns auth routing resolved from the effective feature configuration.
+ 1611      pub fn auth_route_config(&amp;self) -&gt; AuthRouteConfig {
+ 1612          AuthRouteConfig::from_http_client_factory(self.http_client_factory())
+ 1613      }
+ 1614
+ 1615      /// Creates the HTTP client factory resolved from the effective feature configuration.
+ 1616      pub fn http_client_factory(&amp;self) -&gt; HttpClientFactory {
+ 1617          let outbound_proxy_policy = if self.respect_system_proxy {
+ 1618              OutboundProxyPolicy::RespectSystemProxy
+ 1619          } else {
+ 1620              OutboundProxyPolicy::ReqwestDefault
+ 1621          };
+ 1622          let factory = HttpClientFactory::new(outbound_proxy_policy);
+ 1623          if self.features.enabled(Feature::Psp) {
+ 1624              factory.with_chatgpt_cookies([HeaderValue::from_static(&quot;oai-chat-psp=true&quot;)])
+ 1625          } else {
+ 1626              factory
+ 1627          }
+ 1628      }
+ 1629
+ 1630      /// Build the plugin-manager input from the effective config.
+ 1631      pub fn plugins_config_input(&amp;self) -&gt; PluginsConfigInput {</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">COLLABORATION · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>每棵 root thread 树共享 AgentControl、registry、V2 residency、execution limiter 和 rollout budget；spawn 通过 ThreadManager 创建独立 thread，子线程继承环境与 exec policy。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control.rs#L70-L111" target="_blank" rel="noreferrer">codex-rs/core/src/agent/control.rs:70–111 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>spawn_agent V2 解析 fork_turns none/all/正整数，默认 all；send_message 只投递队列，followup 类通信可触发空闲 agent 开新 turn，wait 同时监听 mailbox、steer 和 timeout。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165" target="_blank" rel="noreferrer">codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs:39–165 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>V2 的 effective_agent_max_threads 从 max_concurrent_threads_per_session 减去 root；AgentExecutionLimiter 只在 V2 SubAgent 启动新 turn 时检查 active 数，已有 active turn 的消息不重复占槽，guard drop 释放名额。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560" target="_blank" rel="noreferrer">codex-rs/core/src/config/mod.rs:1547–1560 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>V2 的 effective_agent_max_threads 从 max_concurrent_threads_per_session 减去 root；AgentExecutionLimiter 只在 V2 SubAgent 启动新 turn 时检查 active 数，已有 active turn 的消息不重复占槽，guard drop 释放名额。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560" target="_blank" rel="noreferrer">codex-rs/core/src/config/mod.rs:1547–1560 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/capability.html" title="OpenAI Codex capability" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch08-ecosystem.html">← 扩展：MCP、Skill、插件如何接入</a><a href="ch10-evidence.html">证据与取舍：把源码结论带回自研 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,1 +1,1052 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>CodeWhale · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · CodeWhale · cfc2f2b13c07</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>CodeWhale · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch07-security.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-security-001" data-finding-dimension="security"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>01 · ExecPolicy 是 Builtin/Agent/User 三层规则，deny 优先且支持 arity-aware shell 判断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>execpolicy 定义 PermissionAction Allow/Ask/Deny、AskForApproval 语义和 Builtin/Agent/User ruleset layer；高层规则覆盖低层，同层 deny 优先于 ask/allow，检查顺序先 denied prefix、再 trusted 单段命令、链式调用 typed deny、最后 ask rule，并考虑参数个数。</p></section><section><span>白话解释</span><p>用户自己的规则可以补充策略，但不能把更高优先级的拒绝抹掉；`cargo test` 和 `cargo test --config ...` 也不会被当成同一件事。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>命令策略需要明确层级、优先级、链式命令和参数形态；只做字符串前缀 allowlist 很容易漏洞。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/execpolicy/src/lib.rs#L10-L32" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/sandbox/policy.rs#L17-L87" target="_blank" rel="noreferrer">crates/tui/src/sandbox/policy.rs:17–87 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/execpolicy/src/lib.rs:10–32</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/execpolicy/src/lib.rs#L10-L32" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>Builtin/Agent/User ruleset。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-security-002" data-finding-dimension="security"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>02 · 子 Agent 的执行权限从真实 capability 和 input 分类出来，并且只能收窄</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ExecutionEnvelope 不是工具名黑名单：它读取 ToolCapability 和 input-specific is_read_only，区分 bounded verification、ExecutesCode、WritesFiles、Network；narrow 用字段交集，后代不能扩大父级的 write/network/shell 权限。</p></section><section><span>白话解释</span><p>即使未来加了一个新 MCP 或插件，只要它声明会写文件/跑代码/联网，就会自动落入相应门槛；子 Agent 不能通过自定义角色把权限变宽。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多 Agent 权限应是可序列化能力 envelope，继承规则用交集，不要按角色名字散落在多处。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/execution_envelope.rs#L1-L59" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/sandbox/policy.rs#L17-L87" target="_blank" rel="noreferrer">crates/tui/src/sandbox/policy.rs:17–87 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/execution_envelope.rs:1–59</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/execution_envelope.rs#L1-L59" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>能力分类表与 fail-closed 设计。</code></pre></div></div></article><article class="finding-card compact" id="codewhale-security-003" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · ToolAuthorityEnvelope 对 headless/Fleet worker 做一次性外层封顶</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ToolAuthorityEnvelope 记录 schema、owner、ReadOnly/ScopedWrite、network、writable_roots/files 和 coordination contracts；normalized 拒绝空 scope 或 read-only 携带写权限，permit_mutation_path 只接受精确文件或 root，process authority 只能安装一次且不能被替换。</p></section><section><span>白话解释</span><p>Fleet 启动子进程时把“最多能写哪些地方”作为机器参数传进去；子 Agent 内部可以再收紧，但不能把它改成全盘写。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>外层 orchestrator 传给 worker 的 authority 应版本化、拒绝未知字段、绑定 owner 和不可替换。</p></section><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L150-L218" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/sandbox/policy.rs#L17-L87" target="_blank" rel="noreferrer">crates/tui/src/sandbox/policy.rs:17–87 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/spec.rs:150–218</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L150-L218" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>ToolAuthorityEnvelope schema、normalization 和 read-only invariants。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="CodeWhale architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>CodeWhale · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">CodeWhale · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>CodeWhale</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>cfc2f2b13c07</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · CodeWhale · cfc2f2b13c07</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>5 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>CodeWhale · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/codewhale/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codewhale/ch07-security.srt" data-video-status="published">SRT</a><em>cfc2f2b13c07</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 终端画面只是一个事件消费者；真正决定模型、工具和会话怎么走的是 Core Engine。这样换成 Web、ACP 或测试宿主时，不必再复制一套 Agent Loop。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codewhale-sandbox-001" data-finding-dimension="execution"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>execution</span></div><h3>01 · 默认 sandbox policy 是 workspace-write，但所有政策仍允许全盘读</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>SandboxPolicy 提供 DangerFullAccess、ReadOnly、ExternalSandbox 和 WorkspaceWrite；默认 WorkspaceWrite 只把 cwd/额外 roots（以及可选 /tmp/TMPDIR）设为可写且关闭网络，但 has_full_disk_read_access 对当前所有政策都返回 true。</p></section><section><span>白话解释</span><p>默认不是“只能看到项目”，而是“能看全盘但只能写项目和指定目录”；这对分析工具方便，对密钥读取风险更敏感。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>自研要把读取边界、写入边界和网络边界分别建模，不能把 workspace-write 误称为全隔离。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>17–51</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>52–87</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/sandbox/policy.rs#L17-L87" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/sandbox/policy.rs:17–87</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/sandbox/policy.rs#L17-L87" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   17  /// Determines execution restrictions for shell commands.
+   18  ///
+   19  /// The sandbox policy controls filesystem access, network access, and other
+   20  /// system resources for executed commands. Choose the most restrictive policy
+   21  /// that still allows your command to function.
+   22  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+   23  #[serde(tag = &quot;type&quot;, rename_all = &quot;kebab-case&quot;)]
+   24  pub enum SandboxPolicy {
+   25      /// No restrictions whatsoever. Use with extreme caution.
+   26      ///
+   27      /// This policy disables all sandboxing and allows full system access.
+   28      /// Only use this when absolutely necessary and the command source is trusted.
+   29      #[serde(rename = &quot;danger-full-access&quot;)]
+   30      DangerFullAccess,
+   31
+   32      /// Read-only access to the entire filesystem.
+   33      ///
+   34      /// The process can read any file but cannot write anywhere.
+   35      /// Useful for analysis tools that need broad read access.
+   36      #[serde(rename = &quot;read-only&quot;)]
+   37      ReadOnly,
+   38
+   39      /// Indicates the process is already running in an external sandbox.
+   40      ///
+   41      /// Use this when CodeWhale is itself running inside a container,
+   42      /// VM, or other sandboxed environment. This avoids double-sandboxing
+   43      /// which can cause issues.
+   44      #[serde(rename = &quot;external-sandbox&quot;)]
+   45      ExternalSandbox {
+   46          /// Whether network access is allowed in the external sandbox.
+   47          #[serde(default)]
+   48          network_access: bool,
+   49      },
+   50
+   51      /// Read-only filesystem access plus write access to specified directories.
+   52      ///
+   53      /// This is the default and recommended policy. It allows:
+   54      /// - Read access to the entire filesystem (for tools, libraries, etc.)
+   55      /// - Write access only to the current working directory and specified roots
+   56      /// - Optional network access
+   57      #[serde(rename = &quot;workspace-write&quot;)]
+   58      WorkspaceWrite {
+   59          /// Additional directories where writes are allowed.
+   60          #[serde(default, skip_serializing_if = &quot;Vec::is_empty&quot;)]
+   61          writable_roots: Vec&lt;PathBuf&gt;,
+   62
+   63          /// Whether outbound network connections are permitted.
+   64          #[serde(default)]
+   65          network_access: bool,
+   66
+   67          /// Exclude TMPDIR from writable paths.
+   68          #[serde(default)]
+   69          exclude_tmpdir: bool,
+   70
+   71          /// Exclude /tmp from writable paths.
+   72          #[serde(default)]
+   73          exclude_slash_tmp: bool,
+   74      },
+   75  }
+   76
+   77  impl Default for SandboxPolicy {
+   78      /// Returns the default policy: workspace-write with no extra roots and no network.
+   79      fn default() -&gt; Self {
+   80          SandboxPolicy::WorkspaceWrite {
+   81              writable_roots: vec![],
+   82              network_access: false,
+   83              exclude_tmpdir: false,
+   84              exclude_slash_tmp: false,
+   85          }
+   86      }
+   87  }
+   88
+   89  impl SandboxPolicy {
+   90      /// Create a workspace-write policy with network access enabled.
+   91      pub fn workspace_with_network() -&gt; Self {
+   92          SandboxPolicy::WorkspaceWrite {
+   93              writable_roots: vec![],
+   94              network_access: true,
+   95              exclude_tmpdir: false,
+   96              exclude_slash_tmp: false,
+   97          }
+   98      }
+   99
+  100      /// Create a workspace-write policy with additional writable directories.
+  101      pub fn workspace_with_roots(roots: Vec&lt;PathBuf&gt;, network: bool) -&gt; Self {
+  102          SandboxPolicy::WorkspaceWrite {
+  103              writable_roots: roots,
+  104              network_access: network,
+  105              exclude_tmpdir: false,
+  106              exclude_slash_tmp: false,
+  107          }
+  108      }
+  109
+  110      /// Returns true if the policy allows reading any file on the filesystem.
+  111      pub fn has_full_disk_read_access() -&gt; bool {
+  112          // All current policies allow full disk read access
+  113          true
+  114      }
+  115
+  116      /// Returns true if the policy allows writing to any file on the filesystem.
+  117      pub fn has_full_disk_write_access(&amp;self) -&gt; bool {
+  118          matches!(
+  119              self,
+  120              SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
+  121          )
+  122      }
+  123
+  124      /// Returns true if the policy allows outbound network connections.
+  125      pub fn has_network_access(&amp;self) -&gt; bool {
+  126          match self {
+  127              SandboxPolicy::DangerFullAccess =&gt; true,
+  128              SandboxPolicy::ReadOnly =&gt; false,
+  129              SandboxPolicy::ExternalSandbox { network_access }
+  130              | SandboxPolicy::WorkspaceWrite { network_access, .. } =&gt; *network_access,
+  131          }
+  132      }
+  133
+  134      /// Returns true if the sandbox should be applied (not bypassed).
+  135      pub fn should_sandbox(&amp;self) -&gt; bool {
+  136          !matches!(
+  137              self,
+  138              SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
+  139          )
+  140      }
+  141
+  142      /// Get the list of writable roots for this policy.
+  143      ///
+  144      /// This includes:
+  145      /// - The current working directory
+  146      /// - Any explicitly specified `writable_roots`
+  147      /// - /tmp (unless excluded)
+  148      /// - TMPDIR (unless excluded)
+  149      ///
+  150      /// For policies with full write access, returns an empty vec since
+  151      /// there&#39;s no need to enumerate specific paths.
+  152      pub fn get_writable_roots(&amp;self, cwd: &amp;Path) -&gt; Vec&lt;WritableRoot&gt; {
+  153          match self {
+  154              // Full write access or read-only - no enumeration needed
+  155              SandboxPolicy::DangerFullAccess
+  156              | SandboxPolicy::ExternalSandbox { .. }
+  157              | SandboxPolicy::ReadOnly =&gt; vec![],
+  158</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/sandbox/policy.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/sandbox/policy.rs#L17-L87" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   17  /// Determines execution restrictions for shell commands.
+   18  ///
+   19  /// The sandbox policy controls filesystem access, network access, and other
+   20  /// system resources for executed commands. Choose the most restrictive policy
+   21  /// that still allows your command to function.
+   22  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+   23  #[serde(tag = &quot;type&quot;, rename_all = &quot;kebab-case&quot;)]
+   24  pub enum SandboxPolicy {
+   25      /// No restrictions whatsoever. Use with extreme caution.
+   26      ///
+   27      /// This policy disables all sandboxing and allows full system access.
+   28      /// Only use this when absolutely necessary and the command source is trusted.
+   29      #[serde(rename = &quot;danger-full-access&quot;)]
+   30      DangerFullAccess,
+   31
+   32      /// Read-only access to the entire filesystem.
+   33      ///
+   34      /// The process can read any file but cannot write anywhere.
+   35      /// Useful for analysis tools that need broad read access.
+   36      #[serde(rename = &quot;read-only&quot;)]
+   37      ReadOnly,
+   38
+   39      /// Indicates the process is already running in an external sandbox.
+   40      ///
+   41      /// Use this when CodeWhale is itself running inside a container,
+   42      /// VM, or other sandboxed environment. This avoids double-sandboxing
+   43      /// which can cause issues.
+   44      #[serde(rename = &quot;external-sandbox&quot;)]
+   45      ExternalSandbox {
+   46          /// Whether network access is allowed in the external sandbox.
+   47          #[serde(default)]
+   48          network_access: bool,
+   49      },
+   50
+   51      /// Read-only filesystem access plus write access to specified directories.
+   52      ///
+   53      /// This is the default and recommended policy. It allows:
+   54      /// - Read access to the entire filesystem (for tools, libraries, etc.)
+   55      /// - Write access only to the current working directory and specified roots
+   56      /// - Optional network access
+   57      #[serde(rename = &quot;workspace-write&quot;)]
+   58      WorkspaceWrite {
+   59          /// Additional directories where writes are allowed.
+   60          #[serde(default, skip_serializing_if = &quot;Vec::is_empty&quot;)]
+   61          writable_roots: Vec&lt;PathBuf&gt;,
+   62
+   63          /// Whether outbound network connections are permitted.
+   64          #[serde(default)]
+   65          network_access: bool,
+   66
+   67          /// Exclude TMPDIR from writable paths.
+   68          #[serde(default)]
+   69          exclude_tmpdir: bool,
+   70
+   71          /// Exclude /tmp from writable paths.
+   72          #[serde(default)]
+   73          exclude_slash_tmp: bool,
+   74      },
+   75  }
+   76
+   77  impl Default for SandboxPolicy {
+   78      /// Returns the default policy: workspace-write with no extra roots and no network.
+   79      fn default() -&gt; Self {
+   80          SandboxPolicy::WorkspaceWrite {
+   81              writable_roots: vec![],
+   82              network_access: false,
+   83              exclude_tmpdir: false,
+   84              exclude_slash_tmp: false,
+   85          }
+   86      }
+   87  }
+   88
+   89  impl SandboxPolicy {
+   90      /// Create a workspace-write policy with network access enabled.
+   91      pub fn workspace_with_network() -&gt; Self {
+   92          SandboxPolicy::WorkspaceWrite {
+   93              writable_roots: vec![],
+   94              network_access: true,
+   95              exclude_tmpdir: false,
+   96              exclude_slash_tmp: false,
+   97          }
+   98      }
+   99
+  100      /// Create a workspace-write policy with additional writable directories.
+  101      pub fn workspace_with_roots(roots: Vec&lt;PathBuf&gt;, network: bool) -&gt; Self {
+  102          SandboxPolicy::WorkspaceWrite {
+  103              writable_roots: roots,
+  104              network_access: network,
+  105              exclude_tmpdir: false,
+  106              exclude_slash_tmp: false,
+  107          }
+  108      }
+  109
+  110      /// Returns true if the policy allows reading any file on the filesystem.
+  111      pub fn has_full_disk_read_access() -&gt; bool {
+  112          // All current policies allow full disk read access
+  113          true
+  114      }
+  115
+  116      /// Returns true if the policy allows writing to any file on the filesystem.
+  117      pub fn has_full_disk_write_access(&amp;self) -&gt; bool {
+  118          matches!(
+  119              self,
+  120              SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
+  121          )
+  122      }
+  123
+  124      /// Returns true if the policy allows outbound network connections.
+  125      pub fn has_network_access(&amp;self) -&gt; bool {
+  126          match self {
+  127              SandboxPolicy::DangerFullAccess =&gt; true,
+  128              SandboxPolicy::ReadOnly =&gt; false,
+  129              SandboxPolicy::ExternalSandbox { network_access }
+  130              | SandboxPolicy::WorkspaceWrite { network_access, .. } =&gt; *network_access,
+  131          }
+  132      }
+  133
+  134      /// Returns true if the sandbox should be applied (not bypassed).
+  135      pub fn should_sandbox(&amp;self) -&gt; bool {
+  136          !matches!(
+  137              self,
+  138              SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
+  139          )
+  140      }
+  141
+  142      /// Compact, deterministic posture label for model- and user-facing
+  143      /// surfaces (`&lt;turn_meta&gt;`, sandbox-denial hints). Byte-stable for a
+  144      /// given policy so per-turn metadata stays cache-friendly.
+  145      #[must_use]
+  146      pub fn posture_label(&amp;self) -&gt; String {
+  147          match self {
+  148              SandboxPolicy::DangerFullAccess =&gt; &quot;full access (sandbox disabled)&quot;.to_string(),
+  149              SandboxPolicy::ReadOnly =&gt; {
+  150                  &quot;read-only (shell writes are blocked; tool approval cannot lift this)&quot;.to_string()
+  151              }
+  152              SandboxPolicy::ExternalSandbox { network_access } =&gt; format!(
+  153                  &quot;external sandbox (host-managed; network {})&quot;,
+  154                  if *network_access {
+  155                      &quot;allowed&quot;
+  156                  } else {
+  157                      &quot;blocked&quot;
+  158                  }</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-sandbox-002" data-finding-dimension="execution"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>limitation</span><span>execution</span></div><h3>02 · OS sandbox 的可用性强依赖平台、安装物和配置</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>macOS 只有 sandbox-exec probe 成功时使用 Seatbelt；Linux 只有用户显式 prefer_bwrap 且 /usr/bin/bwrap 可执行时使用 bubblewrap；bwrap 不存在时命令会以 unwrapped 形式运行且不标成 sandboxed；Windows 当前不声明 OS sandbox，OpenHarmony 也不声明 Linux 后端。</p></section><section><span>白话解释</span><p>代码写了 Seatbelt 和 bwrap，不代表每一次执行都有它们；平台不支持或用户没装/没打开时，默认可能退回宿主进程。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>生产部署必须在启动时做 sandbox capability attestation，并把未隔离状态显式呈现给用户和审计系统。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>3–10</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>11–20</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><div class="finding-caveat"><span>边界 / 风险</span><ul><li>这里描述的是源码分支和 fallback，不代表具体机器的运行结果。</li><li>ExternalSandbox/DangerFullAccess 本来就会绕过本地 wrapper。</li></ul></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/sandbox/mod.rs#L3-L20" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/sandbox/mod.rs:3–20</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/sandbox/mod.rs#L3-L20" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    3  //! Sandbox module for secure command execution.
+    4  //!
+    5  //! This module provides sandboxing capabilities for shell commands executed by
+    6  //! CodeWhale. Sandboxing restricts what system resources a command can access,
+    7  //! preventing accidental or malicious damage to the system.
+    8  //!
+    9  //! # Platform Support
+   10  //!
+   11  //! - **macOS**: Uses Seatbelt (`sandbox-exec`) when the runtime probe succeeds
+   12  //! - **Linux**: Uses bubblewrap only when the user opts in and `/usr/bin/bwrap`
+   13  //!   is executable. Landlock and seccomp helpers are not wired into child
+   14  //!   execution yet and therefore are not advertised.
+   15  //! - **OpenHarmony**: No local Linux sandbox is advertised. Bubblewrap,
+   16  //!   Landlock, seccomp, and Linux `prctl` hardening are gated out under
+   17  //!   `target_env = &quot;ohos&quot;`.
+   18  //! - **Windows**: No OS sandbox is advertised yet. The planned first helper
+   19  //!   contract is process-tree containment only via a Windows Job Object; it
+   20  //!   must not claim filesystem, network, registry, or AppContainer isolation.
+   21  //!
+   22  //! # Usage
+   23  //!
+   24  //! ```rust,ignore
+   25  //! use sandbox::{SandboxManager, CommandSpec, SandboxPolicy};
+   26  //!
+   27  //! let manager = SandboxManager::new();
+   28  //! let spec = CommandSpec::shell(&quot;ls -la&quot;, PathBuf::from(&quot;.&quot;), Duration::from_secs(30))
+   29  //!     .with_policy(SandboxPolicy::default());
+   30  //!
+   31  //! let exec_env = manager.prepare(&amp;spec);
+   32  //! // exec_env.command now contains the sandboxed command
+   33  //! ```
+   34
+   35  pub mod backend;
+   36  pub mod opensandbox;
+   37  pub mod policy;
+   38  pub mod process_hardening;
+   39
+   40  #[cfg(target_os = &quot;macos&quot;)]
+   41  pub mod seatbelt;
+   42
+   43  #[cfg(all(target_os = &quot;linux&quot;, not(target_env = &quot;ohos&quot;)))]
+   44  pub mod landlock;
+   45
+   46  #[cfg(all(target_os = &quot;linux&quot;, not(target_env = &quot;ohos&quot;)))]
+   47  pub mod seccomp;
+   48
+   49  #[cfg(all(target_os = &quot;linux&quot;, not(target_env = &quot;ohos&quot;)))]
+   50  pub mod bwrap;
+   51
+   52  #[cfg(target_os = &quot;windows&quot;)]
+   53  pub mod windows;
+   54
+   55  use std::collections::HashMap;
+   56  use std::path::PathBuf;
+   57  use std::time::Duration;
+   58
+   59  pub use policy::SandboxPolicy;
+   60
+   61  /// Public OS-sandbox capability labels consumed by the website facts
+   62  /// generator. Keep this list limited to wrappers that the command execution
+   63  /// path can actually select and apply.
+   64  #[allow(dead_code)] // Parsed from source by web/scripts/facts-lib.mjs.
+   65  pub const PUBLIC_SANDBOX_BACKENDS: &amp;[&amp;str] = &amp;[
+   66      &quot;seatbelt (macOS, when available)&quot;,
+   67      &quot;bubblewrap (Linux, opt-in when installed)&quot;,
+   68  ];
+   69
+   70  /// Specification for a command to be executed, potentially within a sandbox.
+   71  ///
+   72  /// This struct captures all the information needed to execute a command:
+   73  /// the program and arguments, working directory, environment variables,
+   74  /// timeout, and sandbox policy.
+   75  #[derive(Debug, Clone)]
+   76  pub struct CommandSpec {
+   77      /// The program to execute (e.g., &quot;sh&quot;, &quot;python&quot;, &quot;cargo&quot;).
+   78      pub program: String,
+   79
+   80      /// Arguments to pass to the program.
+   81      pub args: Vec&lt;String&gt;,
+   82
+   83      /// Working directory for the command.
+   84      pub cwd: PathBuf,
+   85
+   86      /// Additional environment variables to set.
+   87      pub env: HashMap&lt;String, String&gt;,
+   88
+   89      /// Maximum execution time before the command is killed.
+   90      pub timeout: Duration,
+   91</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/sandbox/mod.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/sandbox/mod.rs#L3-L20" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    3  //! Sandbox module for secure command execution.
+    4  //!
+    5  //! This module provides sandboxing capabilities for shell commands executed by
+    6  //! CodeWhale. Sandboxing restricts what system resources a command can access,
+    7  //! preventing accidental or malicious damage to the system.
+    8  //!
+    9  //! # Platform Support
+   10  //!
+   11  //! - **macOS**: Uses Seatbelt (`sandbox-exec`) when the runtime probe succeeds
+   12  //! - **Linux**: Uses bubblewrap only when the user opts in and `/usr/bin/bwrap`
+   13  //!   is executable. The seccomp helper is not wired into child execution and
+   14  //!   therefore is not advertised.
+   15  //! - **OpenHarmony**: No local Linux sandbox is advertised. Bubblewrap,
+   16  //!   seccomp, and Linux `prctl` hardening are gated out under `target_env =
+   17  //!   &quot;ohos&quot;`.
+   18  //! - **Windows**: No OS sandbox is advertised yet. The planned first helper
+   19  //!   contract is process-tree containment only via a Windows Job Object; it
+   20  //!   must not claim filesystem, network, registry, or AppContainer isolation.
+   21  //!
+   22  //! # Usage
+   23  //!
+   24  //! ```rust,ignore
+   25  //! use sandbox::{SandboxManager, CommandSpec, SandboxPolicy};
+   26  //!
+   27  //! let manager = SandboxManager::new();
+   28  //! let spec = CommandSpec::shell(&quot;ls -la&quot;, PathBuf::from(&quot;.&quot;), Duration::from_secs(30))
+   29  //!     .with_policy(SandboxPolicy::default());
+   30  //!
+   31  //! let exec_env = manager.prepare(&amp;spec);
+   32  //! // exec_env.command now contains the sandboxed command
+   33  //! ```
+   34
+   35  pub mod backend;
+   36  pub mod opensandbox;
+   37  pub mod policy;
+   38  pub mod process_hardening;
+   39
+   40  #[cfg(target_os = &quot;macos&quot;)]
+   41  pub mod seatbelt;
+   42
+   43  #[cfg(all(target_os = &quot;linux&quot;, not(target_env = &quot;ohos&quot;)))]
+   44  pub mod seccomp;
+   45
+   46  #[cfg(all(target_os = &quot;linux&quot;, not(target_env = &quot;ohos&quot;)))]
+   47  pub mod bwrap;
+   48
+   49  #[cfg(target_os = &quot;windows&quot;)]
+   50  pub mod windows;
+   51
+   52  use std::collections::HashMap;
+   53  use std::path::PathBuf;
+   54  use std::time::Duration;
+   55
+   56  pub use policy::SandboxPolicy;
+   57
+   58  /// Public OS-sandbox capability labels consumed by the website facts
+   59  /// generator. Keep this list limited to wrappers that the command execution
+   60  /// path can actually select and apply.
+   61  #[allow(dead_code)] // Parsed from source by web/scripts/facts-lib.mjs.
+   62  pub const PUBLIC_SANDBOX_BACKENDS: &amp;[&amp;str] = &amp;[
+   63      &quot;seatbelt (macOS, when available)&quot;,
+   64      &quot;bubblewrap (Linux, opt-in when installed)&quot;,
+   65  ];
+   66
+   67  /// Specification for a command to be executed, potentially within a sandbox.
+   68  ///
+   69  /// This struct captures all the information needed to execute a command:
+   70  /// the program and arguments, working directory, environment variables,
+   71  /// timeout, and sandbox policy.
+   72  #[derive(Debug, Clone)]
+   73  pub struct CommandSpec {
+   74      /// The program to execute (e.g., &quot;sh&quot;, &quot;python&quot;, &quot;cargo&quot;).
+   75      pub program: String,
+   76
+   77      /// Arguments to pass to the program.
+   78      pub args: Vec&lt;String&gt;,
+   79
+   80      /// Working directory for the command.
+   81      pub cwd: PathBuf,
+   82
+   83      /// Additional environment variables to set.
+   84      pub env: HashMap&lt;String, String&gt;,
+   85
+   86      /// Maximum execution time before the command is killed.
+   87      pub timeout: Duration,
+   88
+   89      /// Sandbox policy controlling resource access.
+   90      pub sandbox_policy: SandboxPolicy,
+   91</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-security-001" data-finding-dimension="security"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>03 · ExecPolicy 是 Builtin/Agent/User 三层规则，deny 优先且支持 arity-aware shell 判断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>execpolicy 定义 PermissionAction Allow/Ask/Deny、AskForApproval 语义和 Builtin/Agent/User ruleset layer；高层规则覆盖低层，同层 deny 优先于 ask/allow，检查顺序先 denied prefix、再 trusted 单段命令、链式调用 typed deny、最后 ask rule，并考虑参数个数。</p></section><section><span>白话解释</span><p>用户自己的规则可以补充策略，但不能把更高优先级的拒绝抹掉；`cargo test` 和 `cargo test --config ...` 也不会被当成同一件事。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>命令策略需要明确层级、优先级、链式命令和参数形态；只做字符串前缀 allowlist 很容易漏洞。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>10–20</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>21–32</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/execpolicy/src/lib.rs#L10-L32" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/execpolicy/src/lib.rs:10–32</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/execpolicy/src/lib.rs#L10-L32" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   10  /// Priority layer for typed permission-rule selection. Higher ordinal = higher
+   11  /// priority. Matching typed rules compare layer before action and specificity.
+   12  /// Hard denied prefixes are merged across layers and checked first.
+   13  #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+   14  #[serde(rename_all = &quot;snake_case&quot;)]
+   15  pub enum RulesetLayer {
+   16      BuiltinDefault = 0,
+   17      Agent = 1,
+   18      User = 2,
+   19  }
+   20
+   21  /// A named set of allow/deny prefix rules at a given priority layer.
+   22  #[derive(Debug, Clone, Serialize, Deserialize)]
+   23  pub struct Ruleset {
+   24      /// Priority layer this ruleset belongs to.
+   25      pub layer: RulesetLayer,
+   26      /// Command prefixes that are allowed without requiring approval.
+   27      pub trusted_prefixes: Vec&lt;String&gt;,
+   28      /// Command prefixes that are always blocked, regardless of trust rules.
+   29      pub denied_prefixes: Vec&lt;String&gt;,
+   30      /// Typed rules that mark specific tool invocations as requiring approval.
+   31      #[serde(default, skip_serializing_if = &quot;Vec::is_empty&quot;)]
+   32      pub ask_rules: Vec&lt;ToolAskRule&gt;,
+   33  }
+   34
+   35  impl Ruleset {
+   36      /// Creates an empty ruleset at the builtin default priority layer.
+   37      pub fn builtin_default() -&gt; Self {
+   38          Self {
+   39              layer: RulesetLayer::BuiltinDefault,
+   40              trusted_prefixes: vec![],
+   41              denied_prefixes: vec![],
+   42              ask_rules: vec![],
+   43          }
+   44      }
+   45
+   46      /// Creates an agent-layer ruleset with the given trusted and denied prefixes.
+   47      pub fn agent(trusted: Vec&lt;String&gt;, denied: Vec&lt;String&gt;) -&gt; Self {
+   48          Self {
+   49              layer: RulesetLayer::Agent,
+   50              trusted_prefixes: trusted,
+   51              denied_prefixes: denied,
+   52              ask_rules: vec![],
+   53          }
+   54      }
+   55
+   56      /// Creates a user-layer ruleset with the given trusted and denied prefixes.
+   57      pub fn user(trusted: Vec&lt;String&gt;, denied: Vec&lt;String&gt;) -&gt; Self {
+   58          Self {
+   59              layer: RulesetLayer::User,
+   60              trusted_prefixes: trusted,
+   61              denied_prefixes: denied,
+   62              ask_rules: vec![],
+   63          }
+   64      }
+   65
+   66      /// Attaches typed ask rules to this ruleset and returns it.
+   67      pub fn with_ask_rules(mut self, ask_rules: Vec&lt;ToolAskRule&gt;) -&gt; Self {
+   68          self.ask_rules = ask_rules;
+   69          self
+   70      }
+   71  }
+   72
+   73  /// Permission action for a tool invocation rule.
+   74  #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+   75  #[serde(rename_all = &quot;snake_case&quot;)]
+   76  pub enum PermissionAction {
+   77      /// Allow the invocation without asking.
+   78      Allow,
+   79      /// Ask the user before allowing — the approval prompt is forced.
+   80      Ask,
+   81      /// Deny the invocation — the tool call is blocked.
+   82      Deny,
+   83  }
+   84
+   85  fn default_rule_action() -&gt; PermissionAction {
+   86      PermissionAction::Ask
+   87  }
+   88
+   89  /// Typed rule that controls whether a tool invocation is denied, allowed, or requires approval.
+   90  ///
+   91  /// The `action` field governs what happens when this rule matches:
+   92  /// - `&quot;deny&quot;` — the tool call is blocked outright (highest priority).
+   93  /// - `&quot;ask&quot;` — the approval prompt is forced (default, backward compatible).
+   94  /// - `&quot;allow&quot;` — the tool call proceeds without asking.
+   95  ///
+   96  /// Inside one ruleset layer, deny wins over ask, which wins over allow.
+   97  /// Higher-priority layers are selected before action and specificity.
+   98  /// Command-prefix-based deny and allow rules loaded from `permissions.toml`
+   99  /// are also promoted into the execution-policy engine&#39;s `denied_prefixes` /
+  100  /// `trusted_prefixes` for arity-aware matching; path-only rules are evaluated
+  101  /// separately.
+  102  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+  103  #[serde(deny_unknown_fields)]</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/execpolicy/src/lib.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/execpolicy/src/lib.rs#L10-L32" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   10
+   11  /// Priority layer for typed permission-rule selection. Higher ordinal = higher
+   12  /// priority. Matching typed rules compare layer before action and specificity.
+   13  /// Hard denied prefixes are merged across layers and checked first.
+   14  #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+   15  #[serde(rename_all = &quot;snake_case&quot;)]
+   16  pub enum RulesetLayer {
+   17      BuiltinDefault = 0,
+   18      Agent = 1,
+   19      User = 2,
+   20  }
+   21
+   22  /// A named set of allow/deny prefix rules at a given priority layer.
+   23  #[derive(Debug, Clone, Serialize, Deserialize)]
+   24  pub struct Ruleset {
+   25      /// Priority layer this ruleset belongs to.
+   26      pub layer: RulesetLayer,
+   27      /// Command prefixes that are allowed without requiring approval.
+   28      pub trusted_prefixes: Vec&lt;String&gt;,
+   29      /// Command prefixes that are always blocked, regardless of trust rules.
+   30      pub denied_prefixes: Vec&lt;String&gt;,
+   31      /// Typed rules that mark specific tool invocations as requiring approval.
+   32      #[serde(default, skip_serializing_if = &quot;Vec::is_empty&quot;)]
+   33      pub ask_rules: Vec&lt;ToolAskRule&gt;,
+   34  }
+   35
+   36  impl Ruleset {
+   37      /// Creates an empty ruleset at the builtin default priority layer.
+   38      pub fn builtin_default() -&gt; Self {
+   39          Self {
+   40              layer: RulesetLayer::BuiltinDefault,
+   41              trusted_prefixes: vec![],
+   42              denied_prefixes: vec![],
+   43              ask_rules: vec![],
+   44          }
+   45      }
+   46
+   47      /// Creates an agent-layer ruleset with the given trusted and denied prefixes.
+   48      pub fn agent(trusted: Vec&lt;String&gt;, denied: Vec&lt;String&gt;) -&gt; Self {
+   49          Self {
+   50              layer: RulesetLayer::Agent,
+   51              trusted_prefixes: trusted,
+   52              denied_prefixes: denied,
+   53              ask_rules: vec![],
+   54          }
+   55      }
+   56
+   57      /// Creates a user-layer ruleset with the given trusted and denied prefixes.
+   58      pub fn user(trusted: Vec&lt;String&gt;, denied: Vec&lt;String&gt;) -&gt; Self {
+   59          Self {
+   60              layer: RulesetLayer::User,
+   61              trusted_prefixes: trusted,
+   62              denied_prefixes: denied,
+   63              ask_rules: vec![],
+   64          }
+   65      }
+   66
+   67      /// Attaches typed ask rules to this ruleset and returns it.
+   68      pub fn with_ask_rules(mut self, ask_rules: Vec&lt;ToolAskRule&gt;) -&gt; Self {
+   69          self.ask_rules = ask_rules;
+   70          self
+   71      }
+   72  }
+   73
+   74  /// Permission action for a tool invocation rule.
+   75  #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+   76  #[serde(rename_all = &quot;snake_case&quot;)]
+   77  pub enum PermissionAction {
+   78      /// Allow the invocation without asking.
+   79      Allow,
+   80      /// Ask the user before allowing — the approval prompt is forced.
+   81      Ask,
+   82      /// Deny the invocation — the tool call is blocked.
+   83      Deny,
+   84  }
+   85
+   86  fn default_rule_action() -&gt; PermissionAction {
+   87      PermissionAction::Ask
+   88  }
+   89
+   90  /// Typed rule that controls whether a tool invocation is denied, allowed, or requires approval.
+   91  ///
+   92  /// The `action` field governs what happens when this rule matches:
+   93  /// - `&quot;deny&quot;` — the tool call is blocked outright (highest priority).
+   94  /// - `&quot;ask&quot;` — the approval prompt is forced (default, backward compatible).
+   95  /// - `&quot;allow&quot;` — the tool call proceeds without asking.
+   96  ///
+   97  /// Inside one ruleset layer, deny wins over ask, which wins over allow.
+   98  /// Higher-priority layers are selected before action and specificity.
+   99  /// Command-prefix-based deny and allow rules loaded from `permissions.toml`
+  100  /// are also promoted into the execution-policy engine&#39;s `denied_prefixes` /
+  101  /// `trusted_prefixes` for arity-aware matching; path-only rules are evaluated
+  102  /// separately.
+  103  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]</code></pre></details></div></div></article><article class="finding-card compact" id="codewhale-security-002" data-finding-dimension="security"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>04 · 子 Agent 的执行权限从真实 capability 和 input 分类出来，并且只能收窄</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ExecutionEnvelope 不是工具名黑名单：它读取 ToolCapability 和 input-specific is_read_only，区分 bounded verification、ExecutesCode、WritesFiles、Network；narrow 用字段交集，后代不能扩大父级的 write/network/shell 权限。</p></section><section><span>白话解释</span><p>即使未来加了一个新 MCP 或插件，只要它声明会写文件/跑代码/联网，就会自动落入相应门槛；子 Agent 不能通过自定义角色把权限变宽。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>多 Agent 权限应是可序列化能力 envelope，继承规则用交集，不要按角色名字散落在多处。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–29</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>30–59</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/execution_envelope.rs#L1-L59" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/execution_envelope.rs:1–59</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/execution_envelope.rs#L1-L59" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  //! The one place that decides whether a delegated child may make a call that
+    2  //! **executes**, **mutates**, or **reaches the network**.
+    3  //!
+    4  //! Before this module the answer was spread across three hand-maintained name
+    5  //! lists ([`crate::fleet::exact::RAW_SHELL_DENYLIST`] and its siblings) plus a
+    6  //! role posture that keyed on `ShellPolicy::Full`. That shape had a structural
+    7  //! hole: a name list can only deny the execution primitives someone remembered
+    8  //! to write down, and `shell = &quot;full&quot;` was being read as &quot;may run arbitrary
+    9  //! code&quot; by every tool whose approval requirement is `Required`. So a member
+   10  //! saved as read-only-with-checks (`write = false`, `shell = &quot;full&quot;` — the
+   11  //! `tester`/`verifier` preset, and any `custom` member shaped like it) lost
+   12  //! `Bash` and kept:
+   13  //!
+   14  //! - `tasks{action:&quot;gate_run&quot;}` — runs an operator-supplied command line;
+   15  //! - `automation{action:&quot;run&quot;}` / `{action:&quot;create&quot;}` — executes or schedules a
+   16  //!   stored automation, with its own cwd and prompt;
+   17  //! - `start_mcp_server` — spawns a process and opens a socket;
+   18  //! - every repository plugin tool, which is a shell command by definition;
+   19  //!
+   20  //! each of which mutates the workspace and reaches the network exactly as well
+   21  //! as the shell that was just removed, while the receipt said `write=false`.
+   22  //!
+   23  //! ## What is enforced
+   24  //!
+   25  //! The classification is derived, never listed: it comes from the tool&#39;s own
+   26  //! [`ToolCapability`] set and from `is_read_only_for` applied to the **actual
+   27  //! input**, after [`canonical_action_alias`] has resolved the family/action
+   28  //! pair. That is what makes it cover tools this file has never heard of —
+   29  //! plugins, runtime MCP servers, and anything registered later.
+   30  //!
+   31  //! | call classification | requires |
+   32  //! |---|---|
+   33  //! | read-only for this input | nothing |
+   34  //! | built-in verification (default or test-selection) | shell authority |
+   35  //! | `ExecutesCode` | write **and** shell authority |
+   36  //! | `WritesFiles` | write authority |
+   37  //! | `Network` | network authority |
+   38  //!
+   39  //! `ExecutesCode` requires *write* authority because an arbitrary program is an
+   40  //! arbitrary mutation primitive; requiring shell authority as well keeps the
+   41  //! existing posture rule from being weakened. Two carve-outs are deliberate and
+   42  //! are the &quot;bounded positives&quot; this module must not break:
+   43  //!
+   44  //! - **`agent`** declares `ExecutesCode` (it runs a child model loop), but
+   45  //!   delegation is governed by the depth budget and by the fact that the child
+   46  //!   inherits this same envelope. Denying it here would stop a read-only member
+   47  //!   from fanning out read-only work, which is a capability, not an escape.
+   48  //! - **Bounded verification** — `run_tests` / `run_verifiers` / `Run` — is the
+   49  //!   whole purpose of a read-only verifier, and the shipped `verifier` role is
+   50  //!   exactly `write = false, shell = &quot;full&quot;`. Classifying it by tool name would
+   51  //!   either take the role&#39;s job away or hand it a program launcher, so the
+   52  //!   bound is read off the concrete call by [`classify_verification`]:
+   53  //!   argument-free and pure test *selection* both cost shell authority (each
+   54  //!   forks a process, which `analyst`/`scout` were never granted), and
+   55  //!   anything that can name a program is held to the raw-shell bar. Every
+   56  //!   consumer of that contract — the catalog filter, the dispatch guard, and
+   57  //!   `reject_unbounded_verification` / `is_delegated_builtin_verification` in
+   58  //!   [`crate::tools::subagent`] — reads this one classifier rather than
+   59  //!   re-deriving it.
+   60
+   61  use serde_json::Value;
+   62
+   63  use crate::tools::canonical_action::canonical_action_alias;
+   64  use crate::tools::spec::{ApprovalRequirement, ToolCapability, ToolSpec};
+   65
+   66  /// The execution authority a child actually holds, read off the runtime posture
+   67  /// rather than off a label.
+   68  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   69  pub(crate) struct ExecutionEnvelope {
+   70      /// May mutate the workspace.
+   71      pub(crate) write: bool,
+   72      /// May be handed a model-visible network tool.
+   73      pub(crate) network: bool,
+   74      /// May run arbitrary commands (raw shell posture).
+   75      pub(crate) shell: bool,
+   76  }
+   77
+   78  impl ExecutionEnvelope {
+   79      /// The widest envelope: used by callers that impose no narrowing at all.
+   80      ///
+   81      /// Currently reached only from this module&#39;s tests — the production
+   82      /// callers all derive an envelope from a real authority rather than
+   83      /// starting from the widest one. Kept because it is the identity element
+   84      /// [`Self::narrow`] is defined against, and removing it would leave that
+   85      /// invariant untestable.
+   86      #[allow(dead_code)]
+   87      pub(crate) const UNRESTRICTED: Self = Self {
+   88          write: true,
+   89          network: true,
+   90          shell: true,
+   91      };
+   92
+   93      /// Whether this envelope narrows anything, i.e. whether enforcement can
+   94      /// ever refuse a call.
+   95      #[must_use]
+   96      pub(crate) const fn is_unrestricted(self) -&gt; bool {
+   97          self.write &amp;&amp; self.network &amp;&amp; self.shell
+   98      }
+   99
+  100      /// Intersect with another envelope. Used wherever a child envelope is
+  101      /// derived from a parent one: every field takes the more restrictive side,
+  102      /// so a descendant can never widen an ancestor.
+  103      ///
+  104      /// Exercised by this module&#39;s tests today; the grandchild-derivation path
+  105      /// that consumes it in production lands with the ratification UI.
+  106      #[must_use]
+  107      #[allow(dead_code)]
+  108      pub(crate) const fn narrow(self, other: Self) -&gt; Self {
+  109          Self {
+  110              write: self.write &amp;&amp; other.write,
+  111              network: self.network &amp;&amp; other.network,
+  112              shell: self.shell &amp;&amp; other.shell,
+  113          }
+  114      }
+  115  }
+  116
+  117  /// Tool names whose execution is governed by a different, stricter mechanism
+  118  /// and which therefore must not be judged by capability alone.
+  119  ///
+  120  /// Only `agent` qualifies, and the reason is specific: its `ExecutesCode`
+  121  /// capability describes running a child *model loop*, not a child *program*,
+  122  /// and that loop runs under a narrowed copy of this same envelope. See the
+  123  /// module docs.
+  124  fn is_delegation_tool(canonical: &amp;str) -&gt; bool {
+  125      canonical == &quot;agent&quot;
+  126  }
+  127
+  128  /// Cargo/test-harness flags a bounded verification call may carry.
+  129  ///
+  130  /// An allowlist, not a denylist, and that is the whole of its security value.</code></pre></div></div></article><article class="finding-card compact" id="codewhale-security-003" data-finding-dimension="security"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>security</span></div><h3>05 · ToolAuthorityEnvelope 对 headless/Fleet worker 做一次性外层封顶</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>ToolAuthorityEnvelope 记录 schema、owner、ReadOnly/ScopedWrite、network、writable_roots/files 和 coordination contracts；normalized 拒绝空 scope 或 read-only 携带写权限，permit_mutation_path 只接受精确文件或 root，process authority 只能安装一次且不能被替换。</p></section><section><span>白话解释</span><p>Fleet 启动子进程时把“最多能写哪些地方”作为机器参数传进去；子 Agent 内部可以再收紧，但不能把它改成全盘写。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>外层 orchestrator 传给 worker 的 authority 应版本化、拒绝未知字段、绑定 owner 和不可替换。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>150–183</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>184–218</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · b63e48331b7d · <a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L150-L218" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>crates/tui/src/tools/spec.rs:150–218</span><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/spec.rs#L150-L218" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  150  /// Machine-readable mutation boundary for a headless worker process.
+  151  ///
+  152  /// Fleet serializes this envelope onto the exact `codewhale exec` argv. The
+  153  /// child installs it before constructing its engine, and every ToolContext in
+  154  /// that process inherits the same outer cap. Nested agents may narrow this
+  155  /// boundary, but cannot remove or expand it.
+  156  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+  157  #[serde(deny_unknown_fields)]
+  158  pub struct ToolAuthorityEnvelope {
+  159      pub schema_version: u32,
+  160      pub owner: String,
+  161      pub authority: ToolMutationAuthority,
+  162      /// Optional outer network cap for headless workers. `None` preserves the
+  163      /// behavior of v1 envelopes written before this field existed; new Fleet
+  164      /// launches always carry the resolved worker permission explicitly.
+  165      #[serde(default, skip_serializing_if = &quot;Option::is_none&quot;)]
+  166      pub network_access: Option&lt;bool&gt;,
+  167      #[serde(default)]
+  168      pub writable_roots: Vec&lt;String&gt;,
+  169      #[serde(default)]
+  170      pub writable_files: Vec&lt;String&gt;,
+  171      #[serde(default)]
+  172      pub coordination_contracts: Vec&lt;String&gt;,
+  173  }
+  174
+  175  #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+  176  #[serde(rename_all = &quot;snake_case&quot;)]
+  177  pub enum ToolMutationAuthority {
+  178      ReadOnly,
+  179      ScopedWrite,
+  180  }
+  181
+  182  static PROCESS_TOOL_AUTHORITY: OnceLock&lt;Arc&lt;ToolAuthorityEnvelope&gt;&gt; = OnceLock::new();
+  183
+  184  impl ToolAuthorityEnvelope {
+  185      pub fn normalized(mut self) -&gt; Result&lt;Self, String&gt; {
+  186          if self.schema_version != 1 {
+  187              return Err(format!(
+  188                  &quot;unsupported tool authority schema version {}&quot;,
+  189                  self.schema_version
+  190              ));
+  191          }
+  192          self.owner = bounded_authority_value(&quot;owner&quot;, &amp;self.owner, 128)?;
+  193          self.writable_roots = normalize_authority_paths(&amp;self.writable_roots, &quot;writable_roots&quot;)?;
+  194          self.writable_files = normalize_authority_paths(&amp;self.writable_files, &quot;writable_files&quot;)?;
+  195          self.coordination_contracts = normalize_authority_values(
+  196              &amp;self.coordination_contracts,
+  197              &quot;coordination_contracts&quot;,
+  198              16,
+  199              128,
+  200          )?;
+  201          if self.authority == ToolMutationAuthority::ScopedWrite
+  202              &amp;&amp; self.writable_roots.is_empty()
+  203              &amp;&amp; self.writable_files.is_empty()
+  204              &amp;&amp; self.coordination_contracts.is_empty()
+  205          {
+  206              return Err(
+  207                  &quot;scoped_write authority requires a writable root, exact file, or coordination contract&quot;
+  208                      .to_string(),
+  209              );
+  210          }
+  211          if self.authority == ToolMutationAuthority::ReadOnly
+  212              &amp;&amp; (!self.writable_roots.is_empty()
+  213                  || !self.writable_files.is_empty()
+  214                  || !self.coordination_contracts.is_empty())
+  215          {
+  216              return Err(&quot;read_only authority cannot carry mutation scope&quot;.to_string());
+  217          }
+  218          Ok(self)
+  219      }
+  220
+  221      pub fn from_json(raw: &amp;str) -&gt; Result&lt;Self, String&gt; {
+  222          serde_json::from_str::&lt;Self&gt;(raw)
+  223              .map_err(|error| format!(&quot;invalid tool authority envelope: {error}&quot;))?
+  224              .normalized()
+  225      }
+  226
+  227      #[cfg(test)]
+  228      fn is_within(&amp;self, outer: &amp;Self) -&gt; bool {
+  229          if self.authority == ToolMutationAuthority::ReadOnly {
+  230              return true;
+  231          }
+  232          if outer.authority != ToolMutationAuthority::ScopedWrite {
+  233              return false;
+  234          }
+  235          self.writable_roots.iter().all(|path| {
+  236              outer
+  237                  .writable_roots
+  238                  .iter()
+  239                  .any(|root| authority_path_is_within_root(path, root))
+  240          }) &amp;&amp; self.writable_files.iter().all(|path| {
+  241              outer.writable_files.contains(path)
+  242                  || outer
+  243                      .writable_roots
+  244                      .iter()
+  245                      .any(|root| authority_path_is_within_root(path, root))
+  246          }) &amp;&amp; self
+  247              .coordination_contracts
+  248              .iter()
+  249              .all(|contract| outer.coordination_contracts.contains(contract))
+  250      }
+  251
+  252      pub fn permits_mutation_path(
+  253          &amp;self,
+  254          context: &amp;ToolContext,
+  255          raw_path: &amp;str,
+  256      ) -&gt; Result&lt;bool, ToolError&gt; {
+  257          if self.authority == ToolMutationAuthority::ReadOnly {
+  258              return Ok(false);
+  259          }
+  260          let target = resolve_strict_authority_path(context, raw_path)?;
+  261          for file in &amp;self.writable_files {
+  262              if resolve_strict_authority_path(context, file)? == target {
+  263                  return Ok(true);
+  264              }
+  265          }
+  266          for root in &amp;self.writable_roots {
+  267              if target.starts_with(resolve_strict_authority_path(context, root)?) {
+  268                  return Ok(true);
+  269              }
+  270          }
+  271          Ok(false)
+  272      }
+  273  }
+  274
+  275  #[cfg(test)]
+  276  fn authority_path_is_within_root(path: &amp;str, root: &amp;str) -&gt; bool {
+  277      root == &quot;.&quot;
+  278          || path == root
+  279          || path
+  280              .strip_prefix(root)
+  281              .is_some_and(|suffix| suffix.starts_with(&#39;/&#39;))
+  282  }
+  283
+  284  pub fn install_process_tool_authority(envelope: ToolAuthorityEnvelope) -&gt; Result&lt;(), String&gt; {
+  285      let envelope = Arc::new(envelope.normalized()?);
+  286      if let Some(existing) = PROCESS_TOOL_AUTHORITY.get() {
+  287          return if existing.as_ref() == envelope.as_ref() {
+  288              Ok(())
+  289          } else {</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>crates/tui/src/tools/spec.rs · cfc2f2b13c07</span><a href="https://github.com/Hmbown/CodeWhale/blob/cfc2f2b13c070e900ee10dbeffb07028d3beaebd/crates/tui/src/tools/spec.rs#L150-L218" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  150              .field(
+  151                  &quot;dynamic_tool_executor&quot;,
+  152                  &amp;self.dynamic_tool_executor.is_some(),
+  153              )
+  154              .field(&quot;work&quot;, &amp;self.work.is_some())
+  155              .field(&quot;hook_executor&quot;, &amp;self.hook_executor.is_some())
+  156              .field(&quot;handle_store&quot;, &amp;true)
+  157              .field(&quot;rlm_sessions&quot;, &amp;true)
+  158              .finish()
+  159      }
+  160  }
+  161
+  162  #[derive(Debug, Clone, PartialEq, Eq)]
+  163  struct FileReadSnapshot {
+  164      len: u64,
+  165      modified: Option&lt;SystemTime&gt;,
+  166  }
+  167
+  168  #[derive(Debug, Default)]
+  169  pub struct FileReadTracker {
+  170      reads: HashMap&lt;PathBuf, FileReadSnapshot&gt;,
+  171  }
+  172
+  173  pub type SharedFileReadTracker = Arc&lt;Mutex&lt;FileReadTracker&gt;&gt;;
+  174
+  175  pub(crate) fn new_shared_file_read_tracker() -&gt; SharedFileReadTracker {
+  176      Arc::new(Mutex::new(FileReadTracker::default()))
+  177  }
+  178
+  179  fn file_read_snapshot(path: &amp;Path) -&gt; Result&lt;FileReadSnapshot, ToolError&gt; {
+  180      let metadata = fs::metadata(path).map_err(|e| {
+  181          ToolError::execution_failed(format!(&quot;Failed to inspect {}: {e}&quot;, path.display()))
+  182      })?;
+  183      Ok(FileReadSnapshot {
+  184          len: metadata.len(),
+  185          modified: metadata.modified().ok(),
+  186      })
+  187  }
+  188
+  189  /// Sandbox policy for command execution.
+  190  #[derive(Debug, Clone, Default)]
+  191  pub enum SandboxPolicy {
+  192      /// No sandboxing (dangerous but sometimes needed)
+  193      #[default]
+  194      None,
+  195  }
+  196
+  197  /// Machine-readable mutation boundary for a headless worker process.
+  198  ///
+  199  /// Fleet serializes this envelope onto the exact `codewhale exec` argv. The
+  200  /// child installs it before constructing its engine, and every ToolContext in
+  201  /// that process inherits the same outer cap. Nested agents may narrow this
+  202  /// boundary, but cannot remove or expand it.
+  203  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+  204  #[serde(deny_unknown_fields)]
+  205  pub struct ToolAuthorityEnvelope {
+  206      pub schema_version: u32,
+  207      pub owner: String,
+  208      pub authority: ToolMutationAuthority,
+  209      /// Optional outer network cap for headless workers. `None` preserves the
+  210      /// behavior of v1 envelopes written before this field existed; new Fleet
+  211      /// launches always carry the resolved worker permission explicitly.
+  212      #[serde(default, skip_serializing_if = &quot;Option::is_none&quot;)]
+  213      pub network_access: Option&lt;bool&gt;,
+  214      /// Explicit shell cap for a headless worker. Older v1 envelopes omit this
+  215      /// field and therefore remain shell-less; mutation authority is never
+  216      /// treated as an implicit shell grant.
+  217      #[serde(default, skip_serializing_if = &quot;ToolShellAuthority::is_none&quot;)]
+  218      pub shell: ToolShellAuthority,
+  219      /// Narrow process-start authority for the built-in verification surface.
+  220      /// This is separate from both mutation and shell authority: a verifier may
+  221      /// run classifier-bounded workspace checks, but that never grants Bash or
+  222      /// an operator-supplied command line.
+  223      #[serde(default, skip_serializing_if = &quot;ToolVerificationAuthority::is_none&quot;)]
+  224      pub verification: ToolVerificationAuthority,
+  225      #[serde(default)]
+  226      pub writable_roots: Vec&lt;String&gt;,
+  227      #[serde(default)]
+  228      pub writable_files: Vec&lt;String&gt;,
+  229      #[serde(default)]
+  230      pub coordination_contracts: Vec&lt;String&gt;,
+  231  }
+  232
+  233  /// Shell authority carried across the Fleet subprocess boundary.
+  234  ///
+  235  /// Full/arbitrary shell is intentionally not representable here. Fleet can
+  236  /// opt a Scout/Reviewer worker into the classifier-proven read subset, while every
+  237  /// other headless role keeps the historical shell-less posture.
+  238  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+  239  #[serde(rename_all = &quot;snake_case&quot;)]
+  240  pub enum ToolShellAuthority {
+  241      #[default]
+  242      None,
+  243      ReadOnly,
+  244  }
+  245
+  246  impl ToolShellAuthority {
+  247      #[must_use]
+  248      pub const fn is_none(&amp;self) -&gt; bool {
+  249          matches!(self, Self::None)
+  250      }
+  251
+  252      #[must_use]
+  253      const fn shell_policy(self) -&gt; ShellPolicy {
+  254          match self {
+  255              Self::None =&gt; ShellPolicy::None,
+  256              Self::ReadOnly =&gt; ShellPolicy::ReadOnly,
+  257          }
+  258      }
+  259  }
+  260
+  261  /// Process authority for Fleet&#39;s dedicated verifier role.
+  262  ///
+  263  /// Arbitrary execution is intentionally not representable. The registry and
+  264  /// dispatch boundary admit only calls that the shared verification classifier
+  265  /// proves are default workspace checks or pure test selection.
+  266  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+  267  #[serde(rename_all = &quot;snake_case&quot;)]
+  268  pub enum ToolVerificationAuthority {
+  269      #[default]
+  270      None,
+  271      Bounded,
+  272  }
+  273
+  274  impl ToolVerificationAuthority {
+  275      #[must_use]
+  276      pub const fn is_none(&amp;self) -&gt; bool {
+  277          matches!(self, Self::None)
+  278      }
+  279  }
+  280
+  281  /// Whether a headless Fleet process should register the one read-only Bash
+  282  /// surface after intersecting the transported cap with explicit tool denies.
+  283  #[must_use]
+  284  pub(crate) fn fleet_exec_shell_enabled(
+  285      fleet_authority_active: bool,
+  286      shell_authority: ToolShellAuthority,
+  287      disallowed_tools: Option&lt;&amp;[String]&gt;,
+  288  ) -&gt; bool {
+  289      fleet_authority_active</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">SECURITY · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>SandboxPolicy 提供 DangerFullAccess、ReadOnly、ExternalSandbox 和 WorkspaceWrite；默认 WorkspaceWrite 只把 cwd/额外 roots（以及可选 /tmp/TMPDIR）设为可写且关闭网络，但 has_full_disk_read_access 对当前所有政策都返回 true。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/sandbox/policy.rs#L17-L87" target="_blank" rel="noreferrer">crates/tui/src/sandbox/policy.rs:17–87 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>macOS 只有 sandbox-exec probe 成功时使用 Seatbelt；Linux 只有用户显式 prefer_bwrap 且 /usr/bin/bwrap 可执行时使用 bubblewrap；bwrap 不存在时命令会以 unwrapped 形式运行且不标成 sandboxed；Windows 当前不声明 OS sandbox，OpenHarmony 也不声明 Linux 后端。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/sandbox/mod.rs#L3-L20" target="_blank" rel="noreferrer">crates/tui/src/sandbox/mod.rs:3–20 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>execpolicy 定义 PermissionAction Allow/Ask/Deny、AskForApproval 语义和 Builtin/Agent/User ruleset layer；高层规则覆盖低层，同层 deny 优先于 ask/allow，检查顺序先 denied prefix、再 trusted 单段命令、链式调用 typed deny、最后 ask rule，并考虑参数个数。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/execpolicy/src/lib.rs#L10-L32" target="_blank" rel="noreferrer">crates/execpolicy/src/lib.rs:10–32 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>ExecutionEnvelope 不是工具名黑名单：它读取 ToolCapability 和 input-specific is_read_only，区分 bounded verification、ExecutesCode、WritesFiles、Network；narrow 用字段交集，后代不能扩大父级的 write/network/shell 权限。</blockquote><a href="https://github.com/Hmbown/CodeWhale/blob/b63e48331b7d06e0517970cd9b9033a4cbbe6fff/crates/tui/src/tools/execution_envelope.rs#L1-L59" target="_blank" rel="noreferrer">crates/tui/src/tools/execution_envelope.rs:1–59 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/architecture.html" title="CodeWhale architecture" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

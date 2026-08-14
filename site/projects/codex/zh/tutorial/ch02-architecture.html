@@ -1,1 +1,1131 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · OpenAI Codex · 902bd9e06b3e</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/codex/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch02-architecture.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</p></section><section><span>白话解释</span><p>一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>配置热更新只能在安全边界生效，换来 prompt cache 和工具调用的确定性。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:2034–2168 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:153–274</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>turn 初始化、压缩、hooks 与 step context。</code></pre></div></div></article><article class="finding-card compact" id="codex-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 流式采样与工具 Future 同时推进，并可被新消息抢占</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>try_run_sampling_request 消费流式 ResponseEvent；完整 tool item 到达后进入 FuturesOrdered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。</p></section><section><span>白话解释</span><p>模型说到一个完整动作就能开工，不必等整段回答结束；用户中途补充信息时，系统也能在安全位置收住并接新指令。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>响应更快，但对调用顺序、取消、配对和幂等要求很高。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:2034–2168</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>流式事件、工具 future 与参数 diff。</code></pre></div></div></article><article class="finding-card compact" id="codex-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 重试预算属于 turn-scoped client session，窗口超限不当作普通网络错误重试</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</p></section><section><span>白话解释</span><p>同一轮尽量复用连接和粘性状态；行李箱塞不下不会盲目重拨网络，而是交给压缩逻辑处理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>把语义恢复与传输恢复分开，避免无效重试放大费用。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:2034–2168 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:1176–1273</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>turn-scoped client session 与错误分类重试。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">OpenAI Codex · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>OpenAI Codex</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>902bd9e06b3e</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · OpenAI Codex · 902bd9e06b3e</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>OpenAI Codex · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/codex/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/codex/ch02-architecture.srt" data-video-status="published">SRT</a><em>902bd9e06b3e</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="codex-loop-001" data-finding-dimension="architecture"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>01 · 每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</p></section><section><span>白话解释</span><p>一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>配置热更新只能在安全边界生效，换来 prompt cache 和工具调用的确定性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>153–212</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>213–274</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:153–274</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  153  pub(crate) async fn run_turn(
+  154      sess: Arc&lt;Session&gt;,
+  155      turn_context: Arc&lt;TurnContext&gt;,
+  156      turn_extension_data: Arc&lt;codex_extension_api::ExtensionData&gt;,
+  157      input: Vec&lt;TurnInput&gt;,
+  158      prewarmed_client_session: Option&lt;ModelClientSession&gt;,
+  159      cancellation_token: CancellationToken,
+  160  ) -&gt; CodexResult&lt;Option&lt;String&gt;&gt; {
+  161      let mut client_session =
+  162          prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
+  163      // TODO(ccunningham): Pre-turn compaction runs before context updates and the
+  164      // new user message are recorded. Estimate pending incoming items (context
+  165      // diffs/full reinjection + user input) and trigger compaction preemptively
+  166      // when they would push the thread over the compaction threshold.
+  167      if let Err(err) = run_pre_sampling_compact(
+  168          &amp;sess,
+  169          &amp;turn_context,
+  170          &amp;mut client_session,
+  171          &amp;cancellation_token,
+  172      )
+  173      .await
+  174      {
+  175          if matches!(err.details(), CodexErrorDetails::TurnAborted) {
+  176              run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input).await;
+  177              return Err(err);
+  178          }
+  179          let error = err.to_codex_protocol_error();
+  180          sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
+  181              .await;
+  182          error!(&quot;Failed to run pre-sampling compact&quot;);
+  183          return Ok(None);
+  184      }
+  185
+  186      // run_turn owns the step used to seed context and make the first sampling request.
+  187      let first_step_context = match sess
+  188          .capture_step_context(Arc::clone(&amp;turn_context), &amp;cancellation_token)
+  189          .await
+  190      {
+  191          Ok(step_context) =&gt; step_context,
+  192          Err(err) if matches!(err.details(), CodexErrorDetails::TurnAborted) =&gt; {
+  193              run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input).await;
+  194              return Err(err);
+  195          }
+  196          Err(err) =&gt; return Err(err),
+  197      };
+  198      // Keep the exact model-visible state used by this turn and its inline compactions.
+  199      let (mut world_state, display_roots) = tokio::join!(
+  200          sess.record_context_updates_and_set_reference_context_item(first_step_context.as_ref()),
+  201          turn_diff_display_roots(first_step_context.as_ref()),
+  202      );
+  203
+  204      let Some((injection_items, explicitly_enabled_connectors)) = build_skills_and_plugins(
+  205          &amp;sess,
+  206          first_step_context.as_ref(),
+  207          &amp;input,
+  208          &amp;cancellation_token,
+  209      )
+  210      .await
+  211      else {
+  212          return Ok(None);
+  213      };
+  214
+  215      if run_pending_session_start_hooks(&amp;sess, &amp;turn_context).await {
+  216          return Ok(None);
+  217      }
+  218      let mut can_drain_pending_input = input.is_empty();
+  219      if run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input).await {
+  220          return Ok(None);
+  221      }
+  222
+  223      sess.merge_connector_selection(explicitly_enabled_connectors.clone())
+  224          .await;
+  225      sess.set_previous_turn_settings(Some(PreviousTurnSettings {
+  226          model: turn_context.model_info.slug.clone(),
+  227          comp_hash: turn_context.model_info.comp_hash.clone(),
+  228          realtime_active: Some(turn_context.realtime_active),
+  229      }))
+  230      .await;
+  231      for response_item in injection_items {
+  232          sess.record_conversation_items(&amp;turn_context, std::slice::from_ref(&amp;response_item))
+  233              .await;
+  234      }
+  235
+  236      track_turn_resolved_config_analytics(&amp;sess, &amp;turn_context, &amp;input).await;
+  237
+  238      let mut last_agent_message: Option&lt;String&gt; = None;
+  239      let mut stop_hook_active = false;
+  240      // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
+  241      // many turns, from the perspective of the user, it is a single turn.
+  242      let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
+  243          TurnDiffTracker::with_environment_display_roots(display_roots),
+  244      ));
+  245
+  246      // `ModelClientSession` is turn-scoped and caches WebSocket + sticky routing state, so we reuse
+  247      // one instance across retries within this turn.
+  248      // Pending input is drained into history before building the next model request.
+  249      // However, we defer that drain until after sampling in two cases:
+  250      // 1. At the start of a turn, so the fresh turn input in `input` gets sampled first.
+  251      // 2. After auto-compact, when model/tool continuation needs to resume before any steer.
+  252
+  253      let mut next_step_context = Some(first_step_context);
+  254      loop {
+  255          // Note that pending_input would be something like a message the user
+  256          // submitted through the UI while the model was running. Though the UI
+  257          // may support this, the model might not.
+  258          let pending_input = if can_drain_pending_input {
+  259              sess.input_queue.get_pending_input(&amp;sess.active_turn).await
+  260          } else {
+  261              Vec::new()
+  262          };
+  263
+  264          if run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;pending_input).await {
+  265              break;
+  266          }
+  267
+  268          let window_id = sess.current_window_id().await;
+  269          super::rollout_budget::maybe_record_reminder(
+  270              sess.as_ref(),
+  271              turn_context.as_ref(),
+  272              &amp;window_id,
+  273          )
+  274          .await;
+  275
+  276          // Capture once so context, advertised tools, and tool calls share one request view.
+  277          let step_context = match next_step_context.take() {
+  278              Some(step_context) =&gt; step_context,
+  279              None =&gt; {
+  280                  sess.capture_step_context(Arc::clone(&amp;turn_context), &amp;cancellation_token)
+  281                      .await?
+  282              }
+  283          };
+  284          let sampling_request_result: CodexResult&lt;_&gt; = async {
+  285              super::time_reminder::maybe_record_current_time_reminder(
+  286                  sess.as_ref(),
+  287                  turn_context.as_ref(),
+  288                  &amp;window_id,
+  289              )
+  290              .await?;
+  291
+  292              world_state = sess
+  293                  .record_step_world_state_if_changed(&amp;world_state, step_context.as_ref())
+  294                  .await;
+  295
+  296              // Construct the input that we will send to the model.
+  297              let sampling_request_input: Vec&lt;ResponseItem&gt; = async {
+  298                  sess.clone_history()
+  299                      .await
+  300                      .for_prompt(&amp;turn_context.model_info.input_modalities)
+  301              }
+  302              .instrument(trace_span!(&quot;run_turn.prepare_sampling_request_input&quot;))
+  303              .await;
+  304
+  305              let responses_metadata = turn_context.turn_metadata_state.to_responses_metadata(
+  306                  sess.installation_id.clone(),
+  307                  window_id,
+  308                  CodexResponsesRequestKind::Turn,
+  309              );
+  310              run_sampling_request(
+  311                  Arc::clone(&amp;sess),
+  312                  Arc::clone(&amp;step_context),
+  313                  Arc::clone(&amp;turn_extension_data),
+  314                  Arc::clone(&amp;turn_diff_tracker),
+  315                  &amp;mut client_session,
+  316                  &amp;responses_metadata,
+  317                  sampling_request_input,
+  318                  cancellation_token.child_token(),
+  319              )
+  320              .await
+  321          }
+  322          .await;
+  323          match sampling_request_result {
+  324              Ok((sampling_request_output, sampling_request_input)) =&gt; {
+  325                  let SamplingRequestResult {
+  326                      needs_follow_up: model_needs_follow_up,
+  327                      last_agent_message: sampling_request_last_agent_message,
+  328                  } = sampling_request_output;
+  329                  if model_needs_follow_up {
+  330                      sess.input_queue
+  331                          .accept_mailbox_delivery_for_current_turn(
+  332                              &amp;sess.active_turn,
+  333                              &amp;turn_context.sub_id,
+  334                          )
+  335                          .await;
+  336                  }
+  337                  can_drain_pending_input = true;
+  338                  let (has_pending_input, token_status) = async {
+  339                      let has_pending_input =
+  340                          sess.input_queue.has_pending_input(&amp;sess.active_turn).await;
+  341                      let token_status = super::context_window::context_window_token_status(
+  342                          sess.as_ref(),
+  343                          turn_context.as_ref(),
+  344                      )
+  345                      .await;</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  153  pub(crate) async fn run_turn(
+  154      sess: Arc&lt;Session&gt;,
+  155      turn_context: Arc&lt;TurnContext&gt;,
+  156      input: Vec&lt;TurnInput&gt;,
+  157      prewarmed_client_session: Option&lt;ModelClientSession&gt;,
+  158      cancellation_token: CancellationToken,
+  159  ) -&gt; CodexResult&lt;Option&lt;String&gt;&gt; {
+  160      // Record results from hooks that finished after the previous turn before this turn&#39;s user prompt.
+  161      drain_async_hook_results(&amp;sess, &amp;turn_context, /*before_user_prompt*/ true).await;
+  162
+  163      let mut client_session =
+  164          prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
+  165      // TODO(ccunningham): Pre-turn compaction runs before context updates and the
+  166      // new user message are recorded. Estimate pending incoming items (context
+  167      // diffs/full reinjection + user input) and trigger compaction preemptively
+  168      // when they would push the thread over the compaction threshold.
+  169      if let Err(err) = run_pre_sampling_compact(
+  170          &amp;sess,
+  171          &amp;turn_context,
+  172          &amp;mut client_session,
+  173          &amp;cancellation_token,
+  174      )
+  175      .await
+  176      {
+  177          if matches!(err.details(), CodexErrorDetails::TurnAborted) {
+  178              run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input, PersistContext::Standard)
+  179                  .await;
+  180              return Err(err);
+  181          }
+  182          if matches!(err.details(), CodexErrorDetails::ToolCollision(_)) {
+  183              return Err(err);
+  184          }
+  185          let error = err.to_codex_protocol_error();
+  186          sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
+  187              .await;
+  188          error!(&quot;Failed to run pre-sampling compact&quot;);
+  189          return Ok(None);
+  190      }
+  191
+  192      let user_input = turn_user_input(&amp;input);
+  193      let (required_servers, mentioned_plugins) =
+  194          match required_mcp_servers_for_input(&amp;sess, turn_context.as_ref(), &amp;user_input)
+  195              .or_cancel(&amp;cancellation_token)
+  196              .await
+  197          {
+  198              Ok(requirements) =&gt; requirements,
+  199              Err(err) =&gt; {
+  200                  run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input, PersistContext::Standard)
+  201                      .await;
+  202                  return Err(err.into());
+  203              }
+  204          };
+  205
+  206      // run_turn owns the step used to seed context and make the first sampling request.
+  207      let first_step_context = match sess
+  208          .capture_step_context_with_required_mcp_servers(
+  209              Arc::clone(&amp;turn_context),
+  210              &amp;cancellation_token,
+  211              &amp;required_servers,
+  212          )
+  213          .await
+  214      {
+  215          Ok(step_context) =&gt; step_context,
+  216          Err(err) if matches!(err.details(), CodexErrorDetails::TurnAborted) =&gt; {
+  217              run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input, PersistContext::Standard)
+  218                  .await;
+  219              return Err(err);
+  220          }
+  221          Err(err) =&gt; return Err(err),
+  222      };
+  223      // Keep the exact model-visible state used by this turn and its inline compactions.
+  224      let (world_state, display_roots) = tokio::join!(
+  225          sess.record_context_updates_and_set_reference_context_item(first_step_context.as_ref()),
+  226          turn_diff_display_roots(first_step_context.as_ref()),
+  227      );
+  228      let mut world_state = world_state?;
+  229
+  230      let Some((injection_items, explicitly_enabled_connectors)) = build_skills_and_plugins(
+  231          &amp;sess,
+  232          first_step_context.as_ref(),
+  233          &amp;user_input,
+  234          &amp;mentioned_plugins,
+  235          &amp;cancellation_token,
+  236      )
+  237      .await
+  238      else {
+  239          return Ok(None);
+  240      };
+  241
+  242      if run_pending_session_start_hooks(&amp;sess, &amp;turn_context).await {
+  243          return Ok(None);
+  244      }
+  245      let mut can_drain_pending_input = input.is_empty();
+  246      if run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input, PersistContext::TurnStart).await {
+  247          return Ok(None);
+  248      }
+  249
+  250      sess.merge_connector_selection(explicitly_enabled_connectors.clone())
+  251          .await;
+  252      sess.set_previous_turn_settings(Some(PreviousTurnSettings {
+  253          model: turn_context.model_info.slug.clone(),
+  254          comp_hash: turn_context.model_info.comp_hash.clone(),
+  255          realtime_active: Some(turn_context.realtime_active),
+  256      }))
+  257      .await;
+  258      for response_item in injection_items {
+  259          sess.record_conversation_items(&amp;turn_context, std::slice::from_ref(&amp;response_item))
+  260              .await;
+  261      }
+  262
+  263      track_turn_resolved_config_analytics(&amp;sess, &amp;turn_context, &amp;input).await;
+  264
+  265      let mut last_agent_message: Option&lt;String&gt; = None;
+  266      let mut stop_hook_active = false;
+  267      // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
+  268      // many turns, from the perspective of the user, it is a single turn.
+  269      let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
+  270          TurnDiffTracker::with_environment_display_roots(display_roots),
+  271      ));
+  272
+  273      // `ModelClientSession` is turn-scoped and caches WebSocket + sticky routing state, so we reuse
+  274      // one instance across retries within this turn.
+  275      // Pending input is drained into history before building the next model request.
+  276      // However, we defer that drain until after sampling in two cases:
+  277      // 1. At the start of a turn, so the fresh turn input in `input` gets sampled first.
+  278      // 2. After auto-compact, when model/tool continuation needs to resume before any steer.
+  279
+  280      let mut next_step_context = Some(first_step_context);
+  281      loop {
+  282          // Note that pending_input would be something like a message the user
+  283          // submitted through the UI while the model was running. Though the UI
+  284          // may support this, the model might not.
+  285          let pending_input = if can_drain_pending_input {
+  286              sess.input_queue
+  287                  .get_pending_input(&amp;sess.active_turn)
+  288                  .await
+  289                  .0
+  290          } else {
+  291              Vec::new()
+  292          };
+  293
+  294          if run_hooks_and_record_inputs(
+  295              &amp;sess,
+  296              &amp;turn_context,
+  297              &amp;pending_input,
+  298              PersistContext::Standard,
+  299          )
+  300          .await
+  301          {
+  302              break;
+  303          }
+  304
+  305          let window_id = sess.current_window_id().await;
+  306          super::rollout_budget::maybe_record_reminder(
+  307              sess.as_ref(),
+  308              turn_context.as_ref(),
+  309              &amp;window_id,
+  310          )
+  311          .await;
+  312
+  313          // Capture once so context, advertised tools, and tool calls share one request view.
+  314          let step_context = match next_step_context.take() {
+  315              Some(step_context) =&gt; step_context,
+  316              None if pending_input.is_empty() =&gt; {
+  317                  sess.capture_step_context(Arc::clone(&amp;turn_context), &amp;cancellation_token)
+  318                      .await?
+  319              }
+  320              None =&gt; {
+  321                  let pending_user_input = turn_user_input(&amp;pending_input);
+  322                  let (required_servers, _) = required_mcp_servers_for_input(
+  323                      &amp;sess,
+  324                      turn_context.as_ref(),
+  325                      &amp;pending_user_input,
+  326                  )
+  327                  .or_cancel(&amp;cancellation_token)
+  328                  .await?;
+  329                  sess.capture_step_context_with_required_mcp_servers(
+  330                      Arc::clone(&amp;turn_context),
+  331                      &amp;cancellation_token,
+  332                      &amp;required_servers,
+  333                  )
+  334                  .await?
+  335              }
+  336          };
+  337          let sampling_request_result: CodexResult&lt;_&gt; = async {
+  338              super::time_reminder::maybe_record_current_time_reminder(
+  339                  sess.as_ref(),
+  340                  turn_context.as_ref(),
+  341                  &amp;window_id,
+  342              )
+  343              .await?;
+  344
+  345              world_state = sess</code></pre></details></div></div></article><article class="finding-card compact" id="codex-loop-002" data-finding-dimension="architecture"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>02 · 流式采样与工具 Future 同时推进，并可被新消息抢占</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>try_run_sampling_request 消费流式 ResponseEvent；完整 tool item 到达后进入 FuturesOrdered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。</p></section><section><span>白话解释</span><p>模型说到一个完整动作就能开工，不必等整段回答结束；用户中途补充信息时，系统也能在安全位置收住并接新指令。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>响应更快，但对调用顺序、取消、配对和幂等要求很高。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>2034–2100</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>2101–2168</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:2034–2168</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 2034      tool_runtime: ToolCallRuntime,
+ 2035      sess: Arc&lt;Session&gt;,
+ 2036      turn_context: Arc&lt;TurnContext&gt;,
+ 2037      turn_store: Arc&lt;codex_extension_api::ExtensionData&gt;,
+ 2038      client_session: &amp;mut ModelClientSession,
+ 2039      responses_metadata: &amp;CodexResponsesMetadata,
+ 2040      turn_diff_tracker: SharedTurnDiffTracker,
+ 2041      prompt: &amp;Prompt,
+ 2042      cancellation_token: CancellationToken,
+ 2043  ) -&gt; CodexResult&lt;SamplingRequestResult&gt; {
+ 2044      feedback_tags!(
+ 2045          model = turn_context.model_info.slug.clone(),
+ 2046          approval_policy = turn_context.approval_policy.value(),
+ 2047          sandbox_policy = &amp;turn_context.sandbox_policy(),
+ 2048          effort = turn_context.reasoning_effort,
+ 2049          auth_mode = sess.services.auth_manager.auth_mode(),
+ 2050          features = sess.features.enabled_features(),
+ 2051      );
+ 2052      let inference_trace = sess.services.rollout_thread_trace.inference_trace_context(
+ 2053          turn_context.sub_id.as_str(),
+ 2054          turn_context.model_info.slug.as_str(),
+ 2055          turn_context.provider.info().name.as_str(),
+ 2056      );
+ 2057      let sampling_timing_guard = turn_context.turn_timing_state.begin_sampling();
+ 2058      let uses_sequential_cutoff_reasoning_summaries = turn_context
+ 2059          .config
+ 2060          .features
+ 2061          .enabled(Feature::ConcurrentReasoningSummaries)
+ 2062          &amp;&amp; turn_context.provider.info().is_openai();
+ 2063      let mut stream = client_session
+ 2064          .stream(
+ 2065              prompt,
+ 2066              &amp;turn_context.model_info,
+ 2067              &amp;turn_context.session_telemetry,
+ 2068              turn_context.reasoning_effort.clone(),
+ 2069              turn_context.reasoning_summary,
+ 2070              turn_context.config.service_tier.clone(),
+ 2071              responses_metadata,
+ 2072              &amp;inference_trace,
+ 2073          )
+ 2074          .instrument(trace_span!(&quot;stream_request&quot;))
+ 2075          .or_cancel(&amp;cancellation_token)
+ 2076          .await??;
+ 2077      let mut in_flight: FuturesOrdered&lt;BoxFuture&lt;&#39;static, CodexResult&lt;ResponseInputItem&gt;&gt;&gt; =
+ 2078          FuturesOrdered::new();
+ 2079      let mut needs_follow_up = false;
+ 2080      let mut last_agent_message: Option&lt;String&gt; = None;
+ 2081      let mut active_item: Option&lt;TurnItem&gt; = None;
+ 2082      let mut active_tool_argument_diff_consumer: Option&lt;(
+ 2083          String,
+ 2084          Box&lt;dyn ToolArgumentDiffConsumer&gt;,
+ 2085      )&gt; = None;
+ 2086      let mut should_emit_turn_diff = false;
+ 2087      let mut should_emit_token_count = false;
+ 2088      let reasoning_effort = turn_context.effective_reasoning_effort_for_tracing();
+ 2089      let plan_mode = turn_context.mode == ModeKind::Plan;
+ 2090      let mut assistant_message_stream_parsers = AssistantMessageStreamParsers::new(plan_mode);
+ 2091      let mut plan_mode_state = plan_mode.then(|| PlanModeStreamState::new(&amp;turn_context.sub_id));
+ 2092      let defer_streamed_turn_items_for_contributors =
+ 2093          !sess.services.extensions.turn_item_contributors().is_empty();
+ 2094      let mut active_item_is_streaming_to_client = false;
+ 2095      let receiving_span = trace_span!(&quot;receiving_stream&quot;);
+ 2096      let outcome: CodexResult&lt;SamplingRequestResult&gt; = loop {
+ 2097          let handle_responses = trace_span!(
+ 2098              parent: &amp;receiving_span,
+ 2099              &quot;handle_responses&quot;,
+ 2100              otel.name = field::Empty,
+ 2101              tool_name = field::Empty,
+ 2102              from = field::Empty,
+ 2103              codex.request.reasoning_effort = %reasoning_effort,
+ 2104              gen_ai.usage.input_tokens = field::Empty,
+ 2105              gen_ai.usage.cache_read.input_tokens = field::Empty,
+ 2106              gen_ai.usage.cache_write.input_tokens = field::Empty,
+ 2107              gen_ai.usage.output_tokens = field::Empty,
+ 2108              codex.usage.reasoning_output_tokens = field::Empty,
+ 2109              codex.usage.total_tokens = field::Empty,
+ 2110          );
+ 2111
+ 2112          let event = match stream
+ 2113              .next()
+ 2114              .instrument(trace_span!(parent: &amp;handle_responses, &quot;receiving&quot;))
+ 2115              .or_cancel(&amp;cancellation_token)
+ 2116              .await
+ 2117          {
+ 2118              Ok(event) =&gt; event,
+ 2119              Err(codex_async_utils::CancelErr::Cancelled) =&gt; {
+ 2120                  break Err(CodexErr::TurnAborted);
+ 2121              }
+ 2122          };
+ 2123
+ 2124          let event = match event {
+ 2125              Some(Ok(event)) =&gt; event,
+ 2126              Some(Err(err)) =&gt; break Err(err),
+ 2127              None =&gt; {
+ 2128                  break Err(CodexErr::Stream(
+ 2129                      &quot;stream closed before response.completed&quot;.into(),
+ 2130                  ));
+ 2131              }
+ 2132          };
+ 2133
+ 2134          sess.services
+ 2135              .session_telemetry
+ 2136              .record_responses(&amp;handle_responses, &amp;event);
+ 2137          record_turn_ttft_metric(&amp;turn_context, &amp;event).await;
+ 2138
+ 2139          match event {
+ 2140              ResponseEvent::Created =&gt; {}
+ 2141              ResponseEvent::OutputItemDone(mut item) =&gt; {
+ 2142                  assign_missing_streamed_response_item_id(&amp;mut item, active_item.as_ref());
+ 2143                  if let Some((_, mut consumer)) = active_tool_argument_diff_consumer.take()
+ 2144                      &amp;&amp; let Ok(Some(event)) = consumer.finish()
+ 2145                  {
+ 2146                      sess.send_event(&amp;turn_context, event).await;
+ 2147                  }
+ 2148                  let previously_active_item = active_item.take();
+ 2149                  let previously_streamed_item = if active_item_is_streaming_to_client {
+ 2150                      previously_active_item
+ 2151                  } else {
+ 2152                      None
+ 2153                  };
+ 2154                  active_item_is_streaming_to_client = false;
+ 2155                  if let Some(previous) = previously_streamed_item.as_ref()
+ 2156                      &amp;&amp; matches!(previous, TurnItem::AgentMessage(_))
+ 2157                  {
+ 2158                      let item_id = previous.id();
+ 2159                      flush_assistant_text_segments_for_item(
+ 2160                          &amp;sess,
+ 2161                          &amp;turn_context,
+ 2162                          plan_mode_state.as_mut(),
+ 2163                          &amp;mut assistant_message_stream_parsers,
+ 2164                          &amp;item_id,
+ 2165                      )
+ 2166                      .await;
+ 2167                  }
+ 2168                  if let Some(state) = plan_mode_state.as_mut()
+ 2169                      &amp;&amp; handle_assistant_item_done_in_plan_mode(
+ 2170                          &amp;sess,
+ 2171                          &amp;turn_context,
+ 2172                          turn_store.as_ref(),
+ 2173                          &amp;item,
+ 2174                          state,
+ 2175                          previously_streamed_item.as_ref(),
+ 2176                          &amp;mut last_agent_message,
+ 2177                      )
+ 2178                      .await
+ 2179                  {
+ 2180                      continue;
+ 2181                  }
+ 2182
+ 2183                  let mut ctx = HandleOutputCtx {
+ 2184                      sess: sess.clone(),
+ 2185                      turn_context: turn_context.clone(),
+ 2186                      turn_store: Arc::clone(&amp;turn_store),
+ 2187                      tool_runtime: tool_runtime.clone(),
+ 2188                      cancellation_token: cancellation_token.child_token(),
+ 2189                  };
+ 2190
+ 2191                  let preempt_for_mailbox_mail = match &amp;item {
+ 2192                      ResponseItem::Message { role, phase, .. } =&gt; {
+ 2193                          role == &quot;assistant&quot; &amp;&amp; matches!(phase, Some(MessagePhase::Commentary))
+ 2194                      }
+ 2195                      ResponseItem::Reasoning { .. } =&gt; true,
+ 2196                      ResponseItem::AgentMessage { .. } =&gt; false,
+ 2197                      ResponseItem::AdditionalTools { .. }
+ 2198                      | ResponseItem::LocalShellCall { .. }
+ 2199                      | ResponseItem::FunctionCall { .. }
+ 2200                      | ResponseItem::ToolSearchCall { .. }
+ 2201                      | ResponseItem::FunctionCallOutput { .. }
+ 2202                      | ResponseItem::CustomToolCall { .. }
+ 2203                      | ResponseItem::CustomToolCallOutput { .. }
+ 2204                      | ResponseItem::ToolSearchOutput { .. }
+ 2205                      | ResponseItem::WebSearchCall { .. }
+ 2206                      | ResponseItem::ImageGenerationCall { .. }
+ 2207                      | ResponseItem::Compaction { .. }
+ 2208                      | ResponseItem::CompactionTrigger { .. }
+ 2209                      | ResponseItem::ContextCompaction { .. }
+ 2210                      | ResponseItem::Other =&gt; false,
+ 2211                  };
+ 2212
+ 2213                  let output_result =
+ 2214                      match handle_output_item_done(&amp;mut ctx, item, previously_streamed_item)
+ 2215                          .instrument(handle_responses)
+ 2216                          .await
+ 2217                      {
+ 2218                          Ok(output_result) =&gt; output_result,
+ 2219                          Err(err) =&gt; break Err(err),
+ 2220                      };
+ 2221                  if let Some(tool_future) = output_result.tool_future {
+ 2222                      in_flight.push_back(tool_future);
+ 2223                  }
+ 2224                  if let Some(agent_message) = output_result.last_agent_message {
+ 2225                      last_agent_message = Some(agent_message);
+ 2226                  }
+ 2227                  needs_follow_up |= output_result.needs_follow_up;
+ 2228                  // todo: remove before stabilizing multi-agent v2
+ 2229                  if preempt_for_mailbox_mail &amp;&amp; sess.input_queue.has_pending_mailbox_items().await {
+ 2230                      break Ok(SamplingRequestResult {
+ 2231                          needs_follow_up: true,
+ 2232                          last_agent_message,
+ 2233                      });
+ 2234                  }
+ 2235              }
+ 2236              ResponseEvent::OutputItemAdded(mut item) =&gt; {
+ 2237                  assign_missing_streamed_response_item_id(&amp;mut item, /*active_item*/ None);
+ 2238                  if let ResponseItem::CustomToolCall {
+ 2239                      call_id,</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code> 2034      turn_item: TurnItem,
+ 2035      previously_active_item: Option&lt;&amp;TurnItem&gt;,
+ 2036      state: &amp;mut PlanModeStreamState,
+ 2037  ) {
+ 2038      match turn_item {
+ 2039          TurnItem::AgentMessage(agent_message) =&gt; {
+ 2040              emit_agent_message_in_plan_mode(sess, turn_context, agent_message, state).await;
+ 2041          }
+ 2042          _ =&gt; {
+ 2043              if previously_active_item.is_none() {
+ 2044                  sess.emit_turn_item_started(turn_context, &amp;turn_item).await;
+ 2045              }
+ 2046              sess.emit_turn_item_completed(turn_context, turn_item).await;
+ 2047          }
+ 2048      }
+ 2049  }
+ 2050
+ 2051  /// Handle a completed assistant response item in plan mode, returning true if handled.
+ 2052  async fn handle_assistant_item_done_in_plan_mode(
+ 2053      sess: &amp;Session,
+ 2054      turn_context: &amp;TurnContext,
+ 2055      turn_store: &amp;codex_extension_api::ExtensionData,
+ 2056      item: &amp;ResponseItem,
+ 2057      state: &amp;mut PlanModeStreamState,
+ 2058      previously_active_item: Option&lt;&amp;TurnItem&gt;,
+ 2059      last_agent_message: &amp;mut Option&lt;String&gt;,
+ 2060  ) -&gt; bool {
+ 2061      if let ResponseItem::Message { role, .. } = item
+ 2062          &amp;&amp; role == &quot;assistant&quot;
+ 2063      {
+ 2064          maybe_complete_plan_item_from_message(sess, turn_context, state, item).await;
+ 2065
+ 2066          let mut finalized_facts = None;
+ 2067          if let Some(finalized_turn_item) = finalize_non_tool_response_item(
+ 2068              sess,
+ 2069              TurnItemContributorPolicy::Run(turn_store),
+ 2070              item,
+ 2071              /*plan_mode*/ true,
+ 2072          )
+ 2073          .await
+ 2074          {
+ 2075              finalized_facts = Some(finalized_turn_item.facts.clone());
+ 2076              emit_turn_item_in_plan_mode(
+ 2077                  sess,
+ 2078                  turn_context,
+ 2079                  finalized_turn_item.turn_item,
+ 2080                  previously_active_item,
+ 2081                  state,
+ 2082              )
+ 2083              .await;
+ 2084          }
+ 2085          let final_last_agent_message = finalized_facts
+ 2086              .as_ref()
+ 2087              .and_then(|facts| facts.last_agent_message.clone());
+ 2088
+ 2089          record_completed_response_item_with_finalized_facts(
+ 2090              sess,
+ 2091              turn_context,
+ 2092              item,
+ 2093              finalized_facts.as_ref(),
+ 2094          )
+ 2095          .await;
+ 2096          if let Some(agent_message) = final_last_agent_message {
+ 2097              *last_agent_message = Some(agent_message);
+ 2098          }
+ 2099          return true;
+ 2100      }
+ 2101      false
+ 2102  }
+ 2103
+ 2104  #[instrument(level = &quot;trace&quot;, skip_all)]
+ 2105  async fn drain_in_flight(
+ 2106      in_flight: &amp;mut FuturesOrdered&lt;BoxFuture&lt;&#39;static, CodexResult&lt;ResponseInputItem&gt;&gt;&gt;,
+ 2107      sess: Arc&lt;Session&gt;,
+ 2108      turn_context: Arc&lt;TurnContext&gt;,
+ 2109  ) -&gt; CodexResult&lt;()&gt; {
+ 2110      while let Some(res) = in_flight.next().await {
+ 2111          match res {
+ 2112              Ok(response_input) =&gt; {
+ 2113                  let response_item = response_input.into();
+ 2114                  sess.record_conversation_items(&amp;turn_context, std::slice::from_ref(&amp;response_item))
+ 2115                      .await;
+ 2116                  mark_thread_memory_mode_polluted_if_external_context(
+ 2117                      sess.as_ref(),
+ 2118                      turn_context.as_ref(),
+ 2119                      &amp;response_item,
+ 2120                  )
+ 2121                  .await;
+ 2122              }
+ 2123              Err(err) =&gt; {
+ 2124                  error_or_panic(format!(&quot;in-flight tool future failed during drain: {err}&quot;));
+ 2125              }
+ 2126          }
+ 2127      }
+ 2128      Ok(())
+ 2129  }
+ 2130
+ 2131  fn assign_missing_streamed_response_item_id(
+ 2132      item: &amp;mut ResponseItem,
+ 2133      active_item: Option&lt;&amp;TurnItem&gt;,
+ 2134  ) {
+ 2135      if item.id().is_some_and(|id| !id.is_empty()) {
+ 2136          return;
+ 2137      }
+ 2138
+ 2139      let active_item_id = active_item
+ 2140          .map(|item| ResponseItemId::from_server(item.id()))
+ 2141          .filter(|item_id| !item_id.is_empty());
+ 2142      item.set_id(active_item_id);
+ 2143      Session::assign_missing_response_item_id(item);
+ 2144  }
+ 2145
+ 2146  #[allow(clippy::too_many_arguments)]
+ 2147  #[instrument(level = &quot;trace&quot;,
+ 2148      skip_all,
+ 2149      fields(
+ 2150          turn_id = %turn_context.sub_id,
+ 2151          model = %turn_context.model_info.slug
+ 2152      )
+ 2153  )]
+ 2154  async fn try_run_sampling_request(
+ 2155      tool_runtime: ToolCallRuntime,
+ 2156      sess: Arc&lt;Session&gt;,
+ 2157      turn_context: Arc&lt;TurnContext&gt;,
+ 2158      turn_store: Arc&lt;codex_extension_api::ExtensionData&gt;,
+ 2159      client_session: &amp;mut ModelClientSession,
+ 2160      responses_metadata: &amp;CodexResponsesMetadata,
+ 2161      turn_diff_tracker: SharedTurnDiffTracker,
+ 2162      prompt: &amp;Prompt,
+ 2163      cancellation_token: CancellationToken,
+ 2164  ) -&gt; CodexResult&lt;SamplingRequestResult&gt; {
+ 2165      feedback_tags!(
+ 2166          model = turn_context.model_info.slug.clone(),
+ 2167          approval_policy = turn_context.approval_policy(),
+ 2168          sandbox_policy = &amp;turn_context.sandbox_policy(),
+ 2169          effort = turn_context.reasoning_effort,
+ 2170          auth_mode = sess.services.auth_manager.auth_mode(),
+ 2171          features = sess.features.enabled_features(),
+ 2172      );
+ 2173      let inference_trace = sess.services.rollout_thread_trace.inference_trace_context(
+ 2174          turn_context.sub_id.as_str(),
+ 2175          turn_context.model_info.slug.as_str(),
+ 2176          turn_context.provider.info().name.as_str(),
+ 2177      );
+ 2178      let sampling_timing_guard = turn_context.turn_timing_state.begin_sampling();
+ 2179      let uses_sequential_cutoff_reasoning_summaries = turn_context
+ 2180          .config
+ 2181          .features
+ 2182          .enabled(Feature::ConcurrentReasoningSummaries)
+ 2183          &amp;&amp; turn_context.provider.info().is_openai();
+ 2184      let mut stream = client_session
+ 2185          .stream(
+ 2186              prompt,
+ 2187              &amp;turn_context.model_info,
+ 2188              &amp;turn_context.session_telemetry,
+ 2189              turn_context.reasoning_effort.clone(),
+ 2190              turn_context.reasoning_summary,
+ 2191              turn_context.config.service_tier.clone(),
+ 2192              responses_metadata,
+ 2193              &amp;inference_trace,
+ 2194          )
+ 2195          .instrument(trace_span!(&quot;stream_request&quot;))
+ 2196          .or_cancel(&amp;cancellation_token)
+ 2197          .await??;
+ 2198      let mut in_flight: FuturesOrdered&lt;BoxFuture&lt;&#39;static, CodexResult&lt;ResponseInputItem&gt;&gt;&gt; =
+ 2199          FuturesOrdered::new();
+ 2200      let mut needs_follow_up = false;
+ 2201      let mut last_agent_message: Option&lt;String&gt; = None;
+ 2202      let mut active_item: Option&lt;TurnItem&gt; = None;
+ 2203      let mut active_tool_argument_diff_consumer: Option&lt;(
+ 2204          String,
+ 2205          Box&lt;dyn ToolArgumentDiffConsumer&gt;,
+ 2206      )&gt; = None;
+ 2207      let mut should_emit_turn_diff = false;
+ 2208      let mut should_emit_token_count = false;
+ 2209      const MAX_ANALYTICS_TOOL_CALL_IDS_PER_RESPONSE: usize = 256;
+ 2210      let mut analytics_tool_call_ids = Vec::new();
+ 2211      let reasoning_effort = turn_context.effective_reasoning_effort_for_tracing();
+ 2212      let plan_mode = turn_context.mode == ModeKind::Plan;
+ 2213      let mut assistant_message_stream_parsers = AssistantMessageStreamParsers::new(plan_mode);
+ 2214      let mut plan_mode_state = plan_mode.then(|| PlanModeStreamState::new(&amp;turn_context.sub_id));
+ 2215      let defer_streamed_turn_items_for_contributors =
+ 2216          !sess.services.extensions.turn_item_contributors().is_empty();
+ 2217      let mut active_item_is_streaming_to_client = false;
+ 2218      let receiving_span = trace_span!(&quot;receiving_stream&quot;);
+ 2219      let outcome: CodexResult&lt;SamplingRequestResult&gt; = loop {
+ 2220          let handle_responses = trace_span!(
+ 2221              parent: &amp;receiving_span,
+ 2222              &quot;handle_responses&quot;,
+ 2223              otel.name = field::Empty,
+ 2224              tool_name = field::Empty,
+ 2225              from = field::Empty,
+ 2226              codex.request.reasoning_effort = %reasoning_effort,
+ 2227              gen_ai.usage.input_tokens = field::Empty,
+ 2228              gen_ai.usage.cache_read.input_tokens = field::Empty,
+ 2229              gen_ai.usage.cache_write.input_tokens = field::Empty,
+ 2230              gen_ai.usage.output_tokens = field::Empty,
+ 2231              codex.usage.reasoning_output_tokens = field::Empty,
+ 2232              codex.usage.total_tokens = field::Empty,
+ 2233          );
+ 2234
+ 2235          let event = match stream
+ 2236              .next()
+ 2237              .instrument(trace_span!(parent: &amp;handle_responses, &quot;receiving&quot;))
+ 2238              .or_cancel(&amp;cancellation_token)
+ 2239              .await</code></pre></details></div></div></article><article class="finding-card compact" id="codex-loop-003" data-finding-dimension="architecture"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>architecture</span></div><h3>03 · 重试预算属于 turn-scoped client session，窗口超限不当作普通网络错误重试</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</p></section><section><span>白话解释</span><p>同一轮尽量复用连接和粘性状态；行李箱塞不下不会盲目重拨网络，而是交给压缩逻辑处理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>把语义恢复与传输恢复分开，避免无效重试放大费用。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1176–1223</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>1224–1273</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 3418498f0142 · <a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs:1176–1273</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code> 1176  async fn run_sampling_request(
+ 1177      sess: Arc&lt;Session&gt;,
+ 1178      step_context: Arc&lt;StepContext&gt;,
+ 1179      turn_store: Arc&lt;codex_extension_api::ExtensionData&gt;,
+ 1180      turn_diff_tracker: SharedTurnDiffTracker,
+ 1181      client_session: &amp;mut ModelClientSession,
+ 1182      responses_metadata: &amp;CodexResponsesMetadata,
+ 1183      input: Vec&lt;ResponseItem&gt;,
+ 1184      cancellation_token: CancellationToken,
+ 1185  ) -&gt; CodexResult&lt;(SamplingRequestResult, Vec&lt;ResponseItem&gt;)&gt; {
+ 1186      let turn_context = Arc::clone(&amp;step_context.turn);
+ 1187      let router = Arc::clone(&amp;step_context.tool_router);
+ 1188
+ 1189      let base_instructions = sess.get_base_instructions().await;
+ 1190
+ 1191      let tool_runtime = ToolCallRuntime::new(
+ 1192          Arc::clone(&amp;router),
+ 1193          Arc::clone(&amp;sess),
+ 1194          Arc::clone(&amp;step_context),
+ 1195          Arc::clone(&amp;turn_diff_tracker),
+ 1196      );
+ 1197      let _code_mode_worker = sess.services.code_mode_service.start_turn_worker(
+ 1198          &amp;sess,
+ 1199          Arc::clone(&amp;step_context),
+ 1200          Arc::clone(&amp;router),
+ 1201          Arc::clone(&amp;turn_diff_tracker),
+ 1202      );
+ 1203      let max_retries = turn_context.provider.info().stream_max_retries();
+ 1204      let mut retries = 0;
+ 1205      let mut initial_input = Some(input);
+ 1206      let mut original_input = None;
+ 1207      loop {
+ 1208          let prompt_input = if let Some(input) = initial_input.take() {
+ 1209              input
+ 1210          } else {
+ 1211              sess.clone_history()
+ 1212                  .await
+ 1213                  .for_prompt(&amp;turn_context.model_info.input_modalities)
+ 1214          };
+ 1215          let prompt = build_prompt(
+ 1216              prompt_input,
+ 1217              router.as_ref(),
+ 1218              turn_context.as_ref(),
+ 1219              base_instructions.clone(),
+ 1220          );
+ 1221          let err = match try_run_sampling_request(
+ 1222              tool_runtime.clone(),
+ 1223              Arc::clone(&amp;sess),
+ 1224              Arc::clone(&amp;turn_context),
+ 1225              Arc::clone(&amp;turn_store),
+ 1226              client_session,
+ 1227              responses_metadata,
+ 1228              Arc::clone(&amp;turn_diff_tracker),
+ 1229              &amp;prompt,
+ 1230              cancellation_token.child_token(),
+ 1231          )
+ 1232          .await
+ 1233          {
+ 1234              Ok(output) =&gt; {
+ 1235                  return Ok((output, original_input.unwrap_or(prompt.input)));
+ 1236              }
+ 1237              Err(err) =&gt; match err.details() {
+ 1238                  CodexErrorDetails::ContextWindowExceeded =&gt; {
+ 1239                      sess.set_total_tokens_full(&amp;turn_context).await;
+ 1240                      return Err(err);
+ 1241                  }
+ 1242                  CodexErrorDetails::UsageLimitReached(e) =&gt; {
+ 1243                      let rate_limits = e.rate_limits.clone();
+ 1244                      if let Some(rate_limits) = rate_limits {
+ 1245                          sess.update_rate_limits(&amp;turn_context, *rate_limits).await;
+ 1246                      }
+ 1247                      return Err(err);
+ 1248                  }
+ 1249                  _ =&gt; err,
+ 1250              },
+ 1251          };
+ 1252
+ 1253          if original_input.is_none() {
+ 1254              original_input = Some(prompt.input);
+ 1255          }
+ 1256
+ 1257          if !err.is_retryable() {
+ 1258              return Err(err);
+ 1259          }
+ 1260
+ 1261          handle_retryable_response_stream_error(
+ 1262              &amp;mut retries,
+ 1263              max_retries,
+ 1264              err,
+ 1265              client_session,
+ 1266              &amp;sess,
+ 1267              &amp;turn_context,
+ 1268              ResponsesStreamRequest::Sampling,
+ 1269          )
+ 1270          .await?;
+ 1271          turn_context.turn_timing_state.record_sampling_retry();
+ 1272      }
+ 1273  }
+ 1274
+ 1275  pub(crate) struct PreparedToolRecommendations {
+ 1276      auth: Option&lt;CodexAuth&gt;,
+ 1277      endpoint_candidates: Option&lt;Vec&lt;DiscoverableTool&gt;&gt;,
+ 1278  }
+ 1279
+ 1280  #[instrument(level = &quot;trace&quot;, skip_all)]
+ 1281  pub(crate) async fn prepare_tool_recommendations(
+ 1282      sess: &amp;Session,
+ 1283      turn_context: &amp;TurnContext,
+ 1284  ) -&gt; PreparedToolRecommendations {
+ 1285      let loaded_plugins = sess
+ 1286          .services
+ 1287          .plugins_manager
+ 1288          .plugins_for_config(&amp;turn_context.config.plugins_config_input())
+ 1289          .instrument(trace_span!(&quot;built_tools.load_plugins&quot;))
+ 1290          .await;
+ 1291      let tool_suggest_is_enabled = tool_suggest_enabled(turn_context);
+ 1292      let auth = if tool_suggest_is_enabled {
+ 1293          sess.services.auth_manager.auth().await
+ 1294      } else {
+ 1295          None
+ 1296      };
+ 1297      let endpoint_candidates = if tool_suggest_is_enabled {
+ 1298          let plugins_config = turn_context.config.plugins_config_input();
+ 1299          sess.services
+ 1300              .plugins_manager
+ 1301              .recommended_plugin_candidates_for_config(RecommendedPluginCandidatesInput {
+ 1302                  plugins_config: &amp;plugins_config,
+ 1303                  loaded_plugins: &amp;loaded_plugins,
+ 1304                  auth: auth.as_ref(),
+ 1305                  disabled_tools: &amp;turn_context.config.tool_suggest.disabled_tools,
+ 1306                  app_server_client_name: turn_context.app_server_client_name.as_deref(),
+ 1307              })
+ 1308              .await
+ 1309      } else {
+ 1310          None
+ 1311      };
+ 1312
+ 1313      PreparedToolRecommendations {
+ 1314          auth,
+ 1315          endpoint_candidates,
+ 1316      }
+ 1317  }
+ 1318
+ 1319  #[instrument(level = &quot;trace&quot;,
+ 1320      skip_all,
+ 1321      fields(
+ 1322          turn_id = %turn_context.sub_id,
+ 1323          model = %turn_context.model_info.slug,
+ 1324          apps_enabled = turn_context.apps_enabled()
+ 1325      )
+ 1326  )]
+ 1327  pub(crate) async fn built_tools(
+ 1328      sess: &amp;Session,
+ 1329      turn_context: &amp;TurnContext,
+ 1330      environments: &amp;TurnEnvironmentSnapshot,
+ 1331      mcp: &amp;codex_mcp::McpBinding,
+ 1332      step_store: &amp;ExtensionData,
+ 1333      prepared_recommendations: PreparedToolRecommendations,
+ 1334  ) -&gt; (Vec&lt;ToolInfo&gt;, Arc&lt;ToolRouter&gt;) {
+ 1335      let all_mcp_tools = mcp.tools().to_vec();
+ 1336      let connector_snapshot = mcp.config().connector_snapshot.clone();
+ 1337
+ 1338      let apps_enabled = turn_context.apps_enabled();
+ 1339      let accessible_connectors =
+ 1340          apps_enabled.then(|| connectors::accessible_connectors_from_mcp_tools(&amp;all_mcp_tools));
+ 1341      let accessible_connectors_with_enabled_state =
+ 1342          accessible_connectors.as_ref().map(|connectors| {
+ 1343              connectors::with_app_enabled_state(connectors.clone(), &amp;turn_context.config)
+ 1344          });</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>codex-rs/core/src/session/turn.rs · 902bd9e06b3e</span><a href="https://github.com/openai/codex/blob/902bd9e06b3ecb32cbf7f8e64cd23b956be3e7fe/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code> 1176          // instead of consuming a pending `new_context` tool request.
+ 1177          crate::compact_token_budget::run_inline_auto_compact_task(
+ 1178              Arc::clone(sess),
+ 1179              step_context,
+ 1180              initial_context_injection,
+ 1181          )
+ 1182          .await?;
+ 1183          return Ok(());
+ 1184      }
+ 1185
+ 1186      match turn_context.provider.capabilities().remote_compaction {
+ 1187          RemoteCompactionSupport::V2
+ 1188              if turn_context
+ 1189                  .config
+ 1190                  .features
+ 1191                  .enabled(Feature::RemoteCompactionV2) =&gt;
+ 1192          {
+ 1193              emit_compact_metric(
+ 1194                  &amp;sess.services.session_telemetry,
+ 1195                  &quot;remote_v2&quot;,
+ 1196                  /*manual*/ false,
+ 1197              );
+ 1198              run_inline_remote_auto_compact_task_v2(
+ 1199                  Arc::clone(sess),
+ 1200                  step_context,
+ 1201                  fallback_step_context,
+ 1202                  client_session,
+ 1203                  initial_context_injection,
+ 1204                  reason,
+ 1205                  phase,
+ 1206              )
+ 1207              .await?;
+ 1208          }
+ 1209          RemoteCompactionSupport::V1 | RemoteCompactionSupport::V2 =&gt; {
+ 1210              emit_compact_metric(
+ 1211                  &amp;sess.services.session_telemetry,
+ 1212                  &quot;remote&quot;,
+ 1213                  /*manual*/ false,
+ 1214              );
+ 1215              run_inline_remote_auto_compact_task(
+ 1216                  Arc::clone(sess),
+ 1217                  step_context,
+ 1218                  fallback_step_context,
+ 1219                  client_session.turn_state(),
+ 1220                  initial_context_injection,
+ 1221                  reason,
+ 1222                  phase,
+ 1223              )
+ 1224              .await?;
+ 1225          }
+ 1226          RemoteCompactionSupport::Unsupported =&gt; {
+ 1227              emit_compact_metric(
+ 1228                  &amp;sess.services.session_telemetry,
+ 1229                  &quot;local&quot;,
+ 1230                  /*manual*/ false,
+ 1231              );
+ 1232              run_inline_auto_compact_task(
+ 1233                  Arc::clone(sess),
+ 1234                  Arc::clone(turn_context),
+ 1235                  initial_context_injection,
+ 1236                  reason,
+ 1237                  phase,
+ 1238              )
+ 1239              .await?;
+ 1240          }
+ 1241      }
+ 1242      Ok(())
+ 1243  }
+ 1244
+ 1245  pub(super) fn collect_explicit_app_ids_from_skill_items(
+ 1246      skill_items: &amp;[ResponseItem],
+ 1247      connectors: &amp;[connectors::AppInfo],
+ 1248      skill_name_counts_lower: &amp;HashMap&lt;String, usize&gt;,
+ 1249  ) -&gt; HashSet&lt;String&gt; {
+ 1250      if skill_items.is_empty() || connectors.is_empty() {
+ 1251          return HashSet::new();
+ 1252      }
+ 1253
+ 1254      let skill_messages = skill_items
+ 1255          .iter()
+ 1256          .filter_map(|item| match item {
+ 1257              ResponseItem::Message { content, .. } =&gt; {
+ 1258                  content.iter().find_map(|content_item| match content_item {
+ 1259                      ContentItem::InputText { text } =&gt; Some(text.clone()),
+ 1260                      _ =&gt; None,
+ 1261                  })
+ 1262              }
+ 1263              _ =&gt; None,
+ 1264          })
+ 1265          .collect::&lt;Vec&lt;String&gt;&gt;();
+ 1266      if skill_messages.is_empty() {
+ 1267          return HashSet::new();
+ 1268      }
+ 1269
+ 1270      let mentions = collect_tool_mentions_from_messages(&amp;skill_messages);
+ 1271      let mention_names_lower = mentions
+ 1272          .plain_names
+ 1273          .iter()
+ 1274          .map(|name| name.to_ascii_lowercase())
+ 1275          .collect::&lt;HashSet&lt;String&gt;&gt;();
+ 1276      let mut connector_ids = mentions
+ 1277          .paths
+ 1278          .iter()
+ 1279          .filter(|path| tool_kind_for_path(path) == ToolMentionKind::App)
+ 1280          .filter_map(|path| app_id_from_path(path).map(str::to_string))
+ 1281          .collect::&lt;HashSet&lt;String&gt;&gt;();
+ 1282
+ 1283      let connector_slug_counts = build_connector_slug_counts(connectors);
+ 1284      for connector in connectors {
+ 1285          let slug = codex_connectors::metadata::connector_mention_slug(connector);
+ 1286          let connector_count = connector_slug_counts.get(&amp;slug).copied().unwrap_or(0);
+ 1287          let skill_count = skill_name_counts_lower.get(&amp;slug).copied().unwrap_or(0);
+ 1288          if connector_count == 1 &amp;&amp; skill_count == 0 &amp;&amp; mention_names_lower.contains(&amp;slug) {
+ 1289              connector_ids.insert(connector.id.clone());
+ 1290          }
+ 1291      }
+ 1292
+ 1293      connector_ids
+ 1294  }
+ 1295
+ 1296  #[instrument(level = &quot;trace&quot;, skip_all)]
+ 1297  pub(crate) fn build_prompt(
+ 1298      input: Vec&lt;ResponseItem&gt;,
+ 1299      router: &amp;ToolRouter,
+ 1300      turn_context: &amp;TurnContext,
+ 1301      base_instructions: BaseInstructions,
+ 1302  ) -&gt; Prompt {
+ 1303      Prompt {
+ 1304          input,
+ 1305          tools: router.model_visible_specs(),
+ 1306          parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+ 1307          base_instructions,
+ 1308          output_schema: turn_context.final_output_json_schema.clone(),
+ 1309          output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
+ 1310              &amp;turn_context.session_source,
+ 1311          ),
+ 1312      }
+ 1313  }
+ 1314
+ 1315  #[allow(clippy::too_many_arguments)]
+ 1316  #[allow(deprecated)]
+ 1317  #[instrument(level = &quot;trace&quot;,
+ 1318      skip_all,
+ 1319      fields(
+ 1320          turn_id = %step_context.turn.sub_id,
+ 1321          model = %step_context.turn.model_info.slug,
+ 1322          cwd = %step_context.turn.cwd.display()
+ 1323      )
+ 1324  )]
+ 1325  async fn run_sampling_request(
+ 1326      sess: Arc&lt;Session&gt;,
+ 1327      step_context: Arc&lt;StepContext&gt;,
+ 1328      turn_store: Arc&lt;codex_extension_api::ExtensionData&gt;,
+ 1329      turn_diff_tracker: SharedTurnDiffTracker,
+ 1330      client_session: &amp;mut ModelClientSession,
+ 1331      responses_metadata: &amp;CodexResponsesMetadata,
+ 1332      input: Vec&lt;ResponseItem&gt;,
+ 1333      cancellation_token: CancellationToken,
+ 1334  ) -&gt; CodexResult&lt;(SamplingRequestResult, Vec&lt;ResponseItem&gt;)&gt; {
+ 1335      let turn_context = Arc::clone(&amp;step_context.turn);
+ 1336      let router = Arc::clone(&amp;step_context.tool_router);
+ 1337
+ 1338      let base_instructions = sess.get_base_instructions().await;
+ 1339
+ 1340      let tool_runtime = ToolCallRuntime::new(
+ 1341          Arc::clone(&amp;sess),
+ 1342          Arc::clone(&amp;step_context),
+ 1343          Arc::clone(&amp;turn_diff_tracker),
+ 1344      );</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ARCHITECTURE · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:153–274 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>try_run_sampling_request 消费流式 ResponseEvent；完整 tool item 到达后进入 FuturesOrdered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:2034–2168 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:1176–1273 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</blockquote><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273" target="_blank" rel="noreferrer">codex-rs/core/src/session/turn.rs:1176–1273 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="OpenAI Codex sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

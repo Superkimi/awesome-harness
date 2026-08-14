@@ -1,1 +1,478 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="工具声明、参数、执行和回执在哪里发生？"><title>Pi · M05 · 工具：Agent 的手脚怎样被注册</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Pi · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch05-tools.html">中</a><a href="../../en/tutorial/ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Pi</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="active" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>581d75a89cea</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · Pi · 581d75a89cea</p><h1>工具：Agent 的手脚怎样被注册</h1><p class="lede">工具声明、参数、执行和回执在哪里发生？</p><div class="chapter-meta"><span>第 5 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>Pi · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/pi/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/pi/ch05-tools.srt" data-video-status="published">SRT</a><em>581d75a89cea</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>工具像机场跑道：模型拿到登机牌还不够，注册、权限、参数、执行和回执要逐关通过。</p></div><h2>先回答本章问题</h2><p>工具声明、参数、执行和回执在哪里发生？ 一边是可嵌入任何产品的发动机，一边是已经带 CLI、会话、扩展和交互界面的整车；当前两套代码有重叠，不能把发动机的新接口直接当成整车每条路径都已采用。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="pi-tool-dispatch-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具默认可并行，声明 sequential 或全局策略才串行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>同一 assistant message 的 tool calls 默认 Promise 并发；任一工具 executionMode=sequential 或配置顺序执行时改为串行。结果按原 tool call 顺序返回，before hook 可阻断，after hook 可改写结果、usage 和 terminate。</p></section><section><span>白话解释</span><p>互不冲突的工具一起跑更快；有副作用的工具可以声明排队。即使并发完成顺序不同，交给模型的账本仍按原顺序。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>吞吐高，但自定义工具作者必须正确声明副作用和并发语义。</p></section><small class="finding-source-note">叙述来自历史证据账本 · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:411–553</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>顺序/并行调度和结果顺序。</code></pre></div></div></article><article class="finding-card compact" id="pi-edit-001" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 编辑采用唯一精确替换，并对同一文件串行化</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>edit 要求 oldText 在文件中唯一且 replacement 不重叠，保留 BOM/行尾，写回后返回 diff/patch；同 canonical path 的 edit/write 进入 mutation queue，不同文件仍可并行。</p></section><section><span>白话解释</span><p>它不凭模糊相似度猜改哪里；目标文字必须只出现一次。同一文件上的两把手术刀要排队，避免互相覆盖。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>机制简单可审计，面对漂移代码时会失败并要求模型重新读取。</p></section><small class="finding-source-note">叙述来自历史证据账本 · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:411–553 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/edit.ts:33–53</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>精确唯一替换 schema。</code></pre></div></div></article><article class="finding-card compact" id="pi-tool-output-001" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · read 与 bash 使用不同方向的双阈值截断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>默认输出上限 2000 行或 50KB；read 保留头部并给 offset 续读提示，bash 保留尾部并把完整超长输出写入 /tmp/pi-bash-*.log。</p></section><section><span>白话解释</span><p>读文件通常从开头看，命令日志通常看结尾报错；超出的内容没有直接消失，而是留全文路径。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>减少工具输出占满上下文，同时维持可追溯性。</p></section><small class="finding-source-note">叙述来自历史证据账本 · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:411–553 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/truncate.ts:1–12</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>默认双阈值和方向。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Pi sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← 模型与消息：流式结果如何进入状态</a><a href="ch06-context.html">上下文：长任务怎样不丢重点 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="工具声明、参数、执行和回执在哪里发生？"><title>Pi · M05 · 工具：Agent 的手脚怎样被注册</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Pi · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch05-tools.html">中</a><a href="../../en/tutorial/ch05-tools.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Pi</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="active" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>581d75a89cea</div></aside><main><section class="chapter-hero"><p class="eyebrow">M05 · Pi · 581d75a89cea</p><h1>工具：Agent 的手脚怎样被注册</h1><p class="lede">工具声明、参数、执行和回执在哪里发生？</p><div class="chapter-meta"><span>第 5 / 10 章</span><span>3 条源码 finding</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M05</span><b>Pi · M05 · 工具：Agent 的手脚怎样被注册</b></div><div class="video-links"><a href="../../../../videos/pi/ch05-tools.mp4" data-video-status="published">MP4</a><a href="../../../../videos/pi/ch05-tools.srt" data-video-status="published">SRT</a><em>581d75a89cea</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>工具像机场跑道：模型拿到登机牌还不够，注册、权限、参数、执行和回执要逐关通过。</p></div><h2>先回答本章问题</h2><p>工具声明、参数、执行和回执在哪里发生？ 一边是可嵌入任何产品的发动机，一边是已经带 CLI、会话、扩展和交互界面的整车；当前两套代码有重叠，不能把发动机的新接口直接当成整车每条路径都已采用。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="pi-tool-dispatch-001" data-finding-dimension="tools"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>01 · 工具默认可并行，声明 sequential 或全局策略才串行</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>同一 assistant message 的 tool calls 默认 Promise 并发；任一工具 executionMode=sequential 或配置顺序执行时改为串行。结果按原 tool call 顺序返回，before hook 可阻断，after hook 可改写结果、usage 和 terminate。</p></section><section><span>白话解释</span><p>互不冲突的工具一起跑更快；有副作用的工具可以声明排队。即使并发完成顺序不同，交给模型的账本仍按原顺序。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>吞吐高，但自定义工具作者必须正确声明副作用和并发语义。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>411–481</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>482–553</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/agent/src/agent-loop.ts:411–553</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  411  async function executeToolCalls(
+  412  	currentContext: AgentContext,
+  413  	assistantMessage: AssistantMessage,
+  414  	config: AgentLoopConfig,
+  415  	signal: AbortSignal | undefined,
+  416  	emit: AgentEventSink,
+  417  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  418  	const toolCalls = assistantMessage.content.filter((c) =&gt; c.type === &quot;toolCall&quot;);
+  419  	const hasSequentialToolCall = toolCalls.some(
+  420  		(tc) =&gt; currentContext.tools?.find((t) =&gt; t.name === tc.name)?.executionMode === &quot;sequential&quot;,
+  421  	);
+  422  	if (config.toolExecution === &quot;sequential&quot; || hasSequentialToolCall) {
+  423  		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+  424  	}
+  425  	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
+  426  }
+  427
+  428  type ExecutedToolCallBatch = {
+  429  	messages: ToolResultMessage[];
+  430  	terminate: boolean;
+  431  };
+  432
+  433  async function executeToolCallsSequential(
+  434  	currentContext: AgentContext,
+  435  	assistantMessage: AssistantMessage,
+  436  	toolCalls: AgentToolCall[],
+  437  	config: AgentLoopConfig,
+  438  	signal: AbortSignal | undefined,
+  439  	emit: AgentEventSink,
+  440  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  441  	const finalizedCalls: FinalizedToolCallOutcome[] = [];
+  442  	const messages: ToolResultMessage[] = [];
+  443
+  444  	for (const toolCall of toolCalls) {
+  445  		await emit({
+  446  			type: &quot;tool_execution_start&quot;,
+  447  			toolCallId: toolCall.id,
+  448  			toolName: toolCall.name,
+  449  			args: toolCall.arguments,
+  450  		});
+  451
+  452  		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+  453  		let finalized: FinalizedToolCallOutcome;
+  454  		if (preparation.kind === &quot;immediate&quot;) {
+  455  			finalized = {
+  456  				toolCall,
+  457  				result: preparation.result,
+  458  				isError: preparation.isError,
+  459  			};
+  460  		} else {
+  461  			const executed = await executePreparedToolCall(preparation, signal, emit);
+  462  			finalized = await finalizeExecutedToolCall(
+  463  				currentContext,
+  464  				assistantMessage,
+  465  				preparation,
+  466  				executed,
+  467  				config,
+  468  				signal,
+  469  			);
+  470  		}
+  471
+  472  		await emitToolExecutionEnd(finalized, emit);
+  473  		const toolResultMessage = createToolResultMessage(finalized);
+  474  		await emitToolResultMessage(toolResultMessage, emit);
+  475  		finalizedCalls.push(finalized);
+  476  		messages.push(toolResultMessage);
+  477
+  478  		if (signal?.aborted) {
+  479  			break;
+  480  		}
+  481  	}
+  482
+  483  	return {
+  484  		messages,
+  485  		terminate: shouldTerminateToolBatch(finalizedCalls),
+  486  	};
+  487  }
+  488
+  489  async function executeToolCallsParallel(
+  490  	currentContext: AgentContext,
+  491  	assistantMessage: AssistantMessage,
+  492  	toolCalls: AgentToolCall[],
+  493  	config: AgentLoopConfig,
+  494  	signal: AbortSignal | undefined,
+  495  	emit: AgentEventSink,
+  496  ): Promise&lt;ExecutedToolCallBatch&gt; {
+  497  	const finalizedCalls: FinalizedToolCallEntry[] = [];
+  498
+  499  	for (const toolCall of toolCalls) {
+  500  		await emit({
+  501  			type: &quot;tool_execution_start&quot;,
+  502  			toolCallId: toolCall.id,
+  503  			toolName: toolCall.name,
+  504  			args: toolCall.arguments,
+  505  		});
+  506
+  507  		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
+  508  		if (preparation.kind === &quot;immediate&quot;) {
+  509  			const finalized = {
+  510  				toolCall,
+  511  				result: preparation.result,
+  512  				isError: preparation.isError,
+  513  			} satisfies FinalizedToolCallOutcome;
+  514  			await emitToolExecutionEnd(finalized, emit);
+  515  			finalizedCalls.push(finalized);
+  516  			if (signal?.aborted) {
+  517  				break;
+  518  			}
+  519  			continue;
+  520  		}
+  521
+  522  		finalizedCalls.push(async () =&gt; {
+  523  			const executed = await executePreparedToolCall(preparation, signal, emit);
+  524  			const finalized = await finalizeExecutedToolCall(
+  525  				currentContext,
+  526  				assistantMessage,
+  527  				preparation,
+  528  				executed,
+  529  				config,
+  530  				signal,
+  531  			);
+  532  			await emitToolExecutionEnd(finalized, emit);
+  533  			return finalized;
+  534  		});
+  535  		if (signal?.aborted) {
+  536  			break;
+  537  		}
+  538  	}
+  539
+  540  	const orderedFinalizedCalls = await Promise.all(
+  541  		finalizedCalls.map((entry) =&gt; (typeof entry === &quot;function&quot; ? entry() : Promise.resolve(entry))),
+  542  	);
+  543  	const messages: ToolResultMessage[] = [];
+  544  	for (const finalized of orderedFinalizedCalls) {
+  545  		const toolResultMessage = createToolResultMessage(finalized);
+  546  		await emitToolResultMessage(toolResultMessage, emit);
+  547  		messages.push(toolResultMessage);
+  548  	}
+  549
+  550  	return {
+  551  		messages,
+  552  		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
+  553  	};
+  554  }
+  555
+  556  type PreparedToolCall = {
+  557  	kind: &quot;prepared&quot;;
+  558  	toolCall: AgentToolCall;
+  559  	tool: AgentTool&lt;any&gt;;
+  560  	args: unknown;
+  561  };
+  562
+  563  type ImmediateToolCallOutcome = {
+  564  	kind: &quot;immediate&quot;;
+  565  	result: AgentToolResult&lt;any&gt;;
+  566  	isError: boolean;
+  567  };
+  568
+  569  type ExecutedToolCallOutcome = {
+  570  	result: AgentToolResult&lt;any&gt;;
+  571  	isError: boolean;
+  572  };
+  573
+  574  type FinalizedToolCallOutcome = {
+  575  	toolCall: AgentToolCall;
+  576  	result: AgentToolResult&lt;any&gt;;
+  577  	isError: boolean;
+  578  };
+  579
+  580  type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() =&gt; Promise&lt;FinalizedToolCallOutcome&gt;);
+  581
+  582  function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
+  583  	return finalizedCalls.length &gt; 0 &amp;&amp; finalizedCalls.every((finalized) =&gt; finalized.result.terminate === true);
+  584  }
+  585
+  586  function prepareToolCallArguments(tool: AgentTool&lt;any&gt;, toolCall: AgentToolCall): AgentToolCall {
+  587  	if (!tool.prepareArguments) {
+  588  		return toolCall;
+  589  	}
+  590  	const preparedArguments = tool.prepareArguments(toolCall.arguments);
+  591  	if (preparedArguments === toolCall.arguments) {
+  592  		return toolCall;
+  593  	}
+  594  	return {
+  595  		...toolCall,
+  596  		arguments: preparedArguments as Record&lt;string, any&gt;,
+  597  	};
+  598  }
+  599
+  600  async function prepareToolCall(
+  601  	currentContext: AgentContext,
+  602  	assistantMessage: AssistantMessage,
+  603  	toolCall: AgentToolCall,
+  604  	config: AgentLoopConfig,
+  605  	signal: AbortSignal | undefined,
+  606  ): Promise&lt;PreparedToolCall | ImmediateToolCallOutcome&gt; {
+  607  	const tool = currentContext.tools?.find((t) =&gt; t.name === toolCall.name);
+  608  	if (!tool) {
+  609  		return {
+  610  			kind: &quot;immediate&quot;,
+  611  			result: createErrorToolResult(`Tool ${toolCall.name} not found`),
+  612  			isError: true,
+  613  		};
+  614  	}
+  615
+  616  	try {
+  617  		const preparedToolCall = prepareToolCallArguments(tool, toolCall);
+  618  		const validatedArgs = validateToolArguments(tool, preparedToolCall);
+  619  		if (config.beforeToolCall) {
+  620  			const beforeResult = await config.beforeToolCall(
+  621  				{
+  622  					assistantMessage,
+  623  					toolCall,
+  624  					args: validatedArgs,</code></pre></div></div></article><article class="finding-card compact" id="pi-edit-001" data-finding-dimension="tools"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>02 · 编辑采用唯一精确替换，并对同一文件串行化</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>edit 要求 oldText 在文件中唯一且 replacement 不重叠，保留 BOM/行尾，写回后返回 diff/patch；同 canonical path 的 edit/write 进入 mutation queue，不同文件仍可并行。</p></section><section><span>白话解释</span><p>它不凭模糊相似度猜改哪里；目标文字必须只出现一次。同一文件上的两把手术刀要排队，避免互相覆盖。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>机制简单可审计，面对漂移代码时会失败并要求模型重新读取。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>33–42</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>43–53</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/edit.ts:33–53</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   33  const replaceEditSchema = Type.Object(
+   34  	{
+   35  		oldText: Type.String({
+   36  			description:
+   37  				&quot;Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.&quot;,
+   38  		}),
+   39  		newText: Type.String({ description: &quot;Replacement text for this targeted edit.&quot; }),
+   40  	},
+   41  	{},
+   42  );
+   43
+   44  const editSchema = Type.Object(
+   45  	{
+   46  		path: Type.String({ description: &quot;Path to the file to edit (relative or absolute)&quot; }),
+   47  		edits: Type.Array(replaceEditSchema, {
+   48  			description:
+   49  				&quot;One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.&quot;,
+   50  		}),
+   51  	},
+   52  	{},
+   53  );
+   54
+   55  export type EditToolInput = Static&lt;typeof editSchema&gt;;
+   56  type LegacyEditToolInput = EditToolInput &amp; {
+   57  	oldText?: unknown;
+   58  	newText?: unknown;
+   59  };
+   60
+   61  export interface EditToolDetails {
+   62  	/** Display-oriented diff of the changes made */
+   63  	diff: string;
+   64  	/** Standard unified patch of the changes made */
+   65  	patch: string;
+   66  	/** Line number of the first change in the new file (for editor navigation) */
+   67  	firstChangedLine?: number;
+   68  }
+   69
+   70  /**
+   71   * Pluggable operations for the edit tool.
+   72   * Override these to delegate file editing to remote systems (for example SSH).
+   73   */
+   74  export interface EditOperations {
+   75  	/** Read file contents as a Buffer */
+   76  	readFile: (absolutePath: string) =&gt; Promise&lt;Buffer&gt;;
+   77  	/** Write content to a file */
+   78  	writeFile: (absolutePath: string, content: string) =&gt; Promise&lt;void&gt;;
+   79  	/** Check if file is readable and writable (throw if not) */
+   80  	access: (absolutePath: string) =&gt; Promise&lt;void&gt;;
+   81  }
+   82
+   83  const defaultEditOperations: EditOperations = {
+   84  	readFile: (path) =&gt; fsReadFile(path),
+   85  	writeFile: (path, content) =&gt; fsWriteFile(path, content, &quot;utf-8&quot;),
+   86  	access: (path) =&gt; fsAccess(path, constants.R_OK | constants.W_OK),
+   87  };
+   88
+   89  export interface EditToolOptions {
+   90  	/** Custom operations for file editing. Default: local filesystem */
+   91  	operations?: EditOperations;
+   92  }
+   93
+   94  function prepareEditArguments(input: unknown): EditToolInput {
+   95  	if (!input || typeof input !== &quot;object&quot;) {
+   96  		return input as EditToolInput;
+   97  	}
+   98
+   99  	const args = input as Record&lt;string, unknown&gt;;
+  100
+  101  	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+  102  	if (typeof args.edits === &quot;string&quot;) {
+  103  		try {
+  104  			const parsed = JSON.parse(args.edits);
+  105  			if (Array.isArray(parsed)) args.edits = parsed;
+  106  		} catch {}
+  107  	}
+  108
+  109  	const legacy = args as LegacyEditToolInput;
+  110  	if (typeof legacy.oldText !== &quot;string&quot; || typeof legacy.newText !== &quot;string&quot;) {
+  111  		return args as EditToolInput;
+  112  	}
+  113
+  114  	const edits = Array.isArray(legacy.edits) ? [...legacy.edits] : [];
+  115  	edits.push({ oldText: legacy.oldText, newText: legacy.newText });
+  116  	const { oldText: _oldText, newText: _newText, ...rest } = legacy;
+  117  	return { ...rest, edits } as EditToolInput;
+  118  }
+  119
+  120  function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] } {
+  121  	if (!Array.isArray(input.edits) || input.edits.length === 0) {
+  122  		throw new Error(&quot;Edit tool input is invalid. edits must contain at least one replacement.&quot;);
+  123  	}
+  124  	return { path: input.path, edits: input.edits };</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/edit.ts · 581d75a89cea</span><a href="https://github.com/earendil-works/pi/blob/581d75a89cea21e50d6a26df840352f94427f633/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   33
+   34  const replaceEditSchema = Type.Object(
+   35  	{
+   36  		oldText: Type.String({
+   37  			description:
+   38  				&quot;Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.&quot;,
+   39  		}),
+   40  		newText: Type.String({ description: &quot;Replacement text for this targeted edit.&quot; }),
+   41  	},
+   42  	{},
+   43  );
+   44
+   45  const editSchema = Type.Object(
+   46  	{
+   47  		path: Type.String({ description: &quot;Path to the file to edit (relative or absolute)&quot; }),
+   48  		edits: Type.Array(replaceEditSchema, {
+   49  			description:
+   50  				&quot;One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.&quot;,
+   51  		}),
+   52  	},
+   53  	{},
+   54  );
+   55
+   56  export const editToolSystemPromptContribution = {
+   57  	snippet: &quot;Make precise file edits with exact text replacement, including multiple disjoint edits in one call&quot;,
+   58  	guidelines: [
+   59  		&quot;Use edit for precise changes (edits[].oldText must match exactly)&quot;,
+   60  		&quot;When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls&quot;,
+   61  		&quot;Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.&quot;,
+   62  		&quot;Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.&quot;,
+   63  	],
+   64  } as const;
+   65
+   66  export type EditToolInput = Static&lt;typeof editSchema&gt;;
+   67  type LegacyEditToolInput = EditToolInput &amp; {
+   68  	oldText?: unknown;
+   69  	newText?: unknown;
+   70  };
+   71
+   72  export interface EditToolDetails {
+   73  	/** Display-oriented diff of the changes made */
+   74  	diff: string;
+   75  	/** Standard unified patch of the changes made */
+   76  	patch: string;
+   77  	/** Line number of the first change in the new file (for editor navigation) */
+   78  	firstChangedLine?: number;
+   79  }
+   80
+   81  /**
+   82   * Pluggable operations for the edit tool.
+   83   * Override these to delegate file editing to remote systems (for example SSH).
+   84   */
+   85  export interface EditOperations {
+   86  	/** Read file contents as a Buffer */
+   87  	readFile: (absolutePath: string) =&gt; Promise&lt;Buffer&gt;;
+   88  	/** Write content to a file */
+   89  	writeFile: (absolutePath: string, content: string) =&gt; Promise&lt;void&gt;;
+   90  	/** Check if file is readable and writable (throw if not) */
+   91  	access: (absolutePath: string) =&gt; Promise&lt;void&gt;;
+   92  }
+   93
+   94  const defaultEditOperations: EditOperations = {
+   95  	readFile: (path) =&gt; fsReadFile(path),
+   96  	writeFile: (path, content) =&gt; fsWriteFile(path, content, &quot;utf-8&quot;),
+   97  	access: (path) =&gt; fsAccess(path, constants.R_OK | constants.W_OK),
+   98  };
+   99
+  100  export interface EditToolOptions {
+  101  	/** Custom operations for file editing. Default: local filesystem */
+  102  	operations?: EditOperations;
+  103  }
+  104
+  105  function prepareEditArguments(input: unknown): EditToolInput {
+  106  	if (!input || typeof input !== &quot;object&quot;) {
+  107  		return input as EditToolInput;
+  108  	}
+  109
+  110  	const args = input as Record&lt;string, unknown&gt;;
+  111
+  112  	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+  113  	if (typeof args.edits === &quot;string&quot;) {
+  114  		try {
+  115  			const parsed = JSON.parse(args.edits);
+  116  			if (Array.isArray(parsed)) args.edits = parsed;
+  117  		} catch {}
+  118  	}
+  119
+  120  	const legacy = args as LegacyEditToolInput;
+  121  	if (typeof legacy.oldText !== &quot;string&quot; || typeof legacy.newText !== &quot;string&quot;) {
+  122  		return args as EditToolInput;
+  123  	}
+  124</code></pre></details></div></div></article><article class="finding-card compact" id="pi-tool-output-001" data-finding-dimension="tools"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>tools</span></div><h3>03 · read 与 bash 使用不同方向的双阈值截断</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>默认输出上限 2000 行或 50KB；read 保留头部并给 offset 续读提示，bash 保留尾部并把完整超长输出写入 /tmp/pi-bash-*.log。</p></section><section><span>白话解释</span><p>读文件通常从开头看，命令日志通常看结尾报错；超出的内容没有直接消失，而是留全文路径。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>减少工具输出占满上下文，同时维持可追溯性。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–5</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>6–12</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · c820aa26fe09 · <a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>packages/coding-agent/src/core/tools/truncate.ts:1–12</span><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  /**
+    2   * Shared truncation utilities for tool outputs.
+    3   *
+    4   * Truncation is based on two independent limits - whichever is hit first wins:
+    5   * - Line limit (default: 2000 lines)
+    6   * - Byte limit (default: 50KB)
+    7   *
+    8   * Never returns partial lines (except bash tail truncation edge case).
+    9   */
+   10
+   11  export const DEFAULT_MAX_LINES = 2000;
+   12  export const DEFAULT_MAX_BYTES = 50 * 1024; // 50KB
+   13  export const GREP_MAX_LINE_LENGTH = 500; // Max chars per grep match line
+   14
+   15  export interface TruncationResult {
+   16  	/** The truncated content */
+   17  	content: string;
+   18  	/** Whether truncation occurred */
+   19  	truncated: boolean;
+   20  	/** Which limit was hit: &quot;lines&quot;, &quot;bytes&quot;, or null if not truncated */
+   21  	truncatedBy: &quot;lines&quot; | &quot;bytes&quot; | null;
+   22  	/** Total number of lines in the original content */
+   23  	totalLines: number;
+   24  	/** Total number of bytes in the original content */
+   25  	totalBytes: number;
+   26  	/** Number of complete lines in the truncated output */
+   27  	outputLines: number;
+   28  	/** Number of bytes in the truncated output */
+   29  	outputBytes: number;
+   30  	/** Whether the last line was partially truncated (only for tail truncation edge case) */
+   31  	lastLinePartial: boolean;
+   32  	/** Whether the first line exceeded the byte limit (for head truncation) */
+   33  	firstLineExceedsLimit: boolean;
+   34  	/** The max lines limit that was applied */
+   35  	maxLines: number;
+   36  	/** The max bytes limit that was applied */
+   37  	maxBytes: number;
+   38  }
+   39
+   40  export interface TruncationOptions {
+   41  	/** Maximum number of lines (default: 2000) */
+   42  	maxLines?: number;
+   43  	/** Maximum number of bytes (default: 50KB) */
+   44  	maxBytes?: number;
+   45  }
+   46
+   47  function splitLinesForCounting(content: string): string[] {
+   48  	if (content.length === 0) {
+   49  		return [];
+   50  	}
+   51  	const lines = content.split(&quot;\n&quot;);
+   52  	if (content.endsWith(&quot;\n&quot;)) {
+   53  		lines.pop();
+   54  	}
+   55  	return lines;
+   56  }
+   57
+   58  /**
+   59   * Format bytes as human-readable size.
+   60   */
+   61  export function formatSize(bytes: number): string {
+   62  	if (bytes &lt; 1024) {
+   63  		return `${bytes}B`;
+   64  	} else if (bytes &lt; 1024 * 1024) {
+   65  		return `${(bytes / 1024).toFixed(1)}KB`;
+   66  	} else {
+   67  		return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+   68  	}
+   69  }
+   70
+   71  /**
+   72   * Truncate content from the head (keep first N lines/bytes).
+   73   * Suitable for file reads where you want to see the beginning.
+   74   *
+   75   * Never returns partial lines. If first line exceeds byte limit,
+   76   * returns empty content with firstLineExceedsLimit=true.
+   77   */
+   78  export function truncateHead(content: string, options: TruncationOptions = {}): TruncationResult {
+   79  	const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
+   80  	const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+   81
+   82  	const totalBytes = Buffer.byteLength(content, &quot;utf-8&quot;);
+   83  	const lines = splitLinesForCounting(content);</code></pre></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">TOOLS · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>同一 assistant message 的 tool calls 默认 Promise 并发；任一工具 executionMode=sequential 或配置顺序执行时改为串行。结果按原 tool call 顺序返回，before hook 可阻断，after hook 可改写结果、usage 和 terminate。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/agent/src/agent-loop.ts#L411-L553" target="_blank" rel="noreferrer">packages/agent/src/agent-loop.ts:411–553 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>edit 要求 oldText 在文件中唯一且 replacement 不重叠，保留 BOM/行尾，写回后返回 diff/patch；同 canonical path 的 edit/write 进入 mutation queue，不同文件仍可并行。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/edit.ts#L33-L53" target="_blank" rel="noreferrer">packages/coding-agent/src/core/tools/edit.ts:33–53 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>默认输出上限 2000 行或 50KB；read 保留头部并给 offset 续读提示，bash 保留尾部并把完整超长输出写入 /tmp/pi-bash-*.log。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">packages/coding-agent/src/core/tools/truncate.ts:1–12 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>默认输出上限 2000 行或 50KB；read 保留头部并给 offset 续读提示，bash 保留尾部并把完整超长输出写入 /tmp/pi-bash-*.log。</blockquote><a href="https://github.com/earendil-works/pi/blob/c820aa26fe0907e053e881a957722693fc094c9c/packages/coding-agent/src/core/tools/truncate.ts#L1-L12" target="_blank" rel="noreferrer">packages/coding-agent/src/core/tools/truncate.ts:1–12 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="Pi sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch04-model.html">← 模型与消息：流式结果如何进入状态</a><a href="ch06-context.html">上下文：长任务怎样不丢重点 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

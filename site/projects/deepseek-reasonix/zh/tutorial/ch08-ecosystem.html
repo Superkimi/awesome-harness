@@ -1,1 +1,743 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="新能力如何被发现、加载、调用和卸载？"><title>DeepSeek-Reasonix · M08 · 扩展：MCP、Skill、插件如何接入</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch08-ecosystem.html">中</a><a href="../../en/tutorial/ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>扩展：MCP、Skill、插件如何接入</h1><p class="lede">新能力如何被发现、加载、调用和卸载？</p><div class="chapter-meta"><span>第 8 / 10 章</span><span>3 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>DeepSeek-Reasonix · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。</p></div><h2>先回答本章问题</h2><p>新能力如何被发现、加载、调用和卸载？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：3 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · MCP 以统一 JSON-RPC 适配 stdio、Streamable HTTP 和 legacy SSE</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>plugin 包把握手、tools/list、tools/call 统一在 transport interface 下；stdio 用受 ctx 绑定的子进程与专用 reader demux，HTTP transport 用 session id、单 origin redirect 规则、16 MiB body cap 和串行 request/response mutex。</p></section><section><span>白话解释</span><p>外部工具可以是本地进程，也可以是远程 HTTP/SSE，但 Agent 看到的都是同一个 Tool；连接、超时、取消和响应大小在连接层处理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>连接器治理应是独立 runtime 层，不能让每个工具自己实现 JSON-RPC、超时和取消。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/plugin/plugin.go:1–7</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>MCP JSON-RPC 与三种 transport。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-mcp-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · MCP 项目服务器先做无 secret 的身份授权，再做 live safety 对账</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>project launch identity 对 stdio 固定 executable path 与 SHA-256，对 HTTP 规范化 URL 但只保留 header 名并替换 userinfo/query credentials；cached tool 的 readOnly/destructive 事实与 live server 不一致时，当前调用在执行前阻断。MCP 默认 host mode 不进入 Bash sandbox，confined 只在显式内部模式使用。</p></section><section><span>白话解释</span><p>换了 MCP 二进制、目标地址或工具安全标记，不会因为旧 schema cache 还在就直接执行；同时默认插件是受信任 host 进程，不能误以为它自动继承 Agent shell 沙箱。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>MCP 需要 provenance、exact launch grant、schema cache key 和 live reclassification 四件套；Host/Confined 必须在产品上清楚区分。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/security.go#L17-L66" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">internal/plugin/plugin.go:1–7 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/plugin/security.go:17–66</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/security.go#L17-L66" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>project launch identity、executable hash 与 normalized endpoint。</code></pre></div></div></article><article class="finding-card compact" id="reasonix-mcp-003" data-finding-dimension="connectors"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>03 · MCP 启动是 catalog-first、cache-aware、可惰性连接的</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>boot 对有缓存 schema 的服务器只注册 placeholder，不启动进程；cache miss 才做一次后台 catalog discovery，真正首次调用走 EnsureConnected。插件启动有默认并发上限 8、超时和 StartAvailable 的“单个失败不拖垮整场”路径；Economy profile 还把可选 MCP 放到 connect_tool_source。</p></section><section><span>白话解释</span><p>开一个项目不会立刻 fork 二十个 npm MCP 进程；先用缓存把工具菜单画出来，真正用到时再连，坏一个插件也不必让整场会话起不来。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>扩展生态的启动成本应被当成调度问题，采用 schema cache、lazy process 和 bounded startup，而不是启动时全量阻塞。</p></section><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L243-L279" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small><small class="finding-source-note">当前刷新提交对照 · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">internal/plugin/plugin.go:1–7 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/plugin/plugin.go:243–279</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L243-L279" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>StartPolicy 并发、超时、abort 与 persistence。</code></pre></div></div></article></div><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="DeepSeek-Reasonix sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← 安全：审批、权限和边界</a><a href="ch09-collaboration.html">协作：子 Agent 与工作流 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="新能力如何被发现、加载、调用和卸载？"><title>DeepSeek-Reasonix · M08 · 扩展：MCP、Skill、插件如何接入</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">DeepSeek-Reasonix · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch08-ecosystem.html">中</a><a href="../../en/tutorial/ch08-ecosystem.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>DeepSeek-Reasonix</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="active" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main-v2<br>9aaf8d381a21</div></aside><main><section class="chapter-hero"><p class="eyebrow">M08 · DeepSeek-Reasonix · 9aaf8d381a21</p><h1>扩展：MCP、Skill、插件如何接入</h1><p class="lede">新能力如何被发现、加载、调用和卸载？</p><div class="chapter-meta"><span>第 8 / 10 章</span><span>5 条源码 finding</span><span>main-v2</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M08</span><b>DeepSeek-Reasonix · M08 · 扩展：MCP、Skill、插件如何接入</b></div><div class="video-links"><a href="../../../../videos/deepseek-reasonix/ch08-ecosystem.mp4" data-video-status="published">MP4</a><a href="../../../../videos/deepseek-reasonix/ch08-ecosystem.srt" data-video-status="published">SRT</a><em>9aaf8d381a21</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>多条源码证据</b><i>→</i><b>四问</b><i>→</i><b>交互图</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>插件和 MCP 像外接设备：说明书、设备、电源和网络都要分开登记，不能插上就默认可信。</p></div><h2>先回答本章问题</h2><p>新能力如何被发现、加载、调用和卸载？ 终端、桌面和服务端不是各写一套 Agent，而是都插到同一个“总电闸”上，所以权限、工具和生命周期不会因为换界面而变一套。</p><h2>本章证据板：5 条 finding</h2><p>不要把一段代码当成整个系统；下面每张卡分别说明事实、白话、工程影响、边界和可点击的固定源码。</p><div class="finding-stack"><article class="finding-card compact" id="reasonix-mcp-001" data-finding-dimension="connectors"><header><span class="finding-index">01</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>01 · MCP 以统一 JSON-RPC 适配 stdio、Streamable HTTP 和 legacy SSE</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>plugin 包把握手、tools/list、tools/call 统一在 transport interface 下；stdio 用受 ctx 绑定的子进程与专用 reader demux，HTTP transport 用 session id、单 origin redirect 规则、16 MiB body cap 和串行 request/response mutex。</p></section><section><span>白话解释</span><p>外部工具可以是本地进程，也可以是远程 HTTP/SSE，但 Agent 看到的都是同一个 Tool；连接、超时、取消和响应大小在连接层处理。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>连接器治理应是独立 runtime 层，不能让每个工具自己实现 JSON-RPC、超时和取消。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>1–3</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>4–7</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/plugin/plugin.go:1–7</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>    1  // Package plugin is Reasonix&#39;s MCP client. It connects to external MCP servers and
+    2  // adapts their tools to the tool.Tool interface, so the agent treats plugin
+    3  // tools and built-ins uniformly. The wire protocol is JSON-RPC 2.0 in every
+    4  // case; only the transport differs (stdio subprocess, Streamable HTTP, or the
+    5  // legacy HTTP+SSE). A transport interface hides that difference so the MCP-level
+    6  // logic — handshake, tools/list, tools/call — is written once.
+    7  package plugin
+    8
+    9  import (
+   10  	&quot;context&quot;
+   11  	&quot;encoding/base64&quot;
+   12  	&quot;encoding/json&quot;
+   13  	&quot;errors&quot;
+   14  	&quot;fmt&quot;
+   15  	&quot;hash/fnv&quot;
+   16  	&quot;io&quot;
+   17  	&quot;log/slog&quot;
+   18  	&quot;reflect&quot;
+   19  	&quot;regexp&quot;
+   20  	&quot;sort&quot;
+   21  	&quot;strings&quot;
+   22  	&quot;sync&quot;
+   23  	&quot;sync/atomic&quot;
+   24  	&quot;time&quot;
+   25
+   26  	&quot;reasonix/internal/event&quot;
+   27  	&quot;reasonix/internal/mcplaunch&quot;
+   28  	&quot;reasonix/internal/provider&quot;
+   29  	&quot;reasonix/internal/sandbox&quot;
+   30  	&quot;reasonix/internal/secrets&quot;
+   31  	&quot;reasonix/internal/tool&quot;
+   32  )
+   33
+   34  // protocolVersion is the MCP revision Reasonix advertises during initialize.
+   35  const protocolVersion = &quot;2024-11-05&quot;
+   36
+   37  // MCPProcessMode selects how a local stdio MCP process is launched.
+   38  // It is an internal runtime field, not a user-facing config knob.
+   39  type MCPProcessMode string
+   40
+   41  const (
+   42  	// MCPProcessHost runs authorized stdio MCP as a trusted host process that
+   43  	// does not inherit the agent Bash command sandbox. This is the product
+   44  	// default so servers such as chrome-devtools-mcp can reach the real browser,
+   45  	// Keychain, LaunchServices, and local app services.
+   46  	MCPProcessHost MCPProcessMode = &quot;host&quot;
+   47  	// MCPProcessConfined wraps the process with sandbox.CommandArgs. Reserved for
+   48  	// internal managed deployments and tests; never auto-selected for user installs.
+   49  	MCPProcessConfined MCPProcessMode = &quot;confined&quot;
+   50  )
+   51
+   52  // ResolvedProcessMode returns the effective process mode. Empty means host.
+   53  func (s Spec) ResolvedProcessMode() MCPProcessMode {
+   54  	switch s.ProcessMode {
+   55  	case MCPProcessConfined:
+   56  		return MCPProcessConfined
+   57  	default:
+   58  		return MCPProcessHost
+   59  	}
+   60  }
+   61
+   62  // defaultCallTimeout is the MCP JSON-RPC call deadline applied when neither the
+   63  // caller context nor config provides one. It is intentionally finite so a slow
+   64  // or hung MCP server cannot block an agent turn indefinitely.
+   65  const defaultCallTimeout = 300 * time.Second
+   66
+   67  // Spec declares an external MCP server. Type selects the transport: &quot;stdio&quot;
+   68  // (default) runs Command/Args/Env as a subprocess; &quot;http&quot; / &quot;streamable-http&quot;
+   69  // and &quot;sse&quot; connect to URL with optional static Headers.
+   70  type Spec struct {
+   71  	Name string
+   72  	// Package is the installed plugin package that contributed this server.
+   73  	// It is host-only provenance and intentionally excluded from fingerprints.
+   74  	Package string
+   75  	Type    string
+   76  	Command string
+   77  	Args    []string
+   78  	Env     map[string]string</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/plugin/plugin.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>    1  // Package plugin is Reasonix&#39;s MCP client. It connects to external MCP servers and
+    2  // adapts their tools to the tool.Tool interface, so the agent treats plugin
+    3  // tools and built-ins uniformly. The wire protocol is JSON-RPC 2.0 in every
+    4  // case; only the transport differs (stdio subprocess, Streamable HTTP, or the
+    5  // legacy HTTP+SSE). A transport interface hides that difference so the MCP-level
+    6  // logic — handshake, tools/list, tools/call — is written once.
+    7  package plugin
+    8
+    9  import (
+   10  	&quot;context&quot;
+   11  	&quot;encoding/base64&quot;
+   12  	&quot;encoding/json&quot;
+   13  	&quot;errors&quot;
+   14  	&quot;fmt&quot;
+   15  	&quot;hash/fnv&quot;
+   16  	&quot;io&quot;
+   17  	&quot;log/slog&quot;
+   18  	&quot;maps&quot;
+   19  	&quot;net/http&quot;
+   20  	&quot;reflect&quot;
+   21  	&quot;regexp&quot;
+   22  	&quot;sort&quot;
+   23  	&quot;strings&quot;
+   24  	&quot;sync&quot;
+   25  	&quot;sync/atomic&quot;
+   26  	&quot;time&quot;
+   27
+   28  	&quot;reasonix/internal/event&quot;
+   29  	&quot;reasonix/internal/mcplaunch&quot;
+   30  	&quot;reasonix/internal/provider&quot;
+   31  	&quot;reasonix/internal/sandbox&quot;
+   32  	&quot;reasonix/internal/secrets&quot;
+   33  	&quot;reasonix/internal/tool&quot;
+   34  )
+   35
+   36  // protocolVersion is the MCP revision Reasonix advertises during initialize.
+   37  const protocolVersion = &quot;2024-11-05&quot;
+   38
+   39  // MCPProcessMode selects how a local stdio MCP process is launched.
+   40  // It is an internal runtime field, not a user-facing config knob.
+   41  type MCPProcessMode string
+   42
+   43  const (
+   44  	// MCPProcessHost runs authorized stdio MCP as a trusted host process that
+   45  	// does not inherit the agent Bash command sandbox. This is the product
+   46  	// default so servers such as chrome-devtools-mcp can reach the real browser,
+   47  	// Keychain, LaunchServices, and local app services.
+   48  	MCPProcessHost MCPProcessMode = &quot;host&quot;
+   49  	// MCPProcessConfined wraps the process with sandbox.CommandArgs. Reserved for
+   50  	// internal managed deployments and tests; never auto-selected for user installs.
+   51  	MCPProcessConfined MCPProcessMode = &quot;confined&quot;
+   52  )
+   53
+   54  // ResolvedProcessMode returns the effective process mode. Empty means host.
+   55  func (s Spec) ResolvedProcessMode() MCPProcessMode {
+   56  	switch s.ProcessMode {
+   57  	case MCPProcessConfined:
+   58  		return MCPProcessConfined
+   59  	default:
+   60  		return MCPProcessHost
+   61  	}
+   62  }
+   63
+   64  // defaultCallTimeout is the MCP JSON-RPC call deadline applied when neither the
+   65  // caller context nor config provides one. It is intentionally finite so a slow
+   66  // or hung MCP server cannot block an agent turn indefinitely.
+   67  const defaultCallTimeout = 300 * time.Second
+   68
+   69  // Spec declares an external MCP server. Type selects the transport: &quot;stdio&quot;
+   70  // (default) runs Command/Args/Env as a subprocess; &quot;http&quot; / &quot;streamable-http&quot;
+   71  // and &quot;sse&quot; connect to URL with optional static Headers.
+   72  type Spec struct {
+   73  	Name string
+   74  	// Package is the installed plugin package that contributed this server.
+   75  	// It is host-only provenance and intentionally excluded from fingerprints.
+   76  	Package string
+   77  	Type    string
+   78  	Command string</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-mcp-002" data-finding-dimension="connectors"><header><span class="finding-index">02</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>02 · MCP 项目服务器先做无 secret 的身份授权，再做 live safety 对账</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>project launch identity 对 stdio 固定 executable path 与 SHA-256，对 HTTP 规范化 URL 但只保留 header 名并替换 userinfo/query credentials；cached tool 的 readOnly/destructive 事实与 live server 不一致时，当前调用在执行前阻断。MCP 默认 host mode 不进入 Bash sandbox，confined 只在显式内部模式使用。</p></section><section><span>白话解释</span><p>换了 MCP 二进制、目标地址或工具安全标记，不会因为旧 schema cache 还在就直接执行；同时默认插件是受信任 host 进程，不能误以为它自动继承 Agent shell 沙箱。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>MCP 需要 provenance、exact launch grant、schema cache key 和 live reclassification 四件套；Host/Confined 必须在产品上清楚区分。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>17–40</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>41–66</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/security.go#L17-L66" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/plugin/security.go:17–66</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/security.go#L17-L66" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   17  // projectLaunchIdentityDigest resolves a secret-free identity before a project
+   18  // server is authorized. For stdio this pins the real executable path and file
+   19  // content; for HTTP it normalizes the endpoint while retaining only header key
+   20  // names. Installed and host-session servers never call this path.
+   21  func projectLaunchIdentityDigest(ctx context.Context, s Spec) (string, error) {
+   22  	identity, err := buildProjectLaunchIdentity(ctx, s)
+   23  	if err != nil {
+   24  		return &quot;&quot;, err
+   25  	}
+   26  	return mcplaunch.ProjectLaunchIdentityDigest(identity)
+   27  }
+   28
+   29  func buildProjectLaunchIdentity(ctx context.Context, s Spec) (mcplaunch.ProjectLaunchIdentity, error) {
+   30  	transport := strings.ToLower(strings.TrimSpace(s.Type))
+   31  	if transport == &quot;&quot; {
+   32  		transport = &quot;stdio&quot;
+   33  	}
+   34  	launchArgs := effectiveLaunchArgs(s)
+   35  	if s.LauncherIdentityArgs != nil {
+   36  		launchArgs = s.LauncherIdentityArgs
+   37  	}
+   38  	identity := mcplaunch.ProjectLaunchIdentity{
+   39  		Server: s.Name, Transport: transport,
+   40  		Dir: s.Dir, Args: append([]string(nil), launchArgs...),
+   41  		EnvKeys: sortedMapKeys(s.Env), HeaderKeys: sortedMapKeys(s.Headers),
+   42  		LauncherDigest: s.LauncherDigest,
+   43  	}
+   44  	switch transport {
+   45  	case &quot;stdio&quot;:
+   46  		identity.Dir = stdioWorkingDir(s)
+   47  		if strings.TrimSpace(s.Command) == &quot;&quot; {
+   48  			return mcplaunch.ProjectLaunchIdentity{}, fmt.Errorf(&quot;stdio plugin %q: command is required&quot;, s.Name)
+   49  		}
+   50  		env := mergeEnv(secrets.ProcessEnv(), s.Env)
+   51  		exe, _, err := resolveStdioExecutable(ctx, s, env)
+   52  		if err != nil {
+   53  			return mcplaunch.ProjectLaunchIdentity{}, err
+   54  		}
+   55  		identity.CommandPath = exe
+   56  		identity.CommandSHA256, err = mcplaunch.FileSHA256(exe)
+   57  		if err != nil {
+   58  			return mcplaunch.ProjectLaunchIdentity{}, fmt.Errorf(&quot;hash MCP executable %q: %w&quot;, exe, err)
+   59  		}
+   60  	case &quot;http&quot;, &quot;streamable-http&quot;, &quot;streamable_http&quot;:
+   61  		identity.Transport = &quot;http&quot;
+   62  		identity.URL = normalizeIdentityURL(s.URL)
+   63  	default:
+   64  		identity.URL = normalizeIdentityURL(s.URL)
+   65  	}
+   66  	return identity, nil
+   67  }
+   68
+   69  // MCPStateDir returns a stable, server-scoped host directory outside the
+   70  // workspace for state that must survive across calls and sessions.
+   71  func MCPStateDir(reasonixHome, workspace, server string) string {
+   72  	if strings.TrimSpace(reasonixHome) == &quot;&quot; {
+   73  		return &quot;&quot;
+   74  	}
+   75  	workspaceID := mcplaunch.WorkspaceFingerprint(workspace)
+   76  	if len(workspaceID) &gt; 16 {
+   77  		workspaceID = workspaceID[:16]
+   78  	}
+   79  	if workspaceID == &quot;&quot; {
+   80  		workspaceID = &quot;global&quot;
+   81  	}
+   82  	return filepath.Join(reasonixHome, &quot;mcp-state&quot;, workspaceID, slug(server))
+   83  }
+   84
+   85  // identityURLRedacted replaces credential material inside identity and cache
+   86  // URLs. Only the structure survives: whether userinfo/a password exists and
+   87  // how many values a credential parameter carries, never their contents.
+   88  const identityURLRedacted = &quot;__redacted__&quot;
+   89
+   90  // credentialURLQueryKeys lists query parameters whose values are credentials.
+   91  // Keys are compared case-insensitively after removing &quot;-&quot; and &quot;_&quot;, so
+   92  // api_key, api-key, x-api-key, and APIKEY normalize consistently, and any
+   93  // normalized key ending in a credentialURLQuerySuffixes entry (auth_token,
+   94  // refresh_token, id_token, client_secret, sas_signature, ...) is a credential
+   95  // too. Non-sensitive parameters (workspace, tenant, region, resource, ...)
+   96  // keep their values so a resource scope change still re-triggers verification.
+   97  var credentialURLQueryKeys = map[string]bool{
+   98  	&quot;auth&quot;: true, &quot;authorization&quot;: true, &quot;bearer&quot;: true, &quot;credential&quot;: true,
+   99  	&quot;credentials&quot;: true, &quot;sig&quot;: true,
+  100  	// The key family stays an exact list: a bare &quot;*key&quot; suffix would also
+  101  	// swallow unrelated words (monkey, sortkey-like resource names).
+  102  	&quot;key&quot;: true, &quot;accesskey&quot;: true, &quot;secretkey&quot;: true, &quot;privatekey&quot;: true,
+  103  	&quot;authkey&quot;: true, &quot;appkey&quot;: true, &quot;clientkey&quot;: true, &quot;subscriptionkey&quot;: true,
+  104  	&quot;sharedkey&quot;: true,
+  105  }
+  106
+  107  // credentialURLQuerySuffixes classifies whole credential families by suffix:
+  108  // every *token, *secret, *password/*passwd, *apikey, and *signature parameter
+  109  // carries a credential value regardless of its prefix.
+  110  var credentialURLQuerySuffixes = []string{
+  111  	&quot;token&quot;, &quot;secret&quot;, &quot;password&quot;, &quot;passwd&quot;, &quot;apikey&quot;, &quot;signature&quot;,
+  112  }
+  113
+  114  func credentialURLQueryKey(key string) bool {
+  115  	normalized := strings.NewReplacer(&quot;-&quot;, &quot;&quot;, &quot;_&quot;, &quot;&quot;).Replace(strings.ToLower(strings.TrimSpace(key)))
+  116  	if credentialURLQueryKeys[normalized] {
+  117  		return true
+  118  	}
+  119  	for _, suffix := range credentialURLQuerySuffixes {
+  120  		if strings.HasSuffix(normalized, suffix) {
+  121  			return true
+  122  		}
+  123  	}
+  124  	return false
+  125  }
+  126
+  127  // normalizeIdentityURL canonicalizes an MCP endpoint for host-local identity
+  128  // and schema-cache keys: scheme/host case and default ports fold,
+  129  // the fragment drops, query keys sort stably, and credential material
+  130  // (userinfo, credential query values) is replaced by a fixed placeholder so
+  131  // rotation never invalidates an exact project launch authorization.
+  132  // Network requests always use the raw configured URL, never this form.
+  133  func normalizeIdentityURL(raw string) string {
+  134  	u, err := url.Parse(strings.TrimSpace(raw))
+  135  	if err != nil || u.Scheme == &quot;&quot; || u.Host == &quot;&quot; {
+  136  		return strings.TrimSpace(raw)
+  137  	}</code></pre></div></div></article><article class="finding-card compact" id="reasonix-mcp-003" data-finding-dimension="connectors"><header><span class="finding-index">03</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>connectors</span></div><h3>03 · MCP 启动是 catalog-first、cache-aware、可惰性连接的</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>boot 对有缓存 schema 的服务器只注册 placeholder，不启动进程；cache miss 才做一次后台 catalog discovery，真正首次调用走 EnsureConnected。插件启动有默认并发上限 8、超时和 StartAvailable 的“单个失败不拖垮整场”路径；Economy profile 还把可选 MCP 放到 connect_tool_source。</p></section><section><span>白话解释</span><p>开一个项目不会立刻 fork 二十个 npm MCP 进程；先用缓存把工具菜单画出来，真正用到时再连，坏一个插件也不必让整场会话起不来。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>扩展生态的启动成本应被当成调度问题，采用 schema cache、lazy process 和 bounded startup，而不是启动时全量阻塞。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>243–260</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>261–279</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L243-L279" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/plugin/plugin.go:243–279</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L243-L279" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>  243  // StartPolicy tunes batch plugin startup. The zero value disables every safeguard,
+  244  // so most call sites should use the StartAll / StartAvailable wrappers, which
+  245  // fill in production defaults.
+  246  type StartPolicy struct {
+  247  	// PerPluginTimeout caps how long a single plugin&#39;s handshake (start +
+  248  	// initialize + listTools + listPrompts/Resources) may take. Zero disables.
+  249  	// Exceeded plugins are recorded as failures and, when AbortOnError is set,
+  250  	// tear down the whole batch with the timeout as the cause.
+  251  	PerPluginTimeout time.Duration
+  252
+  253  	// Concurrency caps how many handshakes run at once. Zero or negative means
+  254  	// no cap (every plugin gets a goroutine immediately). A small cap prevents
+  255  	// process storms / FD exhaustion when many MCP servers are configured.
+  256  	Concurrency int
+  257
+  258  	// AbortOnError makes any single failure tear down the partial batch and
+  259  	// return an error (StartAll semantics). When false, failures are recorded
+  260  	// on the host and other plugins keep going (StartAvailable semantics).
+  261  	AbortOnError bool
+  262
+  263  	// SkipPersistence disables RecordStartup / SaveCachedSchema side effects.
+  264  	// Use for read-only live probes (capability diagnostics) that must not
+  265  	// write MCP stats or schema cache files under Reasonix home.
+  266  	SkipPersistence bool
+  267  }
+  268
+  269  // defaultStartConcurrency caps parallel handshakes for the batch-start wrappers.
+  270  // Eight is the standard &quot;process storm&quot; guardrail (Bazel&#39;s --jobs=auto, most LSP
+  271  // managers) — large enough to mask single-plugin latency, small enough to spare
+  272  // a workstation with 20+ configured MCP servers from fork-bombing itself.
+  273  const defaultStartConcurrency = 8
+  274
+  275  // defaultStartTimeout is the per-plugin budget used by StartAvailable. Five
+  276  // seconds covers a healthy stdio MCP spawning under a slow npm/node loader; past
+  277  // that, an interactive user is better served by recording the failure and moving
+  278  // on than by stalling the whole session.
+  279  const defaultStartTimeout = 5 * time.Second
+  280
+  281  var advertisedToolsEmptyListRetryDelays = []time.Duration{
+  282  	50 * time.Millisecond,
+  283  	150 * time.Millisecond,
+  284  	300 * time.Millisecond,
+  285  }
+  286
+  287  // ErrServerAlreadyConnected marks an attempted MCP connection whose server name
+  288  // is already live on the host.
+  289  var ErrServerAlreadyConnected = errors.New(&quot;plugin server already connected&quot;)
+  290
+  291  func serverAlreadyConnectedError(name string) error {
+  292  	return fmt.Errorf(&quot;%w: %q&quot;, ErrServerAlreadyConnected, name)
+  293  }
+  294
+  295  // IsServerAlreadyConnected reports whether err means the MCP server name is
+  296  // already live on the host.
+  297  func IsServerAlreadyConnected(err error) bool {
+  298  	return errors.Is(err, ErrServerAlreadyConnected)
+  299  }
+  300
+  301  // StartAll connects every plugin in parallel, performs the MCP handshake, and
+  302  // returns the union of their tools (namespaced &quot;mcp__&lt;server&gt;__&lt;tool&gt;&quot;). On any
+  303  // failure it tears down everything started so far. The caller must Close the Host.
+  304  //
+  305  // For stdio plugins, subprocess lifetime is bound to ctx (via
+  306  // exec.CommandContext): cancelling ctx kills the children and unblocks reads.
+  307  func StartAll(ctx context.Context, specs []Spec) (*Host, []tool.Tool, error) {
+  308  	return Start(ctx, specs, StartPolicy{
+  309  		Concurrency:  defaultStartConcurrency,
+  310  		AbortOnError: true,
+  311  	})
+  312  }
+  313
+  314  // StartAvailable connects every plugin it can and records failures on the host
+  315  // instead of aborting the whole session. The returned tools are the union of the
+  316  // successfully connected servers.
+  317  func StartAvailable(ctx context.Context, specs []Spec) (*Host, []tool.Tool) {
+  318  	h, tools, _ := Start(ctx, specs, StartPolicy{
+  319  		PerPluginTimeout: defaultStartTimeout,
+  320  		Concurrency:      defaultStartConcurrency,
+  321  		// AbortOnError stays false: a misconfigured plugin must not bring down
+  322  		// the whole session at boot.
+  323  	})
+  324  	return h, tools
+  325  }
+  326
+  327  // Start is the unified batch-startup primitive behind StartAll / StartAvailable.
+  328  // It fans out handshakes in parallel under the policy&#39;s concurrency cap, gives
+  329  // each plugin its own per-plugin timeout, and either aborts the batch on first
+  330  // failure (AbortOnError=true) or records failures on the host and keeps going.
+  331  //
+  332  // Result ordering matches specs (stable for /mcp status). For stdio plugins the
+  333  // subprocess is bound to the parent ctx, not the per-plugin startup timeout:
+  334  // successful servers stay alive after startup, while failed/time-limited starts
+  335  // are closed explicitly before the goroutine returns.
+  336  func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool, error) {
+  337  	if len(specs) == 0 {
+  338  		return &amp;Host{}, nil, nil
+  339  	}
+  340
+  341  	type result struct {
+  342  		idx    int
+  343  		spec   Spec
+  344  		client *Client
+  345  		tools  []tool.Tool
+  346  		err    error
+  347  	}
+  348
+  349  	// A buffered channel acts as a counting semaphore. Capacity 0/negative
+  350  	// means no cap — we still launch one goroutine per spec, but they all run</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/plugin/plugin.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/plugin/plugin.go#L243-L279" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>  243  	// AbortOnError makes any single failure tear down the partial batch and
+  244  	// return an error (StartAll semantics). When false, failures are recorded
+  245  	// on the host and other plugins keep going (StartAvailable semantics).
+  246  	AbortOnError bool
+  247
+  248  	// SkipPersistence disables RecordStartup / SaveCachedSchema side effects.
+  249  	// Use for read-only live probes (capability diagnostics) that must not
+  250  	// write MCP stats or schema cache files under Reasonix home.
+  251  	SkipPersistence bool
+  252  }
+  253
+  254  // defaultStartConcurrency caps parallel handshakes for the batch-start wrappers.
+  255  // Eight is the standard &quot;process storm&quot; guardrail (Bazel&#39;s --jobs=auto, most LSP
+  256  // managers) — large enough to mask single-plugin latency, small enough to spare
+  257  // a workstation with 20+ configured MCP servers from fork-bombing itself.
+  258  const defaultStartConcurrency = 8
+  259
+  260  // defaultStartTimeout is the per-plugin budget used by StartAvailable. Five
+  261  // seconds covers a healthy stdio MCP spawning under a slow npm/node loader; past
+  262  // that, an interactive user is better served by recording the failure and moving
+  263  // on than by stalling the whole session.
+  264  const defaultStartTimeout = 5 * time.Second
+  265
+  266  var advertisedToolsEmptyListRetryDelays = []time.Duration{
+  267  	50 * time.Millisecond,
+  268  	150 * time.Millisecond,
+  269  	300 * time.Millisecond,
+  270  }
+  271
+  272  // ErrServerAlreadyConnected marks an attempted MCP connection whose server name
+  273  // is already live on the host.
+  274  var ErrServerAlreadyConnected = errors.New(&quot;plugin server already connected&quot;)
+  275
+  276  func serverAlreadyConnectedError(name string) error {
+  277  	return fmt.Errorf(&quot;%w: %q&quot;, ErrServerAlreadyConnected, name)
+  278  }
+  279
+  280  // IsServerAlreadyConnected reports whether err means the MCP server name is
+  281  // already live on the host.
+  282  func IsServerAlreadyConnected(err error) bool {
+  283  	return errors.Is(err, ErrServerAlreadyConnected)
+  284  }
+  285
+  286  // StartAll connects every plugin in parallel, performs the MCP handshake, and
+  287  // returns the union of their tools (namespaced &quot;mcp__&lt;server&gt;__&lt;tool&gt;&quot;). On any
+  288  // failure it tears down everything started so far. The caller must Close the Host.
+  289  //
+  290  // For stdio plugins, subprocess lifetime is bound to ctx (via
+  291  // exec.CommandContext): cancelling ctx kills the children and unblocks reads.
+  292  func StartAll(ctx context.Context, specs []Spec) (*Host, []tool.Tool, error) {
+  293  	return Start(ctx, specs, StartPolicy{
+  294  		Concurrency:  defaultStartConcurrency,
+  295  		AbortOnError: true,
+  296  	})
+  297  }
+  298
+  299  // StartAvailable connects every plugin it can and records failures on the host
+  300  // instead of aborting the whole session. The returned tools are the union of the
+  301  // successfully connected servers.
+  302  func StartAvailable(ctx context.Context, specs []Spec) (*Host, []tool.Tool) {
+  303  	h, tools, _ := Start(ctx, specs, StartPolicy{
+  304  		PerPluginTimeout: defaultStartTimeout,
+  305  		Concurrency:      defaultStartConcurrency,
+  306  		// AbortOnError stays false: a misconfigured plugin must not bring down
+  307  		// the whole session at boot.
+  308  	})
+  309  	return h, tools
+  310  }
+  311
+  312  // Start is the unified batch-startup primitive behind StartAll / StartAvailable.
+  313  // It fans out handshakes in parallel under the policy&#39;s concurrency cap, gives
+  314  // each plugin its own per-plugin timeout, and either aborts the batch on first
+  315  // failure (AbortOnError=true) or records failures on the host and keeps going.
+  316  //
+  317  // Result ordering matches specs (stable for /mcp status). For stdio plugins the
+  318  // subprocess is bound to the parent ctx, not the per-plugin startup timeout:
+  319  // successful servers stay alive after startup, while failed/time-limited starts
+  320  // are closed explicitly before the goroutine returns.
+  321  func Start(ctx context.Context, specs []Spec, p StartPolicy) (*Host, []tool.Tool, error) {
+  322  	if len(specs) == 0 {
+  323  		return &amp;Host{}, nil, nil
+  324  	}
+  325
+  326  	type result struct {
+  327  		idx    int
+  328  		spec   Spec
+  329  		client *Client
+  330  		tools  []tool.Tool
+  331  		err    error
+  332  	}
+  333
+  334  	// A buffered channel acts as a counting semaphore. Capacity 0/negative
+  335  	// means no cap — we still launch one goroutine per spec, but they all run
+  336  	// immediately. Capped, the extra goroutines block on the semaphore until a
+  337  	// slot frees up; collection order is still by idx so /mcp status is stable.
+  338  	concurrency := p.Concurrency
+  339  	if concurrency &lt;= 0 || concurrency &gt; len(specs) {
+  340  		concurrency = len(specs)
+  341  	}
+  342  	sem := make(chan struct{}, concurrency)
+  343  	ch := make(chan result, len(specs))
+  344
+  345  	// Created before the fan-out so the detached cache writers can join bgWrites.
+  346  	h := &amp;Host{}
+  347
+  348  	for i, s := range specs {
+  349  		go func(idx int, spec Spec) {
+  350  			sem &lt;- struct{}{}</code></pre></details></div></div></article><article class="finding-card compact" id="reasonix-instruction-001" data-finding-dimension="instructions"><header><span class="finding-index">04</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>04 · Skills 采用 metadata-first 索引，正文按需加载</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>skill.IndexMaxChars 将固定索引限制为 4000 字符；system prompt 只放名称/描述和 subagent tag，skill body 通过 run_skill 或 /name 按需加载。内建 explore/research/review/security_review 使用只读工具，写入型 init/test 以内联主循环执行。</p></section><section><span>白话解释</span><p>模型开机只拿一张“有哪些 playbook”的目录，不把所有长说明书塞进 prompt；真正需要时才读正文，重研究工作可以放到隔离子 Agent。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>Skills 是扩展协议，不应把所有脚本正文常驻上下文；metadata、allowed tools、RunAs 和 ReadOnly 应成为 manifest 的核心字段。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>10–18</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>19–28</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/skill/index.go#L10-L28" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/skill/index.go:10–28</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/skill/index.go#L10-L28" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   10  // IndexMaxChars caps the pinned skills-index block so it can&#39;t bloat the
+   11  // cache-stable system-prompt prefix; bodies never enter the prefix.
+   12  const IndexMaxChars = 4000
+   13
+   14  const missingDescPlaceholder = `(no description — frontmatter is missing a &quot;description:&quot; line; tell the user to add one)`
+   15
+   16  // indexHeader introduces the skills block in the system prompt: the invocation
+   17  // policy (mandatory for inline, judgment-based for subagent) and how to call one.
+   18  const indexHeader = &quot;# Skills — playbooks you can invoke\n\n&quot; +
+   19  	&quot;One-liner index. Before non-trivial work, scan it: if an untagged (inline) skill is even plausibly relevant to the task, invoke it before continuing instead of pre-judging — loading one imperfect inline skill is cheap. Skills tagged `[🧬 subagent]` are the heavy path; reach for them only when the task genuinely needs context-heavy work, not on weak relevance. Each entry is a built-in or a user-authored playbook. Call `run_skill({ name: \&quot;&lt;skill-name&gt;\&quot;, arguments: \&quot;&lt;task&gt;\&quot; })` — `name` is JUST the identifier (e.g. `\&quot;explore\&quot;`), NOT the `[🧬 subagent]` tag that follows it. Prefer the dedicated top-level tool when one exists for a built-in subagent skill. Entries tagged `[🧬 subagent]` spawn an isolated subagent — its tool calls and reasoning never enter your context, only its final answer does; use them for context-heavy work (deep exploration, multi-step research) where you only need the conclusion. Untagged skills are inlined: the body becomes a tool result you read and act on directly. The user can also invoke a skill via `/&lt;name&gt;`.&quot;
+   20
+   21  const readOnlyIndexHeader = &quot;# Skills — read-only playbooks you can invoke\n\n&quot; +
+   22  	&quot;One-liner index for the narrow read-only skill surface. Call `read_only_skill({ name: \&quot;&lt;skill-name&gt;\&quot;, arguments: \&quot;&lt;task&gt;\&quot; })` — `name` is JUST the identifier, NOT the `[🧬 subagent]` tag. Inline skills are loaded into context. Skills tagged `[🧬 subagent]` run in an isolated ephemeral read-only subagent with only read-only research tools and safe foreground bash; no writes, installers, memory mutation, continuation/fork, background jobs, or writer-capable delegation are available. Read-only nested delegation may be available until max_subagent_depth is reached.&quot;
+   23
+   24  // IndexBlock renders the system/tool-result skills listing without attaching it
+   25  // to a base prompt. Only names + descriptions (+ a subagent tag) are listed;
+   26  // bodies load on demand via run_skill.
+   27  func IndexBlock(skills []Skill) string {
+   28  	return indexBlockWithHeader(indexHeader, skills)
+   29  }
+   30
+   31  // ReadOnlyIndexBlock renders the same listing with read_only_skill-specific
+   32  // invocation guidance for token-economy plan-mode connections.
+   33  func ReadOnlyIndexBlock(skills []Skill) string {
+   34  	return indexBlockWithHeader(readOnlyIndexHeader, skills)
+   35  }
+   36
+   37  func indexBlockWithHeader(header string, skills []Skill) string {
+   38  	if len(skills) == 0 {
+   39  		return &quot;&quot;
+   40  	}
+   41  	lines := make([]string, 0, len(skills))
+   42  	for _, sk := range skills {
+   43  		// Manual-invocation skills (e.g. user-authored subagent profiles) stay
+   44  		// invocable by name (/&lt;name&gt;, run_skill) but must never enter the
+   45  		// pinned index the model scans for candidates to call on its own
+   46  		// initiative.
+   47  		if sk.Invocation == &quot;manual&quot; {
+   48  			continue
+   49  		}
+   50  		lines = append(lines, indexLine(sk))
+   51  	}
+   52  	if len(lines) == 0 {
+   53  		return &quot;&quot;
+   54  	}
+   55  	joined := strings.Join(lines, &quot;\n&quot;)
+   56  	if r := []rune(joined); len(r) &gt; IndexMaxChars {
+   57  		joined = string(r[:IndexMaxChars]) + fmt.Sprintf(&quot;\n… (truncated %d chars)&quot;, len(r)-IndexMaxChars)
+   58  	}
+   59  	return header + &quot;\n\n```\n&quot; + joined + &quot;\n```&quot;
+   60  }
+   61
+   62  // ApplyIndex appends the skills index to basePrompt, or returns it unchanged
+   63  // when there are no skills. Only names + descriptions (+ a subagent tag) are
+   64  // listed; bodies load on demand via run_skill.
+   65  func ApplyIndex(basePrompt string, skills []Skill) string {
+   66  	block := IndexBlock(skills)
+   67  	if block == &quot;&quot; {
+   68  		return basePrompt
+   69  	}
+   70  	return basePrompt + &quot;\n\n&quot; + block
+   71  }
+   72
+   73  // indexLine renders one skill as &quot;- name [tag] — description&quot;, clipped to a
+   74  // stable width. The subagent tag goes after the name so a model copying the line
+   75  // into run_skill&#39;s `name` arg still yields a clean identifier.
+   76  func indexLine(sk Skill) string {
+   77  	desc := strings.TrimSpace(strings.ReplaceAll(sk.Description, &quot;\n&quot;, &quot; &quot;))
+   78  	if desc == &quot;&quot; {
+   79  		desc = missingDescPlaceholder
+   80  	}
+   81  	tag := &quot;&quot;
+   82  	if sk.RunAs == RunSubagent {
+   83  		tag = &quot; [🧬 subagent]&quot;
+   84  	}
+   85  	max := 130 - len([]rune(sk.Name)) - len([]rune(tag))
+   86  	clipped := clipRunes(desc, max)
+   87  	if clipped == &quot;&quot; {
+   88  		return &quot;- &quot; + sk.Name + tag
+   89  	}
+   90  	return &quot;- &quot; + sk.Name + tag + &quot; — &quot; + clipped
+   91  }
+   92
+   93  // clipRunes preserves the historical name but clips by grapheme clusters so
+   94  // combined emoji and other user-visible characters stay intact.
+   95  func clipRunes(s string, max int) string {
+   96  	return textutil.ClipGraphemes(s, max, &quot;…&quot;)
+   97  }
+   98</code></pre></div></div></article><article class="finding-card compact" id="reasonix-instruction-002" data-finding-dimension="instructions"><header><span class="finding-index">05</span><div><div class="finding-meta"><b>L1</b><span>fact</span><span>instructions</span></div><h3>05 · Memory 写入有封闭路径集合，背景事实与高权指令分开</h3></div></header><div class="finding-grid"><div class="finding-copy"><section><span>源码事实</span><p>memory.Set 发现 REASONIX.md/AGENTS.md 层级文档、全局 guidance 和 auto-memory index；BackgroundBlock 明确把事实当作可能过期的背景而不是 standing instruction，WriteDoc 只允许写 canonical 或已发现 memory 文件。</p></section><section><span>白话解释</span><p>记忆里的“上次事实”不会自动压过当前用户指令；Agent 也不能借 memory tool 任意写到磁盘上任何路径。</p></section><section class="finding-impact"><span>对自研 Harness 的含义</span><p>组织级 memory 需要 authority、freshness 和 write allowlist 三种元数据，不能把一个大 MEMORY.md 当万能系统 prompt。</p></section><div class="line-guide"><span>逐段阅读提示</span><ol><li><code>12–17</code><div><b>入口、配置和状态初始化</b><p>先确认谁拿到输入、读取了哪些配置、创建了哪些状态。</p></div></li><li><code>18–24</code><div><b>分支、副作用和回执</b><p>再追踪条件分支、外部调用、事件写入和失败出口；不要只看函数名。</p></div></li><li><code>after</code><div><b>回到调用者</b><p>最后沿着调用者和下一条事件继续读，确认这段代码的结果如何被消费。</p></div></li></ol></div><small class="finding-source-note">叙述来自历史证据账本 · 22e18cafc0df · <a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/memory/memory.go#L12-L24" target="_blank" rel="noreferrer">打开账本提交 ↗</a></small></div><div class="finding-code"><div class="finding-code-head"><span>internal/memory/memory.go:12–24</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/memory/memory.go#L12-L24" target="_blank" rel="noreferrer">固定提交 ↗</a></div><pre><code>   12  // Set is everything memory loaded for one session: the hierarchical docs and a
+   13  // handle to the auto-memory store (whose index is captured at load time). It is
+   14  // assembled once at boot and folded into the system prompt by Compose. CWD and
+   15  // UserDir are retained so the controller can resolve quick-add targets without
+   16  // re-deriving discovery context.
+   17  type Set struct {
+   18  	Docs                   []Source // REASONIX.md / AGENTS.md, ascending precedence
+   19  	GlobalGuidance         []Memory // stable snapshot of global user/feedback bodies
+   20  	Store                  Store    // auto-memory store (may be a zero/disabled Store)
+   21  	Index                  string   // MEMORY.md contents at load time
+   22  	CWD                    string   // project working dir used for discovery
+   23  	UserDir                string   // user config root (may be &quot;&quot;)
+   24  	InstructionDiagnostics []instruction.Diagnostic
+   25  }
+   26
+   27  // Options configures discovery. CWD defaults to &quot;.&quot; and UserDir is the user
+   28  // config root (config.MemoryUserDir()); a &quot;&quot; UserDir disables user-global docs
+   29  // and the auto-memory store.
+   30  type Options struct {
+   31  	CWD     string
+   32  	UserDir string
+   33  }
+   34
+   35  // Load discovers all memory for a session: the hierarchical docs and the
+   36  // auto-memory index. It is best-effort and never errors — missing files just
+   37  // mean less memory — so boot can call it unconditionally.
+   38  func Load(opts Options) *Set {
+   39  	cwd := opts.CWD
+   40  	if cwd == &quot;&quot; {
+   41  		cwd = &quot;.&quot;
+   42  	}
+   43  	store := StoreFor(opts.UserDir, cwd)
+   44  	resolved := instruction.Resolve(instruction.ResolveOptions{TargetDir: cwd, UserDir: opts.UserDir})
+   45  	return &amp;Set{
+   46  		Docs:                   resolved.Documents,
+   47  		GlobalGuidance:         store.globalGuidanceForProject(),
+   48  		Store:                  store,
+   49  		Index:                  store.Index(),
+   50  		CWD:                    cwd,
+   51  		UserDir:                opts.UserDir,
+   52  		InstructionDiagnostics: resolved.Diagnostics,
+   53  	}
+   54  }
+   55
+   56  // DocPath returns the doc-memory file a given scope writes to. To avoid splitting
+   57  // a project&#39;s memory across conventions, it prefers a file that already exists
+   58  // (REASONIX.md / AGENTS.md / CLAUDE.md, in that order); when none exists it
+   59  // creates the universal default (AGENTS.md / AGENTS.local.md). ScopeUser →
+   60  // &lt;userDir&gt;, ScopeLocal → &lt;cwd&gt; with the *.local.md names, anything else → &lt;cwd&gt;.
+   61  // Returns &quot;&quot; for ScopeUser when no user dir is configured.
+   62  func (s *Set) DocPath(scope Scope) string {
+   63  	dir := s.CWD
+   64  	names, def := docNames, defaultDocName
+   65  	switch scope {
+   66  	case ScopeUser:
+   67  		if s.UserDir == &quot;&quot; {
+   68  			return &quot;&quot;
+   69  		}
+   70  		dir = s.UserDir
+   71  	case ScopeLocal:
+   72  		names, def = localNames, defaultLocalName
+   73  	}
+   74  	for _, n := range names {
+   75  		p := filepath.Join(dir, n)
+   76  		if _, err := os.Stat(p); err == nil {
+   77  			return p // append to the doc already in use
+   78  		}
+   79  	}
+   80  	return filepath.Join(dir, def)
+   81  }
+   82
+   83  // Empty reports whether the set carries nothing to inject, so Compose can leave
+   84  // the base prompt byte-for-byte untouched (and the cache prefix maximal) when
+   85  // there is no memory at all.
+   86  func (s *Set) Empty() bool {
+   87  	return s == nil || (len(s.Docs) == 0 &amp;&amp; len(s.GlobalGuidance) == 0 &amp;&amp; strings.TrimSpace(s.Index) == &quot;&quot;)
+   88  }
+   89
+   90  // docScopes are the scopes the panel can target for a quick-add or a new doc.
+   91  // Ordered broad → specific for display.
+   92  var docScopes = []Scope{ScopeUser, ScopeProject, ScopeLocal}
+   93
+   94  // allowedDocPaths is the closed set of files WriteDoc / AppendDoc may touch: the
+   95  // canonical file for each writable scope, plus every doc already discovered this</code></pre><details class="current-source"><summary>展开当前刷新提交的同路径代码</summary><div class="finding-code-head"><span>internal/memory/memory.go · 9aaf8d381a21</span><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/9aaf8d381a214cd2cb6df774d3b207a646ddd651/internal/memory/memory.go#L12-L24" target="_blank" rel="noreferrer">当前源码 ↗</a></div><pre><code>   12  // Set is everything memory loaded for one session: the hierarchical docs and a
+   13  // handle to the auto-memory store (whose index is captured at load time). It is
+   14  // assembled once at boot and folded into the system prompt by Compose. CWD and
+   15  // UserDir are retained so the controller can resolve quick-add targets without
+   16  // re-deriving discovery context.
+   17  type Set struct {
+   18  	Docs                   []Source // REASONIX.md / AGENTS.md, ascending precedence
+   19  	PinnedGuidance         []Memory // stable snapshot of pinned fact bodies (incl. legacy global user/feedback)
+   20  	Store                  Store    // auto-memory store (may be a zero/disabled Store)
+   21  	Index                  string   // MEMORY.md contents at load time
+   22  	CWD                    string   // project working dir used for discovery
+   23  	UserDir                string   // user config root (may be &quot;&quot;)
+   24  	InstructionDiagnostics []instruction.Diagnostic
+   25
+   26  	// recall is the snapshot&#39;s prebuilt retrieval index (nil when memory is
+   27  	// hidden or empty); Set.AutoRecall serves each turn from it without disk.
+   28  	recall *RecallIndex
+   29  }
+   30
+   31  // Options configures discovery. CWD defaults to &quot;.&quot; and UserDir is the user
+   32  // config root (config.MemoryUserDir()); a &quot;&quot; UserDir disables user-global docs
+   33  // and the auto-memory store.
+   34  type Options struct {
+   35  	CWD     string
+   36  	UserDir string
+   37  }
+   38
+   39  // Load discovers all memory for a session: the hierarchical docs and the
+   40  // auto-memory index. It is best-effort and never errors — missing files just
+   41  // mean less memory — so boot can call it unconditionally.
+   42  func Load(opts Options) *Set {
+   43  	cwd := opts.CWD
+   44  	if cwd == &quot;&quot; {
+   45  		cwd = &quot;.&quot;
+   46  	}
+   47  	resolved := instruction.Resolve(instruction.ResolveOptions{TargetDir: cwd, UserDir: opts.UserDir})
+   48  	// MemoryBench&#39;s counterfactual arm: hide the store, index, pinned
+   49  	// guidance, and recall so paired runs measure memory&#39;s contribution.
+   50  	// Instruction docs stay — standing instructions are not under test.
+   51  	if os.Getenv(&quot;REASONIX_EXPERIMENT_NO_MEMORY&quot;) == &quot;1&quot; {
+   52  		return &amp;Set{Docs: resolved.Documents, CWD: cwd, UserDir: opts.UserDir,
+   53  			InstructionDiagnostics: resolved.Diagnostics}
+   54  	}
+   55  	store := StoreFor(opts.UserDir, cwd)
+   56  	return &amp;Set{
+   57  		Docs:                   resolved.Documents,
+   58  		PinnedGuidance:         store.pinnedGuidanceForProject(),
+   59  		Store:                  store,
+   60  		Index:                  store.Index(),
+   61  		CWD:                    cwd,
+   62  		UserDir:                opts.UserDir,
+   63  		InstructionDiagnostics: resolved.Diagnostics,
+   64  		recall:                 BuildRecallIndex(store),
+   65  	}
+   66  }
+   67
+   68  // DocPath returns the doc-memory file a given scope writes to. To avoid splitting
+   69  // a project&#39;s memory across conventions, it prefers a file that already exists
+   70  // (REASONIX.md / AGENTS.md / CLAUDE.md, in that order); when none exists it
+   71  // creates the universal default (AGENTS.md / AGENTS.local.md). ScopeUser →
+   72  // &lt;userDir&gt;, ScopeLocal → &lt;cwd&gt; with the *.local.md names, anything else → &lt;cwd&gt;.
+   73  // Returns &quot;&quot; for ScopeUser when no user dir is configured.
+   74  func (s *Set) DocPath(scope Scope) string {
+   75  	dir := s.CWD
+   76  	names, def := docNames, defaultDocName
+   77  	switch scope {
+   78  	case ScopeUser:
+   79  		if s.UserDir == &quot;&quot; {
+   80  			return &quot;&quot;
+   81  		}
+   82  		dir = s.UserDir
+   83  	case ScopeLocal:
+   84  		names, def = localNames, defaultLocalName
+   85  	}
+   86  	for _, n := range names {
+   87  		p := filepath.Join(dir, n)
+   88  		if _, err := os.Stat(p); err == nil {
+   89  			return p // append to the doc already in use
+   90  		}
+   91  	}
+   92  	return filepath.Join(dir, def)
+   93  }
+   94
+   95  // Empty reports whether the set carries nothing to inject, so Compose can leave</code></pre></details></div></div></article></div><h2>四问：从代码追到执行语义</h2><section class="mechanism-panel"><div class="mechanism-kicker">ECOSYSTEM · 四个实现问题</div><div class="mechanism-grid"><article class="mechanism-card"><span>ENTRY</span><h3>入口 / 注册</h3><p>先定位谁创建这次运行、注册了哪些能力，以及输入怎样进入状态。</p><blockquote>plugin 包把握手、tools/list、tools/call 统一在 transport interface 下；stdio 用受 ctx 绑定的子进程与专用 reader demux，HTTP transport 用 session id、单 origin redirect 规则、16 MiB body cap 和串行 request/response mutex。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L1-L7" target="_blank" rel="noreferrer">internal/plugin/plugin.go:1–7 ↗</a></article><article class="mechanism-card"><span>STATE</span><h3>状态 / 投影</h3><p>再找会话、上下文、队列或 projection 的所有权；状态不是 UI 文案。</p><blockquote>project launch identity 对 stdio 固定 executable path 与 SHA-256，对 HTTP 规范化 URL 但只保留 header 名并替换 userinfo/query credentials；cached tool 的 readOnly/destructive 事实与 live server 不一致时，当前调用在执行前阻断。MCP 默认 host mode 不进入 Bash sandbox，confined 只在显式内部模式使用。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/security.go#L17-L66" target="_blank" rel="noreferrer">internal/plugin/security.go:17–66 ↗</a></article><article class="mechanism-card"><span>EFFECT</span><h3>操作 / 事务</h3><p>把模型输出、工具执行、权限检查和外部副作用拆开，确认有没有回执。</p><blockquote>boot 对有缓存 schema 的服务器只注册 placeholder，不启动进程；cache miss 才做一次后台 catalog discovery，真正首次调用走 EnsureConnected。插件启动有默认并发上限 8、超时和 StartAvailable 的“单个失败不拖垮整场”路径；Economy profile 还把可选 MCP 放到 connect_tool_source。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/plugin/plugin.go#L243-L279" target="_blank" rel="noreferrer">internal/plugin/plugin.go:243–279 ↗</a></article><article class="mechanism-card"><span>RECOVERY</span><h3>失败 / 恢复</h3><p>最后追踪重试、压缩、取消、回滚、持久化或人工接管出口。</p><blockquote>skill.IndexMaxChars 将固定索引限制为 4000 字符；system prompt 只放名称/描述和 subagent tag，skill body 通过 run_skill 或 /name 按需加载。内建 explore/research/review/security_review 使用只读工具，写入型 init/test 以内联主循环执行。</blockquote><a href="https://github.com/esengine/DeepSeek-Reasonix/blob/22e18cafc0dfe27f192e8e303ffae0a0bc548eb0/internal/skill/index.go#L10-L28" target="_blank" rel="noreferrer">internal/skill/index.go:10–28 ↗</a></article></div></section><h2>把证据放回全链路</h2><div class="flow-strip"><span>输入 / 事件</span><i>→</i><span>规则 / 状态</span><i>→</i><span>模型 / 工具</span><i>→</i><span>回执 / 持久化</span><i>→</i><span>恢复 / 下一步</span></div><iframe class="diagram-frame diagram-frame-rich" src="../diagrams/sequence.html" title="DeepSeek-Reasonix sequence" loading="lazy"></iframe><h2>小白练习：不要只会复述</h2><div class="exercise"><p>把本章 finding 卡片遮住白话解释，只看源码：谁创建状态？谁能改变状态？副作用在哪里发生？失败时写入了什么回执？最后点开行号链接，确认你的回答没有超出固定提交。</p><details><summary>查看提示</summary><ul><li>先找输入和状态，不要先找函数名。</li><li>把 policy / approval / sandbox 分开写。</li><li>如果引用来自历史账本，记得查看卡片里的历史 commit 标识。</li></ul></details></div></section><footer class="chapter-footer"><a href="ch07-security.html">← 安全：审批、权限和边界</a><a href="ch09-collaboration.html">协作：子 Agent 与工作流 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>
