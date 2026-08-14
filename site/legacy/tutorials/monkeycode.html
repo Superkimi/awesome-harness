@@ -1,0 +1,709 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="MonkeyCode 的固定提交源码教程：主循环、上下文、工具、安全、扩展、协作与观测"><title>MonkeyCode · Coding Agent 源码教程</title><link rel="stylesheet" href="../assets/tutorial.css"></head><body><div class="progress-rail" id="progress-rail"></div><header class="tutorial-topbar"><button class="hamburger" type="button" aria-label="打开目录" data-menu>☰</button><a href="index.html" class="top-brand">Harness <em>·</em> Coding Agent Book</a><span class="top-crumb">06 / MonkeyCode</span><div class="top-actions"><a href="../index.html">研究总览</a><button type="button" data-immersive>沉浸式</button><button type="button" data-theme>☼ / ☾</button></div></header><div class="tutorial-layout"><aside class="tutorial-toc"><a class="tutorial-brand" href="index.html"><span class="tutorial-mark">H</span><span>HARNESS<br><small>CODING AGENT BOOK</small></span></a><button class="toc-toggle" type="button" data-toc-toggle>章节目录</button><nav><a class="" href="goose.html"><span>M01</span>Goose</a><a class="" href="aider.html"><span>M02</span>Aider</a><a class="" href="grok-build.html"><span>M03</span>Grok Build</a><a class="" href="openinterpreter.html"><span>M04</span>Open Interpreter</a><a class="" href="little-coder.html"><span>M05</span>Little Coder</a><a class="active" href="monkeycode.html"><span>M06</span>MonkeyCode</a><a class="" href="opencode.html"><span>M07</span>OpenCode</a><a class="" href="oh-my-pi.html"><span>M08</span>Oh My Pi</a><a class="" href="claude-code.html"><span>M09</span>Claude Code（复原）</a><a class="" href="pi.html"><span>M10</span>Pi</a><a class="" href="codex.html"><span>M11</span>OpenAI Codex</a><a class="" href="gemini-cli.html"><span>M12</span>Gemini CLI</a><a class="" href="jcode.html"><span>M13</span>JCode</a><a class="" href="kimi-cli.html"><span>M14</span>Kimi CLI</a><a class="" href="deepseek-reasonix.html"><span>M15</span>DeepSeek-Reasonix</a><a class="" href="codewhale.html"><span>M16</span>CodeWhale</a><a class="" href="prime-agent.html"><span>M17</span>Prime Agent</a><a class="" href="deepagents.html"><span>M18</span>DeepAgents</a></nav><div class="toc-foot">SOURCE-LOCKED<br>固定提交 · 可回放</div></aside><main class="tutorial-main"><section class="module-hero"><div class="module-eyebrow">M06 · SOURCE-GROUNDED TUTORIAL</div><h1>MonkeyCode<br><em>从源码学会它怎么工作</em></h1><p class="module-thesis">它是把多种 CLI 放入远程 VM 的控制平面；Agent 智能来自所选 CLI，平台负责隔离、凭据与协作。 我们不把 README 当结论，而是沿主循环、工具、上下文、权限、扩展、协作和状态一路读到实现。</p><div class="module-meta"><span>Go/TS · Remote Agent Control Plane</span><span>AGPL</span><span>ddc3794fc31e</span><span>21 个结论 · 61 处引用</span></div><div class="module-actions"><a href="../reports/monkeycode.html">回到源码审计报告 ↗</a><a href="https://github.com/chaitin/MonkeyCode/tree/ddc3794fc31e95b58b1493ab99e96844640bdf40">打开固定源码 ↗</a><label><span>⌕</span><input type="search" placeholder="搜索本章源码与概念…" data-lesson-search></label></div></section>
+  <section class="module-intro"><div class="intro-copy"><div class="module-kicker">这门课怎么读</div><h2>先建立直觉，再沿一条任务链钻进代码</h2><p>参考教程的做法不是把 API 名称罗列出来，而是从一个小白能理解的问题开始，先解释“为什么需要这个机制”，再用概念对比、执行链路和固定提交的源码回答“它究竟怎么做”。本页把 MonkeyCode 的 21 个源码结论重新编排成十节课；每个结论都保留证据等级、文件路径、行号和可点击源码。</p><div class="learning-contract"><div><b>你会得到</b><span>一张可复述的架构地图</span><span>一次完整任务的链路追踪</span><span>能迁移到自研 Harness 的设计判断</span></div><div><b>你不会得到</b><span>把 README 功能当成已验证事实</span><span>把 prompt 约束说成 OS 沙箱</span><span>把一次双模型调用夸成多 Agent 平台</span></div></div></div><aside class="intro-stats"><div><b>10</b><span>学习章节</span></div><div><b>21</b><span>源码结论</span></div><div><b>20</b><span>被引文件</span></div><div><b>61</b><span>精确引用</span></div></aside></section>
+  <section class="module-section map-section" id="map"><div class="module-kicker">M00 · MAP</div><h2>先看全景：这个 Agent 的控制面在哪里</h2><p class="section-question">下面的图不是产品宣传图，而是把固定提交里最关键的入口、循环、模型、工具、安全、状态和协作节点放在一张地图上。</p><div class="diagram-pair"><figure><figcaption><b>架构图</b><a href="../diagrams/monkeycode-architecture.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/monkeycode-architecture.html" title="MonkeyCode 架构图" loading="lazy"></iframe></figure><figure><figcaption><b>一轮执行链路</b><a href="../diagrams/monkeycode-sequence.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/monkeycode-sequence.html" title="MonkeyCode 执行链路" loading="lazy"></iframe></figure></div><div class="route-cards"><div><b>核心机制</b><p>DB 预登记 → VM → Redis 交接 → 选定 CLI</p></div><div><b>上下文</b><p>只知道窗口上限；压缩和 memory 交给内层 Agent</p></div><div><b>适用建设</b><p>多人远程 Coding Agent SaaS、隔离租户、统一审计</p></div></div></section>
+  <section class="module-section trace-section" id="trace"><div class="module-kicker">M00.5 · TRACE</div><h2>跟踪一个任务：从输入到交付</h2><p class="section-question">把下面九步当成你读源码时的“地图坐标”。每到一个节点，都能回到后面的章节查具体实现。</p><div class="trace-board" role="img" aria-label="MonkeyCode 一次任务的执行链路"><div class="trace-step"><span>01</span><b>创建任务并预登记 DB</b><small>任务进入</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>02</span><b>创建 VM 与临时密钥</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>03</span><b>Redis 交接运行态</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>04</span><b>启动选定 CLI</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>05</span><b>代理并锁定模型协议</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>06</span><b>转发 auto-approve / MCP</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>07</span><b>旁路解析流与用量</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>08</span><b>持久化任务状态</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>09</span><b>实时回放给协作者</b><small>交付/续跑</small></div></div><div class="trace-note"><b>读图提醒</b><p>箭头只表示控制面之间的关系，不代表每个实现都同步、串行或拥有 OS 隔离；真正的边界要以对应章节的源码摘录和 caveat 为准。</p></div></section>
+  <section class="module-section" id="orientation" data-chapter><div class="module-kicker">M01 · ORIENTATION</div><h2>先把 Agent 看成一台会交付的机器</h2><p class="section-question">如果只看 README，你知道它能做什么；钻进源码后，我们要知道它为什么能做、什么时候会停、失败后谁负责收拾。</p><div class="analogy"><b>先用一个生活比喻</b><p>把 Agent 想成一间带传送带的工作室：入口收任务，主循环决定下一步，模型负责提出动作，工具负责动手，状态账本负责让下一班人接着干。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 1</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="loop" data-chapter><div class="module-kicker">M02 · LOOP</div><h2>主循环：模型为什么会继续动</h2><p class="section-question">一次模型调用为什么会变成十几步？循环靠什么继续，靠什么停止？</p><div class="analogy"><b>先用一个生活比喻</b><p>像一个会看回执的快递员：模型先写行动单，工具返回回执，主循环把回执放回桌面，再让模型决定下一张行动单。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>它是多 CLI 的任务控制平面，不是第四套 Agent loop</td><td><code>backend/pkg/taskflow/types.go:554</code></td><td>MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。</td></tr><tr><td>任务创建拆成数据库预登记、VM 创建、Redis 交接、运行态启动</td><td><code>backend/biz/task/usecase/task.go:556</code></td><td>先把工单和工作间登记好，再等工作间真的上线，最后才把任务交给里面的 Agent。</td></tr><tr><td>Taskflow Create 失败被记录但吞掉，任务可能滞留 processing</td><td><code>backend/pkg/lifecycle/taskhook.go:104</code></td><td>工单已经盖了“处理中”，但真正开工失败后只记了一条日志，状态机可能还以为工作在继续。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-architecture-001" data-search="它是多 cli 的任务控制平面，不是第四套 agent loop taskflow 协议把 codingagent 枚举为 codex、claude、mcaireview、opencode；任务请求携带 system prompt、模型、配置文件、mcp 与资源，真正的推理—工具循环交给所选 cli。 monkeycode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 codex 或 claude 亲自驾驶。 entry-session-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">01</span><div><div class="lesson-eyebrow">L1 · fact · monkey-architecture-001</div><h3>它是多 CLI 的任务控制平面，不是第四套 Agent loop</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>Taskflow 协议把 CodingAgent 枚举为 Codex、Claude、MCAIReview、OpenCode；任务请求携带 system prompt、模型、配置文件、MCP 与资源，真正的推理—工具循环交给所选 CLI。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>MonkeyCode 更像机场塔台：它决定哪架飞机、在哪个跑道、带什么配置起飞，但不会替 Codex 或 Claude 亲自驾驶。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>比较 Harness 时，应把平台编排能力与各 CLI 内核能力拆开计分。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L554-L587">backend/pkg/taskflow/types.go · L554–L587 ↗</a></div><pre><code>  554  // ==================== CreateTask 类型 ====================
+  555  
+  556  // CodingAgent 编码代理类型
+  557  type CodingAgent int
+  558  
+  559  const (
+  560  	CodingAgentCodex CodingAgent = iota + 1
+  561  	CodingAgentClaude
+  562  	CodingAgentMCAIReview
+  563  	CodingAgentOpenCode
+  564  )
+  565  
+  566  // LLM 模型配置
+  567  type LLM struct {
+  568  	ApiKey      string   `json:&quot;api_key&quot;`
+  569  	BaseURL     string   `json:&quot;base_url&quot;`
+  570  	Model       string   `json:&quot;model&quot;`
+  571  	ApiType     string   `json:&quot;api_type,omitempty&quot;` // 接口类型 anthropic | openai
+  572  	Temperature *float32 `json:&quot;temperature,omitempty&quot;`
+  573  }
+  574  
+  575  // ConfigFile 配置文件
+  576  type ConfigFile struct {
+  577  	Path    string  `json:&quot;path&quot;`
+  578  	Content string  `json:&quot;content&quot;`
+  579  	Mode    *uint32 `json:&quot;mode,omitempty&quot;`
+  580  }
+  581  
+  582  // TaskExecutionConfig 任务运行配置
+  583  type TaskExecutionConfig struct {
+  584  	Envs           map[string]string `json:&quot;envs,omitempty&quot;`
+  585  	ConfigFiles    []ConfigFile      `json:&quot;config_files,omitempty&quot;`
+  586  	McpServers     []McpServerConfig `json:&quot;mcp_servers,omitempty&quot;`
+  587  	AgentResources *AgentResources   `json:&quot;agent_resources,omitempty&quot;`</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L554-L587"><code>backend/pkg/taskflow/types.go:554–587</code></a><small>CodingAgent 枚举和执行配置。</small></li><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L626-L640"><code>backend/pkg/taskflow/types.go:626–640</code></a><small>完整任务下发协议。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L875-L928"><code>backend/biz/task/usecase/task.go:875–928</code></a><small>按 CLI 渲染 Claude/Codex/OpenCode 配置。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-lifecycle-001" data-search="任务创建拆成数据库预登记、vm 创建、redis 交接、运行态启动 create 先校验 host/model/concurrency 并预创建任务记录，再请求 2 核 8gib vm，将完整 createtaskreq 以 ttl 写入 redis，最后切到 pending；vm ready hook 取出请求并调用 taskmanager.create。 先把工单和工作间登记好，再等工作间真的上线，最后才把任务交给里面的 agent。 entry-session-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">02</span><div><div class="lesson-eyebrow">L1 · fact · monkey-lifecycle-001</div><h3>任务创建拆成数据库预登记、VM 创建、Redis 交接、运行态启动</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>Create 先校验 host/model/concurrency 并预创建任务记录，再请求 2 核 8GiB VM，将完整 CreateTaskReq 以 TTL 写入 Redis，最后切到 pending；VM ready hook 取出请求并调用 TaskManager.Create。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>先把工单和工作间登记好，再等工作间真的上线，最后才把任务交给里面的 Agent。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>分阶段便于恢复和审计，但 Redis 交接键成为启动链路的关键依赖。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L556-L617">backend/biz/task/usecase/task.go · L556–L617 ↗</a></div><pre><code>  556  	limit, err := a.resolveTaskConcurrencyLimit(ctx, user.ID)
+  557  	if err != nil {
+  558  		return nil, err
+  559  	}
+  560  	ctx = entx.WithTaskConcurrencyLimit(ctx, limit)
+  561  
+  562  	vmID := fmt.Sprintf(&quot;agent_%s&quot;, uuid.NewString())
+  563  	prepared, err := a.repo.PrepareCreate(ctx, user, req, token, vmID)
+  564  	if err != nil {
+  565  		a.logger.With(&quot;error&quot;, err, &quot;req&quot;, req).ErrorContext(ctx, &quot;failed to create task&quot;)
+  566  		return nil, err
+  567  	}
+  568  	if prepared == nil || prepared.ProjectTask == nil || prepared.Model == nil || prepared.Image == nil {
+  569  		return nil, fmt.Errorf(&quot;failed to prepare task&quot;)
+  570  	}
+  571  	pt := prepared.ProjectTask
+  572  	m := prepared.Model
+  573  	i := prepared.Image
+  574  	t := pt.Edges.Task
+  575  	if t == nil {
+  576  		return nil, fmt.Errorf(&quot;task edge is nil&quot;)
+  577  	}
+  578  	if git.URL == &quot;&quot; {
+  579  		git.URL = pt.RepoURL
+  580  	}
+      … 26 lines omitted; exact range 556–617 …
+  607  		LLM: taskflow.LLMProviderReq{
+  608  			Provider: taskflow.LlmProviderOpenAI,
+  609  			ApiKey:   m.APIKey,
+  610  			BaseURL:  m.BaseURL,
+  611  			Model:    m.Model,
+  612  		},
+  613  		Cores:    &quot;2&quot;,
+  614  		Memory:   8 &lt;&lt; 30,
+  615  		Envs:     env,
+  616  		LogStore: normalizeTaskLogStore(t.LogStore),
+  617  	})</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L556-L617"><code>backend/biz/task/usecase/task.go:556–617</code></a><small>并发门、预登记与 VM 请求。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L622-L687"><code>backend/biz/task/usecase/task.go:622–687</code></a><small>VM ID 校验、Redis handoff 与 pending transition。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/lifecycle/taskhook.go#L92-L130"><code>backend/pkg/lifecycle/taskhook.go:92–130</code></a><small>VM ready 后消费 CreateTaskReq。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-lifecycle-002" data-search="taskflow create 失败被记录但吞掉，任务可能滞留 processing handleprocessing 在先写入 processing 后调用 taskmanager.create；若调用失败只写 error log，不 return err，外层 witherror 无法把任务转入 error。 工单已经盖了“处理中”，但真正开工失败后只记了一条日志，状态机可能还以为工作在继续。 entry-session-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">03</span><div><div class="lesson-eyebrow">L1 · risk · monkey-lifecycle-002</div><h3>Taskflow Create 失败被记录但吞掉，任务可能滞留 processing</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>handleProcessing 在先写入 processing 后调用 TaskManager.Create；若调用失败只写 error log，不 return err，外层 withError 无法把任务转入 error。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>工单已经盖了“处理中”，但真正开工失败后只记了一条日志，状态机可能还以为工作在继续。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>应把 Create 错误返回给生命周期管理器，并为 processing-without-session 增加 watchdog。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/lifecycle/taskhook.go#L104-L123">backend/pkg/lifecycle/taskhook.go · L104–L123 ↗</a></div><pre><code>  104  		reqKey := fmt.Sprintf(&quot;task:create_req:%s&quot;, id.String())
+  105  		val, err := h.redis.Get(ctx, reqKey).Result()
+  106  		if err != nil {
+  107  			h.logger.With(&quot;task_id&quot;, id, &quot;error&quot;, err).ErrorContext(ctx, &quot;failed to get CreateTaskReq from redis&quot;)
+  108  			return fmt.Errorf(&quot;failed to get CreateTaskReq from Redis: %w&quot;, err)
+  109  		}
+  110  
+  111  		defer h.redis.Del(ctx, reqKey)
+  112  
+  113  		if err := h.repo.Update(ctx, &amp;domain.User{}, id, func(up *db.TaskUpdateOne) error {
+  114  			up.SetStatus(consts.TaskStatusProcessing)
+  115  			return nil
+  116  		}); err != nil {
+  117  			return fmt.Errorf(&quot;failed to update task status: %w&quot;, err)
+  118  		}
+  119  
+  120  		var createReq taskflow.CreateTaskReq
+  121  		if err := json.Unmarshal([]byte(val), &amp;createReq); err != nil {
+  122  			h.logger.With(&quot;task_id&quot;, id, &quot;error&quot;, err).ErrorContext(ctx, &quot;failed to unmarshal CreateTaskReq&quot;)
+  123  			return fmt.Errorf(&quot;failed to unmarshal CreateTaskReq: %w&quot;, err)</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/lifecycle/taskhook.go#L104-L123"><code>backend/pkg/lifecycle/taskhook.go:104–123</code></a><small>读取请求并先更新 processing。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/lifecycle/taskhook.go#L129-L136"><code>backend/pkg/lifecycle/taskhook.go:129–136</code></a><small>Create 错误仅日志化后返回 nil。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 2</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="model" data-chapter><div class="module-kicker">M03 · MODEL</div><h2>模型调用：流式输出如何变成可执行步骤</h2><p class="section-question">模型输出的文字、思考、工具调用和错误，经过哪些转换才进入 Agent 状态？</p><div class="analogy"><b>先用一个生活比喻</b><p>模型像电话另一端的同事：你听到的不是一整段录音，而是一串实时片段；Harness 要边听边拼装，还要能在电话断线时留下可恢复的记录。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>工作 VM 拿的是代金券，不是模型厂商的保险柜钥匙；平台看到券后再替它换成真正凭据。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>LLM proxy 用 VM 绑定临时密钥隐藏真实上游凭据</td><td><code>backend/biz/task/usecase/task.go:585</code></td><td>工作 VM 拿的是代金券，不是模型厂商的保险柜钥匙；平台看到券后再替它换成真正凭据。</td></tr><tr><td>代理只放行三种 LLM 协议，并阻止任务偷换模型</td><td><code>backend/biz/llmproxy/proxy.go:28</code></td><td>这不是任意 HTTP 隧道；票上写的是哪个模型，就只能点那个模型。</td></tr><tr><td>运行中切模仅支持 OpenCode，并通过 restart 恢复 session</td><td><code>backend/biz/task/usecase/task.go:165</code></td><td>换发动机不是所有车都支持：目前只有 OpenCode 能中途换模型，且本质是重启运行时再接回会话。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-provider-001" data-search="llm proxy 用 vm 绑定临时密钥隐藏真实上游凭据 任务拿到 modelapikey/runtime token 和平台 proxy url；proxy 再从数据库解析 user、vm、provider、真实 baseurl/api key，重写 authorization/x-api-key 后访问上游。 工作 vm 拿的是代金券，不是模型厂商的保险柜钥匙；平台看到券后再替它换成真正凭据。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">04</span><div><div class="lesson-eyebrow">L1 · fact · monkey-provider-001</div><h3>LLM proxy 用 VM 绑定临时密钥隐藏真实上游凭据</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>任务拿到 ModelApiKey/runtime token 和平台 proxy URL；proxy 再从数据库解析 user、VM、provider、真实 BaseURL/API key，重写 Authorization/X-Api-Key 后访问上游。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>工作 VM 拿的是代金券，不是模型厂商的保险柜钥匙；平台看到券后再替它换成真正凭据。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>可撤销密钥、统一用量和上游切换都集中在控制面。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L585-L590">backend/biz/task/usecase/task.go · L585–L590 ↗</a></div><pre><code>  585  	var runtimeToken string
+  586  	if keys := m.Edges.Apikeys; len(keys) &gt; 0 {
+  587  		m.APIKey = keys[0].APIKey
+  588  		m.BaseURL = a.cfg.LLMProxy.BaseURL + &quot;/v1&quot;
+  589  		runtimeToken = keys[0].APIKey
+  590  	}</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L585-L590"><code>backend/biz/task/usecase/task.go:585–590</code></a><small>运行时使用 proxy URL 与临时 key。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L160-L185"><code>backend/biz/llmproxy/proxy.go:160–185</code></a><small>token 解析为真实模型上下文。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L203-L236"><code>backend/biz/llmproxy/proxy.go:203–236</code></a><small>上游地址和凭据重写。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-provider-002" data-search="代理只放行三种 llm 协议，并阻止任务偷换模型 入口只接受 chat/completions、responses、messages；请求必须有 bearer 或 x-api-key，body 中 model 若与 token 绑定模型不一致直接 403。 这不是任意 http 隧道；票上写的是哪个模型，就只能点那个模型。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">05</span><div><div class="lesson-eyebrow">L1 · fact · monkey-provider-002</div><h3>代理只放行三种 LLM 协议，并阻止任务偷换模型</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>入口只接受 chat/completions、responses、messages；请求必须有 bearer 或 X-api-key，body 中 model 若与 token 绑定模型不一致直接 403。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>这不是任意 HTTP 隧道；票上写的是哪个模型，就只能点那个模型。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>减小了凭据代理被滥用成通用外网代理或越权消费的空间。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L28-L34">backend/biz/llmproxy/proxy.go · L28–L34 ↗</a></div><pre><code>   28  const upstreamFailureMessage = &quot;连接上游模型失败，请检查模型配置，或重试&quot;
+   29  
+   30  var allowPaths = map[string]string{
+   31  	&quot;/v1/chat/completions&quot;: &quot;/chat/completions&quot;,
+   32  	&quot;/v1/responses&quot;:        &quot;/responses&quot;,
+   33  	&quot;/v1/messages&quot;:         &quot;/messages&quot;,
+   34  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L28-L34"><code>backend/biz/llmproxy/proxy.go:28–34</code></a><small>三条允许路径。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L116-L150"><code>backend/biz/llmproxy/proxy.go:116–150</code></a><small>路径、认证、请求解析与模型匹配。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-provider-003" data-search="运行中切模仅支持 opencode，并通过 restart 恢复 session switchmodel 要求 processing、owner/privileged、模型授权；重建配置后若 runtime 不是 opencode 就报错，随后调用 taskmanager.restart 并可选择 loadsession。 换发动机不是所有车都支持：目前只有 opencode 能中途换模型，且本质是重启运行时再接回会话。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">06</span><div><div class="lesson-eyebrow">L1 · limitation · monkey-provider-003</div><h3>运行中切模仅支持 OpenCode，并通过 restart 恢复 session</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>SwitchModel 要求 processing、owner/privileged、模型授权；重建配置后若 runtime 不是 OpenCode 就报错，随后调用 TaskManager.Restart 并可选择 LoadSession。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>换发动机不是所有车都支持：目前只有 OpenCode 能中途换模型，且本质是重启运行时再接回会话。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>Codex/Claude 的长任务无法享受平台级模型升降档。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L165-L218">backend/biz/task/usecase/task.go · L165–L218 ↗</a></div><pre><code>  165  // SwitchModel 切换运行中任务使用的模型
+  166  func (a *TaskUsecase) SwitchModel(ctx context.Context, user *domain.User, taskID uuid.UUID, req domain.SwitchTaskModelReq) (*domain.SwitchTaskModelResp, error) {
+  167  	t, owner, err := a.Info(ctx, user, taskID)
+  168  	if err != nil {
+  169  		return nil, err
+  170  	}
+  171  	if !owner &amp;&amp; !a.isPrivileged(ctx, user.ID) {
+  172  		return nil, errcode.ErrForbidden
+  173  	}
+  174  	if t.Status != consts.TaskStatusProcessing {
+  175  		return nil, fmt.Errorf(&quot;task is not processing&quot;)
+  176  	}
+  177  	if t.VirtualMachine == nil {
+  178  		return nil, fmt.Errorf(&quot;task virtual machine is nil&quot;)
+  179  	}
+  180  
+  181  	taskOwnerID := t.UserID
+  182  	if a.modelHook != nil {
+  183  		if err := a.modelHook.ValidateAccess(ctx, taskOwnerID, req.ModelID.String()); err != nil {
+  184  			return nil, err
+  185  		}
+  186  	}
+  187  	model, err := a.modelRepo.Get(ctx, taskOwnerID, req.ModelID)
+  188  	if err != nil {
+  189  		return nil, err
+      … 18 lines omitted; exact range 165–218 …
+  208  	var skillIDs, pluginIDs []string
+  209  	if t.Extra != nil {
+  210  		skillIDs = t.Extra.SkillIDs
+  211  		pluginIDs = t.Extra.PluginIDs
+  212  	}
+  213  	coding, configs, agentRes, err := a.getCodingConfigs(ctx, t.CliName, model, skillIDs, pluginIDs, a.userScope(ctx, user), false)
+  214  	if err != nil {
+  215  		return nil, err
+  216  	}
+  217  	if coding != taskflow.CodingAgentOpenCode {
+  218  		return nil, fmt.Errorf(&quot;switch model only supports opencode runtime&quot;)</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L165-L218"><code>backend/biz/task/usecase/task.go:165–218</code></a><small>切模授权、配置重建和 OpenCode 限制。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L253-L299"><code>backend/biz/task/usecase/task.go:253–299</code></a><small>restart 与切模结果持久化。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 3</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="tools" data-chapter><div class="module-kicker">M04 · TOOLS</div><h2>工具系统：Agent 的手脚怎样被注册和调度</h2><p class="section-question">模型看见的工具说明，和真正执行工具的代码，是不是同一个东西？并发、编辑和失败结果怎么处理？</p><div class="analogy"><b>先用一个生活比喻</b><p>工具系统像机场：模型提交登机牌，注册表确认航班，权限闸机检查证件，调度器决定跑道，最后才允许真正起飞。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>公司给默认技能，团队可换一版，个人还能再覆盖同名版本；被禁用的资源不会因强制投放而复活。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>资源按 global/team/user 合并，同名 user 覆盖 team 覆盖 global</td><td><code>backend/biz/agentresource/types.go:99</code></td><td>公司给默认技能，团队可换一版，个人还能再覆盖同名版本；被禁用的资源不会因强制投放而复活。</td></tr><tr><td>MCP Hub 把工具身份绑定到具体 user、task 和 VM</td><td><code>backend/biz/task/usecase/task.go:741</code></td><td>工具调用不是“拿到平台 token 就随便用”，而是能追到哪台 VM、哪个人、哪个任务。</td></tr><tr><td>工具调用具备有效集过滤、幂等 replay 和状态审计</td><td><code>backend/biz/mcphub/runtime/registry/service.go:56</code></td><td>同一个任务重试同一张工具工单不会重复扣动外部系统；每次调用都有完整状态轨迹。</td></tr><tr><td>MCP 计费接口已预留，但当前实现是 Noop</td><td><code>backend/biz/mcphub/runtime/gateway/handler.go:228</code></td><td>水表接口和插座都装好了，但现在里面还没有真正的计费表芯。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-resource-002" data-search="资源按 global/team/user 合并，同名 user 覆盖 team 覆盖 global scopefilter 可同时包含三个层级，调用方按 user&gt;team&gt;global 做 name override；dispatch 选择用户勾选项与 force-delivery，并过滤 disabled。 公司给默认技能，团队可换一版，个人还能再覆盖同名版本；被禁用的资源不会因强制投放而复活。 tools-connectors-plugins">
+    <div class="lesson-finding-head"><span class="lesson-number">07</span><div><div class="lesson-eyebrow">L1 · fact · monkey-resource-002</div><h3>资源按 global/team/user 合并，同名 user 覆盖 team 覆盖 global</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ScopeFilter 可同时包含三个层级，调用方按 user&gt;team&gt;global 做 name override；dispatch 选择用户勾选项与 force-delivery，并过滤 disabled。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>公司给默认技能，团队可换一版，个人还能再覆盖同名版本；被禁用的资源不会因强制投放而复活。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>这已经接近企业 Agent 的策略分层，而不是单用户插件目录。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/types.go#L99-L126">backend/biz/agentresource/types.go · L99–L126 ↗</a></div><pre><code>   99  // ScopeFilter constrains a listing or dispatch query to a subset of the
+  100  // three scope tiers. Used by the *Scoped Repo methods.
+  101  //
+  102  // Semantic: rows whose scope_type is &quot;global&quot; are included when
+  103  // IncludeGlobal is true; rows whose scope is &quot;team&quot; are included when
+  104  // TeamID != nil and matches; same for user. Multiple flags may be set —
+  105  // the result is the union, with name-based override (user &gt; team &gt; global)
+  106  // applied by the call sites that need overrides (Listing / dispatch).
+  107  type ScopeFilter struct {
+  108  	IncludeGlobal bool
+  109  	TeamID        *uuid.UUID
+  110  	UserID        *uuid.UUID
+  111  }
+  112  
+  113  // GlobalOnlyScope is the default scope for back-compat call sites that
+  114  // haven&#39;t migrated to ScopeFilter yet. Matches the historical &quot;global only&quot;
+  115  // behavior of the unsuffixed Repo methods.
+  116  func GlobalOnlyScope() ScopeFilter {
+  117  	return ScopeFilter{IncludeGlobal: true}
+  118  }
+  119  
+  120  // SkillSelection bundles a ScopeFilter with the user-picked skill IDs for
+  121  // the dispatch path. ListActiveSkillsScoped takes this so the same struct
+  122  // flows from the task usecase down to the SQL.
+  123  type SkillSelection struct {
+  124  	Scope           ScopeFilter
+  125  	UserSelectedIDs []uuid.UUID
+  126  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/types.go#L99-L126"><code>backend/biz/agentresource/types.go:99–126</code></a><small>三层 scope 与覆盖语义。</small></li><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/resolver.go#L49-L54"><code>backend/biz/agentresource/resolver.go:49–54</code></a><small>scoped resolver 与 disabled 过滤。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L982-L1010"><code>backend/biz/task/usecase/task.go:982–1010</code></a><small>技能/插件 scoped selection。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-mcp-001" data-search="mcp hub 把工具身份绑定到具体 user、task 和 vm 任务拿到本地 builtin mcp 和带 runtime token 的平台 mcp；hub 认证先由 modelapikey 找到 virtualmachineid，再查唯一 taskvirtualmachine，形成 user/task/model subject。 工具调用不是“拿到平台 token 就随便用”，而是能追到哪台 vm、哪个人、哪个任务。 tools-connectors-plugins">
+    <div class="lesson-finding-head"><span class="lesson-number">08</span><div><div class="lesson-eyebrow">L1 · fact · monkey-mcp-001</div><h3>MCP Hub 把工具身份绑定到具体 user、task 和 VM</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>任务拿到本地 builtin MCP 和带 runtime token 的平台 MCP；Hub 认证先由 ModelApiKey 找到 VirtualMachineID，再查唯一 TaskVirtualMachine，形成 user/task/model subject。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>工具调用不是“拿到平台 token 就随便用”，而是能追到哪台 VM、哪个人、哪个任务。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>为审计、限额和撤销提供了细粒度主体。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L741-L767">backend/biz/task/usecase/task.go · L741–L767 ↗</a></div><pre><code>  741  func (a *TaskUsecase) buildMCPConfigs(taskID uuid.UUID, token string) []taskflow.McpServerConfig {
+  742  	mcps := []taskflow.McpServerConfig{
+  743  		{
+  744  			Type: &quot;http&quot;,
+  745  			Name: &quot;mcaiBuiltin&quot;,
+  746  			Url:  proto.String(fmt.Sprintf(&quot;http://127.0.0.1:65510/mcp?task_id=%s&quot;, taskID.String())),
+  747  		},
+  748  	}
+  749  
+  750  	if token != &quot;&quot; {
+  751  		mcps = append(mcps, taskflow.McpServerConfig{
+  752  			Type: &quot;http&quot;,
+  753  			Name: &quot;monkeycode-ai&quot;,
+  754  			Url:  proto.String(fmt.Sprintf(&quot;%s/mcp&quot;, strings.TrimRight(a.cfg.Server.BaseURL, &quot;/&quot;))),
+  755  			Headers: []*taskflow.McpHttpHeader{
+  756  				{
+  757  					Name:  &quot;Authorization&quot;,
+  758  					Value: fmt.Sprintf(&quot;Bearer %s&quot;, token),
+  759  				},
+  760  			},
+  761  			Command: new(string),
+  762  			Args:    []string{},
+  763  			Env:     map[string]string{},
+  764  		})
+  765  	}
+  766  
+  767  	return mcps</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L741-L767"><code>backend/biz/task/usecase/task.go:741–767</code></a><small>builtin 与平台 MCP 下发。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/auth/service.go#L45-L80"><code>backend/biz/mcphub/auth/service.go:45–80</code></a><small>token→VM→task subject 绑定。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-mcp-002" data-search="工具调用具备有效集过滤、幂等 replay 和状态审计 hub 合并 platform/user/team 工具和用户开关，过滤 disabled/deleted/missing upstream；调用 id 由 task、json-rpc id、tool、canonical args 哈希，重复请求复用结果；首次调用写 pending，再标 success/failed/unknown。 同一个任务重试同一张工具工单不会重复扣动外部系统；每次调用都有完整状态轨迹。 tool-dispatch">
+    <div class="lesson-finding-head"><span class="lesson-number">09</span><div><div class="lesson-eyebrow">L1 · fact · monkey-mcp-002</div><h3>工具调用具备有效集过滤、幂等 replay 和状态审计</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>Hub 合并 platform/user/team 工具和用户开关，过滤 disabled/deleted/missing upstream；调用 ID 由 task、JSON-RPC ID、tool、canonical args 哈希，重复请求复用结果；首次调用写 pending，再标 success/failed/unknown。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>同一个任务重试同一张工具工单不会重复扣动外部系统；每次调用都有完整状态轨迹。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>这是比把 MCP URL 直接交给 Agent 更成熟的连接器治理层。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/registry/service.go#L56-L80">backend/biz/mcphub/runtime/registry/service.go · L56–L80 ↗</a></div><pre><code>   56  func (s *Service) ListEffectiveTools(ctx context.Context, userID uuid.UUID) ([]repo.ToolSnapshot, error) {
+   57  	platform, err := s.listPlatformTools(ctx)
+   58  	if err != nil {
+   59  		return nil, err
+   60  	}
+   61  	userTools, err := s.repo.ListUserPublishedTools(ctx, userID)
+   62  	if err != nil {
+   63  		return nil, err
+   64  	}
+   65  	teamTools, err := s.repo.ListTeamPublishedTools(ctx, userID)
+   66  	if err != nil {
+   67  		return nil, err
+   68  	}
+   69  
+   70  	settings := map[uuid.UUID]bool{}
+   71  	if s.userSettings != nil {
+   72  		settings, err = s.userSettings.ListEnabledMap(ctx, userID)
+   73  		if err != nil {
+   74  			return nil, err
+   75  		}
+   76  	}
+   77  
+   78  	tools := append(platform, userTools...)
+   79  	tools = append(tools, teamTools...)
+   80  	return applyUserSettingsDefaultEnabled(tools, settings), nil</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/registry/service.go#L56-L80"><code>backend/biz/mcphub/runtime/registry/service.go:56–80</code></a><small>三类工具与用户开关合并。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/gateway/handler.go#L144-L185"><code>backend/biz/mcphub/runtime/gateway/handler.go:144–185</code></a><small>有效工具与 upstream 可达性过滤。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/gateway/handler.go#L187-L260"><code>backend/biz/mcphub/runtime/gateway/handler.go:187–260</code></a><small>幂等 replay、pending 与终态审计。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/gateway/handler.go#L263-L267"><code>backend/biz/mcphub/runtime/gateway/handler.go:263–267</code></a><small>确定性 request ID。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-mcp-003" data-search="mcp 计费接口已预留，但当前实现是 noop gateway 在调用前后执行 canconsume/consume，但默认 billing.noop 两个方法都直接返回 nil。 水表接口和插座都装好了，但现在里面还没有真正的计费表芯。 tool-dispatch">
+    <div class="lesson-finding-head"><span class="lesson-number">10</span><div><div class="lesson-eyebrow">L1 · limitation · monkey-mcp-003</div><h3>MCP 计费接口已预留，但当前实现是 Noop</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>gateway 在调用前后执行 CanConsume/Consume，但默认 billing.Noop 两个方法都直接返回 nil。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>水表接口和插座都装好了，但现在里面还没有真正的计费表芯。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>不能仅凭调用链存在就宣称已实现工具预算或付费配额。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/gateway/handler.go#L228-L251">backend/biz/mcphub/runtime/gateway/handler.go · L228–L251 ↗</a></div><pre><code>  228  	if h.billing != nil {
+  229  		if err := h.billing.CanConsume(ctx, call); err != nil {
+  230  			_ = h.calls.MarkFailed(ctx, call.ID, err.Error(), &quot;&quot;)
+  231  			return nil, err
+  232  		}
+  233  	}
+  234  
+  235  	result, upstreamRequestID, err := h.upstream.CallTool(ctx, upstream, tool, CallToolParams{
+  236  		Name:      tool.Name,
+  237  		Arguments: args,
+  238  	})
+  239  	switch classifyUpstreamError(err) {
+  240  	case repo.ToolCallStatusSuccess:
+  241  		if err := h.calls.MarkSuccess(ctx, call.ID, result, upstreamRequestID); err != nil {
+  242  			return nil, err
+  243  		}
+  244  		if h.billing != nil {
+  245  			completed := *call
+  246  			completed.Status = repo.ToolCallStatusSuccess
+  247  			completed.ResultJSON = result
+  248  			completed.UpstreamRequestID = upstreamRequestID
+  249  			if err := h.billing.Consume(ctx, &amp;completed); err != nil {
+  250  				return nil, err
+  251  			}</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/runtime/gateway/handler.go#L228-L251"><code>backend/biz/mcphub/runtime/gateway/handler.go:228–251</code></a><small>计费前检与消费调用点。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/billing/noop.go#L9-L20"><code>backend/biz/mcphub/billing/noop.go:9–20</code></a><small>当前 Noop 计费实现。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 4</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="context" data-chapter><div class="module-kicker">M05 · CONTEXT</div><h2>上下文：有限窗口怎样装下长任务</h2><p class="section-question">当对话、工具输出、计划和记忆越来越多，系统怎样决定留下什么、折叠什么、放到哪里？</p><div class="analogy"><b>先用一个生活比喻</b><p>上下文不是聊天记录，而是一张会整理的工作台：常用零件放桌面，旧材料装进档案盒，必要时只留下索引卡。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>平台知道油箱标称多大，却不看里面还剩多少油；何时压缩历史由 OpenCode/Codex/Claude 自己决定。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>平台知道模型窗口上限，但不管理内层 compaction</td><td><code>backend/biz/task/usecase/task.go:788</code></td><td>平台知道油箱标称多大，却不看里面还剩多少油；何时压缩历史由 OpenCode/Codex/Claude 自己决定。</td></tr><tr><td>任务摘要是异步 UI 元数据，不是 Agent 记忆回写</td><td><code>backend/biz/task/service/tasksummary.go:32</code></td><td>它会给长对话写一段“给人看的剧情简介”，但这段简介不会自动塞回 Agent 的脑子里。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-context-001" data-search="平台知道模型窗口上限，但不管理内层 compaction opencode 配置缺省 context=200000、output=32000；taskflow 请求只下发 prompt/config/session，monkeycode 仓库没有在推理循环中计算 live context 或触发 compaction 的代码。 平台知道油箱标称多大，却不看里面还剩多少油；何时压缩历史由 opencode/codex/claude 自己决定。 context-compaction-memory">
+    <div class="lesson-finding-head"><span class="lesson-number">11</span><div><div class="lesson-eyebrow">L1 · limitation · monkey-context-001</div><h3>平台知道模型窗口上限，但不管理内层 compaction</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>OpenCode 配置缺省 context=200000、output=32000；Taskflow 请求只下发 prompt/config/session，MonkeyCode 仓库没有在推理循环中计算 live context 或触发 compaction 的代码。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>平台知道油箱标称多大，却不看里面还剩多少油；何时压缩历史由 OpenCode/Codex/Claude 自己决定。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>跨 runtime 的长任务可靠性会随各 CLI 内核不同而波动。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L788-L792">backend/biz/task/usecase/task.go · L788–L792 ↗</a></div><pre><code>  788  func modelRuntimeDefaults(m *db.Model) (thinking bool, contextLimit int, outputLimit int) {
+  789  	thinking = m.ThinkingEnabled
+  790  	contextLimit = cmp.Or(m.ContextLimit, 200000)
+  791  	outputLimit = cmp.Or(m.OutputLimit, 32000)
+  792  	return thinking, contextLimit, outputLimit</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L788-L792"><code>backend/biz/task/usecase/task.go:788–792</code></a><small>模型窗口和输出缺省值。</small></li><li><span>config</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/templates/opencode.tmpl#L27-L40"><code>backend/templates/opencode.tmpl:27–40</code></a><small>窗口下发给 OpenCode provider。</small></li><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L626-L640"><code>backend/pkg/taskflow/types.go:626–640</code></a><small>平台任务合同中无 compaction control。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-context-002" data-search="任务摘要是异步 ui 元数据，不是 agent 记忆回写 tasksummaryservice 从持久化 task log 取 conversation，用独立 llm 延迟生成 summary 并写入 task.summary；任务 create/continue 协议未读取该字段回灌内层会话。 它会给长对话写一段“给人看的剧情简介”，但这段简介不会自动塞回 agent 的脑子里。 context-compaction-memory">
+    <div class="lesson-finding-head"><span class="lesson-number">12</span><div><div class="lesson-eyebrow">L1 · fact · monkey-context-002</div><h3>任务摘要是异步 UI 元数据，不是 Agent 记忆回写</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>TaskSummaryService 从持久化 task log 取 conversation，用独立 LLM 延迟生成 summary 并写入 Task.summary；任务 Create/Continue 协议未读取该字段回灌内层会话。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它会给长对话写一段“给人看的剧情简介”，但这段简介不会自动塞回 Agent 的脑子里。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>摘要改善列表浏览和通知，不应被误计为上下文压缩或长期记忆。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L32-L92">backend/biz/task/service/tasksummary.go · L32–L92 ↗</a></div><pre><code>   32  // TaskSummaryService 任务摘要生成服务
+   33  type TaskSummaryService struct {
+   34  	cfg                *config.Config
+   35  	db                 *db.Client
+   36  	llm                *llm.Client
+   37  	summaryQueue       *delayqueue.TaskSummaryQueue
+   38  	logger             *slog.Logger
+   39  	conversationReader ConversationReader
+   40  
+   41  	// 生命周期管理
+   42  	cancel context.CancelFunc
+   43  	wg     sync.WaitGroup
+   44  }
+   45  
+   46  type tasklogGateway interface {
+   47  	QueryTurns(ctx context.Context, taskID uuid.UUID, taskCreatedAt time.Time, opts tasklog.QueryTurnsOpts, store consts.LogStore) (*tasklog.QueryTurnsResp, error)
+   48  }
+   49  
+   50  type ConversationReader interface {
+   51  	Fetch(ctx context.Context, taskID uuid.UUID, createdAt time.Time, store consts.LogStore, initialContent string, maxRounds int) ([]llm.Message, error)
+   52  }
+   53  
+   54  type tasklogConversationReader struct {
+   55  	gateway tasklogGateway
+   56  	logger  *slog.Logger
+      … 25 lines omitted; exact range 32–92 …
+   82  		db:                 d,
+   83  		llm:                llmClient,
+   84  		summaryQueue:       sq,
+   85  		logger:             logger,
+   86  		conversationReader: newTasklogConversationReader(tlg, logger),
+   87  	}
+   88  
+   89  	// 启动消费者
+   90  	s.Start(context.Background())
+   91  
+   92  	return s, nil</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L32-L92"><code>backend/biz/task/service/tasksummary.go:32–92</code></a><small>独立 summary LLM 与 tasklog reader。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L121-L145"><code>backend/biz/task/service/tasksummary.go:121–145</code></a><small>延迟队列。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/service/tasksummary.go#L148-L186"><code>backend/biz/task/service/tasksummary.go:148–186</code></a><small>摘要写入数据库字段。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 5</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="security" data-chapter><div class="module-kicker">M06 · SECURITY</div><h2>权限与沙箱：能做什么，在哪里做</h2><p class="section-question">审批按钮、规则引擎、容器和操作系统沙箱分别解决什么问题？为什么“问过用户”不等于“隔离了风险”？</p><div class="analogy"><b>先用一个生活比喻</b><p>审批像门卫问你有没有预约，沙箱像把访客关在指定房间；前者决定是否放行，后者限制放行后能摸到什么。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>Codex 在房间里面拿的是万能钥匙；安全取决于这个“房间”到底是不是一间真正隔离的 VM，而造房间的代码不在本仓库。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>隔离边界主要依赖仓库外 VM，Codex 内层 sandbox 明确关闭</td><td><code>backend/pkg/taskflow/types.go:72</code></td><td>Codex 在房间里面拿的是万能钥匙；安全取决于这个“房间”到底是不是一间真正隔离的 VM，而造房间的代码不在本仓库。</td></tr><tr><td>平台只转发 auto-approve，具体权限语义继承所选 CLI</td><td><code>backend/biz/task/usecase/task.go:157</code></td><td>平台提供“自动点同意”的总开关，但什么动作需要同意、允许后能做多大，仍由里面那套 CLI 决定。</td></tr><tr><td>zip 资源有文件数、单文件、总量和 zip-slip 双重校验</td><td><code>backend/biz/agentresource/unpack.go:12</code></td><td>插件压缩包不能假装很小再突然炸开，也不能用 ../../ 偷写 VM 里的其他路径。</td></tr><tr><td>SSRF guard 能防 DNS rebinding，但私有化示例默认关闭</td><td><code>backend/pkg/netguard/guard.go:53</code></td><td>防护能力本身很认真，但自建用户照示例部署时默认不会打开这扇防火门。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-sandbox-001" data-search="隔离边界主要依赖仓库外 vm，codex 内层 sandbox 明确关闭 平台协议申请带 host、image、cpu、memory、git 和 ttl 的 virtualmachine；但 codex 模板设置 sandbox_mode=danger-full-access，并将 /workspace 标为 trusted。仓库内只有 vm api 合同，没有底层 namespace/hypervisor enforcement。 codex 在房间里面拿的是万能钥匙；安全取决于这个“房间”到底是不是一间真正隔离的 vm，而造房间的代码不在本仓库。 execution-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">13</span><div><div class="lesson-eyebrow">L1 · limitation · monkey-sandbox-001</div><h3>隔离边界主要依赖仓库外 VM，Codex 内层 sandbox 明确关闭</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>平台协议申请带 host、image、CPU、memory、git 和 TTL 的 VirtualMachine；但 Codex 模板设置 sandbox_mode=danger-full-access，并将 /workspace 标为 trusted。仓库内只有 VM API 合同，没有底层 namespace/hypervisor enforcement。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>Codex 在房间里面拿的是万能钥匙；安全取决于这个“房间”到底是不是一间真正隔离的 VM，而造房间的代码不在本仓库。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>部署评审必须联审 codingmatrix/Taskflow 执行器，不能因类型名叫 VirtualMachine 就自动认定强隔离。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92">backend/pkg/taskflow/types.go · L72–L92 ↗</a></div><pre><code>   72  // VirtualMachine 虚拟机信息
+   73  type VirtualMachine struct {
+   74  	ID            string               `json:&quot;id&quot;`
+   75  	AccessToken   string               `json:&quot;access_token,omitempty&quot;`
+   76  	EnvironmentID string               `json:&quot;environment_id&quot;`
+   77  	HostID        string               `json:&quot;host_id&quot;`
+   78  	Hostname      string               `json:&quot;hostname&quot;`
+   79  	Arch          string               `json:&quot;arch&quot;`
+   80  	OS            string               `json:&quot;os&quot;`
+   81  	Name          string               `json:&quot;name&quot;`
+   82  	Repository    string               `json:&quot;repository&quot;`
+   83  	Status        VirtualMachineStatus `json:&quot;status&quot;`
+   84  	StatusMessage string               `json:&quot;status_message&quot;`
+   85  	Cores         int32                `json:&quot;cores&quot;`
+   86  	Memory        uint64               `json:&quot;memory&quot;`
+   87  	Disk          uint64               `json:&quot;disk&quot;`
+   88  	TTL           TTL                  `json:&quot;ttl&quot;`
+   89  	ExternalIP    string               `json:&quot;external_ip&quot;`
+   90  	CreatedAt     int64                `json:&quot;created_at&quot;`
+   91  	Version       string               `json:&quot;version&quot;`
+   92  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L72-L92"><code>backend/pkg/taskflow/types.go:72–92</code></a><small>VirtualMachine 对外状态和资源合同。</small></li><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L122-L139"><code>backend/pkg/taskflow/types.go:122–139</code></a><small>VM 创建请求中的镜像、资源和环境。</small></li><li><span>config</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/templates/codex.tmpl#L1-L13"><code>backend/templates/codex.tmpl:1–13</code></a><small>Codex danger-full-access 与 trusted workspace。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-permission-001" data-search="平台只转发 auto-approve，具体权限语义继承所选 cli autoapprove api 只把 task id 和布尔值传给 taskflow；codex 模板使用 approval_policy=untrusted，opencode 模板却允许 doom_loop、外部目录和 .env 读取。 平台提供“自动点同意”的总开关，但什么动作需要同意、允许后能做多大，仍由里面那套 cli 决定。 permissions-security">
+    <div class="lesson-finding-head"><span class="lesson-number">14</span><div><div class="lesson-eyebrow">L1 · fact · monkey-permission-001</div><h3>平台只转发 auto-approve，具体权限语义继承所选 CLI</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>AutoApprove API 只把 task ID 和布尔值传给 Taskflow；Codex 模板使用 approval_policy=untrusted，OpenCode 模板却允许 doom_loop、外部目录和 .env 读取。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>平台提供“自动点同意”的总开关，但什么动作需要同意、允许后能做多大，仍由里面那套 CLI 决定。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>统一 UI 不等于统一安全语义，需要为每个 runtime 建立可比较的 capability policy。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L157-L163">backend/biz/task/usecase/task.go · L157–L163 ↗</a></div><pre><code>  157  // AutoApprove implements domain.TaskUsecase.
+  158  func (a *TaskUsecase) AutoApprove(ctx context.Context, _ *domain.User, id uuid.UUID, approve bool) error {
+  159  	return a.taskflow.TaskManager().AutoApprove(ctx, taskflow.TaskApproveReq{
+  160  		ID:          id,
+  161  		AutoApprove: &amp;approve,
+  162  	})
+  163  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L157-L163"><code>backend/biz/task/usecase/task.go:157–163</code></a><small>auto-approve 纯转发。</small></li><li><span>config</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/templates/codex.tmpl#L1-L6"><code>backend/templates/codex.tmpl:1–6</code></a><small>Codex approval 与 sandbox 配置。</small></li><li><span>config</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/templates/opencode.tmpl#L40-L50"><code>backend/templates/opencode.tmpl:40–50</code></a><small>OpenCode 指令、权限和技能路径。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-resource-003" data-search="zip 资源有文件数、单文件、总量和 zip-slip 双重校验 默认限制 1000 文件、单文件 32mib、总解压 256mib；先查声明尺寸，再用 limitreader 验证实际尺寸，并拒绝绝对路径、反斜线和 .. 逃逸。 插件压缩包不能假装很小再突然炸开，也不能用 ../../ 偷写 vm 里的其他路径。 permissions-security">
+    <div class="lesson-finding-head"><span class="lesson-number">15</span><div><div class="lesson-eyebrow">L1 · fact · monkey-resource-003</div><h3>zip 资源有文件数、单文件、总量和 zip-slip 双重校验</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>默认限制 1000 文件、单文件 32MiB、总解压 256MiB；先查声明尺寸，再用 LimitReader 验证实际尺寸，并拒绝绝对路径、反斜线和 .. 逃逸。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>插件压缩包不能假装很小再突然炸开，也不能用 ../../ 偷写 VM 里的其他路径。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>插件供应链仍需签名/哈希治理，但基础解包攻击面处理得较完整。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/unpack.go#L12-L31">backend/biz/agentresource/unpack.go · L12–L31 ↗</a></div><pre><code>   12  // UnzipLimits guards the in-memory unzipper against zip bombs and overly
+   13  // large archives. All limits are inclusive of the value (size == limit is OK).
+   14  type UnzipLimits struct {
+   15  	MaxFileSize  int64 // per-entry uncompressed size
+   16  	MaxTotalSize int64 // sum of all entries&#39; uncompressed sizes
+   17  	MaxFiles     int   // max number of file entries
+   18  }
+   19  
+   20  // DefaultUnzipLimits is the policy used by the Resolver.
+   21  var DefaultUnzipLimits = UnzipLimits{
+   22  	MaxFileSize:  32 &lt;&lt; 20,  // 32 MiB
+   23  	MaxTotalSize: 256 &lt;&lt; 20, // 256 MiB
+   24  	MaxFiles:     1000,
+   25  }
+   26  
+   27  // unzipToMemory reads a zip archive entirely from memory and returns its
+   28  // regular file entries. Directories are skipped. Paths are validated to
+   29  // reject zip-slip (&quot;../..&quot;) and absolute paths. Entries that exceed the
+   30  // limits cause the entire archive to be rejected so callers can fall back
+   31  // to skipping the whole asset (matching the Resolver&#39;s per-skill policy).</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/unpack.go#L12-L31"><code>backend/biz/agentresource/unpack.go:12–31</code></a><small>默认解包限额和策略。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/unpack.go#L38-L98"><code>backend/biz/agentresource/unpack.go:38–98</code></a><small>声明与实际尺寸双检。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/unpack.go#L101-L126"><code>backend/biz/agentresource/unpack.go:101–126</code></a><small>zip-slip 与路径校验。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-security-001" data-search="ssrf guard 能防 dns rebinding，但私有化示例默认关闭 netguard 校验 http/https、特殊 ipv4 写法、localhost/private/metadata ip，并在 dial 时使用已验证 ip；测试覆盖十进制、八进制、十六进制、ipv6 和私有代理。然而示例配置明确为 saas 开启、私有化默认 false。 防护能力本身很认真，但自建用户照示例部署时默认不会打开这扇防火门。 permissions-security">
+    <div class="lesson-finding-head"><span class="lesson-number">16</span><div><div class="lesson-eyebrow">L1 · risk · monkey-security-001</div><h3>SSRF guard 能防 DNS rebinding，但私有化示例默认关闭</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>netguard 校验 http/https、特殊 IPv4 写法、localhost/private/metadata IP，并在 dial 时使用已验证 IP；测试覆盖十进制、八进制、十六进制、IPv6 和私有代理。然而示例配置明确为 SaaS 开启、私有化默认 false。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>防护能力本身很认真，但自建用户照示例部署时默认不会打开这扇防火门。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>需要按部署信任边界决定默认值，并在关闭时明确告警。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/netguard/guard.go#L53-L69">backend/pkg/netguard/guard.go · L53–L69 ↗</a></div><pre><code>   53  func (g *Guard) ValidateURL(ctx context.Context, rawURL string) error {
+   54  	u, err := url.Parse(strings.TrimSpace(rawURL))
+   55  	if err != nil {
+   56  		return fmt.Errorf(&quot;parse url: %w&quot;, err)
+   57  	}
+   58  	if u.Scheme != &quot;http&quot; &amp;&amp; u.Scheme != &quot;https&quot; {
+   59  		return fmt.Errorf(&quot;unsupported scheme %q&quot;, u.Scheme)
+   60  	}
+   61  	if u.Hostname() == &quot;&quot; {
+   62  		return errors.New(&quot;empty host&quot;)
+   63  	}
+   64  	if !g.Enabled() {
+   65  		return nil
+   66  	}
+   67  	_, err = g.resolveHost(ctx, u.Hostname())
+   68  	return err
+   69  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/netguard/guard.go#L53-L69"><code>backend/pkg/netguard/guard.go:53–69</code></a><small>URL 与启用门。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/netguard/guard.go#L143-L179"><code>backend/pkg/netguard/guard.go:143–179</code></a><small>请求和 dial 阶段防重绑定。</small></li><li><span>test</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/netguard/guard_test.go#L22-L59"><code>backend/pkg/netguard/guard_test.go:22–59</code></a><small>私网和特殊 IP 测试。</small></li><li><span>config</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/config/server/config.yaml.example#L7-L10"><code>backend/config/server/config.yaml.example:7–10</code></a><small>私有化默认关闭。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 6</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="ecosystem" data-chapter><div class="module-kicker">M07 · ECOSYSTEM</div><h2>指令、MCP、Skills 与插件：能力如何接进来</h2><p class="section-question">一条系统指令、一个 Skill、一个 MCP server 和一个插件，分别在什么时候进入上下文和执行路径？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像给工作室接设备：说明书不是设备，设备也不等于电源；成熟 Harness 会分别治理发现、信任、加载、调用和卸载。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>规则是小纸条直接塞进去，技能是压缩包让 VM 自己下载，插件还要告诉 OpenCode 从哪个入口文件启动。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>rules、skills、plugins 是三条不同投放链</td><td><code>backend/biz/task/usecase/task.go:795</code></td><td>规则是小纸条直接塞进去，技能是压缩包让 VM 自己下载，插件还要告诉 OpenCode 从哪个入口文件启动。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-resource-001" data-search="rules、skills、plugins 是三条不同投放链 rules 以内联 configfile 写入 .ai-ready/rules；skills 对三种 cli 都以 24h presigned zip url 下发；plugins 只给 opencode，并将 entry 变成 file:// url 注入 opencode.json。 规则是小纸条直接塞进去，技能是压缩包让 vm 自己下载，插件还要告诉 opencode 从哪个入口文件启动。 instructions-prompts">
+    <div class="lesson-finding-head"><span class="lesson-number">17</span><div><div class="lesson-eyebrow">L1 · fact · monkey-resource-001</div><h3>rules、skills、plugins 是三条不同投放链</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>rules 以内联 ConfigFile 写入 .ai-ready/rules；skills 对三种 CLI 都以 24h presigned zip URL 下发；plugins 只给 OpenCode，并将 entry 变成 file:// URL 注入 opencode.json。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>规则是小纸条直接塞进去，技能是压缩包让 VM 自己下载，插件还要告诉 OpenCode 从哪个入口文件启动。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>资源协议兼顾小文本与大包，但各 runtime 的插件能力并不对齐。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L795-L803">backend/biz/task/usecase/task.go · L795–L803 ↗</a></div><pre><code>  795  // agentRuleBaseDir / agentSkillBaseDir / agentPluginBaseDir 是 codingmatrix 在
+  796  // VM 内部约定的 .ai-ready/ 投放路径。rule 走 .md 平铺；skill / plugin 解 zip
+  797  // 后按目录结构展开；plugin 的 entry 字段再以 file:// 注入到 opencode.json 的
+  798  // `plugin` 数组里。Claude / Codex 不消费 plugin（spec §6.3）。
+  799  const (
+  800  	agentRuleBaseDir   = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/rules/&quot;
+  801  	agentSkillBaseDir  = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/skills/&quot;
+  802  	agentPluginBaseDir = &quot;${HOME}/.codingmatrix/project-tpl/.ai-ready/plugins/&quot;
+  803  )</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L795-L803"><code>backend/biz/task/usecase/task.go:795–803</code></a><small>.ai-ready 路径和 CLI 差异。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L955-L1002"><code>backend/biz/task/usecase/task.go:955–1002</code></a><small>rules inline 与 skills URL。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/usecase/task.go#L1004-L1041"><code>backend/biz/task/usecase/task.go:1004–1041</code></a><small>OpenCode-only plugins 与 file URL 注入。</small></li><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/agentresource/resolver.go#L13-L29"><code>backend/biz/agentresource/resolver.go:13–29</code></a><small>24h presigned URL 交接。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 7</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="collaboration" data-chapter><div class="module-kicker">M08 · COLLABORATION</div><h2>子 Agent：把一个大任务拆成可治理的协作</h2><p class="section-question">什么时候是普通工具调用，什么时候才算子 Agent？子 Agent 的上下文、预算、取消和结果怎样回到父 Agent？</p><div class="analogy"><b>先用一个生活比喻</b><p>不是把同事叫来聊天就叫协作；真正的协作要有工单、权限、截止时间、交付物和回收机制。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>旁观者能看直播，任务主人才能按按钮和继续对话；掉线重连后还能从历史接上。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>远程协作以 owner write gate、历史回放和实时流为核心</td><td><code>backend/biz/task/handler/v1/task.go:323</code></td><td>旁观者能看直播，任务主人才能按按钮和继续对话；掉线重连后还能从历史接上。</td></tr><tr><td>平台层没有可见的子 Agent 调度与独立治理实体</td><td><code>backend/pkg/taskflow/types.go:626</code></td><td>如果 Codex/OpenCode 内部自己再派子 Agent，MonkeyCode 目前只会把它们看成同一间 VM 里的同一项任务，无法逐个授权、暂停和计费。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-remote-001" data-search="远程协作以 owner write gate、历史回放和实时流为核心 websocket stream 根据任务 owner 决定 writable；非 owner 的上行消息被丢弃。attach 模式先订阅并回放历史，再消费实时事件；用户可继续输入、停止、取消当前操作、切 auto-approve 和回答 agent 问题。 旁观者能看直播，任务主人才能按按钮和继续对话；掉线重连后还能从历史接上。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">18</span><div><div class="lesson-eyebrow">L1 · fact · monkey-remote-001</div><h3>远程协作以 owner write gate、历史回放和实时流为核心</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>WebSocket stream 根据任务 owner 决定 writable；非 owner 的上行消息被丢弃。attach 模式先订阅并回放历史，再消费实时事件；用户可继续输入、停止、取消当前操作、切 auto-approve 和回答 Agent 问题。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>旁观者能看直播，任务主人才能按按钮和继续对话；掉线重连后还能从历史接上。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>它实现了人—Agent 远程接管，而不是多 Agent 共享计划或黑板。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/handler/v1/task.go#L323-L384">backend/biz/task/handler/v1/task.go · L323–L384 ↗</a></div><pre><code>  323  // Stream 任务数据流 WebSocket
+  324  //
+  325  //	@Summary		任务数据流 WebSocket
+  326  //	@Description	功能定位：该接口通过 WebSocket 转发任务运行数据。任务对话继续输入使用 `type=user-input`。
+  327  //	@Description	数据格式约定：当前仅支持文本帧透传。服务端将 Agent 的原始文本数据包装为如下结构返回给前端（对应 domain.TaskStream）：
+  328  //	@Description	```json
+  329  //	@Description	{ &quot;type&quot;: &quot;string&quot;, &quot;data&quot;: &quot;string&quot;, &quot;kind&quot;: &quot;string&quot;, &quot;timestamp&quot;: 0 }
+  330  //	@Description	```
+  331  //	@Description	user-input 上行新格式：
+  332  //	@Description	```json
+  333  //	@Description	{ &quot;type&quot;: &quot;user-input&quot;, &quot;data&quot;: &quot;{\&quot;content\&quot;:\&quot;57un57ut5aSE55CG6L+Z5Liq6Zeu6aKY\&quot;,\&quot;attachments\&quot;:[{\&quot;url\&quot;:\&quot;https://example-bucket.oss-cn-hangzhou.aliyuncs.com/temp/a.txt\&quot;,\&quot;filename\&quot;:\&quot;a.txt\&quot;}]}&quot; }
+  334  //	@Description	```
+  335  //	@Description	user-input 上行旧格式仍兼容：
+  336  //	@Description	```json
+  337  //	@Description	{ &quot;type&quot;: &quot;user-input&quot;, &quot;data&quot;: &quot;继续处理这个问题&quot; }
+  338  //	@Description	```
+  339  //	@Description	user-input 下行和历史返回统一使用新 JSON payload 字符串：
+  340  //	@Description	```json
+  341  //	@Description	{ &quot;type&quot;: &quot;user-input&quot;, &quot;data&quot;: &quot;{\&quot;content\&quot;:\&quot;57un57ut5aSE55CG6L+Z5Liq6Zeu6aKY\&quot;,\&quot;attachments\&quot;:[]}&quot;, &quot;timestamp&quot;: 0 }
+  342  //	@Description	```
+  343  //	@Description	`attachments` 为可选附件列表，最多 10 个；每项包含 `url` 和 `filename`，URL 需要匹配后端配置的附件白名单前缀。
+  344  //	@Description	type 字段说明：
+  345  //	@Description	- task-started: 本轮任务启动
+  346  //	@Description	- task-ended: 本轮任务结束
+  347  //	@Description	- task-error: 本轮任务发生错误
+      … 26 lines omitted; exact range 323–384 …
+  374  func (h *TaskHandler) Stream(c *web.Context, req domain.TaskStreamReq) error {
+  375  	user := middleware.GetUser(c)
+  376  	task, owner, err := h.usecase.Info(c.Request().Context(), user, req.ID)
+  377  	if err != nil {
+  378  		return err
+  379  	}
+  380  
+  381  	if req.Mode == &quot;&quot; {
+  382  		req.Mode = &quot;new&quot;
+  383  	}
+  384  	return h.stream(c, user, task, owner, req.Mode)</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/handler/v1/task.go#L323-L384"><code>backend/biz/task/handler/v1/task.go:323–384</code></a><small>流事件、权限与模式协议。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/handler/v1/task.go#L387-L423"><code>backend/biz/task/handler/v1/task.go:387–423</code></a><small>owner writable 与 attach 流程。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/handler/v1/task.go#L640-L721"><code>backend/biz/task/handler/v1/task.go:640–721</code></a><small>只读 gate 与用户控制路由。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-subagent-001" data-search="平台层没有可见的子 agent 调度与独立治理实体 taskflow createtaskreq 只有单一 codingagent、单 vm、单 task/session；websocket 和 mcp 审计也都按同一 task/vm 归因。仓库未定义 child task、parent task、handoff 或 child capability 合同。 如果 codex/opencode 内部自己再派子 agent，monkeycode 目前只会把它们看成同一间 vm 里的同一项任务，无法逐个授权、暂停和计费。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">19</span><div><div class="lesson-eyebrow">L2 · limitation · monkey-subagent-001</div><h3>平台层没有可见的子 Agent 调度与独立治理实体</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>Taskflow CreateTaskReq 只有单一 CodingAgent、单 VM、单 task/session；WebSocket 和 MCP 审计也都按同一 task/VM 归因。仓库未定义 child task、parent task、handoff 或 child capability 合同。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>如果 Codex/OpenCode 内部自己再派子 Agent，MonkeyCode 目前只会把它们看成同一间 VM 里的同一项任务，无法逐个授权、暂停和计费。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>多 Agent 能力最多继承 runtime，本平台尚未形成可观测、可治理的协作控制面。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L626-L640">backend/pkg/taskflow/types.go · L626–L640 ↗</a></div><pre><code>  626  // CreateTaskReq 创建任务请求
+  627  type CreateTaskReq struct {
+  628  	ID             uuid.UUID         `json:&quot;id&quot;`
+  629  	VMID           string            `json:&quot;vm_id&quot;`
+  630  	SystemPrompt   string            `json:&quot;system_prompt,omitempty&quot;`
+  631  	Text           string            `json:&quot;text,omitempty&quot;`
+  632  	Attachments    []Attachment      `json:&quot;attachments,omitempty&quot;`
+  633  	LLM            LLM               `json:&quot;llm,omitzero&quot;`
+  634  	CodingAgent    CodingAgent       `json:&quot;coding_agent,omitempty&quot;`
+  635  	Configs        []ConfigFile      `json:&quot;configs,omitzero&quot;`
+  636  	McpConfigs     []McpServerConfig `json:&quot;mcp_configs,omitzero&quot;`
+  637  	Env            map[string]string `json:&quot;env,omitempty&quot;`
+  638  	LogStore       string            `json:&quot;log_store,omitempty&quot;`
+  639  	AgentResources *AgentResources   `json:&quot;agent_resources,omitempty&quot;` // skill/plugin presigned URLs + rule content forwarded to codingmatrix agent
+  640  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/taskflow/types.go#L626-L640"><code>backend/pkg/taskflow/types.go:626–640</code></a><small>单 Agent/VM 任务合同。</small></li><li><span>contract</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/mcphub/auth/service.go#L22-L28"><code>backend/biz/mcphub/auth/service.go:22–28</code></a><small>工具主体只有 user/task/model。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/task/handler/v1/task.go#L585-L610"><code>backend/biz/task/handler/v1/task.go:585–610</code></a><small>实时事件按单 task stream 归因。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 8</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="state" data-chapter><div class="module-kicker">M09 · STATE</div><h2>会话、持久化与观测：让一次运行变成可追溯事实</h2><p class="section-question">如果进程崩了、用户刷新了、任务跑了一夜，系统凭什么恢复并解释“刚才究竟发生了什么”？</p><div class="analogy"><b>先用一个生活比喻</b><p>内存像白板，数据库像目录，append-only journal 像监控录像；可靠 Harness 不只保存最后答案，还保存每次转弯。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>回答照常流给 Agent，同时平台在旁边读水表，不必让每个 CLI 各写一套计费代码。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>模型流被旁路解析，用量归因到 task/user/VM</td><td><code>backend/biz/llmproxy/proxy.go:246</code></td><td>回答照常流给 Agent，同时平台在旁边读水表，不必让每个 CLI 各写一套计费代码。</td></tr><tr><td>遥测采用 OTLP，但输出前做严格 allowlist 消毒</td><td><code>backend/pkg/telemetry/telemetry.go:29</code></td><td>它不是把请求体、URL 和异常详情整包发给观测平台，而是先过一遍“只准这些字段出门”的白名单。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-monkey-observe-001" data-search="模型流被旁路解析，用量归因到 task/user/vm 成功响应 body 被 usagecapture 包装，兼容流式与非流式；token 结果被组装为含 task、user、provider、model、input/output/cache/total、request id 的 usage event。 回答照常流给 agent，同时平台在旁边读水表，不必让每个 cli 各写一套计费代码。 observability-persistence">
+    <div class="lesson-finding-head"><span class="lesson-number">20</span><div><div class="lesson-eyebrow">L1 · fact · monkey-observe-001</div><h3>模型流被旁路解析，用量归因到 task/user/VM</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>成功响应 body 被 UsageCapture 包装，兼容流式与非流式；token 结果被组装为含 task、user、provider、model、input/output/cache/total、request ID 的 usage event。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>回答照常流给 Agent，同时平台在旁边读水表，不必让每个 CLI 各写一套计费代码。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>统一代理是跨 Harness 成本观测的高价值控制点。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L246-L264">backend/biz/llmproxy/proxy.go · L246–L264 ↗</a></div><pre><code>  246  func (p *Proxy) modifyResponse(resp *http.Response) error {
+  247  	if resp == nil || resp.Body == nil {
+  248  		return nil
+  249  	}
+  250  	if resp.StatusCode &lt; http.StatusOK || resp.StatusCode &gt;= http.StatusMultipleChoices {
+  251  		return nil
+  252  	}
+  253  	ctx, ok := resp.Request.Context().Value(contextKey{}).(*proxyContext)
+  254  	if !ok || ctx == nil || ctx.model == nil {
+  255  		return nil
+  256  	}
+  257  	resp.Body = NewUsageCapture(p.logger, resp.Body, &amp;UsageCaptureContext{
+  258  		ctx:      resp.Request.Context(),
+  259  		path:     normalizeUsageCapturePath(resp.Request.URL.Path),
+  260  		stream:   ctx.stream,
+  261  		proxyCtx: ctx,
+  262  		proxy:    p,
+  263  	})
+  264  	return nil</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L246-L264"><code>backend/biz/llmproxy/proxy.go:246–264</code></a><small>成功响应挂载 usage capture。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/biz/llmproxy/proxy.go#L280-L317"><code>backend/biz/llmproxy/proxy.go:280–317</code></a><small>usage 事件归因字段。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-monkey-observe-002" data-search="遥测采用 otlp，但输出前做严格 allowlist 消毒 otlp exporter 用 batch processor；导出前过滤 span attributes、events、links 和 status，仅保留 task/session/request/vm、http/rpc/db 等允许字段，exception 只留类型并清空 status 描述。 它不是把请求体、url 和异常详情整包发给观测平台，而是先过一遍“只准这些字段出门”的白名单。 observability-persistence">
+    <div class="lesson-finding-head"><span class="lesson-number">21</span><div><div class="lesson-eyebrow">L1 · fact · monkey-observe-002</div><h3>遥测采用 OTLP，但输出前做严格 allowlist 消毒</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>OTLP exporter 用 batch processor；导出前过滤 span attributes、events、links 和 status，仅保留 task/session/request/VM、HTTP/RPC/DB 等允许字段，exception 只留类型并清空 status 描述。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它不是把请求体、URL 和异常详情整包发给观测平台，而是先过一遍“只准这些字段出门”的白名单。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>降低 prompt、token、密钥进入第三方 trace backend 的风险，但也牺牲部分排障细节。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/telemetry/telemetry.go#L29-L65">backend/pkg/telemetry/telemetry.go · L29–L65 ↗</a></div><pre><code>   29  func Setup(ctx context.Context, cfg Config) (Shutdown, error) {
+   30  	otel.SetTextMapPropagator(propagation.TraceContext{})
+   31  	if !enabled(cfg) {
+   32  		return func(context.Context) error { return nil }, nil
+   33  	}
+   34  
+   35  	opts := []otlptracegrpc.Option{}
+   36  	if endpoint := strings.TrimSpace(cfg.Endpoint); endpoint != &quot;&quot; {
+   37  		if strings.Contains(endpoint, &quot;://&quot;) {
+   38  			opts = append(opts, otlptracegrpc.WithEndpointURL(endpoint))
+   39  		} else {
+   40  			opts = append(opts, otlptracegrpc.WithEndpoint(endpoint))
+   41  		}
+   42  	}
+   43  	if cfg.Insecure {
+   44  		opts = append(opts, otlptracegrpc.WithInsecure())
+   45  	}
+   46  
+   47  	exporter, err := otlptracegrpc.New(ctx, opts...)
+   48  	if err != nil {
+   49  		return nil, err
+   50  	}
+   51  	tp, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider)
+   52  	if !ok {
+   53  		_ = exporter.Shutdown(ctx)
+      … 1 lines omitted; exact range 29–65 …
+   55  	}
+   56  
+   57  	processor := sdktrace.NewBatchSpanProcessor(
+   58  		&amp;resourceExporter{SpanExporter: exporter, resource: buildResource(cfg)},
+   59  		sdktrace.WithMaxQueueSize(2048),
+   60  		sdktrace.WithMaxExportBatchSize(512),
+   61  		sdktrace.WithBatchTimeout(5*time.Second),
+   62  		sdktrace.WithExportTimeout(5*time.Second),
+   63  	)
+   64  	tp.RegisterSpanProcessor(processor)
+   65  	return processor.Shutdown, nil</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 4 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/telemetry/telemetry.go#L29-L65"><code>backend/pkg/telemetry/telemetry.go:29–65</code></a><small>OTLP batch exporter。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/telemetry/telemetry.go#L95-L107"><code>backend/pkg/telemetry/telemetry.go:95–107</code></a><small>导出前消毒包装。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/telemetry/sanitize.go#L10-L78"><code>backend/pkg/telemetry/sanitize.go:10–78</code></a><small>属性 allowlist。</small></li><li><span>implementation</span><a href="https://github.com/chaitin/MonkeyCode/blob/ddc3794fc31e95b58b1493ab99e96844640bdf40/backend/pkg/telemetry/sanitize.go#L102-L127"><code>backend/pkg/telemetry/sanitize.go:102–127</code></a><small>事件、links 和 status 消毒。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 9</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="maturity" data-chapter><div class="module-kicker">M10 · ENGINEERING</div><h2>测试、恢复与工程取舍：把漂亮机制变成可靠产品</h2><p class="section-question">哪些行为有测试证明？哪些只是配置或 prompt 约定？当安全、性能、可恢复性冲突时，源码选择了什么？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像验收一座桥：图纸说明结构，测试证明承重，故障演练证明断电后还能不能让人安全回来。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 10</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section>
+  <section class="module-section practice" id="practice"><div class="module-kicker">M11 · PRACTICE</div><h2>把读懂变成会判断</h2><p class="section-question">下面的练习不要求你先写一个完整 Agent，而是训练你检查设计边界：事实是什么、推断是什么、如果换成自研产品要补哪一层。</p><div class="practice-grid"><article><span>Q1</span><h3>它是多 CLI 的任务控制平面，不是第四套 Agent loop</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>比较 Harness 时，应把平台编排能力与各 CLI 内核能力拆开计分。</p><small>证据：backend/pkg/taskflow/types.go:554</small></details></article><article><span>Q2</span><h3>任务创建拆成数据库预登记、VM 创建、Redis 交接、运行态启动</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>分阶段便于恢复和审计，但 Redis 交接键成为启动链路的关键依赖。</p><small>证据：backend/biz/task/usecase/task.go:556</small></details></article><article><span>Q3</span><h3>Taskflow Create 失败被记录但吞掉，任务可能滞留 processing</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>应把 Create 错误返回给生命周期管理器，并为 processing-without-session 增加 watchdog。</p><small>证据：backend/pkg/lifecycle/taskhook.go:104</small></details></article><article><span>Q4</span><h3>隔离边界主要依赖仓库外 VM，Codex 内层 sandbox 明确关闭</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>部署评审必须联审 codingmatrix/Taskflow 执行器，不能因类型名叫 VirtualMachine 就自动认定强隔离。</p><small>证据：backend/pkg/taskflow/types.go:72</small></details></article><article><span>Q5</span><h3>远程协作以 owner write gate、历史回放和实时流为核心</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>它实现了人—Agent 远程接管，而不是多 Agent 共享计划或黑板。</p><small>证据：backend/biz/task/handler/v1/task.go:323</small></details></article></div></section>
+  <section class="module-section source-index" id="sources"><div class="module-kicker">APPENDIX · SOURCE INDEX</div><h2>本课读过的实现文件</h2><p class="section-question">文件索引帮助你在课程外继续追踪调用链；每一条路径来自固定提交的证据账本。</p><ol><li><span>01</span><code>backend/pkg/taskflow/types.go</code><small>L554–587, L626–640, L72–92, L122–139, L626–640, L626–640</small></li><li><span>02</span><code>backend/biz/task/usecase/task.go</code><small>L875–928, L556–617, L622–687, L157–163, L585–590, L165–218, L253–299, L788–792, L795–803, L955–1002, L1004–1041, L982–1010, L741–767</small></li><li><span>03</span><code>backend/pkg/lifecycle/taskhook.go</code><small>L92–130, L104–123, L129–136</small></li><li><span>04</span><code>backend/templates/codex.tmpl</code><small>L1–13, L1–6</small></li><li><span>05</span><code>backend/biz/task/handler/v1/task.go</code><small>L323–384, L387–423, L640–721, L585–610</small></li><li><span>06</span><code>backend/templates/opencode.tmpl</code><small>L40–50, L27–40</small></li><li><span>07</span><code>backend/biz/llmproxy/proxy.go</code><small>L160–185, L203–236, L28–34, L116–150, L246–264, L280–317</small></li><li><span>08</span><code>backend/biz/task/service/tasksummary.go</code><small>L32–92, L121–145, L148–186</small></li><li><span>09</span><code>backend/biz/agentresource/resolver.go</code><small>L13–29, L49–54</small></li><li><span>10</span><code>backend/biz/agentresource/types.go</code><small>L99–126</small></li><li><span>11</span><code>backend/biz/agentresource/unpack.go</code><small>L12–31, L38–98, L101–126</small></li><li><span>12</span><code>backend/biz/mcphub/auth/service.go</code><small>L45–80, L22–28</small></li><li><span>13</span><code>backend/biz/mcphub/runtime/registry/service.go</code><small>L56–80</small></li><li><span>14</span><code>backend/biz/mcphub/runtime/gateway/handler.go</code><small>L144–185, L187–260, L263–267, L228–251</small></li><li><span>15</span><code>backend/biz/mcphub/billing/noop.go</code><small>L9–20</small></li><li><span>16</span><code>backend/pkg/netguard/guard.go</code><small>L53–69, L143–179</small></li><li><span>17</span><code>backend/pkg/netguard/guard_test.go</code><small>L22–59</small></li><li><span>18</span><code>backend/config/server/config.yaml.example</code><small>L7–10</small></li><li><span>19</span><code>backend/pkg/telemetry/telemetry.go</code><small>L29–65, L95–107</small></li><li><span>20</span><code>backend/pkg/telemetry/sanitize.go</code><small>L10–78, L102–127</small></li></ol></section>
+  <section class="module-section next-section"><div class="next-lesson"><div><span>下一步</span><h2>从课程回到报告，做一次反向核验</h2><p>教程负责让你读懂，报告负责让你查证。打开报告页，任选一个章节，尝试只靠源码摘录复述它的边界。</p></div><a href="../reports/monkeycode.html">查看 MonkeyCode 报告 ↗</a></div></section>
+  <footer class="tutorial-footer"><div><span>FIXED SNAPSHOT</span><code>ddc3794fc31e95b58b1493ab99e96844640bdf40</code></div><nav><a href="little-coder.html">← Little Coder</a><a href="opencode.html">OpenCode →</a></nav></footer></main></div><script src="../assets/tutorial.js"></script></body></html>

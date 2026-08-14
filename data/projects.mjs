@@ -1,4 +1,6 @@
-export const projects = [
+import { legacyProjects } from "./legacy-projects.mjs";
+
+const baseProjects = [
   {
     slug: "openwork",
     name: "OpenWork",
@@ -238,6 +240,8 @@ export const projects = [
     ]
   }
 ];
+
+export const projects = [...baseProjects, ...legacyProjects];
 
 // These notes are deliberately kept separate from the marketing metadata above. Each sentence is a
 // source-backed reading cue; the generator pairs it with the corresponding pinned file and line range.

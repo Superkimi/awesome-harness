@@ -1,0 +1,416 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "codex",
+  "snapshot": {
+    "repository": "openai/codex",
+    "commit": "3418498f01422f5f650ea645d4bd19e05c3a9616",
+    "commitDate": "2026-07-28T01:17:52Z"
+  },
+  "method": {
+    "readmePolicy": "README 只用于定位产品入口；实现结论来自 turn/session、model client、context manager、tool registry、sandbox、MCP、agent control、rollout/state 和测试源码。",
+    "factPolicy": "所有结论固定到该提交；明确区分协议兼容、Provider 能力、feature gate、默认配置和操作系统后端。",
+    "inferencePolicy": "源码未证明的服务端行为不外推；Require/Auto 等策略只按本地选择与变换代码描述，外部组件内部机制标为边界。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 turn loop、step snapshot、流式采样、重试、mailbox 抢占和停止钩子。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "审计 Responses-only wire API、可配置兼容 Provider、WebSocket/SSE 和认证边界。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 COW history、配对规范化、截断、本地/远端压缩和模型可见 token 估算。" },
+    { "dimension": "tools-editing", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计工具运行时契约、工具规划、并发互斥、apply_patch、unified exec 和动态工具。" },
+    { "dimension": "permissions-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计审批策略、Guardian/用户裁决、权限 profile 与 macOS/Linux/Windows sandbox 后端。" },
+    { "dimension": "mcp-connectors", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计连接复用、OAuth、required server、工具过滤、catalog revision、elicitation 和超时。" },
+    { "dimension": "instructions-skills-plugins-hooks", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 AGENTS.md 层级、skills 预算、plugin 注入和全生命周期 hooks。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 V2 控制面、fork history、消息/mailbox、wait、完成通知、驻留和执行额度。" },
+    { "dimension": "persistence-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审计 JSONL rollout、SQLite 镜像、日志/目标/记忆分库、tracing/OTEL 和工具时延。" },
+    { "dimension": "maturity-license", "status": "verified", "evidenceLevels": ["L2", "L3"], "notes": "确认 Apache-2.0、源码规模与测试密度。" }
+  ],
+  "findings": [
+    {
+      "id": "codex-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照",
+      "fact": "run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。",
+      "plainLanguage": "一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。",
+      "implication": "配置热更新只能在安全边界生效，换来 prompt cache 和工具调用的确定性。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 153, "endLine": 274, "role": "implementation", "excerpt": "turn 初始化、压缩、hooks 与 step context。" },
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 275, "endLine": 455, "role": "implementation", "excerpt": "step 循环、待处理输入、压缩和停止控制。" }
+      ]
+    },
+    {
+      "id": "codex-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "流式采样与工具 Future 同时推进，并可被新消息抢占",
+      "fact": "try_run_sampling_request 消费流式 ResponseEvent；完整 tool item 到达后进入 FuturesOrdered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。",
+      "plainLanguage": "模型说到一个完整动作就能开工，不必等整段回答结束；用户中途补充信息时，系统也能在安全位置收住并接新指令。",
+      "implication": "响应更快，但对调用顺序、取消、配对和幂等要求很高。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 2034, "endLine": 2168, "role": "implementation", "excerpt": "流式事件、工具 future 与参数 diff。" },
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 2169, "endLine": 2265, "role": "implementation", "excerpt": "mailbox 抢占和 follow-up。" }
+      ]
+    },
+    {
+      "id": "codex-loop-003",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "重试预算属于 turn-scoped client session，窗口超限不当作普通网络错误重试",
+      "fact": "run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。",
+      "plainLanguage": "同一轮尽量复用连接和粘性状态；行李箱塞不下不会盲目重拨网络，而是交给压缩逻辑处理。",
+      "implication": "把语义恢复与传输恢复分开，避免无效重试放大费用。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 1176, "endLine": 1273, "role": "implementation", "excerpt": "turn-scoped client session 与错误分类重试。" },
+        { "path": "codex-rs/core/src/client.rs", "startLine": 1, "endLine": 24, "role": "contract", "excerpt": "ModelClientSession 生命周期、WebSocket 复用与重试预算。" }
+      ]
+    },
+    {
+      "id": "codex-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "模型协议只保留 Responses API，但 Provider 端点与认证可扩展",
+      "fact": "WireApi 枚举只有 Responses，反序列化 chat 会报迁移错误；ModelProviderInfo 允许自定义 base URL、环境密钥、命令认证、AWS SigV4、headers、query 和重试。",
+      "plainLanguage": "它允许换“接线地址和门禁方式”，但要求对方都说 Responses 这门语言；不是任意 Chat Completions 方言翻译器。",
+      "implication": "兼容面更一致，第三方 Provider 必须实现 Responses 语义而非只暴露 chat/completions。",
+      "citations": [
+        { "path": "codex-rs/model-provider-info/src/lib.rs", "startLine": 54, "endLine": 84, "role": "contract", "excerpt": "Responses-only wire API。" },
+        { "path": "codex-rs/model-provider-info/src/lib.rs", "startLine": 86, "endLine": 144, "role": "config", "excerpt": "Provider 端点、认证、headers、重试和能力配置。" }
+      ]
+    },
+    {
+      "id": "codex-provider-002",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "传输层同时支持 SSE 与可复用 WebSocket，并带 turn 粘性状态",
+      "fact": "ModelClientSession 按 turn 创建，延迟缓存 Responses WebSocket 和 x-codex-turn-state；预热是 generate=false 的 v2 response.create，失败后由常规重试/回退处理。",
+      "plainLanguage": "每轮对话尽量占用一条可复用的高速通道，还带着本轮路由票据；热身失败不会把整轮任务判死。",
+      "implication": "交互延迟低，但 Provider 必须准确声明 WebSocket 能力，AWS 认证当前明确不能与 WebSocket 同开。",
+      "citations": [
+        { "path": "codex-rs/core/src/client.rs", "startLine": 1, "endLine": 24, "role": "contract", "excerpt": "turn-scoped WebSocket、预热与 fallback。" },
+        { "path": "codex-rs/model-provider-info/src/lib.rs", "startLine": 156, "endLine": 186, "role": "implementation", "excerpt": "AWS 与 WebSocket/auth 冲突校验。" }
+      ]
+    },
+    {
+      "id": "codex-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "历史是带版本号的 Copy-on-Write 账本，不是随手拼接的消息数组",
+      "fact": "ContextManager 用 Arc<Vec<ResponseItem>> 保存历史并维护 history_version、token info、reference context 和 world-state baseline；写入前过滤非 API item、截断并在取 prompt 时规范化。",
+      "plainLanguage": "像有版本号的账本：读取者共享同一份快照，真要改时才复制，且每笔工具调用都要能对上回执。",
+      "implication": "适合并发读取和回滚，也让 compaction、fork 与增量世界状态有明确一致性边界。",
+      "citations": [
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 38, "endLine": 60, "role": "implementation", "excerpt": "COW history 与版本/状态字段。" },
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 123, "endLine": 146, "role": "implementation", "excerpt": "record、truncate 与 normalize。" }
+      ]
+    },
+    {
+      "id": "codex-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "上下文裁剪同时维护工具调用配对并计算多模态成本",
+      "fact": "remove_oldest_item 会同步移除对应 call/output 并清 world baseline；normalize 修复配对并过滤不支持的图像/音频，token 估算覆盖 reasoning、compaction、图像、音频和 encrypted content。",
+      "plainLanguage": "剪历史不能只撕掉一页：工具问题和答案必须一起处理；图片、音频和加密内容也不能当作零体积。",
+      "implication": "上下文预算比纯文本字符计数可靠，降低 Provider 因协议不完整而拒绝请求的概率。",
+      "citations": [
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 189, "endLine": 248, "role": "implementation", "excerpt": "成对删除、替换和回滚。" },
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 295, "endLine": 386, "role": "implementation", "excerpt": "usage、normalize 与工具输出截断。" },
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 493, "endLine": 558, "role": "implementation", "excerpt": "模型可见 token 估算。" }
+      ]
+    },
+    {
+      "id": "codex-context-003",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "本地压缩会自救：压缩请求自身超限时逐项删旧记录再重试",
+      "fact": "compact 使用模型生成摘要；若压缩调用本身超出窗口，就删除最老 item 及其配对继续尝试，成功后保留真实 user 消息、插入摘要前缀、推进窗口并重算 usage。",
+      "plainLanguage": "连“请帮我整理行李”这句话都塞不进去时，它会先扔掉最旧且成对的票据，直到能完成整理。",
+      "implication": "长会话更耐用；源码也明确提示多次摘要会逐步降低准确性。",
+      "citations": [
+        { "path": "codex-rs/core/src/compact.rs", "startLine": 240, "endLine": 318, "role": "implementation", "excerpt": "compact overflow 自救与重试。" },
+        { "path": "codex-rs/core/src/compact.rs", "startLine": 319, "endLine": 392, "role": "implementation", "excerpt": "摘要替换、窗口推进和准确性警告。" }
+      ]
+    },
+    {
+      "id": "codex-tools-001",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具有统一 typed runtime 契约，hooks、观测和流式参数 diff 都是一级能力",
+      "fact": "CoreToolRuntime 扩展 ToolExecutor，统一声明 payload 匹配、取消清理、telemetry tags、pre/post hook payload、hook 输入改写和参数 diff consumer。",
+      "plainLanguage": "每个新工具不只是写一个 execute 函数，还要说明如何取消、怎么记日志、钩子看什么、参数流到一半时如何展示。",
+      "implication": "扩展成本高于轻量 Agent，但跨工具的安全和观测语义更一致。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/registry.rs", "startLine": 48, "endLine": 149, "role": "contract", "excerpt": "CoreToolRuntime 完整契约。" },
+        { "path": "codex-rs/core/src/tools/registry.rs", "startLine": 151, "endLine": 188, "role": "contract", "excerpt": "参数 diff 与统一结果。" }
+      ]
+    },
+    {
+      "id": "codex-tools-002",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "并发工具用读写锁实现“并行组 + 全局排他工具”",
+      "fact": "ToolCallRuntime 对支持并发的 handler 取读锁，不支持并发的取写锁；取消时按 handler 语义等待清理或 abort，并输出结构化 aborted result 与分段时延。",
+      "plainLanguage": "能并行的工具像多人同时读资料；危险或有状态的工具拿独占钥匙，等所有并行动作结束后自己运行。",
+      "implication": "不是简单 Promise.all，避免非并行工具与其他调用交叉污染环境。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/parallel.rs", "startLine": 74, "endLine": 145, "role": "implementation", "excerpt": "读写锁并发策略。" },
+        { "path": "codex-rs/core/src/tools/parallel.rs", "startLine": 146, "endLine": 202, "role": "implementation", "excerpt": "取消与 timing 记录。" }
+      ]
+    },
+    {
+      "id": "codex-tools-003",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "工具暴露与分发分离，兼容旧 shell 又不污染模型可见清单",
+      "fact": "工具规划测试确认 unified exec 可把 exec_command/write_stdin 暴露给模型，同时保留隐藏的 legacy shell_command 仅供分发；apply_patch、web search 和动态工具也按环境、模型及 Provider capability gate。",
+      "plainLanguage": "后台可以保留旧插座做兼容，但模型眼前只摆当前应该用的工具，避免同功能多把扳手。",
+      "implication": "迁移期兼容性强，且 prompt tool schema 保持紧凑稳定。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/spec_plan_tests.rs", "startLine": 637, "endLine": 708, "role": "test", "excerpt": "unified exec 与隐藏 legacy shell。" },
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 310, "endLine": 328, "role": "implementation", "excerpt": "web search capability gate。" },
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 917, "endLine": 936, "role": "implementation", "excerpt": "动态工具与 namespace handler。" }
+      ]
+    },
+    {
+      "id": "codex-permission-001",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "审批策略把“何时问”与“允许做什么”分成两条轴",
+      "fact": "AskForApproval 有 UnlessTrusted、OnRequest、Granular 和 Never；SandboxPolicy 独立描述 DangerFullAccess、ReadOnly、ExternalSandbox 与 WorkspaceWrite。",
+      "plainLanguage": "一条轴决定要不要敲门，另一条轴决定进门后活动范围；“不用问”不等于“拥有整台机器”。",
+      "implication": "企业策略能单独收紧提权频率与文件/网络能力。",
+      "citations": [
+        { "path": "codex-rs/protocol/src/protocol.rs", "startLine": 890, "endLine": 932, "role": "contract", "excerpt": "审批策略枚举。" },
+        { "path": "codex-rs/protocol/src/protocol.rs", "startLine": 995, "endLine": 1043, "role": "contract", "excerpt": "legacy sandbox policy 枚举。" }
+      ]
+    },
+    {
+      "id": "codex-permission-002",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "审批缺失默认中止，且可授予一次、本会话或规则/网络修订",
+      "fact": "命令审批包含 command、cwd、reason、network amendment、execpolicy amendment、additional permissions 和 plugin provenance；等待通道消失时默认 Abort。ReviewDecision 支持单次、session、execpolicy/network amendment、拒绝、超时和 abort。",
+      "plainLanguage": "授权不是一个“永远允许”按钮；可以只放这次、放本会话、或把精确规则写进政策，没人回答则停下。",
+      "implication": "失败关闭且授权可结构化沉淀，适合审计。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/mod.rs", "startLine": 2295, "endLine": 2376, "role": "implementation", "excerpt": "命令审批请求与默认 Abort。" },
+        { "path": "codex-rs/protocol/src/protocol.rs", "startLine": 4094, "endLine": 4135, "role": "contract", "excerpt": "ReviewDecision 完整类型。" }
+      ]
+    },
+    {
+      "id": "codex-sandbox-001",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "沙箱按平台变换真实进程：macOS Seatbelt、Linux seccomp/bwrap/landlock、Windows restricted token",
+      "fact": "SandboxManager 将抽象策略映射到平台后端；Auto 只在策略要求时选沙箱，Require/Forbid 明确覆盖选择，随后把命令变换为对应 launcher。",
+      "plainLanguage": "不是在提示词里说“请别乱动”，而是在启动进程前给命令套上操作系统能执行的限制器。",
+      "implication": "强度取决于平台与后端可用性；报告不把 unsupported 平台推断成同等隔离。",
+      "citations": [
+        { "path": "codex-rs/sandboxing/src/manager.rs", "startLine": 34, "endLine": 73, "role": "implementation", "excerpt": "平台 sandbox 类型映射。" },
+        { "path": "codex-rs/sandboxing/src/manager.rs", "startLine": 280, "endLine": 367, "role": "implementation", "excerpt": "Auto/Require/Forbid 选择与命令变换。" }
+      ]
+    },
+    {
+      "id": "codex-sandbox-002",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "自定义 permission profile 默认从受限文件系统和受限网络开始",
+      "fact": "custom profile 编译器先建立 restricted filesystem 与 restricted network，再应用条目；网络只有显式 true 才启用，WorkspaceWrite 默认也关闭网络，并保护 .git hooks 等元数据子路径。",
+      "plainLanguage": "自定义政策从“什么都别给”开始逐项开门，而不是先全开再查漏补缺。",
+      "implication": "默认拒绝更适合作为组织级安全基线。",
+      "citations": [
+        { "path": "codex-rs/core/src/config/permissions.rs", "startLine": 203, "endLine": 213, "role": "config", "excerpt": "内建 read-only/workspace profile。" },
+        { "path": "codex-rs/core/src/config/permissions.rs", "startLine": 347, "endLine": 407, "role": "implementation", "excerpt": "自定义 profile 编译与 glob 警告。" },
+        { "path": "codex-rs/core/src/config/permissions.rs", "startLine": 507, "endLine": 520, "role": "implementation", "excerpt": "网络显式开启。" }
+      ]
+    },
+    {
+      "id": "codex-mcp-001",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 是带复用、认证、required gate 和 catalog revision 的运行时",
+      "fact": "McpConnectionSet 同时管理 server、required servers、工具目录版本、Codex Apps cache、plugin provenance、工具命名前缀和 elicitation；连接配置/OAuth 凭据一致且存活时才复用。",
+      "plainLanguage": "它不是每轮临时扫一遍外接工具，而是维护一套有版本、有健康状态、有认证身份的连接池。",
+      "implication": "工具清单可稳定捕获到 step snapshot，连接变化不会悄悄污染正在执行的一步。",
+      "citations": [
+        { "path": "codex-rs/codex-mcp/src/connection_manager.rs", "startLine": 66, "endLine": 117, "role": "implementation", "excerpt": "连接复用、OAuth 一致性和取消。" },
+        { "path": "codex-rs/codex-mcp/src/connection_manager.rs", "startLine": 143, "endLine": 199, "role": "implementation", "excerpt": "连接集状态、required server 与 catalog revision。" }
+      ]
+    },
+    {
+      "id": "codex-mcp-002",
+      "dimension": "mcp-connectors",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "模型只能看到显式可见且能绑定到同一目录版本的 MCP 工具",
+      "fact": "tool_catalog 过滤 UI visibility，不含 metadata 时默认可见；capture_binding 在读锁下捕获 revision、ready client、过滤后的 tools 和 prepared calls，无法精确绑定的工具被省略。",
+      "plainLanguage": "展示给模型的工具名和真正执行它的连接必须来自同一版目录，不能拿新版菜单去点旧版厨房。",
+      "implication": "减少热刷新导致的工具错配和 TOCTOU 风险。",
+      "citations": [
+        { "path": "codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs", "startLine": 34, "endLine": 55, "role": "implementation", "excerpt": "model visibility 规则。" },
+        { "path": "codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs", "startLine": 127, "endLine": 230, "role": "implementation", "excerpt": "revision 锁、ready client 与 prepared call 绑定。" }
+      ]
+    },
+    {
+      "id": "codex-instructions-001",
+      "dimension": "instructions-skills-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "AGENTS.md 从项目根向 cwd 分层合并，局部 override 优先且有总字节预算",
+      "fact": "发现逻辑以 project root marker 截断上行范围，从根到 cwd 每层最多选 AGENTS.override.md、AGENTS.md 或 fallback 文件之一；按总预算读取，超出部分截断。",
+      "plainLanguage": "公司规章先读，走进子目录后再叠加本地规章；同一层的 override 像贴在门上的最新通知。",
+      "implication": "目录作用域明确，但超预算时越靠后的深层说明更可能被截断，需要可视化告警。",
+      "citations": [
+        { "path": "codex-rs/core/src/agents_md.rs", "startLine": 1, "endLine": 16, "role": "contract", "excerpt": "根到 cwd 的发现语义。" },
+        { "path": "codex-rs/core/src/agents_md.rs", "startLine": 89, "endLine": 150, "role": "implementation", "excerpt": "总字节预算与截断。" },
+        { "path": "codex-rs/core/src/agents_md.rs", "startLine": 207, "endLine": 247, "role": "implementation", "excerpt": "候选文件优先级。" }
+      ]
+    },
+    {
+      "id": "codex-extension-001",
+      "dimension": "instructions-skills-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skills、plugins 和 extensions 都在初始上下文构建期受预算与来源控制",
+      "fact": "build_initial_context 按 context window 计算 skill metadata budget，超限发 warning；plugins 先按配置加载，再生成推荐插件上下文；extension contributors 可注入 developer、contextual user 或独立 developer fragment。",
+      "plainLanguage": "扩展不是把所有说明一股脑塞进提示词，而是先做预算，再按可信来源和消息层级装配。",
+      "implication": "可扩展性强且照顾 prompt cache；插件推荐与已安装插件被区分。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/mod.rs", "startLine": 3336, "endLine": 3397, "role": "implementation", "excerpt": "skills 预算、warning 和 developer 注入。" },
+        { "path": "codex-rs/core/src/session/mod.rs", "startLine": 3398, "endLine": 3440, "role": "implementation", "excerpt": "plugins 推荐与 extension contributors。" }
+      ]
+    },
+    {
+      "id": "codex-hooks-001",
+      "dimension": "instructions-skills-plugins-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Hooks 覆盖 session、prompt、permission、tool、compact、stop 与 subagent 生命周期",
+      "fact": "runtime 为 session/subagent start、PreToolUse、PermissionRequest、PostToolUse、UserPromptSubmit 等构造稳定 payload；hook 可阻断、改写输入或注入额外上下文，完成事件同时进入指标和 analytics。",
+      "plainLanguage": "钩子既能当门卫，也能当翻译器和旁路记录员；每次执行都有开始、结束和耗时记录。",
+      "implication": "组织可插入治理逻辑，但 hook 本身应被当作有权限的代码并受项目信任策略保护。",
+      "citations": [
+        { "path": "codex-rs/core/src/hook_runtime.rs", "startLine": 103, "endLine": 220, "role": "implementation", "excerpt": "session/subagent start 与 PreToolUse。" },
+        { "path": "codex-rs/core/src/hook_runtime.rs", "startLine": 222, "endLine": 285, "role": "implementation", "excerpt": "PermissionRequest 与 PostToolUse。" },
+        { "path": "codex-rs/core/src/hook_runtime.rs", "startLine": 649, "endLine": 705, "role": "implementation", "excerpt": "hook events、metrics 与 analytics。" }
+      ]
+    },
+    {
+      "id": "codex-agent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "多 Agent 是共享控制面的线程树，不是主循环里的递归函数",
+      "fact": "每棵 root thread 树共享 AgentControl、registry、V2 residency、execution limiter 和 rollout budget；spawn 通过 ThreadManager 创建独立 thread，子线程继承环境与 exec policy。",
+      "plainLanguage": "每个子 Agent 都有自己的会话账本，但兄弟们共用一张组织架构表、并发配额和总预算。",
+      "implication": "隔离了对话状态，同时能做全树限流、恢复和协作观测。",
+      "citations": [
+        { "path": "codex-rs/core/src/agent/control.rs", "startLine": 70, "endLine": 111, "role": "implementation", "excerpt": "root-scoped control plane 状态。" },
+        { "path": "codex-rs/core/src/agent/control/spawn.rs", "startLine": 365, "endLine": 445, "role": "implementation", "excerpt": "spawn、额度、驻留与环境/策略继承。" }
+      ]
+    },
+    {
+      "id": "codex-agent-002",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "fork 可选全历史、最近 N 轮或空白；消息可只入队也可触发 turn",
+      "fact": "spawn_agent V2 解析 fork_turns none/all/正整数，默认 all；send_message 只投递队列，followup 类通信可触发空闲 agent 开新 turn，wait 同时监听 mailbox、steer 和 timeout。",
+      "plainLanguage": "派工时可把整本案卷、最近几页或一张白纸交给下属；便签可以只塞进邮箱，也可以按门铃让他立即处理。",
+      "implication": "上下文成本可控，并避免普通消息总是打断正在执行的子任务。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs", "startLine": 39, "endLine": 165, "role": "implementation", "excerpt": "spawn 参数、子配置和 telemetry。" },
+        { "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs", "startLine": 173, "endLine": 220, "role": "implementation", "excerpt": "fork_turns 解析和限制。" },
+        { "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs", "startLine": 37, "endLine": 118, "role": "implementation", "excerpt": "mailbox/steer/timeout wait。" }
+      ]
+    },
+    {
+      "id": "codex-agent-003",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "驻留上限与同时执行上限分离，V2 子 Agent 才受执行 limiter",
+      "fact": "V2 的 effective_agent_max_threads 从 max_concurrent_threads_per_session 减去 root；AgentExecutionLimiter 只在 V2 SubAgent 启动新 turn 时检查 active 数，已有 active turn 的消息不重复占槽，guard drop 释放名额。",
+      "plainLanguage": "可以让许多子会话留在通讯录里，但只有有限几个同时开工；已经在干活的人收到补充便签不会再算一个工位。",
+      "implication": "资源治理比单一 agent count 精细，恢复/驻留和运行并发可以独立调优。",
+      "citations": [
+        { "path": "codex-rs/core/src/config/mod.rs", "startLine": 1547, "endLine": 1560, "role": "config", "excerpt": "V2/legacy 有效线程数计算。" },
+        { "path": "codex-rs/core/src/agent/control/execution.rs", "startLine": 14, "endLine": 118, "role": "implementation", "excerpt": "执行 limiter、guard 与适用范围。" }
+      ]
+    },
+    {
+      "id": "codex-persistence-001",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "会话采用 JSONL rollout 作为事件事实源，后台 writer 支持 persist、flush 与失败记忆",
+      "fact": "RolloutRecorder 将创建/恢复参数与 RolloutItem 送入后台命令队列；writer task 保存 terminal failure，公开 Persist、Flush、Shutdown acknowledgement。",
+      "plainLanguage": "先把每一步写成可重放流水账，后台书记员负责落盘；书记员一旦坏掉，后续调用会记得这次故障而不是假装成功。",
+      "implication": "支持 resume/fork/审计，也给崩溃恢复和一致性测试提供稳定基线。",
+      "citations": [
+        { "path": "codex-rs/rollout/src/recorder.rs", "startLine": 93, "endLine": 171, "role": "implementation", "excerpt": "RolloutCmd 和 writer failure state。" },
+        { "path": "codex-rs/rollout/src/recorder.rs", "startLine": 177, "endLine": 290, "role": "implementation", "excerpt": "create/resume 参数和 history metadata。" }
+      ]
+    },
+    {
+      "id": "codex-persistence-002",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "SQLite 是可查询镜像，并把状态、日志、目标和记忆拆库降低锁竞争",
+      "fact": "state crate 从 JSONL rollout 提取元数据镜像到 SQLite；StateRuntime 分别打开 state、logs、goals、memories 数据库，并明确把日志和分页历史分离以降低锁竞争。",
+      "plainLanguage": "流水账负责忠实记录，SQLite 像索引卡片箱，负责快速搜索；不同类型卡片分柜，避免大家抢同一把锁。",
+      "implication": "兼顾可恢复事件源与 UI 查询性能，代价是要处理 backfill/reconciliation。",
+      "citations": [
+        { "path": "codex-rs/state/src/lib.rs", "startLine": 1, "endLine": 10, "role": "contract", "excerpt": "rollout 到 SQLite 镜像定位。" },
+        { "path": "codex-rs/state/src/runtime.rs", "startLine": 71, "endLine": 125, "role": "implementation", "excerpt": "分库状态与初始化。" },
+        { "path": "codex-rs/state/src/runtime.rs", "startLine": 126, "endLine": 170, "role": "implementation", "excerpt": "各数据库独立打开与失败清理。" }
+      ]
+    },
+    {
+      "id": "codex-observe-001",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "观测横跨模型、工具、hooks、MCP、rollout 与 SQLite，不只是一份 CLI 日志",
+      "fact": "模型 client 注入 SessionTelemetry 与 rollout inference trace；工具 runtime 记录 dispatch/handler/total timing；hooks 发开始/完成事件与 duration；MCP 记录 tool list/refresh；state 定义初始化、错误、回填与 fallback 指标。",
+      "plainLanguage": "既能看模型这段花了多久，也能拆出排队、工具处理、钩子、连接器和数据库的时间与故障。",
+      "implication": "适合做端到端性能归因和故障回放，但需要明确遥测数据的隐私与导出策略。",
+      "citations": [
+        { "path": "codex-rs/core/src/client.rs", "startLine": 74, "endLine": 91, "role": "implementation", "excerpt": "SessionTelemetry 与 rollout trace。" },
+        { "path": "codex-rs/core/src/hook_runtime.rs", "startLine": 649, "endLine": 691, "role": "implementation", "excerpt": "hook events 和 duration metric。" },
+        { "path": "codex-rs/state/src/lib.rs", "startLine": 81, "endLine": 95, "role": "contract", "excerpt": "SQLite/backfill/fallback metrics。" }
+      ]
+    },
+    {
+      "id": "codex-maturity-001",
+      "dimension": "maturity-license",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "这是大型、多前端、测试密集的 Rust Harness，许可证为 Apache-2.0",
+      "fact": "固定快照含约 2,780 个 Rust 文件、645 个 TypeScript 文件；源码树中约 487 个 test 命名文件、1,170 个含 Rust test attribute 的文件，根许可证为 Apache License 2.0。",
+      "plainLanguage": "它不是一段 CLI 脚本，而是一套带协议、TUI、app server、状态库、插件和跨平台后端的系统工程。",
+      "implication": "可借鉴性高，但直接复刻意味着承担很大的平台与回归测试成本。",
+      "citations": [
+        { "path": "LICENSE", "startLine": 1, "endLine": 28, "role": "contract", "excerpt": "Apache License 2.0。" },
+        { "path": "codex-rs/core/src/tools/spec_plan_tests.rs", "startLine": 637, "endLine": 708, "role": "test", "excerpt": "代表性的工具规划回归测试。" },
+        { "path": "codex-rs/core/src/agent/control_tests.rs", "startLine": 2047, "endLine": 2174, "role": "test", "excerpt": "线程额度、释放与共享 limiter 测试。" }
+      ],
+      "caveats": ["文件数与测试文件数是对该固定 checkout 的机械统计，不等于测试覆盖率。"]
+    }
+  ]
+}

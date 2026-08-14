@@ -1,0 +1,401 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "deepagents",
+  "snapshot": {
+    "repository": "langchain-ai/deepagents",
+    "commit": "4cd21b61592ef0239f59cf4e3f27a2a70d226737",
+    "commitDate": "2026-08-11T17:06:38-07:00"
+  },
+  "method": {
+    "readmePolicy": "README 只用于定位 SDK/CLI 入口；结论沿 libs/deepagents、libs/code 的 graph、middleware、backend、agent、MCP、plugins、sessions 和 tests 逐段阅读，固定 commit 后记录行号。",
+    "factPolicy": "优先引用 Python 运行实现、协议、测试和 threat-model 相邻的安全实现；明确区分 SDK 默认 StateBackend、CLI 本地模式和真正的 SandboxBackend。",
+    "inferencePolicy": "把 middleware 组合和 LangGraph checkpointer/store 的关系标为实现归纳；源码未强制的 OS 隔离、permissions backend gap、Auto/PTC bypass 均作为限制或风险，而不是安全保证。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "create_deep_agent 构造 LangGraph agent，DeepAgents Code 再包一层 CLI middleware/approval/control plane。" },
+    { "dimension": "middleware-architecture", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "Skills、Filesystem、SubAgent、Summarization、Patch、Memory、HITL 以受保护顺序装配。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "0.85/0.10 model-aware trigger/keep、overflow fallback、markdown offload、media path 和 manual compact。" },
+    { "dimension": "backend-runtime", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "BackendProtocol 统一 file API，SandboxBackendProtocol 才添加 execute；State/Store 可无 shell。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "filesystem tool allowlist、literal grep/glob、exact edit、task subagent 和 execute。" },
+    { "dimension": "execution-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "SDK backend 可插入 container/VM/remote；CLI local 使用 LocalShellBackend，remote 直接传 sandbox。" },
+    { "dimension": "permissions-security", "status": "partial", "evidenceLevels": ["L1", "L2", "L3"], "notes": "first-match filesystem rules/HITL 很清晰，但 permissions 对能 execute 的 backend 明确暂不支持通用 tool-level gate。" },
+    { "dimension": "mcp-connectors", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "stdio/http/sse、OAuth、lazy sessions、env redaction、tool filters、project trust 和 discovery precedence。" },
+    { "dimension": "instructions-skills-plugins", "status": "verified", "evidenceLevels": ["L1", "L2", "L3", "L4"], "notes": "skills progressive disclosure、AGENTS memory、插件 manifest/path containment、versioned cache/atomic replace。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "declarative/compiled/async subagents、private state keys、task result Command 与 tracing metadata。" },
+    { "dimension": "persistence-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "LangGraph checkpointer/store、CLI SQLite sessions、LangSmith metadata、cost tracking 和 offload archive。" },
+    { "dimension": "tests-benchmarks-maturity", "status": "verified", "evidenceLevels": ["L1", "L3"], "notes": "graph/backend/filesystem/permissions/subagent/summarization/skills/memory/MCP/CLI 本地模式均有测试目录。" }
+  ],
+  "findings": [
+    {
+      "id": "deep-arch-001", "dimension": "architecture-loop", "evidenceLevel": "L1", "claimType": "fact", "title": "create_deep_agent 是 middleware graph builder，不是单一巨大 Agent 类",
+      "fact": "create_deep_agent 接收 model/tools/system_prompt/middleware/subagents/skills/memory/permissions/backend/interrupt_on/checkpointer/store/cache 等依赖，最后调用 LangChain create_agent 并设置 recursion_limit、metadata 和 agent name。",
+      "plainLanguage": "DeepAgents 把 Agent 看成一张可配置的 LangGraph：模型、文件工具、子 Agent、压缩、记忆和审批都作为中间件节点组合。",
+      "implication": "自研可借鉴“装配器 + 可插拔 middleware”模式，把功能切片而非把所有逻辑揉成 turn 函数。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 268, "endLine": 300, "role": "contract", "excerpt": "create_deep_agent 参数和内置工具。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 816, "endLine": 877, "role": "implementation", "excerpt": "main middleware stack 组装。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 922, "endLine": 944, "role": "implementation", "excerpt": "create_agent、recursion_limit 和 LangSmith metadata。" }
+      ]
+    },
+    {
+      "id": "deep-arch-002", "dimension": "middleware-architecture", "evidenceLevel": "L1", "claimType": "fact", "title": "核心 middleware 有受保护的顺序和排除校验",
+      "fact": "graph.py 明确按 Skills、Filesystem、SubAgent、Summarization、PatchToolCalls、AsyncSubAgent、用户 middleware、profile、prompt cache、Memory、HumanInTheLoop 组装；protected middleware 被排除时会验证并报错。",
+      "plainLanguage": "顺序不是装饰：先把文件/任务工具放进去，再做压缩和 prompt cache，最后把 memory 与审批接在尾部；核心骨架不能被 profile 随意删掉。",
+      "implication": "middleware 系统要有 required classes/names 和 exclusion coverage 检查，避免“配置成功但安全/持久化节点没装上”。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 361, "endLine": 401, "role": "contract", "excerpt": "完整 middleware ordering 和 protected exclusions。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 600, "endLine": 621, "role": "implementation", "excerpt": "profile exclusion validation。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 877, "endLine": 909, "role": "implementation", "excerpt": "二次 exclusion、tool exclusion 和 coverage verify。" }
+      ]
+    },
+    {
+      "id": "deep-context-001", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "摘要默认按模型窗口的 85% 触发、保留 10%",
+      "fact": "factory 在有 profile max input tokens 时用 trigger=(fraction,0.85)、keep=(fraction,0.10)，没有 profile 时回退 tokens=170000、keep messages=6；tool arguments 还可单独设截断阈值。",
+      "plainLanguage": "它不会给所有模型硬塞同一个消息数量，而是尽量按模型实际输入窗口比例决定何时压缩和保留多少。",
+      "implication": "上下文策略应使用模型 profile，而不是只写“最近 20 条消息”。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 249, "endLine": 289, "role": "config", "excerpt": "profile-aware trigger/keep 和 fallback defaults。" },
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 1594, "endLine": 1608, "role": "implementation", "excerpt": "factory defaults。" }
+      ]
+    },
+    {
+      "id": "deep-context-002", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "压缩先归档旧历史，再把 summary event 放进私有 state",
+      "fact": "summarization middleware 在 provider ContextOverflowError 或阈值触发后 partition messages，把旧消息写入 `/conversation_history/{thread_id}.md`，构造 summary HumanMessage 和 file_path，最后用 ExtendedModelResponse 的 Command 更新 `_summarization_event`。",
+      "plainLanguage": "上下文里的旧内容不是直接蒸发：它先被保存成可 read_file 的 markdown，模型只拿摘要和路径，下一轮还能按需取回。",
+      "implication": "压缩应同时产生“模型 working set”和“可恢复 archive pointer”，并且 archive failure 要显式告警。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 1, "endLine": 58, "role": "contract", "excerpt": "summary/offload/media storage contract。" },
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 1324, "endLine": 1357, "role": "implementation", "excerpt": "effective messages、overflow fallback 和 private state event。" },
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 1392, "endLine": 1455, "role": "implementation", "excerpt": "offload、summary、file_path 和 Command state update。" }
+      ]
+    },
+    {
+      "id": "deep-context-003", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "媒体会单独上传并在摘要中保留可读取路径",
+      "fact": "内联 image/data URL 在 offload 前上传到 artifacts_root/conversation_history/media/{hash}.{ext}，摘要提示词要求保留 `<image url=...>` 引用并提醒模型需要时调用 read_file。",
+      "plainLanguage": "图片不会因为转成文字摘要就无声丢失；系统把它变成文件引用，并告诉接手的模型如何再读。",
+      "implication": "多模态 Agent 的压缩策略要把媒体 artifact 与文本摘要分开管理。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 42, "endLine": 56, "role": "prompt", "excerpt": "markdown history 与 media path。" },
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 100, "endLine": 107, "role": "prompt", "excerpt": "media reference summary instructions。" },
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 1037, "endLine": 1088, "role": "implementation", "excerpt": "inline media offload path/hash。" }
+      ]
+    },
+    {
+      "id": "deep-context-004", "dimension": "context-compaction", "evidenceLevel": "L1", "claimType": "fact", "title": "manual compact_conversation 受半阈值 gate 约束",
+      "fact": "SummarizationToolMiddleware 把 compact_conversation 注册为普通 tool，但只有当消息量/token/fraction 达到自动压缩阈值约 50% 时才允许；成功路径共享 `_summarization_event`，异常转为 ToolMessage 而不抛穿 graph。",
+      "plainLanguage": "模型可以主动整理上下文，但不能一开场就把还没做完的工作压成一句摘要。",
+      "implication": "手动压缩工具也需要 eligibility gate 和可观察失败结果，不能把“compact”当无条件清空按钮。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 1768, "endLine": 1784, "role": "contract", "excerpt": "manual compact semantics and shared state key。" },
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 1993, "endLine": 2011, "role": "implementation", "excerpt": "50% eligibility gate。" },
+        { "path": "libs/deepagents/deepagents/middleware/summarization.py", "startLine": 2013, "endLine": 2044, "role": "implementation", "excerpt": "compact success/error Command path。" }
+      ]
+    },
+    {
+      "id": "deep-backend-001", "dimension": "backend-runtime", "evidenceLevel": "L1", "claimType": "fact", "title": "BackendProtocol 把文件操作和 shell 执行明确拆层",
+      "fact": "BackendProtocol 提供 ls/read/grep/glob/write/edit/delete/upload/download；文档明确 StateBackend/StoreBackend 可在内存或远端 store 中用纯 Python grep/glob，不实现 execute。SandboxBackendProtocol 单独添加 execute/aexecute 和 sandbox id。",
+      "plainLanguage": "文件工具不再偷偷依赖 shell：没有 shell 的后端也能读写、搜索和编辑；只有明确实现 SandboxBackendProtocol 才会有 execute。",
+      "implication": "执行能力应是后端能力 trait，不要让 tool 层默认假设机器上有 bash。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/backends/protocol.py", "startLine": 378, "endLine": 396, "role": "contract", "excerpt": "BackendProtocol no-shell design。" },
+        { "path": "libs/deepagents/deepagents/backends/protocol.py", "startLine": 410, "endLine": 462, "role": "contract", "excerpt": "ls/read API。" },
+        { "path": "libs/deepagents/deepagents/backends/protocol.py", "startLine": 814, "endLine": 869, "role": "contract", "excerpt": "SandboxBackendProtocol execute。" }
+      ]
+    },
+    {
+      "id": "deep-backend-002", "dimension": "tool-dispatch", "evidenceLevel": "L1", "claimType": "fact", "title": "搜索和编辑工具是结构化 API，不是原始 grep/sed 字符串",
+      "fact": "BackendProtocol 的 grep 是 literal substring matching 并支持全局 max_count/truncated，glob 返回结构化 GlobResult，edit 要求 exact old_string 且默认唯一匹配；FilesystemMiddleware 再做 line-number formatting 和结果截断。",
+      "plainLanguage": "Agent 看到的是可分页、可限量、可解释的文件操作，减少 shell 命令输出不稳定和正则误伤。",
+      "implication": "coding harness 应优先提供结构化 read/edit/search 工具，shell 只作为明确授权的能力。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/backends/protocol.py", "startLine": 473, "endLine": 530, "role": "contract", "excerpt": "literal grep 和 total max_count。" },
+        { "path": "libs/deepagents/deepagents/backends/protocol.py", "startLine": 629, "endLine": 654, "role": "contract", "excerpt": "exact edit/unique old_string。" },
+        { "path": "libs/deepagents/deepagents/middleware/filesystem.py", "startLine": 1534, "endLine": 1551, "role": "contract", "excerpt": "filesystem tools and large-result eviction。" }
+      ]
+    },
+    {
+      "id": "deep-backend-003", "dimension": "execution-sandbox", "evidenceLevel": "L1", "claimType": "fact", "title": "SDK 默认 StateBackend 是会话内临时存储，execute 只对 sandbox backend 出现",
+      "fact": "StateBackend 文档说明文件存进 LangGraph state、在 thread 内 checkpoint、跨 thread 不持久；FilesystemMiddleware 默认 StateBackend，只有 backend 实现 SandboxBackendProtocol 时才创建 execute tool。",
+      "plainLanguage": "纯 SDK 默认不会因为用了 FilesystemMiddleware 就在用户电脑执行 shell；要持久化或执行，调用方必须显式换 backend。",
+      "implication": "默认安全基线应是无 shell、可回收 state；把持久化和执行作为显式部署决策。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/backends/state.py", "startLine": 37, "endLine": 47, "role": "contract", "excerpt": "ephemeral StateBackend semantics。" },
+        { "path": "libs/deepagents/deepagents/middleware/filesystem.py", "startLine": 1534, "endLine": 1564, "role": "contract", "excerpt": "default StateBackend 与 SandboxBackend execute gate。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 627, "endLine": 638, "role": "implementation", "excerpt": "backend defaults and prompt fragments。" }
+      ]
+    },
+    {
+      "id": "deep-security-001", "dimension": "permissions-security", "evidenceLevel": "L1", "claimType": "fact", "title": "FilesystemPermission 是 first-match allow/deny/interrupt 规则",
+      "fact": "FilesystemPermission 验证路径必须以 / 开头、禁止 .. 和 ~；_check_fs_permission 按声明顺序找第一条匹配规则，返回 allow/deny/interrupt，interrupt 交给 HumanInTheLoopMiddleware。",
+      "plainLanguage": "权限规则像防火墙：先匹配到的规则生效，读写可以拒绝，敏感路径可以暂停让人确认。",
+      "implication": "路径权限要固定顺序、拒绝目录穿越，并让“需要审批”与“直接拒绝”是不同结果。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/filesystem.py", "startLine": 383, "endLine": 430, "role": "contract", "excerpt": "path validation and first-match rule。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 440, "endLine": 478, "role": "contract", "excerpt": "permissions inheritance and tool-level semantics。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 871, "endLine": 877, "role": "implementation", "excerpt": "filesystem-derived interrupt_on merged into HITL。" }
+      ]
+    },
+    {
+      "id": "deep-security-002", "dimension": "permissions-security", "evidenceLevel": "L1", "claimType": "limitation", "title": "权限对可执行 backend 的通用 execute gate 明确还没实现",
+      "fact": "FilesystemMiddleware 初始化时发现 permissions 与 SandboxBackendProtocol 同时存在且规则没有完全 scoped 到 Composite routes，就抛 NotImplementedError，并说明 execute 的 tool-level permissions 未实现。",
+      "plainLanguage": "文件读写权限很细，但一旦后端允许 shell，通用权限规则不能假装能限制 shell 里的任意命令；代码选择直接拒绝这种配置。",
+      "implication": "这是诚实的 fail-closed 设计，但部署方必须为 shell 另建 command policy/sandbox，不应误以为 path rules 能包住 shell。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/filesystem.py", "startLine": 1649, "endLine": 1674, "role": "implementation", "excerpt": "permissions + execution backend NotImplementedError。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 473, "endLine": 485, "role": "contract", "excerpt": "permissions only tool-level, not backend-level。" }
+      ],
+      "caveats": ["当规则完全 scoped 到 Composite route 时，初始化条件不同；本结论针对通用 execution backend。"]
+    },
+    {
+      "id": "deep-security-003", "dimension": "permissions-security", "evidenceLevel": "L1", "claimType": "fact", "title": "DeepAgents Code 的 shell allow-list 在 execute 前直接返回错误",
+      "fact": "ShellAllowListMiddleware 只检查 execute command，命令不在 allow-list 就构造 error ToolMessage，不进入 HITL 暂停；空列表和 SHELL_ALLOW_ALL sentinel 会被拒绝。",
+      "plainLanguage": "非交互模式下，危险 shell 不是等人点确认，而是根本不执行；并且不能用空列表伪装成限制或用 all 绕过。",
+      "implication": "headless runner 可用 fail-fast allow-list 保持连续 trace，但必须明确它只控制 command name，不是完整 OS sandbox。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 774, "endLine": 810, "role": "contract", "excerpt": "allow-list middleware guard。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 812, "endLine": 865, "role": "implementation", "excerpt": "execute command check and error ToolMessage。" }
+      ]
+    },
+    {
+      "id": "deep-security-004", "dimension": "permissions-security", "evidenceLevel": "L1", "claimType": "risk", "title": "PTC all/YOLO 是强能力开关，代码要求显式承认但允许绕过 HITL",
+      "fact": "_resolve_ptc_option 在 interpreter_ptc='all' 且非 auto_approve 时要求 acknowledge_unsafe；提示明确 PTC host tools 会 bypass HITL。Approval mode 中 YOLO 直接不 interrupt，AUTO 是否绕过取决于 classifier eligibility。",
+      "plainLanguage": "用户可以选择极快的自动模式，但这不是默认安全路径；代码要求显式开关并记录 write/shell tools。",
+      "implication": "产品应把 Manual/Auto/YOLO/PTC 做成可审计的 run-scoped authority，并在 UI 中显示其会绕过哪些批准。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 898, "endLine": 937, "role": "contract", "excerpt": "PTC all acknowledgement contract。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 960, "endLine": 990, "role": "implementation", "excerpt": "all requires acknowledgement and logs write tools。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 1916, "endLine": 1951, "role": "implementation", "excerpt": "Manual/Auto/YOLO interrupt predicate。" }
+      ]
+    },
+    {
+      "id": "deep-runtime-001", "dimension": "execution-sandbox", "evidenceLevel": "L1", "claimType": "fact", "title": "CLI 明确区分 local shell、local filesystem 和 remote sandbox",
+      "fact": "create_cli_agent 在 sandbox=None 且 enable_shell 时创建 LocalShellBackend(root_dir, virtual_mode=False, inherit_env=False, curated env)；关闭 shell 用 FilesystemBackend；传入 sandbox 时直接把 remote backend 作为执行后端，并禁止 enable_interpreter。",
+      "plainLanguage": "同一个 CLI 可以跑在本机项目目录，也可以把所有文件/命令交给 Modal 等远端 sandbox；模式是显式分支，不是运行中猜。",
+      "implication": "Harness 应把执行环境当成 backend contract，远端执行和本地开发不要共用模糊的 cwd 权限。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2685, "endLine": 2728, "role": "implementation", "excerpt": "local shell/filesystem vs remote sandbox branch。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2730, "endLine": 2737, "role": "implementation", "excerpt": "remote sandbox + interpreter forbidden。" }
+      ]
+    },
+    {
+      "id": "deep-runtime-002", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "CLI 用 CompositeBackend 把 conversation history 和 large results 路由到 artifact 根",
+      "fact": "local CLI 会为 conversation_history 建独立 FilesystemBackend route，为 large_tool_results 建显式 route，并以 artifacts_root 形成 CompositeBackend；sandbox 模式不需要这些本地特殊 routes。",
+      "plainLanguage": "对话归档、超大工具输出和工作区文件各有路由，模型看到的是虚拟路径，宿主可以把 artifact 放到私有持久化目录。",
+      "implication": "artifact storage 需要与工作区隔离、可恢复、可审计，不能把所有输出都丢在当前 repo。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2807, "endLine": 2849, "role": "implementation", "excerpt": "artifact routes and CompositeBackend。" },
+        { "path": "libs/deepagents/deepagents/middleware/filesystem.py", "startLine": 1649, "endLine": 1680, "role": "implementation", "excerpt": "artifacts_root prefixes for history/results。" }
+      ]
+    },
+    {
+      "id": "deep-collab-001", "dimension": "subagents-collaboration", "evidenceLevel": "L1", "claimType": "fact", "title": "task 子 Agent 只拿到新的 HumanMessage，并过滤 private state",
+      "fact": "_validate_and_prepare_state 从 parent runtime state 排除 excluded/private keys，再把 description 作为唯一 HumanMessage；task/atask 调用 compiled runnable，最后只将非私有 state 和最后一条 AI 文本封装成 Command/ToolMessage。",
+      "plainLanguage": "子 Agent 不会自动继承父 Agent 的整段聊天记录，而是收到任务说明和允许共享的状态，完成后返回干净的报告。",
+      "implication": "多 Agent 协作应隔离 context，并定义 state merge/return schema，防止子任务把内部状态污染主循环。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/subagents.py", "startLine": 402, "endLine": 420, "role": "contract", "excerpt": "task tool/private state contract。" },
+        { "path": "libs/deepagents/deepagents/middleware/subagents.py", "startLine": 474, "endLine": 512, "role": "implementation", "excerpt": "result validation、private key filter 和 ToolMessage。" },
+        { "path": "libs/deepagents/deepagents/middleware/subagents.py", "startLine": 529, "endLine": 568, "role": "implementation", "excerpt": "new subagent state with only HumanMessage。" }
+      ]
+    },
+    {
+      "id": "deep-collab-002", "dimension": "subagents-collaboration", "evidenceLevel": "L1", "claimType": "fact", "title": "支持 declarative、compiled 和 async/remote 三种子 Agent",
+      "fact": "graph.py 将 subagent spec 区分为 declarative SubAgent、CompiledSubAgent 和 AsyncSubAgent；declarative 子 Agent 可继承/替换 permissions、skills、interrupt_on、tools 和 model，async 通过 LangSmith deployment 做非阻塞任务。",
+      "plainLanguage": "简单任务写配置就行，复杂任务可以传已经编译的图，远程任务则用 async deployment；不是所有子 Agent 都被迫走同一条路径。",
+      "implication": "协作层应同时支持本地同步、预编译图和远程异步任务，并明确它们的审批/状态继承差异。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 407, "endLine": 439, "role": "contract", "excerpt": "three subagent forms and async task operations。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 641, "endLine": 724, "role": "implementation", "excerpt": "subagent middleware/permissions/skills/interrupt inheritance。" },
+        { "path": "libs/deepagents/deepagents/middleware/subagents.py", "startLine": 333, "endLine": 385, "role": "implementation", "excerpt": "raw SubAgent compile and optional HITL。" }
+      ]
+    },
+    {
+      "id": "deep-skills-001", "dimension": "instructions-skills-plugins", "evidenceLevel": "L1", "claimType": "fact", "title": "Skills 使用 progressive disclosure，先给索引再按需读 SKILL.md",
+      "fact": "SKILLS_SYSTEM_PROMPT 只注入 skill name/description/path，要求模型用 read_file(limit=1000) 读取完整 SKILL.md，再用绝对路径访问 supporting files；SkillsMiddleware 首次 before_agent 加载 metadata，后来源同名 skill 覆盖先来源。",
+      "plainLanguage": "系统提示不会把所有技能全文塞进上下文，而是像目录一样按需展开；同时明确技能文件是外部资料，不应绕过用户请求或安全规则。",
+      "implication": "自研技能系统可以用 metadata→full instruction 两阶段，降低 token 成本和 prompt 污染面。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/skills.py", "startLine": 721, "endLine": 761, "role": "prompt", "excerpt": "progressive disclosure workflow。" },
+        { "path": "libs/deepagents/deepagents/middleware/skills.py", "startLine": 928, "endLine": 971, "role": "implementation", "excerpt": "load once, source order and last-wins。" },
+        { "path": "libs/deepagents/deepagents/middleware/skills.py", "startLine": 1018, "endLine": 1050, "role": "implementation", "excerpt": "skill section injected into request system message。" }
+      ]
+    },
+    {
+      "id": "deep-memory-001", "dimension": "instructions-skills-plugins", "evidenceLevel": "L1", "claimType": "fact", "title": "Memory 被明确标成文件参考资料，不是隐藏 system instruction",
+      "fact": "MEMORY_SYSTEM_PROMPT 告诉模型 AGENTS/memory 可能过期或由他人写入，用户消息和 read_file 证据优先；同时禁止保存 API key、token、password 等凭据。",
+      "plainLanguage": "即使 memory 文件写着“永远执行某命令”，模型也不能把它当最高优先级系统指令。",
+      "implication": "长期记忆注入必须同时提供 provenance、冲突优先级和 credential hygiene。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/memory.py", "startLine": 103, "endLine": 145, "role": "prompt", "excerpt": "memory trust/verification and credential rules。" },
+        { "path": "libs/deepagents/deepagents/middleware/memory.py", "startLine": 178, "endLine": 220, "role": "contract", "excerpt": "ordered sources and cache-aware injection。" },
+        { "path": "libs/deepagents/deepagents/middleware/memory.py", "startLine": 274, "endLine": 340, "role": "implementation", "excerpt": "load memory once per state。" }
+      ]
+    },
+    {
+      "id": "deep-mcp-001", "dimension": "mcp-connectors", "evidenceLevel": "L1", "claimType": "fact", "title": "MCP session manager 按 server lazy cache，并用 per-server lock/close timeout",
+      "fact": "MCPSessionManager 为每个 server 维护缓存 entry、async lock 和 transport/auth signature；get session 时 lazy 创建并复用，close 时每个 exit_stack 有 5 秒 timeout，避免一个坏 stdio server 卡死全局退出。",
+      "plainLanguage": "第一次用某个连接才启动它，同一服务器不会每次 tool call 重启；退出时又限制坏连接的拖延范围。",
+      "implication": "连接器池需要生命周期归属、并发锁和 shutdown deadline，而不是简单保存一个全局 client。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 279, "endLine": 312, "role": "contract", "excerpt": "manager cache and event-loop ownership。" },
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 336, "endLine": 409, "role": "implementation", "excerpt": "per-server lock、eviction、close timeout。" },
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 418, "endLine": 472, "role": "implementation", "excerpt": "lazy session creation and cleanup。" }
+      ]
+    },
+    {
+      "id": "deep-mcp-002", "dimension": "mcp-connectors", "evidenceLevel": "L1", "claimType": "fact", "title": "MCP config 延迟解析 env，并对项目 server 做 trust/deny precedence",
+      "fact": "配置 shape 在加载时校验，${VAR} 环境插值推迟到 server activation；project server 只有 config trusted 或 scoped allowlist 才保留，disabled name 即使 config_trusted 也优先丢弃；发现路径按 user、project .deepagents、project root 递增覆盖。",
+      "plainLanguage": "一个坏 server 的缺失环境变量不会让同文件其他 server 一起消失；项目里的 MCP 也不会因为被发现就自动执行。",
+      "implication": "外部 connector discovery 要区分解析、信任、激活三步，并让显式 deny 永远盖过 trust。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 475, "endLine": 504, "role": "contract", "excerpt": "transport resolution and activation-time interpolation。" },
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 952, "endLine": 987, "role": "implementation", "excerpt": "disabled deny precedence and trust allow。" },
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 990, "endLine": 1035, "role": "implementation", "excerpt": "MCP config discovery precedence。" }
+      ]
+    },
+    {
+      "id": "deep-plugin-001", "dimension": "instructions-skills-plugins", "evidenceLevel": "L1", "claimType": "fact", "title": "Plugin manifest 对组件路径做 plugin-root containment 校验",
+      "fact": "manifest.py 只接受以 ./ 开头的 skills/mcpServers/hooks 路径，拒绝 ./、..、绝对路径、Windows absolute path 和 resolve 后逃出 plugin root 的符号链接。",
+      "plainLanguage": "插件不能在 manifest 里写一个任意绝对路径偷偷指向用户 home 或别的仓库。",
+      "implication": "插件组件声明要在解析阶段做路径 containment，不能等执行时再猜。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/plugins/manifest.py", "startLine": 87, "endLine": 120, "role": "implementation", "excerpt": "relative path and root containment checks。" },
+        { "path": "libs/code/deepagents_code/plugins/manifest.py", "startLine": 189, "endLine": 253, "role": "implementation", "excerpt": "manifest load, component paths, inline MCP/hooks and version。" }
+      ]
+    },
+    {
+      "id": "deep-plugin-002", "dimension": "instructions-skills-plugins", "evidenceLevel": "L1", "claimType": "fact", "title": "插件安装先复制到版本化 cache，再原子替换并移除 .git",
+      "fact": "cache_and_register_plugin 复制 source 到临时目录，删除 .git，运行 validate 后用 backup/temp replace 原子切换 cache path，最后写 installed record；state JSON 也用 tempfile + replace。",
+      "plainLanguage": "运行中的插件不直接从 marketplace 工作目录读，安装过程也不会留下半更新目录或把源码仓库的 .git 带进插件 cache。",
+      "implication": "插件运行时要使用版本化、可回滚、原子注册的 immutable-ish cache，并把安装校验和启用记录分开。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/plugins/store.py", "startLine": 219, "endLine": 232, "role": "implementation", "excerpt": "atomic JSON state write。" },
+        { "path": "libs/code/deepagents_code/plugins/store.py", "startLine": 491, "endLine": 565, "role": "implementation", "excerpt": "copytree、remove .git、validate、backup/replace、register。" },
+        { "path": "libs/code/deepagents_code/plugins/discovery.py", "startLine": 204, "endLine": 265, "role": "implementation", "excerpt": "marketplace plugin install and cache reload。" }
+      ]
+    },
+    {
+      "id": "deep-obs-001", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "LangGraph metadata、SQLite session list 和 cost event 组成三层观测",
+      "fact": "create_deep_agent 设置 ls_integration/deepagents、版本和 agent name metadata；DeepAgents Code sessions.py 把 checkpoint metadata 建 covering index 按 agent/branch/cwd 列线程；cost_tracking 定义 session_cost custom-stream event 并按 usage/pricing 估算累计费用。",
+      "plainLanguage": "一次运行可以在 LangSmith 里追踪，在本地 SQLite 里筛选恢复，也能在 UI 看到累计花费。",
+      "implication": "观测要同时服务在线 trace、离线 session search 和账单/预算，而不是只有日志。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 922, "endLine": 944, "role": "implementation", "excerpt": "LangSmith metadata and recursion limit。" },
+        { "path": "libs/code/deepagents_code/sessions.py", "startLine": 384, "endLine": 430, "role": "implementation", "excerpt": "checkpoint metadata covering index。" },
+        { "path": "libs/code/deepagents_code/cost_tracking.py", "startLine": 88, "endLine": 120, "role": "contract", "excerpt": "session_cost event and provider metadata keys。" }
+      ]
+    },
+    {
+      "id": "deep-obs-002", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "CLI session 以 checkpoint database 为事实来源并按 cwd/branch 过滤",
+      "fact": "list_threads 从 checkpoints 表按 thread_id 聚合，返回 updated/created/latest checkpoint、agent_name、git_branch、cwd；查询可按 agent、branch、cwd 过滤，覆盖 index 失败时仍返回正确结果但变慢。",
+      "plainLanguage": "会话列表不是扫描巨型 state blob，而是读 metadata 索引；用户可以快速找回某个项目分支的线程。",
+      "implication": "持久化格式应分离大 state blob 与可查询 metadata，恢复和列表性能才不会互相拖累。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/sessions.py", "startLine": 401, "endLine": 431, "role": "implementation", "excerpt": "index build and nonfatal fallback。" },
+        { "path": "libs/code/deepagents_code/sessions.py", "startLine": 434, "endLine": 520, "role": "implementation", "excerpt": "thread query filters and metadata projection。" }
+      ]
+    },
+    {
+      "id": "deep-cli-001", "dimension": "tool-dispatch", "evidenceLevel": "L1", "claimType": "fact", "title": "CLI 用 fs_tools allowlist 重新注入主 Agent 和子 Agent，防 delegation 绕过",
+      "fact": "create_cli_agent 接收 fs_tools 时替换 main FilesystemMiddleware，并调用 _inject_fs_tools_into_subagents 将同一限制写进每个 custom subagent；注释明确不这样做会让 task bypass --allow-fs-tools。",
+      "plainLanguage": "限制主 Agent 只能 read/grep 并不够，子 Agent 也必须拿到同一份文件工具白名单。",
+      "implication": "权限面要沿 delegation 传播，不能只在根 graph 上贴一个 UI 层过滤器。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2892, "endLine": 2924, "role": "implementation", "excerpt": "main fs tool replacement and subagent injection。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 726, "endLine": 743, "role": "implementation", "excerpt": "subagent tools inherit or replace explicitly。" }
+      ]
+    },
+    {
+      "id": "deep-cli-002", "dimension": "permissions-security", "evidenceLevel": "L1", "claimType": "fact", "title": "审批模式从 live Store 读取，缺失/异步错误会 fail closed 到 Manual",
+      "fact": "AsyncApprovalHITLMiddleware 在模型返回后重新从 async Store 解析 ApprovalMode；缺失 key 或同步运行无法安全读 live mode 时记录 warning 并走 Manual；_add_interrupt_on 默认覆盖 shell、文件写、web、task 和 MCP side-effect tools。",
+      "plainLanguage": "Auto/YOLO 不是图输入里随便塞一个 dict 就能伪造的状态；拿不到可信的 live mode，就回到人工审批。",
+      "implication": "自治模式要绑定受信运行时上下文，而不是让模型或 checkpoint state 自己宣布“已批准”。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 1784, "endLine": 1858, "role": "implementation", "excerpt": "typed mode and live Store resolution。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 1954, "endLine": 2026, "role": "implementation", "excerpt": "async HITL routing and fail-closed sync path。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2047, "endLine": 2065, "role": "contract", "excerpt": "gated side-effect tool map。" }
+      ]
+    },
+    {
+      "id": "deep-code-001", "dimension": "persistence-observability", "evidenceLevel": "L1", "claimType": "fact", "title": "DeepAgents Code 有 server hooks、goal/rubric 和 read-only grader",
+      "fact": "CLI graph 安装 ServerHooksMiddleware 处理 Pre/Post tool、Stop、subagent 生命周期；GoalCriteriaMiddleware/ReliableRubricMiddleware 可按真实文件和外部 read-only context 评估目标，grader 的 repository tools 被限制在 virtual root 和调用预算。",
+      "plainLanguage": "它不只让模型写代码，还能在真实工作区检查是否达成 rubric，并把 hook 事件交给宿主治理。",
+      "implication": "coding harness 可以把“执行”和“验收”拆成不同 Agent/工具面，验收侧只读并有独立预算。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2883, "endLine": 2891, "role": "implementation", "excerpt": "ServerHooksMiddleware placement after HITL。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2926, "endLine": 2962, "role": "implementation", "excerpt": "goal criteria agent setup。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2968, "endLine": 3052, "role": "implementation", "excerpt": "read-only rubric repository backend, budgets and middleware。" }
+      ]
+    },
+    {
+      "id": "deep-risk-001", "dimension": "execution-sandbox", "evidenceLevel": "L2", "claimType": "risk", "title": "local mode 仍是宿主进程，真正隔离取决于 sandbox backend",
+      "fact": "CLI local enable_shell 使用 LocalShellBackend，virtual_mode=False 并传入 curated host env；只有调用方提供 remote SandboxBackend 才把执行交给远端环境。",
+      "plainLanguage": "默认本地开发很方便，但它不是容器边界；不可信 repo 需要在 deploy 层传入真正隔离的 sandbox。",
+      "implication": "部署文档应把 local shell 与 container/VM/remote sandbox 明确分级，审批和 secrets policy 也要跟着分支变化。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2706, "endLine": 2728, "role": "implementation", "excerpt": "LocalShellBackend host process vs remote backend。" },
+        { "path": "libs/deepagents/deepagents/backends/protocol.py", "startLine": 814, "endLine": 824, "role": "contract", "excerpt": "SandboxBackend designed for containers/VMs/remote hosts。" }
+      ],
+      "caveats": ["LocalShellBackend 自身可能有其他实现层保护；本报告只把当前 agent.py 分支识别为宿主执行路径。"]
+    },
+    {
+      "id": "deep-risk-002", "dimension": "mcp-connectors", "evidenceLevel": "L2", "claimType": "risk", "title": "MCP 是强连接器面，project trust、env/header 和 OAuth 都必须纳入审批",
+      "fact": "MCP 支持 stdio（启动本地命令）、http/sse（远端 URL）、env/header 插值、OAuth 和 project config discovery；代码虽做 trust/deny、schema 校验和失败 redaction，但激活后的工具仍进入 Agent tool surface。",
+      "plainLanguage": "MCP 不只是“多几个函数”，它可能启动本地进程或访问远端系统；trust gate 是必要的，不能把发现到的 .mcp.json 当可信配置。",
+      "implication": "连接器审批应显示 transport、命令/URL、环境变量和 tool filters，并与 shell/file approval 共用审计。",
+      "citations": [
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 66, "endLine": 89, "role": "contract", "excerpt": "server status and disabled/no-connection semantics。" },
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 555, "endLine": 604, "role": "implementation", "excerpt": "stdio/http/sse/auth validation。" },
+        { "path": "libs/code/deepagents_code/mcp_tools.py", "startLine": 1113, "endLine": 1117, "role": "contract", "excerpt": "stdio command and remote SSRF/env exfiltration trust rationale。" }
+      ],
+      "caveats": ["风险来自连接器的潜在副作用面；并不声称每个 MCP server 都不可信。"]
+    },
+    {
+      "id": "deep-risk-003", "dimension": "middleware-architecture", "evidenceLevel": "L2", "claimType": "risk", "title": "middleware 数量和 profile exclusion 提升了组合复杂度",
+      "fact": "graph.py 同时构造 main 与 general-purpose subagent stacks，并二次应用 profile extra/excluded/custom middleware；private state schema、tool exclusion、prompt caching、HITL 和 async subagent 都依赖装配顺序。",
+      "plainLanguage": "可组合性很强，但一个 middleware 的名字、位置或 exclusion 配错，可能改变主 Agent、GP 子 Agent 和审批链的行为。",
+      "implication": "自研要提供最终装配图、required middleware 校验和 snapshot tests，而不是只让用户写列表。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 641, "endLine": 716, "role": "implementation", "excerpt": "per-subagent stack and exclusion coverage。" },
+        { "path": "libs/deepagents/deepagents/graph.py", "startLine": 816, "endLine": 909, "role": "implementation", "excerpt": "main stack, private state and exclusion verification。" }
+      ],
+      "caveats": ["这是系统组合复杂度的工程风险，不是已报告的单一缺陷。"]
+    },
+    {
+      "id": "deep-maturity-001", "dimension": "tests-benchmarks-maturity", "evidenceLevel": "L3", "claimType": "fact", "title": "测试覆盖 graph、backend、permissions、subagent、压缩、skills、memory 和本地 sandbox",
+      "fact": "tests 目录包含 test_graph、test_permissions、test_subagents、test_async_subagents、test_summarization_middleware、test_compact_tool、test_skills_middleware、test_memory_middleware、test_state_backend、test_local_shell、test_local_sandbox_operations 等。",
+      "plainLanguage": "它的回归面覆盖了实际 harness 最容易出错的地方：压缩、权限、工具后端、子 Agent 和本地执行。",
+      "implication": "建设自研 Agent 时，应把“能力组合”而不是单个 prompt 作为测试单位。",
+      "citations": [
+        { "path": "libs/deepagents/tests/unit_tests/test_graph.py", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "graph builder tests。" },
+        { "path": "libs/deepagents/tests/unit_tests/test_permissions.py", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "filesystem permission tests。" },
+        { "path": "libs/deepagents/tests/unit_tests/middleware/test_summarization_middleware.py", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "automatic compaction tests。" },
+        { "path": "libs/deepagents/tests/unit_tests/test_local_shell.py", "startLine": 1, "endLine": 12, "role": "test", "excerpt": "local shell backend tests。" }
+      ]
+    },
+    {
+      "id": "deep-recommend-001", "dimension": "backend-runtime", "evidenceLevel": "L2", "claimType": "inference", "title": "最值得借鉴的是 BackendProtocol 与 middleware 的正交组合",
+      "fact": "文件操作、shell execute、压缩归档和大结果 eviction 通过 BackendProtocol/CompositeBackend 提供存储能力；Filesystem/Summarization/SubAgent middleware 只依赖协议，不绑定一个固定工作区。",
+      "plainLanguage": "同一套 Agent 逻辑可以跑在内存 state、数据库、真实文件夹或远端 sandbox，而不用重写工具。",
+      "implication": "自研应先定义统一 artifact/file backend，再把 shell、browser、MCP 等执行能力作为可选 capability。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/backends/protocol.py", "startLine": 378, "endLine": 396, "role": "contract", "excerpt": "unified backend rationale。" },
+        { "path": "libs/deepagents/deepagents/middleware/filesystem.py", "startLine": 1540, "endLine": 1561, "role": "contract", "excerpt": "middleware accepts any backend and optional sandbox。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2817, "endLine": 2849, "role": "implementation", "excerpt": "CompositeBackend routes history/results separately。" }
+      ],
+      "caveats": ["这是对接口边界的架构归纳，不代表所有 backend 都提供同样的 durability 或 isolation。"]
+    },
+    {
+      "id": "deep-recommend-002", "dimension": "permissions-security", "evidenceLevel": "L2", "claimType": "inference", "title": "DeepAgents 适合做 policy-aware coding agent，但 shell/connector authority 仍需部署层补强",
+      "fact": "SDK 提供 first-match filesystem permissions、HumanInTheLoop、tool allowlist、shell allow-list、MCP trust、Auto/PTC 显式开关；同时 local shell 和 execute permission gap 都由源码明确暴露。",
+      "plainLanguage": "它把“谁能读写哪个路径、哪种工具要问人、哪个 MCP 能加载”做得很完整；但真正的进程隔离和 shell 内部权限必须由 sandbox/backend/部署策略提供。",
+      "implication": "可以直接借鉴它的 approval/permission/middleware 结构，再把执行后端设为强制容器或 remote sandbox，形成更强的生产基线。",
+      "citations": [
+        { "path": "libs/deepagents/deepagents/middleware/filesystem.py", "startLine": 383, "endLine": 430, "role": "implementation", "excerpt": "permission rule evaluator。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2047, "endLine": 2065, "role": "contract", "excerpt": "side-effect interrupt map。" },
+        { "path": "libs/code/deepagents_code/agent.py", "startLine": 2685, "endLine": 2737, "role": "implementation", "excerpt": "local/remote runtime branch and interpreter limitation。" }
+      ],
+      "caveats": ["这是建设建议，不是对某个默认部署安全等级的认证。"]
+    }
+  ]
+}

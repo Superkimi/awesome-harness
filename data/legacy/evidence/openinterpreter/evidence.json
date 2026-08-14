@@ -1,0 +1,414 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "openinterpreter",
+  "snapshot": {
+    "repository": "openinterpreter/openinterpreter",
+    "commit": "aaf0aebf8203559711df6ed25b265a3f096bd3ea",
+    "commitDate": "2026-07-27T03:34:00-07:00"
+  },
+  "method": {
+    "readmePolicy": "README 只用于定位；结论来自 Rust turn/step 主循环、Harness 路由与逐个请求适配器、工具别名/文件安全、上下文与压缩、权限/原生沙箱、MCP、Hooks、Skills、Multi-agent、Rollout、产品打包与对应测试。",
+    "factPolicy": "把 Open Interpreter 独有的多 Harness 兼容层与继承自 Codex 的共享运行时分开陈述；同时区分模型可见工具名、内部 dispatch runtime 和真实 OS 隔离。",
+    "inferencePolicy": "不把提示词宣称当代码强制；不推断远端模型服务或分析后端；仓库身份只按本提交的入口、包布局、产品检测与兼容测试陈述。"
+  },
+  "coverage": [
+    { "dimension": "identity-maturity", "status": "verified", "evidenceLevels": ["L1", "L3"], "notes": "当前快照是 Rust/Codex 分叉式产品，保留 Codex SDK/协议兼容并通过包变体重品牌。" },
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "turn/step 状态机、step 快照、pending input、自动压缩与 stop hook。" },
+    { "dimension": "harness-routing", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "Responses/Chat/Messages、provider 默认 harness、请求/响应整形与兼容边界。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "规范化历史、工具配对、多模态裁剪、Harness-aware 压缩。" },
+    { "dimension": "tools-editing", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "可见 spec 与 registry 分离、代码模式、Harness aliases、文件变更事件。" },
+    { "dimension": "permissions-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "审批与权限 profile、路径双重校验、macOS/Linux/Windows 原生隔离。" },
+    { "dimension": "mcp-extensions-hooks", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "MCP catalog、Skills/Plugins/Extensions、完整 hooks 生命周期。" },
+    { "dimension": "collaboration-subagents", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "线程树控制面、fork/message/resume、深度与并发限制；Harness aliases 可复用同一子 Agent 系统。" },
+    { "dimension": "persistence-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "JSONL rollout、SQLite 镜像、文件变更 lifecycle、Open Interpreter 独立 analytics endpoint 与 opt-out。" }
+  ],
+  "findings": [
+    {
+      "id": "oi-identity-001",
+      "dimension": "identity-maturity",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "当前源码不是经典 Python Open Interpreter，而是 Rust/Codex 兼容分叉",
+      "fact": "核心目录、crate、app-server 协议和 Python/TypeScript SDK 仍以 codex/openai-codex 命名；Open Interpreter 通过 Product::OpenInterpreter、interpreter/i 入口、.openinterpreter HOME 和 open-interpreter 包变体建立产品身份。",
+      "plainLanguage": "它不是在旧 Python 循环上继续打补丁，而是把一套 Codex 级 Rust Harness 换了产品入口，再加入自己的多 Harness 能力。",
+      "implication": "评估时必须把它与同批次的 openai/codex 分开：共享基座很多，但 Open Interpreter 的差异主要落在品牌、provider/harness 选择和协议仿真。",
+      "citations": [
+        { "path": "codex-rs/product-info/src/lib.rs", "startLine": 45, "endLine": 79, "role": "implementation", "excerpt": "Codex/OpenInterpreter 产品检测与显示名/命令名。" },
+        { "path": "scripts/install/install-open-interpreter.sh", "startLine": 13, "endLine": 25, "role": "implementation", "excerpt": "interpreter/i、release asset 与 .openinterpreter HOME 映射到共用安装器。" },
+        { "path": "scripts/codex_package/targets.py", "startLine": 60, "endLine": 85, "role": "config", "excerpt": "open-interpreter 包变体。" }
+      ]
+    },
+    {
+      "id": "oi-identity-002",
+      "dimension": "identity-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "兼容性是被测试的产品契约，不只是目录遗留",
+      "fact": "仓库用 interpreter 二进制替换 CODEX_EXEC_PATH，运行 @openai/codex-sdk 的 thread resume 测试；包布局测试也检查 interpreter 与 i alias 以及 code-mode host。",
+      "plainLanguage": "“还能被 Codex SDK 当成 Codex 用”是 CI 级目标，不是偶然能跑。",
+      "implication": "企业接入可复用 Codex 客户端生态；代价是内部命名和上游演进耦合很深。",
+      "citations": [
+        { "path": "scripts/test-codex-sdk-compat.sh", "startLine": 21, "endLine": 36, "role": "test", "excerpt": "用 interpreter 执行 Codex SDK resume 测试。" },
+        { "path": "scripts/codex_package/test_layout.py", "startLine": 19, "endLine": 63, "role": "test", "excerpt": "Open Interpreter 包入口与 alias 布局契约。" }
+      ]
+    },
+    {
+      "id": "oi-harness-001",
+      "dimension": "harness-routing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "核心差异是一层多 Harness 仿真目录",
+      "fact": "源码内有 Claude Code/full+bare、DeepSeek TUI、Kimi CLI、Kimi Code、Little Coder、mini-swe-agent、OpenCode、Pi、Qwen Code、SWE-agent、Terminus 2、ZCode 与 Minimal 等独立请求构造器；app-server 将主要可选项按 wire API 编成 catalog。",
+      "plainLanguage": "同一个底盘能换不同“驾驶舱”：改变系统提示词、消息格式、工具名称与参数，去适配最合适的模型习惯。",
+      "implication": "这比普通 provider adapter 更深，但也不是把这些项目的完整运行时都嵌入进来。",
+      "citations": [
+        { "path": "codex-rs/core/src/harness/mod.rs", "startLine": 1, "endLine": 18, "role": "implementation", "excerpt": "所有 Harness 模块入口。" },
+        { "path": "codex-rs/app-server/src/interpreter_catalog.rs", "startLine": 29, "endLine": 118, "role": "contract", "excerpt": "按 Messages/Chat/All wire 分类的 Harness catalog。" },
+        { "path": "codex-rs/tools/src/harness.rs", "startLine": 1, "endLine": 99, "role": "contract", "excerpt": "Harness enum 与配置名解析。" }
+      ],
+      "caveats": ["catalog 的可选项与底层 enum 并非一一相等，例如 ZCode 存在于底层实现但未列入这一段 UI catalog。"]
+    },
+    {
+      "id": "oi-harness-002",
+      "dimension": "harness-routing",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "Provider、Wire API、Harness 是三层独立选择",
+      "fact": "app-server DTO 分开暴露 Provider、Model、Harness；Provider 包含 base URL/env key/wire API，Harness 是可推荐的独立选项。默认推断按 provider/model/base URL 把 Claude→claude-code、Kimi→kimi-code、Qwen→qwen-code、DeepSeek→claude-code-bare。",
+      "plainLanguage": "“连哪家服务器”“用哪个模型”“让请求长得像哪个 Coding Agent”不是同一个开关。",
+      "implication": "可做跨模型的 Harness A/B；默认映射是产品经验规则，不代表所有组合都兼容。",
+      "citations": [
+        { "path": "codex-rs/app-server-protocol/src/protocol/v2/interpreter.rs", "startLine": 8, "endLine": 44, "role": "contract", "excerpt": "WireApi、Provider、Harness DTO。" },
+        { "path": "codex-rs/app-server-protocol/src/protocol/v2/interpreter.rs", "startLine": 78, "endLine": 137, "role": "contract", "excerpt": "model/harness list 与 set API。" },
+        { "path": "codex-rs/model-provider-info/src/lib.rs", "startLine": 161, "endLine": 223, "role": "implementation", "excerpt": "provider/model 到默认 harness 的启发式映射。" }
+      ]
+    },
+    {
+      "id": "oi-harness-003",
+      "dimension": "harness-routing",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "路由矩阵在代码里硬校验，不兼容组合直接报错",
+      "fact": "Responses 原生走 Responses；Chat 非 Claude Harness 走 chat compatibility；Claude full/bare 可对 Responses/Chat 做 profile shaping；Messages 只允许 Claude 与 ZCode 原生路径，其他 Harness 和 Native Messages 返回 InvalidRequest。单元测试覆盖这些分支。",
+      "plainLanguage": "不是把任意协议和任意外壳随便相乘；路由表会在发请求前拦住不支持的组合。",
+      "implication": "错误更早、更可诊断；catalog 的 Native/ALL 表述仍需与 routing 的 Native+Messages 拒绝一起理解。",
+      "citations": [
+        { "path": "codex-rs/core/src/harness/routing.rs", "startLine": 5, "endLine": 151, "role": "implementation", "excerpt": "完整 transport route matrix 与错误分支。" },
+        { "path": "codex-rs/core/src/harness/routing.rs", "startLine": 185, "endLine": 270, "role": "test", "excerpt": "Responses/Chat/Messages 与 Claude profile 的路由测试。" }
+      ],
+      "caveats": ["app-server catalog 把 Native 标成 ALL_WIRE_APIS，但底层 routing 对 Native+Messages 明确报错；这是当前提交可见的接口不一致。"]
+    },
+    {
+      "id": "oi-harness-004",
+      "dimension": "harness-routing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "请求仿真的单一入口统一处理前置与后置整形",
+      "fact": "request.rs 明确声明为 model client 与 chat harness emulation 的单一集成点；它按 route 调各 builder，判断 YOLO、可加 Harness guidance、为 OpenCode 生成独立 title request，并为 mini-SWE/SWE-agent/Terminus 2 注入响应流后处理。",
+      "plainLanguage": "每种外壳的怪癖被收在一个总路由器里：发出前改请求，回来后必要时把文本动作翻译成工具动作。",
+      "implication": "新增 Harness 的改动面较集中；后处理型工具提取比原生 function call 更脆弱，必须依赖格式测试。",
+      "citations": [
+        { "path": "codex-rs/core/src/harness/request.rs", "startLine": 1, "endLine": 8, "role": "contract", "excerpt": "单一 Harness 集成点声明。" },
+        { "path": "codex-rs/core/src/harness/request.rs", "startLine": 42, "endLine": 73, "role": "contract", "excerpt": "turn 输入、请求输出与 postprocess 类型。" },
+        { "path": "codex-rs/core/src/harness/request.rs", "startLine": 75, "endLine": 231, "role": "implementation", "excerpt": "各 Harness builder、title request 和 response postprocess 分发。" }
+      ]
+    },
+    {
+      "id": "oi-harness-005",
+      "dimension": "harness-routing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "各 Harness 不只换 prompt，还重写历史和工具协议",
+      "fact": "例如 Pi builder 生成自己的 system prompt/tools/thinking 配置，把 ResponseItem 历史改成 Chat messages，跳过 contextual user message、配对工具调用与结果、保留 reasoning_content，并把 LocalShell/Custom tool call 映射成 Pi 认识的名字；Little Coder 与 OpenCode 各自拥有不同 system prompt、tool kinds 和 title/search-agent 逻辑。",
+      "plainLanguage": "这不是贴一张角色卡，而是把整段对话和工具说明书翻译成目标 Agent 的“母语”。",
+      "implication": "模型行为更接近目标 Harness；翻译层必须维护 call/result 配对和隐藏上下文，升级成本高。",
+      "citations": [
+        { "path": "codex-rs/core/src/harness/pi.rs", "startLine": 21, "endLine": 120, "role": "implementation", "excerpt": "Pi request body、system prompt 与历史转换。" },
+        { "path": "codex-rs/core/src/harness/pi.rs", "startLine": 121, "endLine": 225, "role": "implementation", "excerpt": "Pi tool call/result、reasoning 与 LocalShell 映射。" },
+        { "path": "codex-rs/core/src/harness/opencode.rs", "startLine": 1, "endLine": 180, "role": "implementation", "excerpt": "OpenCode request、title/search-agent 适配。" }
+      ]
+    },
+    {
+      "id": "oi-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "共享内核仍是 turn 内多 step 的流式工具循环",
+      "fact": "run_turn 先做预压缩、注入 skills/plugins、运行 session/user hooks并记录输入；随后循环捕获 step context、构造历史、流式 sampling。模型要求工具或有 pending input 就继续，否则运行 stop/after-agent hook 后结束。",
+      "plainLanguage": "一次用户请求会反复经历“取固定快照—问模型—跑工具—把结果放回去”，直到模型真正收尾。",
+      "implication": "Harness 仿真共享同一个成熟执行底盘，不需要每种 Harness 重写 agent loop。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 140, "endLine": 228, "role": "implementation", "excerpt": "turn 初始化、skills/plugins/hooks 与 turn-scoped client。" },
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 229, "endLine": 324, "role": "implementation", "excerpt": "pending input、step snapshot 与 sampling。" },
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 355, "endLine": 460, "role": "implementation", "excerpt": "自动压缩、Harness 特例、stop hook 与结束条件。" }
+      ]
+    },
+    {
+      "id": "oi-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "step 快照让上下文、工具清单与工具执行看到同一世界",
+      "fact": "每个循环只 capture 一次 StepContext，注释明确要求 context、advertised tools 和 tool calls 共享同一 request view；world state 变化被记录到 rollout，下一 step 才重新采样环境。",
+      "plainLanguage": "模型看到的工具说明和真正执行工具时的权限/目录不会在同一步里偷偷漂移。",
+      "implication": "降低并发配置变化导致的 TOCTOU 类语义错位；动态变更需要等下一 step 生效。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 243, "endLine": 292, "role": "implementation", "excerpt": "step context 单次捕获和 world state 记录。" },
+        { "path": "codex-rs/core/src/session/step_context.rs", "startLine": 1, "endLine": 54, "role": "contract", "excerpt": "step-scoped 配置、MCP、环境和工具快照。" }
+      ]
+    },
+    {
+      "id": "oi-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "历史管理维护调用配对、多模态能力和可见 token 成本",
+      "fact": "ContextManager 记录 ResponseItem 后按输入模态规范化：补齐缺失 call output、删除孤儿 output、剥离不支持的图片/音频；工具输出按策略截断，并用模型可见字节估算 token。",
+      "plainLanguage": "上下文不是简单 messages 数组；它会修账，保证工具订单和回执成对，并避免把模型根本不能看的媒体继续塞回去。",
+      "implication": "恢复和压缩后的协议更稳定；token 估算是启发式下界，不等于 provider tokenizer。",
+      "citations": [
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 40, "endLine": 186, "role": "implementation", "excerpt": "历史结构、记录、prompt normalization 与 token estimate。" },
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 328, "endLine": 368, "role": "implementation", "excerpt": "调用配对、媒体剥离与工具输出截断。" },
+        { "path": "codex-rs/core/src/context_manager/history.rs", "startLine": 493, "endLine": 505, "role": "contract", "excerpt": "模型可见 token 粗估规则。" }
+      ]
+    },
+    {
+      "id": "oi-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩是 Harness-aware 的，而不是统一摘要模板",
+      "fact": "压缩先用当前 Harness 生成摘要请求，然后 build_harness_compacted_history：ZCode、Claude Code bare 等可走各自 replacement history；普通路径用 summary prefix。还会从 harness read 调用重建相关文件内容，并识别 no-truncate 标记。",
+      "plainLanguage": "换了驾驶舱，压缩后的“交接便笺”也要换写法，否则目标模型会读不懂或丢失刚看过的文件。",
+      "implication": "长会话兼容性更好；每新增 Harness 都必须测试压缩与恢复，否则短任务能跑、长任务会失真。",
+      "citations": [
+        { "path": "codex-rs/core/src/compact.rs", "startLine": 299, "endLine": 389, "role": "implementation", "excerpt": "压缩请求、replacement history 与 rollout 记录。" },
+        { "path": "codex-rs/core/src/compact.rs", "startLine": 600, "endLine": 689, "role": "implementation", "excerpt": "Harness-specific compacted history。" },
+        { "path": "codex-rs/core/src/compact.rs", "startLine": 718, "endLine": 815, "role": "implementation", "excerpt": "从 Harness read 轨迹恢复文件上下文与 no-truncate 标记。" }
+      ]
+    },
+    {
+      "id": "oi-tools-001",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "模型可见工具与内部可分发 runtime 分离",
+      "fact": "Tool plan 先按 exposure 去重、生成模型可见 spec，再由全部 runtimes 建 ToolRegistry；dispatch-only handler 可以不可见但仍接住兼容工具名。Code mode 又把允许的工具 schema 包进 execute/wait 两个工具。",
+      "plainLanguage": "给模型看的菜单和厨房真正能接的订单不是同一张表；旧别名可以藏在后厨，不污染新模型的菜单。",
+      "implication": "兼容多 Harness 时能避免重复工具；隐藏 handler 仍属于攻击面，必须受同一权限检查。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 240, "endLine": 268, "role": "implementation", "excerpt": "visible specs 与 registry 分离。" },
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 432, "endLine": 495, "role": "implementation", "excerpt": "Code mode 嵌套工具构造。" },
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 719, "endLine": 735, "role": "implementation", "excerpt": "统一 exec 可见、legacy shell dispatch-only。" }
+      ]
+    },
+    {
+      "id": "oi-tools-002",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Harness aliases 将十余套工具名收敛到共享执行器",
+      "fact": "HarnessAliasHandler 覆盖 Bash/Read/Write/Edit/Glob/Grep、Claude task、Kimi goal/cron、DeepSeek diagnostics/git/file、OpenCode task/todo、ZCode plan/skill 等；spec plan 按当前 Harness 添加可见或 dispatch-only alias。",
+      "plainLanguage": "Claude 叫 Read、Pi 叫 read、OpenCode 叫 task，都可以落到同一套真实能力上。",
+      "implication": "跨 Harness 复用强；别名层很大，参数语义和错误文本需要逐 Harness 回归。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/handlers/harness_aliases.rs", "startLine": 102, "endLine": 254, "role": "implementation", "excerpt": "alias 枚举、工具名、并发声明和 dispatch。" },
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 610, "endLine": 685, "role": "implementation", "excerpt": "按 Harness 装载不同可见/隐藏 alias。" }
+      ]
+    },
+    {
+      "id": "oi-tools-003",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Harness 写文件也进入统一 FileChange lifecycle",
+      "fact": "Write/Edit alias 先读取旧内容构建 Add/Update unified diff，发 Started，再执行写入；成功发 Completed，失败发 Failed。事件通过 TurnItem::FileChange 进入会话与 rollout，而不是只返回一句工具文本。",
+      "plainLanguage": "即使模型说的是别家 Agent 的 Write/Edit，前端仍能看到正式的文件改动卡片、diff、成功或失败状态。",
+      "implication": "兼容层不会绕过观测与审计；这是当前提交的主变更点。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/handlers/harness_aliases.rs", "startLine": 1749, "endLine": 1821, "role": "implementation", "excerpt": "FileChange Add/Update 与 started/completed/failed emitter。" },
+        { "path": "codex-rs/core/src/tools/handlers/harness_aliases.rs", "startLine": 1823, "endLine": 1925, "role": "implementation", "excerpt": "Write alias 的安全路径、diff 和 lifecycle。" },
+        { "path": "codex-rs/core/src/tools/handlers/harness_aliases.rs", "startLine": 1927, "endLine": 2025, "role": "implementation", "excerpt": "Edit alias 的读前置、替换、错误和 lifecycle。" }
+      ]
+    },
+    {
+      "id": "oi-tools-004",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具并发用读写锁表达，而不是一律并发",
+      "fact": "ToolCallRuntime 查询 handler 是否支持并发；并发工具取得共享 read lock，写入/交互等排他工具取得 write lock，因此同组读工具可并行，任何排他工具会等待并阻塞后续组。",
+      "plainLanguage": "多个搜索可以一起跑，但写文件或问用户会像闸门一样独占执行通道。",
+      "implication": "兼顾吞吐和副作用顺序；alias 自己也声明 Edit/Write/AskUserQuestion 不并行。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/parallel.rs", "startLine": 42, "endLine": 138, "role": "implementation", "excerpt": "共享 RwLock 与 read/write admission。" },
+        { "path": "codex-rs/core/src/tools/handlers/harness_aliases.rs", "startLine": 196, "endLine": 205, "role": "contract", "excerpt": "Harness alias 并发能力声明。" }
+      ]
+    },
+    {
+      "id": "oi-security-001",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Harness 文件工具先过策略，且同时检查原路径与规范化路径",
+      "fact": "checked_read_path/checked_write_path 解析相对 cwd 后调用 file_system_sandbox_policy；policy_candidates_for_path 同时检查输入路径、canonical path，目标不存在时检查 canonical parent+filename，防止 symlink/别名绕过。",
+      "plainLanguage": "即使换成 Claude/Pi 风格的 Read/Write，也不能因为路径里有软链接或奇怪别名绕过沙箱。",
+      "implication": "兼容层与原生工具共享安全边界；搜索 walk 还跳过 symlink、限制 64 层和 5 万项。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/handlers/harness_fs.rs", "startLine": 39, "endLine": 94, "role": "implementation", "excerpt": "路径解析与读写 policy gate。" },
+        { "path": "codex-rs/core/src/tools/handlers/harness_fs.rs", "startLine": 97, "endLine": 149, "role": "implementation", "excerpt": "有界 walk、symlink 和目录排除。" },
+        { "path": "codex-rs/core/src/tools/handlers/harness_fs.rs", "startLine": 158, "endLine": 204, "role": "implementation", "excerpt": "原路径/canonical path 双重权限检查。" }
+      ]
+    },
+    {
+      "id": "oi-security-002",
+      "dimension": "permissions-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "审批和能力授权是两条轴，OS 沙箱是真实进程变换",
+      "fact": "配置将 approval policy 与 permission profile 分开编译；执行时根据平台把命令变换成 macOS sandbox-exec/Seatbelt、Linux seccomp+bubblewrap/landlock 或 Windows restricted token/private desktop，SandboxType::None 才是不变换。",
+      "plainLanguage": "“要不要先问你”与“即使你同意，它最多能碰哪里”是两回事；后者不是提示词，而是操作系统级限制。",
+      "implication": "这是该分叉继承的最重要企业能力之一；选择 danger/full access 或 SandboxType::None 会主动撤掉这层保护。",
+      "citations": [
+        { "path": "codex-rs/core/src/config/permissions.rs", "startLine": 170, "endLine": 260, "role": "implementation", "excerpt": "permission profile 与 sandbox policy 编译。" },
+        { "path": "codex-rs/sandboxing/src/manager.rs", "startLine": 280, "endLine": 352, "role": "implementation", "excerpt": "权限 profile 到 runtime FS/network policy。" },
+        { "path": "codex-rs/sandboxing/src/manager.rs", "startLine": 357, "endLine": 410, "role": "implementation", "excerpt": "None、macOS Seatbelt、Linux sandbox 进程变换。" }
+      ]
+    },
+    {
+      "id": "oi-mcp-001",
+      "dimension": "mcp-extensions-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP、Apps、Plugins、Extensions 都在 step 工具计划中受快照控制",
+      "fact": "turn 开始根据用户明确提及的 plugins/apps 构建注入；step context 持有 MCP 配置快照，spec plan 再把 MCP resource、extension、dynamic tools 与 core tools 合并，模型可见 spec 和实际 registry 同步生成。",
+      "plainLanguage": "连接器不是随时从全局表里飘进来，而是在这一轮、这一步被拍成快照后再装进工具箱。",
+      "implication": "可复现性和权限边界较清楚；插件配置变化通常下一 step 才生效。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/turn.rs", "startLine": 546, "endLine": 650, "role": "implementation", "excerpt": "plugin mention、MCP connector snapshot 与 skill injection。" },
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 590, "endLine": 608, "role": "implementation", "excerpt": "shell、alias、MCP、collab、extension、dynamic tool 统一计划。" }
+      ]
+    },
+    {
+      "id": "oi-instructions-001",
+      "dimension": "mcp-extensions-hooks",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "AGENTS.md 从项目根到 cwd 合并，局部 override 优先且有总预算",
+      "fact": "loader 先定位 project root，再从根到 cwd 搜索 AGENTS.override.md/AGENTS.md；每层只取第一个候选，按顺序拼接并受 project_doc_max_bytes 限制，读取通过环境文件系统抽象。",
+      "plainLanguage": "仓库总规矩先读，子目录的局部规矩后读；局部 override 能盖住普通 AGENTS 文件，所有说明不能无限占上下文。",
+      "implication": "适合 monorepo 分层治理；超预算内容会截断，因此关键安全规则不应只放在大文件末尾。",
+      "citations": [
+        { "path": "codex-rs/core/src/agents_md.rs", "startLine": 1, "endLine": 49, "role": "contract", "excerpt": "根到 cwd 的层级规则与文件名优先级。" },
+        { "path": "codex-rs/core/src/agents_md.rs", "startLine": 51, "endLine": 150, "role": "implementation", "excerpt": "多环境加载、总预算和截断。" },
+        { "path": "codex-rs/core/src/agents_md.rs", "startLine": 153, "endLine": 231, "role": "implementation", "excerpt": "project root、候选文件与有界并发探测。" }
+      ]
+    },
+    {
+      "id": "oi-instructions-002",
+      "dimension": "mcp-extensions-hooks",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "Skills developer block 不允许被 Harness 转换悄悄丢掉",
+      "fact": "session_skills.rs 明确规定 runtime skills 在 Harness 上层组装成 developer block，每个 Harness 必须映射到最接近的原生格式；解析器支持多行描述、plugin:skill 名称和预算压力下的 rN alias，并有单元测试。",
+      "plainLanguage": "换成 Claude/Kimi/Pi 外壳时，用户装的技能仍要跟过去，不能因为消息格式翻译而消失。",
+      "implication": "跨 Harness 行为更一致；每个 builder 仍需正确调用这些 helper。",
+      "citations": [
+        { "path": "codex-rs/core/src/harness/session_skills.rs", "startLine": 1, "endLine": 65, "role": "contract", "excerpt": "skills developer block 的跨 Harness 保留规则。" },
+        { "path": "codex-rs/core/src/harness/session_skills.rs", "startLine": 67, "endLine": 116, "role": "implementation", "excerpt": "多行技能条目与 plugin 名解析。" },
+        { "path": "codex-rs/core/src/harness/session_skills.rs", "startLine": 118, "endLine": 199, "role": "test", "excerpt": "单行、多行、plugin alias 和 developer-role 测试。" }
+      ]
+    },
+    {
+      "id": "oi-hooks-001",
+      "dimension": "mcp-extensions-hooks",
+      "evidenceLevel": "L2",
+      "claimType": "fact",
+      "title": "Hooks 覆盖会话、输入、权限、工具、压缩、停止和子 Agent 生命周期",
+      "fact": "hook event 类型与 runtime 调用点覆盖 SessionStart、UserPromptSubmit、PermissionRequest、PreToolUse/PostToolUse/PostToolUseFailure、PreCompact、Stop、SubagentStart/SubagentStop；hook 可返回附加上下文、权限决定或阻止继续。",
+      "plainLanguage": "外部治理系统能在关键关口插卡：开始前补上下文，危险动作前审批，工具后审计，结束前决定是否继续。",
+      "implication": "适合企业策略和观测；hook 自身是高权限扩展点，配置来源必须受信。",
+      "citations": [
+        { "path": "codex-rs/hooks/src/types.rs", "startLine": 1, "endLine": 152, "role": "contract", "excerpt": "Hook event/input/output 契约。" },
+        { "path": "codex-rs/core/src/hook_runtime.rs", "startLine": 1, "endLine": 260, "role": "implementation", "excerpt": "Session/Prompt/Permission/Tool/Compact/Stop/Subagent hook 调度。" }
+      ]
+    },
+    {
+      "id": "oi-agent-001",
+      "dimension": "collaboration-subagents",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "多 Agent 是共享控制面的线程树",
+      "fact": "AgentControl 在 root session 创建并共享给所有子 Agent，维护 thread id、parent/child edges、spawn depth、状态与执行 limiter；spawn、message、interrupt、wait、resume 都落到同一 CodexThreadManager。",
+      "plainLanguage": "子 Agent 不是主函数里临时递归一下，而是有独立会话和持久关系的线程树。",
+      "implication": "可以跨步等待、续跑和观测；也需要全局驻留数、运行数和深度限制。",
+      "citations": [
+        { "path": "codex-rs/core/src/agent/control.rs", "startLine": 88, "endLine": 180, "role": "implementation", "excerpt": "共享 AgentControl、线程管理和 execution limiter。" },
+        { "path": "codex-rs/core/src/agent/control.rs", "startLine": 520, "endLine": 640, "role": "implementation", "excerpt": "spawn 准备、角色/昵称与线程启动。" },
+        { "path": "codex-rs/core/src/agent/control.rs", "startLine": 659, "endLine": 750, "role": "implementation", "excerpt": "线程边持久化与后代遍历。" }
+      ]
+    },
+    {
+      "id": "oi-agent-002",
+      "dimension": "collaboration-subagents",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Harness 自己的 Agent/Task 工具复用同一子 Agent 系统",
+      "fact": "Claude/Kimi/ZCode alias 可把 Agent、TaskOutput、TaskStop 等目标工具名映射到内部 multi-agent handler；OpenCode task 也走专用 alias。模型看到的是目标 Harness 语言，后台仍是同一个 AgentControl。",
+      "plainLanguage": "外面看像 Claude 的 Agent 工具或 OpenCode 的 task，里面其实都在同一棵线程树上派工。",
+      "implication": "协作能力不会因换 Harness 丢失；目标 Harness 原生的所有细节并不保证完全复刻。",
+      "citations": [
+        { "path": "codex-rs/core/src/tools/spec_plan.rs", "startLine": 616, "endLine": 685, "role": "implementation", "excerpt": "Claude/Kimi/OpenCode/ZCode 的 Agent/Task alias 装配。" },
+        { "path": "codex-rs/core/src/tools/handlers/harness_aliases.rs", "startLine": 264, "endLine": 420, "role": "implementation", "excerpt": "Claude Agent 参数到内部 spawn 的转换。" },
+        { "path": "codex-rs/core/src/tools/handlers/multi_agents.rs", "startLine": 1, "endLine": 100, "role": "implementation", "excerpt": "共享 collaboration tool surface。" }
+      ]
+    },
+    {
+      "id": "oi-observe-001",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "JSONL rollout 是可恢复事件事实源，SQLite/trace 是查询与诊断层",
+      "fact": "会话把 SessionMeta、TurnContext、WorldState、ResponseItem、Compacted、EventMsg 和 inter-agent communication 记录为 RolloutItem；重建器按 turn complete/abort/rollback/compact 复原历史，rollout-trace 再把原始事件归约成会话、工具和推理视图。",
+      "plainLanguage": "先保存完整流水账，再从流水账还原聊天、文件、工具和子 Agent 发生了什么。",
+      "implication": "恢复与审计能力强；事件 schema 演进、敏感字段保留和磁盘生命周期需要治理。",
+      "citations": [
+        { "path": "codex-rs/core/src/session/rollout_reconstruction.rs", "startLine": 116, "endLine": 288, "role": "implementation", "excerpt": "RolloutItem 分类与 turn/compact/rollback 重建。" },
+        { "path": "codex-rs/rollout/src/recorder.rs", "startLine": 1, "endLine": 260, "role": "implementation", "excerpt": "JSONL rollout recorder、writer 与恢复入口。" },
+        { "path": "codex-rs/rollout-trace/src/reducer/mod.rs", "startLine": 1, "endLine": 220, "role": "implementation", "excerpt": "原始 rollout 到诊断模型的 reducer。" }
+      ]
+    },
+    {
+      "id": "oi-observe-002",
+      "dimension": "persistence-observability",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "Open Interpreter 使用独立分析端点，默认启用但可显式关闭",
+      "fact": "AnalyticsEventsClient 在 analytics_enabled != Some(false) 时创建队列；Open Interpreter 把任何 provider 的事件发送到 oi-new-api.fly.dev 的固定端点，配置 [analytics] enabled=false 可关闭；队列满会丢事件而不阻塞主循环。",
+      "plainLanguage": "默认会发产品使用事件到 Open Interpreter 的后端，用户可以在配置里关掉；遥测故障不会卡住编码任务。",
+      "implication": "企业部署应在基线配置里明确关闭或审查字段，而不是假设换了自建模型就没有遥测。",
+      "citations": [
+        { "path": "codex-rs/analytics/src/client.rs", "startLine": 54, "endLine": 105, "role": "implementation", "excerpt": "独立 endpoint、关闭方式和本地 capture。" },
+        { "path": "codex-rs/analytics/src/client.rs", "startLine": 140, "endLine": 215, "role": "implementation", "excerpt": "有界队列、drop-on-full 与 opt-out 初始化。" },
+        { "path": "codex-rs/analytics/src/client_tests.rs", "startLine": 240, "endLine": 290, "role": "test", "excerpt": "Open Interpreter endpoint 测试。" }
+      ]
+    },
+    {
+      "id": "oi-maturity-001",
+      "dimension": "identity-maturity",
+      "evidenceLevel": "L5",
+      "claimType": "inference",
+      "title": "优势是“一个安全底盘，多种模型原生手感”；主要成本是兼容矩阵爆炸",
+      "fact": "本提交同时维护 15 类 Harness enum、三种 wire protocol、多个独立 request builder、数千行 alias/adapter 与 Harness-aware compaction，并以大量路由/快照/包测试约束行为。",
+      "plainLanguage": "它最像“Coding Agent 兼容器”：同一套沙箱和会话底盘，让不同模型吃到熟悉的提示词与工具格式。",
+      "implication": "建设自有 Agent 时可借鉴“内部统一 IR + 外部 Harness adapter”；但必须为路由、历史翻译、工具参数、压缩和错误恢复建立组合测试，否则适配越多越难证明正确。",
+      "citations": [
+        { "path": "codex-rs/core/src/harness/request.rs", "startLine": 75, "endLine": 231, "role": "implementation", "excerpt": "集中但广泛的 Harness request/postprocess 矩阵。" },
+        { "path": "codex-rs/core/src/tools/handlers/harness_aliases.rs", "startLine": 102, "endLine": 254, "role": "implementation", "excerpt": "庞大的工具别名矩阵。" },
+        { "path": "codex-rs/core/src/compact.rs", "startLine": 600, "endLine": 815, "role": "implementation", "excerpt": "Harness-aware 长上下文交接。" },
+        { "path": "LICENSE", "startLine": 1, "endLine": 20, "role": "contract", "excerpt": "Apache License 2.0。" }
+      ],
+      "caveats": ["这是基于当前源码形态的工程判断，不代表每种 Harness 在目标 benchmark 上一定优于 Native。"]
+    }
+  ]
+}

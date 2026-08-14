@@ -1,0 +1,405 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "pi",
+  "snapshot": {
+    "repository": "earendil-works/pi",
+    "commit": "c820aa26fe0907e053e881a957722693fc094c9c",
+    "commitDate": "2026-07-28T00:01:51+02:00"
+  },
+  "method": {
+    "readmePolicy": "README 只用于入口定位；核心结论来自 agent loop、AgentHarness、AgentSession、compaction、tool、trust、extension、provider、session 与测试源码。",
+    "factPolicy": "严格区分 packages/agent 的可复用 Harness、packages/coding-agent 的产品运行时，以及 examples/extensions 中必须手动加载的参考实现。",
+    "inferencePolicy": "仓库不存在的能力只作限定性结论；特别不把示例 permission gate、sandbox、subagent 当作默认产品能力。"
+  },
+  "coverage": [
+    { "dimension": "architecture-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计低层 agent loop、通用 AgentHarness 和产品 AgentSession 的衔接与重叠。" },
+    { "dimension": "provider-streaming-retry", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 provider/protocol 矩阵、stream hooks、动态凭据和两层 retry。" },
+    { "dimension": "context-compaction", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 token 估算、cut point、split turn、结构化摘要、overflow recovery 和 retained tail。" },
+    { "dimension": "tools-editing", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 read/bash/edit/write、并行调度、截断、精确替换和同文件互斥。" },
+    { "dimension": "execution-sandbox-permission", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "默认 Node/CLI 运行在宿主；sandbox 与 command approval 仅有可选 extension 示例。" },
+    { "dimension": "trust-secrets", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 project resource trust、settings/package gate 与凭据锁/权限。" },
+    { "dimension": "instructions-skills-extensions", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 system/context/skill/template 分层、资源优先级和 in-process extension hooks。" },
+    { "dimension": "connectors", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "固定提交的 runtime/tool registry 未实现内建 MCP；可由 extension 注册自定义工具/协议。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "子 Agent 是 subprocess extension 示例，不是默认调度器。" },
+    { "dimension": "session-observability", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 JSONL tree、fork/navigation、事件、usage/cost、HTML/JSON/RPC 模式。" },
+    { "dimension": "tests-evals-maturity", "status": "partial", "evidenceLevels": ["L2", "L3"], "notes": "机制测试密集；仓库行为 eval 目前只有 smoke 与 extension 两个 suite，未见统一 coding benchmark。" }
+  ],
+  "findings": [
+    {
+      "id": "pi-architecture-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "仓库是“通用 Harness 内核 + 完整 Coding Agent 产品层”的双轨架构",
+      "fact": "packages/agent 的 AgentHarness 直接拥有 session、model、tools、resources、queue 和 hooks；packages/coding-agent 的 AgentSession 仍有自己的 runtime build、resource loader、tool registry、retry 与 compaction 适配。",
+      "plainLanguage": "一边是可嵌入任何产品的发动机，一边是已经带 CLI、会话、扩展和交互界面的整车；当前两套代码有重叠，不能把发动机的新接口直接当成整车每条路径都已采用。",
+      "implication": "架构抽象领先，但迁移期会产生两个 session/compaction/tool 生命周期，需要明确长期收敛边界。",
+      "citations": [
+        { "path": "packages/agent/src/harness/agent-harness.ts", "startLine": 171, "endLine": 223, "role": "implementation", "excerpt": "AgentHarness 持有通用运行时状态和 hook。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 375, "endLine": 400, "role": "implementation", "excerpt": "产品 AgentSession 仍自行订阅 agent、安装 hooks、构造 runtime。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 2560, "endLine": 2598, "role": "implementation", "excerpt": "产品层独立构造工具和 Agent runtime。" }
+      ]
+    },
+    {
+      "id": "pi-loop-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "低层循环把 steering、工具执行和 follow-up 分成内外两层",
+      "fact": "agentLoop 外层消费 follow-up，内层在 assistant tool call 或 steering 消息存在时继续；每轮发出 agent/turn/message 事件并把工具结果加入上下文。",
+      "plainLanguage": "用户中途插话会先纠偏当前工作，排队的新任务则等当前回合稳定后再接着做。",
+      "implication": "交互打断与自治续跑共享同一 loop，而不是 UI 另开旁路。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 155, "endLine": 275, "role": "implementation", "excerpt": "内外循环、队列和生命周期事件。" },
+        { "path": "packages/agent/test/agent-loop.test.ts", "startLine": 1, "endLine": 80, "role": "test", "excerpt": "低层循环和事件顺序的测试入口。" }
+      ]
+    },
+    {
+      "id": "pi-loop-002",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "截断响应禁止执行工具；每回合可热刷新完整运行状态",
+      "fact": "assistant stopReason 为 length 时，即使带 tool call 也不执行，因为参数可能被截断；prepareNextTurn 可替换 context、model、thinking、system prompt 和 tools。",
+      "plainLanguage": "模型半句话里拼出的命令不会贸然执行；同时下一轮可以换模型、换工具或换说明书。",
+      "implication": "工具安全包含协议完整性检查，动态配置不必重启会话。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 208, "endLine": 245, "role": "implementation", "excerpt": "length 防执行和 next-turn refresh。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 520, "endLine": 540, "role": "implementation", "excerpt": "产品层每回合重建 system/tools/model/thinking。" }
+      ]
+    },
+    {
+      "id": "pi-harness-001",
+      "dimension": "architecture-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "新 AgentHarness 把请求 hooks、消息持久化和运行时变更统一到 turn boundary",
+      "fact": "Harness 在每轮创建 state snapshot，通过 beforeProviderRequest/beforeProviderPayload/afterProviderResponse 包装模型请求；message_end 串行写 session，turn 结束后刷新状态并消费 steer/follow-up；model/tool/resource 变更也持久化并发事件。",
+      "plainLanguage": "每轮开始先拍一张配置快照，模型请求前后都能挂钩；消息落盘和配置变化在明确边界完成，减少并发写乱序。",
+      "implication": "适合作为自研 Harness 的可复用内核参考，尤其是 transport、storage 和 execution capability 的解耦。",
+      "citations": [
+        { "path": "packages/agent/src/harness/agent-harness.ts", "startLine": 354, "endLine": 497, "role": "implementation", "excerpt": "turn snapshot、请求 hooks 和 loop 装配。" },
+        { "path": "packages/agent/src/harness/agent-harness.ts", "startLine": 512, "endLine": 656, "role": "implementation", "excerpt": "串行持久化、turn 执行和 settled。" },
+        { "path": "packages/agent/src/harness/agent-harness.ts", "startLine": 884, "endLine": 1023, "role": "implementation", "excerpt": "运行中模型、工具和资源变更。" }
+      ]
+    },
+    {
+      "id": "pi-tool-dispatch-001",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具默认可并行，声明 sequential 或全局策略才串行",
+      "fact": "同一 assistant message 的 tool calls 默认 Promise 并发；任一工具 executionMode=sequential 或配置顺序执行时改为串行。结果按原 tool call 顺序返回，before hook 可阻断，after hook 可改写结果、usage 和 terminate。",
+      "plainLanguage": "互不冲突的工具一起跑更快；有副作用的工具可以声明排队。即使并发完成顺序不同，交给模型的账本仍按原顺序。",
+      "implication": "吞吐高，但自定义工具作者必须正确声明副作用和并发语义。",
+      "citations": [
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 411, "endLine": 553, "role": "implementation", "excerpt": "顺序/并行调度和结果顺序。" },
+        { "path": "packages/agent/src/agent-loop.ts", "startLine": 600, "endLine": 650, "role": "implementation", "excerpt": "参数校验和 before/after hooks。" },
+        { "path": "packages/coding-agent/test/agent-session-concurrent.test.ts", "startLine": 1, "endLine": 90, "role": "test", "excerpt": "产品 session 的并发行为测试入口。" }
+      ]
+    },
+    {
+      "id": "pi-provider-001",
+      "dimension": "provider-streaming-retry",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Provider 不是单一 OpenAI 兼容层，而是多协议适配矩阵",
+      "fact": "内建 provider registry 装配 Anthropic、OpenAI/Codex/Azure、Google/Vertex、Bedrock、Mistral、Kimi/Moonshot、OpenRouter、GitHub Copilot、xAI 等数十个 provider；API 目录分别实现 messages、responses、chat completions、Gemini、Bedrock 和 pi-messages 协议。",
+      "plainLanguage": "每家模型的方言由独立翻译器处理，而不是假设所有服务都说 OpenAI 方言。",
+      "implication": "覆盖面很广，也意味着协议行为和 usage/tool schema 回归成本高。",
+      "citations": [
+        { "path": "packages/ai/src/providers/all.ts", "startLine": 5, "endLine": 44, "role": "implementation", "excerpt": "内建 provider imports。" },
+        { "path": "packages/ai/src/providers/all.ts", "startLine": 86, "endLine": 127, "role": "implementation", "excerpt": "provider registry 实例化。" },
+        { "path": "packages/coding-agent/src/core/model-runtime.ts", "startLine": 95, "endLine": 173, "role": "implementation", "excerpt": "builtin/config/credential/remote catalog 合成。" }
+      ]
+    },
+    {
+      "id": "pi-provider-002",
+      "dimension": "provider-streaming-retry",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Provider 可热注册和覆盖，失败时退回内建组合",
+      "fact": "ModelRuntime 合并内建、文件配置、原生扩展配置和 extension provider；扩展可注册模型、OAuth 与自定义 stream。组合错误会保留诊断并回退 builtin，而不是让整个模型目录不可用。",
+      "plainLanguage": "扩展可以接入私有模型甚至替换流协议；某个扩展写坏时，内置模型仍尽量可用。",
+      "implication": "插件化 provider 适合企业网关，但必须把最终解析来源和错误显式展示。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/model-runtime.ts", "startLine": 193, "endLine": 230, "role": "implementation", "excerpt": "多来源 overlay 与 fallback。" },
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1340, "endLine": 1414, "role": "contract", "excerpt": "扩展 provider/模型注册 API。" }
+      ]
+    },
+    {
+      "id": "pi-retry-001",
+      "dimension": "provider-streaming-retry",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "传输重试与会话重试分层，上下文溢出单独处理",
+      "fact": "AI provider retry 解析 status、retry-after 和 headers，使用带 jitter 的可中止等待且单次上限 60 秒；AgentSession 把 transient error 与 quota/billing/overflow 分开，overflow 不进入普通指数退避。",
+      "plainLanguage": "HTTP 临时故障在网络层重试；整轮失败在会话层重试；没钱和记忆塞满都不会被误当成网络抖动。",
+      "implication": "避免重复重试不可恢复错误，也让 compaction 接管真正的上下文问题。",
+      "citations": [
+        { "path": "packages/ai/src/utils/provider-retry.ts", "startLine": 22, "endLine": 66, "role": "implementation", "excerpt": "header/status/retry-after 与 jitter。" },
+        { "path": "packages/ai/src/utils/provider-retry.ts", "startLine": 105, "endLine": 124, "role": "implementation", "excerpt": "可中止等待。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 2630, "endLine": 2705, "role": "implementation", "excerpt": "session transient classifier 和 bounded backoff。" }
+      ]
+    },
+    {
+      "id": "pi-context-001",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩阈值给输出预留固定预算，并尽量使用真实 usage",
+      "fact": "默认 reserveTokens 为 16384，contextTokens 超过 contextWindow-reserve 才压缩。估算优先取最后 assistant usage 加尾随消息，缺失时用 chars/4，图片按近似字符成本处理。",
+      "plainLanguage": "不会等输入把窗口完全塞满；先给回答留座位。能拿到模型账单就用真实 token，拿不到才用字符粗算。",
+      "implication": "比单纯按消息数量可靠，但固定 16k 对不同模型/任务可调性很重要。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 190, "endLine": 237, "role": "implementation", "excerpt": "默认预算、token 估算与阈值。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 1943, "endLine": 2041, "role": "implementation", "excerpt": "真实 usage、stale usage 与 overflow 判定。" }
+      ]
+    },
+    {
+      "id": "pi-context-002",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "cut point 不切 tool result，并支持拆分超长 turn",
+      "fact": "算法从后往前保留 recentTokens，切点不会落在 tool result；若单回合太长可把 turn prefix 单独摘要、保留后段。summary 使用 Goal/Constraints/Progress/Decisions/Next Steps/Critical Context 结构并可迭代更新旧摘要。",
+      "plainLanguage": "工具调用和结果不会被拦腰拆散；最近一个超长回合也不必全丢或全留，前半段概括、后半段保真。",
+      "implication": "上下文压缩保留执行连续性，结构化摘要便于后续 Agent 接棒。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 345, "endLine": 460, "role": "implementation", "excerpt": "cut point、tool result 安全和 split turn。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 467, "endLine": 537, "role": "prompt", "excerpt": "结构化增量摘要指令。" },
+        { "path": "packages/coding-agent/src/core/compaction/compaction.ts", "startLine": 710, "endLine": 788, "role": "implementation", "excerpt": "摘要区间、retained messages 和文件操作提取。" }
+      ]
+    },
+    {
+      "id": "pi-context-003",
+      "dimension": "context-compaction",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "overflow 最多压缩后自动重试一次，扩展可取消或替换摘要",
+      "fact": "manual/auto compaction 都先触发 extension hook；扩展可取消或提供完整 compaction。overflow 路径移除错误消息后只重试一次，阈值型压缩不会无条件续跑，只有队列还有消息才继续。",
+      "plainLanguage": "记忆爆仓会整理再试一次，不会反复总结到死；插件也能接管公司自己的摘要策略。",
+      "implication": "有明确的恢复上限和可插拔压缩策略。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 1783, "endLine": 1924, "role": "implementation", "excerpt": "manual compact 与 extension override。" },
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 2047, "endLine": 2195, "role": "implementation", "excerpt": "auto compact、一次重试和队列续跑。" },
+        { "path": "packages/coding-agent/test/agent-session-auto-compaction-queue.test.ts", "startLine": 1, "endLine": 100, "role": "test", "excerpt": "压缩与 queued message 行为测试入口。" }
+      ]
+    },
+    {
+      "id": "pi-edit-001",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "编辑采用唯一精确替换，并对同一文件串行化",
+      "fact": "edit 要求 oldText 在文件中唯一且 replacement 不重叠，保留 BOM/行尾，写回后返回 diff/patch；同 canonical path 的 edit/write 进入 mutation queue，不同文件仍可并行。",
+      "plainLanguage": "它不凭模糊相似度猜改哪里；目标文字必须只出现一次。同一文件上的两把手术刀要排队，避免互相覆盖。",
+      "implication": "机制简单可审计，面对漂移代码时会失败并要求模型重新读取。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/tools/edit.ts", "startLine": 33, "endLine": 53, "role": "contract", "excerpt": "精确唯一替换 schema。" },
+        { "path": "packages/coding-agent/src/core/tools/edit.ts", "startLine": 287, "endLine": 361, "role": "implementation", "excerpt": "读取、规范化、写入和 diff。" },
+        { "path": "packages/coding-agent/src/core/tools/file-mutation-queue.ts", "startLine": 28, "endLine": 60, "role": "implementation", "excerpt": "per-file serialization。" },
+        { "path": "packages/coding-agent/test/file-mutation-queue.test.ts", "startLine": 1, "endLine": 100, "role": "test", "excerpt": "并发文件修改测试入口。" }
+      ]
+    },
+    {
+      "id": "pi-tool-output-001",
+      "dimension": "tools-editing",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "read 与 bash 使用不同方向的双阈值截断",
+      "fact": "默认输出上限 2000 行或 50KB；read 保留头部并给 offset 续读提示，bash 保留尾部并把完整超长输出写入 /tmp/pi-bash-*.log。",
+      "plainLanguage": "读文件通常从开头看，命令日志通常看结尾报错；超出的内容没有直接消失，而是留全文路径。",
+      "implication": "减少工具输出占满上下文，同时维持可追溯性。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/tools/truncate.ts", "startLine": 1, "endLine": 12, "role": "config", "excerpt": "默认双阈值和方向。" },
+        { "path": "packages/coding-agent/src/core/tools/read.ts", "startLine": 203, "endLine": 300, "role": "implementation", "excerpt": "文本/图片读取与 continuation。" },
+        { "path": "packages/coding-agent/src/core/bash-executor.ts", "startLine": 46, "endLine": 129, "role": "implementation", "excerpt": "bash 尾部截断与全文临时文件。" }
+      ]
+    },
+    {
+      "id": "pi-execution-001",
+      "dimension": "execution-sandbox-permission",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "默认 CLI 在宿主 shell/filesystem 执行，不是沙箱",
+      "fact": "bash 默认用 cwd、继承宿主 env、spawn 用户 shell、无默认 timeout；read/edit/write 支持绝对路径和 ~，没有 cwd containment。通用 Harness 虽抽象 FileSystem/Shell/ExecutionEnv，默认 NodeExecutionEnv 仍直连宿主。",
+      "plainLanguage": "接口上可以换成远端 VM 或容器，但开箱即用的那套仍是在你的真实电脑里读写和跑命令。",
+      "implication": "企业无人值守场景必须提供另一套 ExecutionEnv，不能把接口抽象等同于安全隔离。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/tools/bash.ts", "startLine": 82, "endLine": 148, "role": "implementation", "excerpt": "本地 shell executor、cwd/env 和 process tree。" },
+        { "path": "packages/coding-agent/src/core/tools/path-utils.ts", "startLine": 44, "endLine": 50, "role": "implementation", "excerpt": "绝对路径和 tilde 解析。" },
+        { "path": "packages/agent/src/harness/types.ts", "startLine": 146, "endLine": 373, "role": "contract", "excerpt": "可替换 filesystem/shell/env capability。" },
+        { "path": "packages/agent/src/harness/env/nodejs.ts", "startLine": 344, "endLine": 497, "role": "implementation", "excerpt": "默认 Node host shell。" }
+      ]
+    },
+    {
+      "id": "pi-trust-001",
+      "dimension": "trust-secrets",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Project Trust 保护仓库可执行资源，但不审批每条命令",
+      "fact": "检测到项目 settings、extensions、skills、prompts、themes、SYSTEM/APPEND 等资源才询问 trust；headless 默认不信任。未信任时清空项目 settings 并禁止项目资源装载/写入，但 built-in bash/edit 仍没有逐命令 approval。",
+      "plainLanguage": "它问的是“要不要加载这个仓库自带的插件和说明书”，不是“接下来这条 rm 命令能不能执行”。",
+      "implication": "resource trust 和 action authorization 是两道不同的门，报告与产品 UI 都必须分开。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/project-trust.ts", "startLine": 24, "endLine": 95, "role": "implementation", "excerpt": "按模式解析信任，headless 默认拒绝。" },
+        { "path": "packages/coding-agent/src/core/trust-manager.ts", "startLine": 29, "endLine": 37, "role": "contract", "excerpt": "需要信任的项目资源集合。" },
+        { "path": "packages/coding-agent/src/core/settings-manager.ts", "startLine": 450, "endLine": 476, "role": "implementation", "excerpt": "未信任时清空项目 settings。" },
+        { "path": "packages/coding-agent/test/trust-manager.test.ts", "startLine": 1, "endLine": 68, "role": "test", "excerpt": "信任发现与存储测试入口。" }
+      ]
+    },
+    {
+      "id": "pi-auth-001",
+      "dimension": "trust-secrets",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "本地凭据文件使用权限收紧和跨进程锁",
+      "fact": "auth storage 创建父目录为 0700、文件为 0600，使用 proper-lockfile 串行更新并在锁内重新读取，避免多个进程覆盖外部修改；API key 也可从环境或命令动态解析。",
+      "plainLanguage": "密钥本不仅不让其他本机用户随便看，两个 Pi 进程同时刷新 token 时也不会互相踩掉。",
+      "implication": "本地 secret hygiene 扎实，但动态命令取 key 本身仍属于受信任配置。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/auth-storage.ts", "startLine": 21, "endLine": 145, "role": "implementation", "excerpt": "目录/文件模式、锁与原子更新。" },
+        { "path": "packages/coding-agent/src/core/auth-storage.ts", "startLine": 217, "endLine": 239, "role": "implementation", "excerpt": "读取时解析配置值并在锁内更新。" },
+        { "path": "packages/coding-agent/src/core/resolve-config-value.ts", "startLine": 1, "endLine": 80, "role": "implementation", "excerpt": "环境变量和命令型配置值解析。" }
+      ]
+    },
+    {
+      "id": "pi-instructions-001",
+      "dimension": "instructions-skills-extensions",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "系统指令由 tool、context files、skills、custom/append prompt 多层拼装",
+      "fact": "system prompt 动态包含活跃工具及其 guidelines、产品核心指令、全局和从 cwd 向上的 AGENTS.md/CLAUDE.md、可用 skills XML、cwd；custom system 可替换核心正文但仍追加项目 context/skills，append prompt 再叠加。",
+      "plainLanguage": "模型看到的不是一段写死提示词，而是当前工具说明、用户规则、项目规则、技能目录和工作目录拼成的最终说明书。",
+      "implication": "必须提供最终展开 prompt 的诊断视图，否则层级覆盖很难排查。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/system-prompt.ts", "startLine": 28, "endLine": 71, "role": "implementation", "excerpt": "custom prompt 与仍保留的 context/skills。" },
+        { "path": "packages/coding-agent/src/core/system-prompt.ts", "startLine": 79, "endLine": 159, "role": "prompt", "excerpt": "动态 tool、核心 prompt、context、skills 与 cwd。" },
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 67, "endLine": 123, "role": "implementation", "excerpt": "全局/祖先 AGENTS 与 CLAUDE context discovery。" }
+      ]
+    },
+    {
+      "id": "pi-skills-001",
+      "dimension": "instructions-skills-extensions",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skill 采用懒加载目录，项目范围受 trust 控制",
+      "fact": "Skill discovery 递归查找 SKILL.md，校验 lower-kebab name 和 description，处理 ignore/symlink/冲突；系统 prompt 只放 name/description/location XML，要求模型需要时再读全文。用户 skills 总是可用，项目 .pi/skills 与祖先 .agents/skills 仅在信任后加载。",
+      "plainLanguage": "先给模型一本技能目录，不把每本说明书都塞进上下文；它决定要用时再打开。仓库自带技能则要先信任仓库。",
+      "implication": "节省 token，且把技能供应链纳入项目 trust。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/skills.ts", "startLine": 118, "endLine": 188, "role": "implementation", "excerpt": "frontmatter 校验和 skill parsing。" },
+        { "path": "packages/coding-agent/src/core/skills.ts", "startLine": 327, "endLine": 360, "role": "prompt", "excerpt": "lazy skill XML 指令。" },
+        { "path": "packages/coding-agent/src/core/package-manager.ts", "startLine": 2303, "endLine": 2466, "role": "implementation", "excerpt": "user/project/ancestor resource scope 与 trust gate。" }
+      ]
+    },
+    {
+      "id": "pi-extension-001",
+      "dimension": "instructions-skills-extensions",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "扩展在同一进程执行，覆盖面接近完整产品内核",
+      "fact": "loader 用 jiti 直接加载 TS/JS；extension API 可监听 trust/resource/session/compaction/context/provider/agent/turn/message/tool/input/user_bash 事件，并注册工具、命令、快捷键、flags、renderer 和 provider。多数 handler 错误被捕获并报告，before tool 失败会阻断执行。",
+      "plainLanguage": "插件不是只能加一个小工具，它几乎能摸到 Agent 每个关节；代价是插件代码和主进程同等权限。",
+      "implication": "扩展生态极强，但必须把安装源和信任当作代码执行供应链治理。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/extensions/loader.ts", "startLine": 66, "endLine": 124, "role": "implementation", "excerpt": "jiti 同进程加载与 bundled module 映射。" },
+        { "path": "packages/coding-agent/src/core/extensions/loader.ts", "startLine": 230, "endLine": 300, "role": "implementation", "excerpt": "注册工具、命令、快捷键、flag、renderer。" },
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1179, "endLine": 1340, "role": "contract", "excerpt": "完整 lifecycle event 和 extension API。" },
+        { "path": "packages/coding-agent/test/extensions-runner.test.ts", "startLine": 1, "endLine": 100, "role": "test", "excerpt": "扩展 runner 行为测试入口。" }
+      ]
+    },
+    {
+      "id": "pi-connectors-001",
+      "dimension": "connectors",
+      "evidenceLevel": "L2",
+      "claimType": "limitation",
+      "title": "固定提交未实现内建 MCP client/server",
+      "fact": "产品 runtime 枚举的 built-in tools 为 read/bash/edit/write，随后合并 SDK 和 extension tools；resource 与 extension contracts 中没有 MCP transport/session/tool discovery 实现。仓库 packages 源码检索未发现 MCP runtime contract。",
+      "plainLanguage": "Pi 可以通过扩展接任意协议，但开箱没有像部分竞品那样配置 MCP server 后自动发现 tools/resources/prompts。",
+      "implication": "自研平台若依赖 MCP，需要额外的官方扩展或内核 connector 层。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/agent-session.ts", "startLine": 2454, "endLine": 2544, "role": "implementation", "excerpt": "工具来源只包含 builtins、SDK 和 extension。" },
+        { "path": "packages/coding-agent/src/core/resource-loader.ts", "startLine": 38, "endLine": 47, "role": "contract", "excerpt": "resource contract 未含 MCP session。" },
+        { "path": "packages/coding-agent/src/core/extensions/types.ts", "startLine": 1280, "endLine": 1340, "role": "contract", "excerpt": "可由扩展自行注册工具/事件作为扩展点。" }
+      ]
+    },
+    {
+      "id": "pi-sandbox-example-001",
+      "dimension": "execution-sandbox-permission",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "Sandbox 与命令审批是可选示例，不是默认安全基线",
+      "fact": "sandbox example 依赖 Anthropic sandbox-runtime，在 macOS sandbox-exec/Linux bubblewrap 中覆盖 bash/user_bash；permission-gate example 只用正则拦 rm -rf、sudo、chmod/chown 777 并弹 UI。两者位于 examples/extensions，必须安装/加载。",
+      "plainLanguage": "仓库教你如何装保险箱和门卫，但新车出厂默认没有把它们启用。",
+      "implication": "能力表必须写“可扩展实现”，不能打成“默认支持沙箱/审批”。",
+      "citations": [
+        { "path": "packages/coding-agent/examples/extensions/sandbox/index.ts", "startLine": 1, "endLine": 47, "role": "example", "excerpt": "示例依赖、平台与默认 sandbox 配置。" },
+        { "path": "packages/coding-agent/examples/extensions/sandbox/index.ts", "startLine": 201, "endLine": 295, "role": "example", "excerpt": "覆盖 bash/user_bash 的可选实现。" },
+        { "path": "packages/coding-agent/examples/extensions/permission-gate.ts", "startLine": 1, "endLine": 35, "role": "example", "excerpt": "基于有限正则的可选审批示例。" }
+      ]
+    },
+    {
+      "id": "pi-subagent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "子 Agent 是独立 pi 进程示例，不是内建调度控制平面",
+      "fact": "subagent extension 支持 single/parallel/chain，最多 8 tasks、并发 4、每任务输出上限 50KB；每个任务 spawn `pi --mode json -p --no-session`，用 0600 临时 prompt，聚合 usage，取消时 TERM 后 KILL。Agent 定义来自 user/project Markdown。",
+      "plainLanguage": "它展示了“主 Agent 叫几个临时 Pi 工人”的方法，但没有内核级 durable queue、共享记忆、远程 worker 或统一权限继承。",
+      "implication": "适合参考 subprocess orchestration，不应与成熟多 Agent 控制平面等同。",
+      "citations": [
+        { "path": "packages/coding-agent/examples/extensions/subagent/index.ts", "startLine": 1, "endLine": 36, "role": "example", "excerpt": "示例定位、模式和硬上限。" },
+        { "path": "packages/coding-agent/examples/extensions/subagent/index.ts", "startLine": 267, "endLine": 428, "role": "example", "excerpt": "独立进程、临时 prompt、usage 与取消。" },
+        { "path": "packages/coding-agent/examples/extensions/subagent/agents.ts", "startLine": 26, "endLine": 115, "role": "example", "excerpt": "user/project agent Markdown discovery。" }
+      ]
+    },
+    {
+      "id": "pi-session-001",
+      "dimension": "session-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "会话是 append-only JSONL 树，可移动叶子、fork 和保存扩展状态",
+      "fact": "每个 entry 有 id/parentId，类型覆盖 message、compaction、branch summary、model、thinking、custom；append 不改旧记录，buildContext 投影当前分支。navigation 只移动 leaf，可总结被放弃分支；fork 把路径复制到新 session 并记录 parentSession。",
+      "plainLanguage": "聊天不是一条会被覆盖的直线，而是一棵只追加的版本树；回到旧节点不会删除未来分支。",
+      "implication": "天然支持回溯、分叉和扩展持久状态，适合审计和复杂交互。",
+      "citations": [
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 30, "endLine": 153, "role": "contract", "excerpt": "entry 类型与 parent tree 合同。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 1015, "endLine": 1188, "role": "implementation", "excerpt": "append-only 持久化与 entry append。" },
+        { "path": "packages/coding-agent/src/core/session-manager.ts", "startLine": 1354, "endLine": 1490, "role": "implementation", "excerpt": "leaf navigation、branch summary 与 fork。" }
+      ]
+    },
+    {
+      "id": "pi-observability-001",
+      "dimension": "session-observability",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "事件和会话账本细，输出模式丰富，但内核不是完整 OTEL 平台",
+      "fact": "Agent 发出 agent/turn/message/tool start/update/end 事件，assistant message 记录 provider/model、token、cost；CLI 支持 interactive、text、json、rpc 和 HTML export。telemetry core 主要是安装 telemetry 开关，固定提交未见完整 trace/span exporter 管线。",
+      "plainLanguage": "本地回放和多种客户端接入很强，能知道花了多少 token、每个工具发生了什么；但不像企业观测平台那样开箱把每步发到 OTEL 后端。",
+      "implication": "自研平台可复用事件合同，但需补 trace id、span、指标/日志导出和集中查询。",
+      "citations": [
+        { "path": "packages/agent/src/types.ts", "startLine": 138, "endLine": 220, "role": "contract", "excerpt": "agent/turn/message/tool event union。" },
+        { "path": "packages/coding-agent/src/cli/args.ts", "startLine": 63, "endLine": 170, "role": "implementation", "excerpt": "json/rpc/print/export/session 等模式。" },
+        { "path": "packages/coding-agent/src/main.ts", "startLine": 109, "endLine": 124, "role": "implementation", "excerpt": "interactive/json/print/rpc mode selection。" },
+        { "path": "packages/coding-agent/src/core/telemetry.ts", "startLine": 1, "endLine": 14, "role": "implementation", "excerpt": "有限的 telemetry 开关实现。" }
+      ]
+    },
+    {
+      "id": "pi-evals-001",
+      "dimension": "tests-evals-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "fact",
+      "title": "机制测试密集，但仓库行为 eval 目前很窄",
+      "fact": "仓库包含 317 个 *.test.ts，覆盖 loop、compaction、trust、extensions、provider 和文件并发；packages/evals 的真实 AgentSession harness 会隔离临时目录、捕获 transcript/usage/tool calls，但 suite 只有“巴黎” smoke 与创建/重载/调用 hello extension 两类。",
+      "plainLanguage": "发动机零件测试很多，真正让整车跑复杂编程赛道的公开考试却还很少。",
+      "implication": "工程成熟度不能只看单测数量；自研应补 repo-level edit/test/recovery、安全红队和长期任务 benchmark。",
+      "citations": [
+        { "path": "packages/evals/src/pi-harness.ts", "startLine": 40, "endLine": 170, "role": "test", "excerpt": "真实 AgentSession、隔离目录和结果采集。" },
+        { "path": "packages/evals/src/smoke.eval.ts", "startLine": 5, "endLine": 16, "role": "test", "excerpt": "基础无工具 smoke。" },
+        { "path": "packages/evals/src/extensions.eval.ts", "startLine": 16, "endLine": 41, "role": "test", "excerpt": "extension 创建、reload 与 tool call eval。" }
+      ]
+    }
+  ]
+}

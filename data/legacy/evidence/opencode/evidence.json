@@ -1,0 +1,451 @@
+{
+  "$schema": "../../evidence.schema.json",
+  "agent": "opencode",
+  "snapshot": {
+    "repository": "anomalyco/opencode",
+    "commit": "284e97068c987a7a2e863430e07e2f1ad7d4be46",
+    "commitDate": "2026-07-28T01:16:18Z"
+  },
+  "method": {
+    "readmePolicy": "README 只用于产品入口定位；核心结论来自 session loop、stream processor、compaction、permission、tools、MCP、plugin、storage 与测试。",
+    "factPolicy": "以 packages/opencode 的 Effect 服务实现为主，同时跟到 packages/core 的数据库/后台任务合同；UI 能力不替代执行层证据。",
+    "inferencePolicy": "明确区分权限审批、宿主进程执行与 OS 沙箱；实验能力按 flag 和测试覆盖标注，不当作默认稳定能力。"
+  },
+  "coverage": [
+    { "dimension": "entry-session-loop", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计持久消息驱动 loop、任务选择、流事件处理、退出、重试和 cleanup。" },
+    { "dimension": "provider-streaming", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 AI SDK provider 装载、协议变换、参数/headers hooks、SSE timeout 和 usage。" },
+    { "dimension": "context-compaction-memory", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 overflow、摘要、近期尾部保留、工具输出裁剪、overflow replay 和自动续跑。" },
+    { "dimension": "tool-dispatch", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 builtins/custom/plugin/MCP 动态工具、schema 转换、hooks、truncation 和 snapshots。" },
+    { "dimension": "execution-sandbox", "status": "verified", "evidenceLevels": ["L1", "L2"], "notes": "shell 是宿主 child process；没有内建 OS/container sandbox，主要是 permission gate。" },
+    { "dimension": "permissions-security", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 last-match rules、once/always/reject、external directory、doom loop 和敏感文件默认策略。" },
+    { "dimension": "instructions-prompts", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 provider prompt、AGENTS/CLAUDE 层级指令、remote instructions、skills 和 compaction hooks。" },
+    { "dimension": "tools-connectors-plugins", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 MCP local/remote/OAuth/resources/prompts、npm/file plugins、custom tools 和 tool hooks。" },
+    { "dimension": "subagents-collaboration", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "已审计 child session、depth、权限继承、resume、foreground/background 和递归取消。" },
+    { "dimension": "observability-persistence", "status": "verified", "evidenceLevels": ["L1", "L2", "L3"], "notes": "消息/part/event、成本/token、git snapshot/patch、fork/revert、可选 OTEL 与 share sync。" },
+    { "dimension": "tests-evals-maturity", "status": "partial", "evidenceLevels": ["L2", "L3"], "notes": "大量单元/集成/recorded stream 测试；仓库未见统一 Coding Agent 成功率 benchmark。" }
+  ],
+  "findings": [
+    {
+      "id": "opencode-loop-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "主循环由持久化消息状态驱动，而不是一次性的 while(tool_call)",
+      "fact": "runLoop 每步从数据库重建过滤后的消息视图，找最后 user/assistant/finished 与待处理 subtask/compaction；只有已完成、无工具调用且顺序闭合才退出，否则继续调度。",
+      "plainLanguage": "它每一轮都重新看账本决定“接下来做什么”，所以进程中断、工具异步完成和压缩都能落在统一状态机里。",
+      "implication": "消息/part 是事实源，loop 是其投影；这比仅在内存追加数组更利于恢复和多客户端。",
+      "citations": [
+        { "path": "packages/opencode/src/session/prompt.ts", "startLine": 1081, "endLine": 1130, "role": "implementation", "excerpt": "loop、状态恢复与退出判定。" },
+        { "path": "packages/opencode/src/session/message-v2.ts", "startLine": 578, "endLine": 600, "role": "implementation", "excerpt": "按单调 ID 找最新消息和未处理任务。" }
+      ]
+    },
+    {
+      "id": "opencode-loop-002",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每一步动态重建 Agent、工具、系统上下文和模型请求",
+      "fact": "loop 解析 agent/model，应用 reminders，创建 assistant record，按当前 permission/provider 解析工具，再并行装配 skills、environment、instructions、MCP instructions 和 compacted model messages。",
+      "plainLanguage": "不是开会前一次性发完所有资料；每走一步都按当前身份、模型和权限重新整理桌面。",
+      "implication": "支持运行中配置和权限变化，但每步装配链更复杂、需要缓存与测试。",
+      "citations": [
+        { "path": "packages/opencode/src/session/prompt.ts", "startLine": 1170, "endLine": 1241, "role": "implementation", "excerpt": "Agent、assistant message、processor 与工具装配。" },
+        { "path": "packages/opencode/src/session/prompt.ts", "startLine": 1252, "endLine": 1286, "role": "implementation", "excerpt": "系统上下文与模型调用。" }
+      ]
+    },
+    {
+      "id": "opencode-stream-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "stream processor 把 reasoning、text、tool、usage、patch 全部事件化持久",
+      "fact": "processor 为 reasoning/text/tool call 建 part，tool result 归一化附件；step-finish 记录 finish、cost、tokens、snapshot 和 patch，并异步更新 session summary。",
+      "plainLanguage": "模型的思考、文字、每次工具起止和文件变化都不是终端里一闪而过，而是独立可回放的事件。",
+      "implication": "TUI、Web、Desktop、ACP 可以消费同一事件模型。",
+      "citations": [
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 315, "endLine": 413, "role": "implementation", "excerpt": "tool call/result 状态机。" },
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 424, "endLine": 483, "role": "implementation", "excerpt": "step、usage、snapshot 与 patch。" },
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 486, "endLine": 531, "role": "implementation", "excerpt": "增量文本持久化和 plugin complete hook。" }
+      ]
+    },
+    {
+      "id": "opencode-retry-001",
+      "dimension": "entry-session-loop",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "重试、拒绝、上下文溢出和中断有不同终态",
+      "fact": "stream 应用 provider-aware retry policy；拒绝默认让 loop 停止，可配置继续；ContextOverflow 在 auto compact 开启时转为 compact，其他错误进入 session error；cleanup 会把残留 tool call 标为 interrupted error。",
+      "plainLanguage": "网络抖动会重试，权限拒绝会刹车，记忆塞满会整理，进程被打断则把未完成工具明确标成中止，不会都混成一个“失败”。",
+      "implication": "错误分类是自治可靠性的核心，而不只是 UI 文案。",
+      "citations": [
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 539, "endLine": 597, "role": "implementation", "excerpt": "cleanup 中止未决工具。" },
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 599, "endLine": 625, "role": "implementation", "excerpt": "overflow 与普通错误分流。" },
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 627, "endLine": 681, "role": "implementation", "excerpt": "retry、compaction 与终态。" }
+      ]
+    },
+    {
+      "id": "opencode-provider-001",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Provider 层是 AI SDK 适配矩阵，不只兼容 OpenAI API",
+      "fact": "内置动态加载 Anthropic、OpenAI/Azure、Google/Vertex、Bedrock、xAI、Mistral、Groq、Cohere、OpenRouter、GitHub Copilot 等 SDK，并为不同 provider 决定 responses/chat/messages、认证和区域模型规则。",
+      "plainLanguage": "它不是把所有厂商硬塞成同一种 HTTP；每家方言由独立适配器翻译。",
+      "implication": "模型覆盖广，但 provider 特例数量大，回归测试成本高。",
+      "citations": [
+        { "path": "packages/opencode/src/provider/provider.ts", "startLine": 101, "endLine": 145, "role": "implementation", "excerpt": "bundled provider SDK 列表和 loader 合同。" },
+        { "path": "packages/opencode/src/provider/provider.ts", "startLine": 154, "endLine": 238, "role": "implementation", "excerpt": "endpoint 选择与 OpenAI/xAI/Copilot 特例。" },
+        { "path": "packages/opencode/src/provider/provider.ts", "startLine": 294, "endLine": 368, "role": "implementation", "excerpt": "Bedrock 凭据链与自定义 endpoint。" }
+      ]
+    },
+    {
+      "id": "opencode-provider-002",
+      "dimension": "provider-streaming",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "请求准备层统一合并 prompt、variant、provider options 与 hooks",
+      "fact": "system 由 agent/provider prompt、环境/项目指令和 user system 合成；参数按 provider base→model→agent→variant 合并，plugins 可改 system、params、headers；工具按 permission 和本轮 user.tools 过滤后排序。",
+      "plainLanguage": "模型请求像一张多层样式表：厂商默认、模型设置、Agent 设置、当前档位和插件逐层覆盖。",
+      "implication": "可扩展性强，但必须记录最终展开结果才能排查“为什么这轮表现不同”。",
+      "citations": [
+        { "path": "packages/opencode/src/session/llm/request.ts", "startLine": 56, "endLine": 100, "role": "implementation", "excerpt": "system 与 options 合并。" },
+        { "path": "packages/opencode/src/session/llm/request.ts", "startLine": 114, "endLine": 158, "role": "implementation", "excerpt": "参数、headers hooks 与 tool schema 兼容。" },
+        { "path": "packages/opencode/src/session/llm/request.ts", "startLine": 181, "endLine": 213, "role": "implementation", "excerpt": "session headers 与工具过滤。" }
+      ]
+    },
+    {
+      "id": "opencode-context-001",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "overflow 阈值为可用输入窗口，而非模型总窗口",
+      "fact": "usable 优先使用 model.limit.input；否则从 context 中扣除最大输出 token，reserved 默认最多 20k。token total 达到 usable 才判 overflow，auto=false 时关闭。",
+      "plainLanguage": "它会先给模型回答预留座位，再判断历史是否坐满，避免输入刚好塞满后没有空间输出。",
+      "implication": "比简单按 context×百分比更贴合各 provider 的 input/output 限制。",
+      "citations": [
+        { "path": "packages/opencode/src/session/overflow.ts", "startLine": 8, "endLine": 33, "role": "implementation", "excerpt": "可用窗口和溢出公式。" },
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 435, "endLine": 482, "role": "implementation", "excerpt": "用真实 step usage 触发压缩。" }
+      ]
+    },
+    {
+      "id": "opencode-context-002",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "压缩保留近期原文尾部，而不是只剩一段摘要",
+      "fact": "默认尝试保留最近 2 个 user turn，预算为 usable 的 25%、上下限 2k–8k；若整轮放不下可从轮中切分。模型视图被重排为 compaction marker、summary、retained tail、continue。",
+      "plainLanguage": "老故事写成摘要，最近几轮尽量保留原话；必要时甚至保留半个超长回合。",
+      "implication": "降低摘要丢失当前执行细节的风险，但消息顺序投影更复杂。",
+      "citations": [
+        { "path": "packages/opencode/src/session/compaction.ts", "startLine": 28, "endLine": 35, "role": "config", "excerpt": "tail 与 preserve 默认值。" },
+        { "path": "packages/opencode/src/session/compaction.ts", "startLine": 180, "endLine": 239, "role": "implementation", "excerpt": "按 token 选择近期尾部和轮内切分。" },
+        { "path": "packages/opencode/src/session/message-v2.ts", "startLine": 521, "endLine": 571, "role": "implementation", "excerpt": "compacted 模型视图重排。" }
+      ]
+    },
+    {
+      "id": "opencode-context-003",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "摘要前先去媒体、限制工具输出，失败时可 replay 原请求",
+      "fact": "compaction 对历史去除媒体并把单个工具输出限制 2000 字符；可把前次 summary 带入增量摘要，plugins 可替换 prompt/加 context。若 provider 因大媒体直接 overflow，会回退到之前 user turn，压缩后以文字占位重放。",
+      "plainLanguage": "整理书桌前先把大图片和长日志搬走；如果一张附件让请求根本进不了门，就去掉附件后把原问题再问一次。",
+      "implication": "覆盖了“请求发送前就超限”和“响应后发现临界”两类路径。",
+      "citations": [
+        { "path": "packages/opencode/src/session/compaction.ts", "startLine": 289, "endLine": 354, "role": "implementation", "excerpt": "overflow replay、增量摘要和媒体/工具输出裁剪。" },
+        { "path": "packages/opencode/src/session/compaction.ts", "startLine": 383, "endLine": 413, "role": "implementation", "excerpt": "无工具 compaction 请求与二次溢出终止。" },
+        { "path": "packages/opencode/src/session/compaction.ts", "startLine": 422, "endLine": 503, "role": "implementation", "excerpt": "replay 与自动 continue。" }
+      ]
+    },
+    {
+      "id": "opencode-context-004",
+      "dimension": "context-compaction-memory",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具输出先独立裁剪，旧输出还能在后台 prune",
+      "fact": "普通工具输出默认上限 2000 行/50KiB，全文保存到临时文件 7 天并给 Grep/Read 或 subagent 指引；compaction prune 在保护最近 40k token 后，累计可释放超过 20k 才标记旧 tool output compacted，skill 输出受保护。",
+      "plainLanguage": "长日志不会直接淹没聊天：模型看摘要，全文留在旁边可查；更老的工具输出再逐步从上下文退场。",
+      "implication": "上下文治理覆盖生成前、工具后和会话历史三层。",
+      "citations": [
+        { "path": "packages/opencode/src/tool/truncate.ts", "startLine": 13, "endLine": 44, "role": "contract", "excerpt": "输出限额、保留期与服务合同。" },
+        { "path": "packages/opencode/src/tool/truncate.ts", "startLine": 85, "endLine": 140, "role": "implementation", "excerpt": "保存全文与上下文节约提示。" },
+        { "path": "packages/opencode/src/session/compaction.ts", "startLine": 241, "endLine": 287, "role": "implementation", "excerpt": "旧工具输出 prune。" }
+      ]
+    },
+    {
+      "id": "opencode-permission-001",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "权限采用 last-match wildcard 规则，默认 ask 而非默认 allow",
+      "fact": "evaluate 从所有 ruleset 尾部找最后匹配 permission+pattern 的规则，无匹配返回 ask。ask 可 deny、直接 allow 或发事件等待 reply；always approval 只在当前 instance state 追加规则并自动解开同 session 匹配请求。",
+      "plainLanguage": "越靠后的规则优先；没写明能不能做时先问人。点“始终允许”会记住本次运行，但不是永久改配置。",
+      "implication": "顺序非常重要，配置合并必须可解释；临时批准不会静默写回磁盘。",
+      "citations": [
+        { "path": "packages/opencode/src/permission/index.ts", "startLine": 28, "endLine": 37, "role": "implementation", "excerpt": "last-match 与默认 ask。" },
+        { "path": "packages/opencode/src/permission/index.ts", "startLine": 67, "endLine": 107, "role": "implementation", "excerpt": "ask/deny/allow/deferred。" },
+        { "path": "packages/opencode/src/permission/index.ts", "startLine": 109, "endLine": 166, "role": "implementation", "excerpt": "reject/once/always 与同 session pending 处理。" }
+      ]
+    },
+    {
+      "id": "opencode-permission-002",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "默认 build 可执行，但敏感文件、外部目录和死循环会询问",
+      "fact": "默认权限总体 allow；doom_loop 与 external_directory 为 ask，.env/.env.* 为 ask、.env.example allow。build 开放 question/plan_enter；plan 禁 edit，仅允许计划文件；explore 只开放搜索/读取/web/bash 等白名单。",
+      "plainLanguage": "日常改项目尽量顺畅，碰到密钥文件、项目外路径或重复工具循环才踩刹车；规划和探索 Agent 的能力更窄。",
+      "implication": "Agent profile 本身就是 capability bundle。",
+      "citations": [
+        { "path": "packages/opencode/src/agent/agent.ts", "startLine": 98, "endLine": 155, "role": "implementation", "excerpt": "默认安全规则和 build。" },
+        { "path": "packages/opencode/src/agent/agent.ts", "startLine": 156, "endLine": 180, "role": "implementation", "excerpt": "plan 的 edit 限制。" },
+        { "path": "packages/opencode/src/agent/agent.ts", "startLine": 182, "endLine": 218, "role": "implementation", "excerpt": "general/explore 子 Agent 能力。" }
+      ]
+    },
+    {
+      "id": "opencode-permission-003",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "连续相同工具调用触发 doom-loop 二次确认",
+      "fact": "processor 检查最近固定阈值的 parts；若工具名和 JSON 输入全部相同且非 pending，就请求 doom_loop 权限。",
+      "plainLanguage": "模型若一直用相同参数撞同一扇门，系统不会无限烧 token，而是停下来问人。",
+      "implication": "这是运行时行为检测，不依赖模型自觉。",
+      "citations": [
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 331, "endLine": 380, "role": "implementation", "excerpt": "相同工具+输入检测与权限请求。" }
+      ]
+    },
+    {
+      "id": "opencode-sandbox-001",
+      "dimension": "execution-sandbox",
+      "evidenceLevel": "L1",
+      "claimType": "limitation",
+      "title": "shell 最终直接启动宿主子进程，没有内建 OS 沙箱",
+      "fact": "ShellTool 用真实环境变量和 plugin env，在当前/指定 cwd 通过 ChildProcess 启动系统 shell；超时或 abort 后 kill。源码未施加容器、namespace、seccomp、Seatbelt 或 Windows job sandbox。",
+      "plainLanguage": "权限门像门卫，但命令一旦放行就在你的真实机器上跑，并不是在一次性隔离箱里。",
+      "implication": "全自动或不可信仓库需要外层 VM/container；permission 不应被宣传成 sandbox。",
+      "citations": [
+        { "path": "packages/opencode/src/tool/shell.ts", "startLine": 293, "endLine": 309, "role": "implementation", "excerpt": "系统 shell child process。" },
+        { "path": "packages/opencode/src/tool/shell.ts", "startLine": 416, "endLine": 425, "role": "implementation", "excerpt": "继承宿主环境并允许 plugin 注入。" },
+        { "path": "packages/opencode/src/tool/shell.ts", "startLine": 481, "endLine": 559, "role": "implementation", "excerpt": "真实进程、流输出、超时和 kill。" }
+      ]
+    },
+    {
+      "id": "opencode-shell-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "shell 权限不是简单字符串前缀，而是 Bash/PowerShell 语法树扫描",
+      "fact": "tree-sitter 解析 Bash/PowerShell，逐 command 生成 permission pattern 和 arity-based always pattern；对 rm/cp/mv/cat/PowerShell 文件 cmdlet 解析路径，项目外目录单独请求 external_directory。",
+      "plainLanguage": "它会拆开一条复杂命令，分别看里面有哪些子命令和文件路径，而不是只看第一个单词。",
+      "implication": "比 startsWith 白名单稳健，但动态变量/命令替换的静态路径推断仍有天然边界。",
+      "citations": [
+        { "path": "packages/opencode/src/tool/shell.ts", "startLine": 257, "endLine": 291, "role": "implementation", "excerpt": "AST parse 后双层权限询问。" },
+        { "path": "packages/opencode/src/tool/shell.ts", "startLine": 378, "endLine": 413, "role": "implementation", "excerpt": "command/path/arity 收集。" },
+        { "path": "packages/opencode/src/tool/shell.ts", "startLine": 597, "endLine": 640, "role": "implementation", "excerpt": "执行前完成 parse/collect/ask。" }
+      ]
+    },
+    {
+      "id": "opencode-tool-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "工具注册表统一 builtin、项目脚本和 npm/file plugin 工具",
+      "fact": "registry 初始化 read/grep/glob/edit/write/apply_patch/shell/task/web/skill/LSP 等 builtins，扫描 config directories 的 tool(s)/*.js|ts，再合并 plugin.tool；所有 plugin 输出走统一 truncation 与 tracing。",
+      "plainLanguage": "内置扳手、项目自制工具和插件工具最后都进同一个工具箱，走同一套执行上下文。",
+      "implication": "能力面一致，但本地 JS/TS plugin 是可执行代码，信任边界等同于宿主进程。",
+      "citations": [
+        { "path": "packages/opencode/src/tool/registry.ts", "startLine": 86, "endLine": 175, "role": "implementation", "excerpt": "plugin tool 适配、权限桥与 truncation。" },
+        { "path": "packages/opencode/src/tool/registry.ts", "startLine": 178, "endLine": 244, "role": "implementation", "excerpt": "项目/插件发现和 builtin 列表。" },
+        { "path": "packages/opencode/src/tool/registry.ts", "startLine": 286, "endLine": 334, "role": "implementation", "excerpt": "按 provider/model 选择工具并开放定义 hook。" }
+      ]
+    },
+    {
+      "id": "opencode-edit-001",
+      "dimension": "tool-dispatch",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Edit 在写前生成 diff、请求权限，写后格式化并回送 LSP 错误",
+      "fact": "每文件 semaphore 防并发覆盖；路径先做 external-directory check，精确/容错 replacer 计算新内容和 diff，permission metadata 携带 diff；写入保持 BOM/换行，formatter 后重新读，最后触发 file events 和 LSP diagnostics。",
+      "plainLanguage": "先把拟修改内容展示给门卫，再落盘；落盘后自动格式化，并立刻告诉模型有没有新语法错误。",
+      "implication": "编辑是有事务边界感的工具，而非裸 fs.writeFile。",
+      "citations": [
+        { "path": "packages/opencode/src/tool/edit.ts", "startLine": 35, "endLine": 56, "role": "implementation", "excerpt": "文件锁和 schema。" },
+        { "path": "packages/opencode/src/tool/edit.ts", "startLine": 79, "endLine": 119, "role": "implementation", "excerpt": "外部路径、新文件 diff、ask 与写入。" },
+        { "path": "packages/opencode/src/tool/edit.ts", "startLine": 123, "endLine": 171, "role": "implementation", "excerpt": "已有文件替换、diff、格式化与 events。" },
+        { "path": "packages/opencode/src/tool/edit.ts", "startLine": 175, "endLine": 211, "role": "implementation", "excerpt": "统计、metadata 和 LSP diagnostics。" }
+      ]
+    },
+    {
+      "id": "opencode-instruction-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "指令既有全局/项目 system 层，也有读文件时的局部层",
+      "fact": "system 搜索全局 AGENTS.md 或 ~/.claude/CLAUDE.md，并在项目树中选择首类 AGENTS/CLAUDE/CONTEXT；config 还能引用 glob 与 URL。Read 某文件时沿目录向上找更近指令，每条 assistant message 只附一次，已在未压缩 Read 中加载的也不重复。",
+      "plainLanguage": "公司总规章开会前发，走进某个子目录时再补当地规章；同一轮不会反复念。",
+      "implication": "层级指令与代码位置绑定，适合 monorepo，但 remote instruction URL 引入供应链和可用性风险。",
+      "citations": [
+        { "path": "packages/opencode/src/session/instruction.ts", "startLine": 60, "endLine": 89, "role": "implementation", "excerpt": "全局/项目指令候选和向上搜索。" },
+        { "path": "packages/opencode/src/session/instruction.ts", "startLine": 110, "endLine": 169, "role": "implementation", "excerpt": "system paths、URL 与并发装载。" },
+        { "path": "packages/opencode/src/session/instruction.ts", "startLine": 179, "endLine": 220, "role": "implementation", "excerpt": "按 read path 局部发现和去重。" }
+      ]
+    },
+    {
+      "id": "opencode-skill-001",
+      "dimension": "instructions-prompts",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "Skills 支持 OpenCode、Claude、agents 目录与远程 discovery",
+      "fact": "扫描 ~/.claude/.agents 及项目祖先的 skills/**/SKILL.md、各 config dir 的 skill(s)、显式 paths 和 URLs；解析 frontmatter，重复 name 后加载者覆盖并告警，available 再按 agent skill permission 过滤。",
+      "plainLanguage": "它能复用多种 Agent 生态的技能目录，也能从远程拉技能；最终只有当前 Agent 有权用的技能会出现。",
+      "implication": "兼容性强，但远程技能内容属于 prompt 供应链，应配合 pin/hash/审计。",
+      "citations": [
+        { "path": "packages/opencode/src/skill/index.ts", "startLine": 21, "endLine": 43, "role": "contract", "excerpt": "多生态目录和 skill shape。" },
+        { "path": "packages/opencode/src/skill/index.ts", "startLine": 105, "endLine": 140, "role": "implementation", "excerpt": "frontmatter、重复名和覆盖。" },
+        { "path": "packages/opencode/src/skill/index.ts", "startLine": 173, "endLine": 232, "role": "implementation", "excerpt": "全局/项目/config/path/URL discovery。" }
+      ]
+    },
+    {
+      "id": "opencode-mcp-001",
+      "dimension": "tools-connectors-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP 同时支持 stdio、Streamable HTTP、SSE、OAuth、prompts 和 resources",
+      "fact": "local MCP 直接启动 configured command；remote 依次尝试 StreamableHTTP/SSE，支持 headers、timeout 和 OAuth。连接后缓存 tool defs/instructions，并暴露 prompts/resources/templates/readResource。",
+      "plainLanguage": "既能在本机拉起一个工具进程，也能连远程工具站；不只会调函数，还能取提示模板和资料。",
+      "implication": "连接器覆盖完整，但 local MCP 与 plugin 一样拥有宿主代码执行权。",
+      "citations": [
+        { "path": "packages/opencode/src/mcp/index.ts", "startLine": 164, "endLine": 198, "role": "contract", "excerpt": "MCP 完整服务面。" },
+        { "path": "packages/opencode/src/mcp/index.ts", "startLine": 236, "endLine": 338, "role": "implementation", "excerpt": "remote transport 与 OAuth 状态。" },
+        { "path": "packages/opencode/src/mcp/index.ts", "startLine": 340, "endLine": 370, "role": "implementation", "excerpt": "local stdio 进程。" },
+        { "path": "packages/opencode/src/mcp/index.ts", "startLine": 666, "endLine": 738, "role": "implementation", "excerpt": "namespaced tools、prompts 和 resources。" }
+      ]
+    },
+    {
+      "id": "opencode-mcp-002",
+      "dimension": "permissions-security",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "MCP OAuth 有 state 校验，但远程连接没有内建 SSRF 私网拦截",
+      "fact": "OAuth state 用 32 随机字节并在 callback 后比对，错配报潜在 CSRF；remoteURL 只验证 URL 可解析，StreamableHTTP/SSE 直接使用目标 URL，未见 private/loopback/metadata IP guard。",
+      "plainLanguage": "登录回调防伪造做了，但“这个 MCP 地址是不是公司内网或云元数据地址”没有额外门卫。",
+      "implication": "在服务端/共享环境运行时，应由网络策略或 URL guard 补上 SSRF 边界。",
+      "citations": [
+        { "path": "packages/opencode/src/mcp/index.ts", "startLine": 123, "endLine": 125, "role": "implementation", "excerpt": "remote URL 仅做可解析检查。" },
+        { "path": "packages/opencode/src/mcp/index.ts", "startLine": 806, "endLine": 849, "role": "implementation", "excerpt": "OAuth state 与 transport 创建。" },
+        { "path": "packages/opencode/src/mcp/index.ts", "startLine": 898, "endLine": 915, "role": "implementation", "excerpt": "callback state/CSRF 校验。" }
+      ]
+    },
+    {
+      "id": "opencode-subagent-001",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 是独立持久 session，可恢复、限深度并继承关键 deny",
+      "fact": "TaskTool 可用 task_id 恢复 child session；新 child 写 parentID、独立 agent/model/permission。默认 subagent_depth=1；child 继承 parent session 的所有 deny 和 external_directory 规则，默认禁 todowrite/task，除非子 Agent 自己显式声明。",
+      "plainLanguage": "子任务有自己的聊天记录，不是父对话里的一段临时函数；父亲的禁区会传下去，默认也不能无限生孩子。",
+      "implication": "上下文隔离、恢复和权限边界都较完整。",
+      "citations": [
+        { "path": "packages/opencode/src/agent/subagent-permissions.ts", "startLine": 4, "endLine": 26, "role": "implementation", "excerpt": "child 权限继承与默认 deny。" },
+        { "path": "packages/opencode/src/tool/task.ts", "startLine": 104, "endLine": 142, "role": "implementation", "excerpt": "depth、task permission、resume 和 child rule。" },
+        { "path": "packages/opencode/src/tool/task.ts", "startLine": 143, "endLine": 172, "role": "implementation", "excerpt": "child session 与 primary tool deny。" }
+      ]
+    },
+    {
+      "id": "opencode-subagent-002",
+      "dimension": "subagents-collaboration",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "子 Agent 支持 foreground/background、结果自动注回和递归取消",
+      "fact": "foreground 等待 child job，background 由实验 flag 开启后立即返回；完成/失败会以 synthetic parent prompt 自动注回。父执行 abort 同时 cancel child prompt/job，删除 parent session 也递归删除 children。",
+      "plainLanguage": "前台像打电话等对方答完，后台像发工单继续做别的；工单结束会主动回报，父任务取消时孩子也停。",
+      "implication": "已经具备实用并行协作骨架，但 background 仍是实验能力。",
+      "citations": [
+        { "path": "packages/opencode/src/tool/task.ts", "startLine": 24, "endLine": 62, "role": "contract", "excerpt": "foreground/background 语义和实验参数。" },
+        { "path": "packages/opencode/src/tool/task.ts", "startLine": 200, "endLine": 253, "role": "implementation", "excerpt": "child run 与 synthetic result 注回。" },
+        { "path": "packages/opencode/src/tool/task.ts", "startLine": 273, "endLine": 347, "role": "implementation", "excerpt": "background start、wait 和取消。" },
+        { "path": "packages/opencode/src/session/session.ts", "startLine": 608, "endLine": 629, "role": "implementation", "excerpt": "删除 session 递归取消/删除 children。" }
+      ]
+    },
+    {
+      "id": "opencode-observe-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "session 持久化 agent/model/permission/cost/tokens/summary/revert 与 parent",
+      "fact": "Session row 包含 parent、agent/model、permission、input/output/reasoning/cache tokens、cost、文件统计、share、revert snapshot 和 timestamps；messages/parts 通过事件桥更新并写数据库。",
+      "plainLanguage": "一条任务不只存聊天文本，还存它用了哪个 Agent/模型、花了多少钱、改了哪些文件、能否回退以及是谁的子任务。",
+      "implication": "为恢复、审计、成本和协作提供统一数据底座。",
+      "citations": [
+        { "path": "packages/opencode/src/session/session.ts", "startLine": 120, "endLine": 158, "role": "implementation", "excerpt": "Session row 完整投影。" },
+        { "path": "packages/opencode/src/session/session.ts", "startLine": 224, "endLine": 244, "role": "contract", "excerpt": "Session schema。" },
+        { "path": "packages/opencode/src/session/session.ts", "startLine": 631, "endLine": 666, "role": "implementation", "excerpt": "message/part event 与读取。" }
+      ]
+    },
+    {
+      "id": "opencode-snapshot-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "每个模型 step 前后用影子 Git 仓库生成可回退 patch",
+      "fact": "processor 在 stream 前预抓 snapshot，step-finish 后 track 并 patch；Snapshot 使用独立 gitdir，复用源仓对象库/索引，忽略规则同步，跳过大于 2MiB 的未跟踪文件并只 stage 候选路径。",
+      "plainLanguage": "每走一步都拍“修改前后”照片，照片存进旁边的 Git 仓库，不污染用户当前分支。",
+      "implication": "支持精确 diff/revert；非 Git 项目或 snapshot=false 时能力降级。",
+      "citations": [
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 98, "endLine": 114, "role": "implementation", "excerpt": "LLM stream 前预抓 snapshot。" },
+        { "path": "packages/opencode/src/session/processor.ts", "startLine": 435, "endLine": 469, "role": "implementation", "excerpt": "step 后 patch part。" },
+        { "path": "packages/opencode/src/snapshot/index.ts", "startLine": 23, "endLine": 27, "role": "config", "excerpt": "保留期、大小和 Git 参数。" },
+        { "path": "packages/opencode/src/snapshot/index.ts", "startLine": 195, "endLine": 232, "role": "implementation", "excerpt": "复用对象库和索引。" },
+        { "path": "packages/opencode/src/snapshot/index.ts", "startLine": 235, "endLine": 298, "role": "implementation", "excerpt": "候选、ignore、大文件和 scoped stage。" }
+      ]
+    },
+    {
+      "id": "opencode-share-001",
+      "dimension": "observability-persistence",
+      "evidenceLevel": "L1",
+      "claimType": "risk",
+      "title": "Share 是显式远程同步会话、消息、parts、diff 和模型",
+      "fact": "创建 share 后，event subscribers 将 session/message/part/session_diff/model 聚合并发到 opncd.ai 或组织 console；可用 OPENCODE_DISABLE_SHARE 全局关闭，配置还支持 share=auto。",
+      "plainLanguage": "分享链接不是只上传一张截图，而是持续同步完整任务数据；若开了自动分享，必须按数据出境功能治理。",
+      "implication": "企业默认应关闭或接自有 console，并在 UI 明确展示共享状态与数据范围。",
+      "citations": [
+        { "path": "packages/opencode/src/share/share-next.ts", "startLine": 23, "endLine": 72, "role": "contract", "excerpt": "关闭开关和同步数据类型。" },
+        { "path": "packages/opencode/src/share/share-next.ts", "startLine": 124, "endLine": 200, "role": "implementation", "excerpt": "事件驱动增量同步。" },
+        { "path": "packages/opencode/src/share/share-next.ts", "startLine": 247, "endLine": 298, "role": "implementation", "excerpt": "远程 flush 和 full sync 数据范围。" },
+        { "path": "packages/opencode/src/config/config.ts", "startLine": 575, "endLine": 577, "role": "config", "excerpt": "autoshare 到 share=auto 兼容。" }
+      ]
+    },
+    {
+      "id": "opencode-plugin-001",
+      "dimension": "tools-connectors-plugins",
+      "evidenceLevel": "L1",
+      "claimType": "fact",
+      "title": "插件是进程内代码，可改 prompt、请求、工具定义和执行结果",
+      "fact": "loader 可按 npm/file spec 安装、检查版本兼容并 dynamic import；运行时 hooks 包括 system/messages/params/headers、compaction、tool.definition、tool.execute.before/after、text.complete、shell.env 等。",
+      "plainLanguage": "插件不是只提供一段文字，而是能伸手进模型请求和工具执行链，因此能力很强、信任也很高。",
+      "implication": "需要插件来源签名、版本 pin、allowlist 与隔离策略；当前 dynamic import 与主进程同权限。",
+      "citations": [
+        { "path": "packages/opencode/src/plugin/loader.ts", "startLine": 76, "endLine": 144, "role": "implementation", "excerpt": "resolve、compatibility 与 dynamic import。" },
+        { "path": "packages/opencode/src/session/llm/request.ts", "startLine": 68, "endLine": 78, "role": "implementation", "excerpt": "system transform hook。" },
+        { "path": "packages/opencode/src/session/tools.ts", "startLine": 92, "endLine": 129, "role": "implementation", "excerpt": "tool before/after hooks。" },
+        { "path": "packages/opencode/src/session/compaction.ts", "startLine": 342, "endLine": 350, "role": "implementation", "excerpt": "compaction prompt/context hook。" }
+      ]
+    },
+    {
+      "id": "opencode-maturity-001",
+      "dimension": "tests-evals-maturity",
+      "evidenceLevel": "L3",
+      "claimType": "limitation",
+      "title": "关键机制测试密集，但缺统一任务成功率评测闭环",
+      "fact": "仓库有 compaction、processor、recorded provider loop、permission、shell、task/background、MCP lifecycle/OAuth、plugin、snapshot、server/ACP 等测试；未发现统一基准将真实 coding task、成本、时延和回归 verdict 连成 eval pipeline。",
+      "plainLanguage": "零件台架测试很丰富，但还没有一张公开的整车赛道成绩单。",
+      "implication": "建设自有 Agent 时应保留其机制级测试，同时补 golden workflow 和端到端 regression harness。",
+      "citations": [
+        { "path": "packages/opencode/test/session/compaction.test.ts", "startLine": 920, "endLine": 1045, "role": "test", "excerpt": "tail、预算和 compaction 组合测试。" },
+        { "path": "packages/opencode/test/tool/task.test.ts", "startLine": 630, "endLine": 690, "role": "test", "excerpt": "background child 执行测试。" },
+        { "path": "packages/opencode/test/tool/shell.test.ts", "startLine": 920, "endLine": 1005, "role": "test", "excerpt": "external directory 与 always pattern 测试。" }
+      ]
+    }
+  ]
+}

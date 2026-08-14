@@ -1,0 +1,1132 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="OpenAI Codex 的固定提交源码教程：主循环、上下文、工具、安全、扩展、协作与观测"><title>OpenAI Codex · Coding Agent 源码教程</title><link rel="stylesheet" href="../assets/tutorial.css"></head><body><div class="progress-rail" id="progress-rail"></div><header class="tutorial-topbar"><button class="hamburger" type="button" aria-label="打开目录" data-menu>☰</button><a href="index.html" class="top-brand">Harness <em>·</em> Coding Agent Book</a><span class="top-crumb">11 / OpenAI Codex</span><div class="top-actions"><a href="../index.html">研究总览</a><button type="button" data-immersive>沉浸式</button><button type="button" data-theme>☼ / ☾</button></div></header><div class="tutorial-layout"><aside class="tutorial-toc"><a class="tutorial-brand" href="index.html"><span class="tutorial-mark">H</span><span>HARNESS<br><small>CODING AGENT BOOK</small></span></a><button class="toc-toggle" type="button" data-toc-toggle>章节目录</button><nav><a class="" href="goose.html"><span>M01</span>Goose</a><a class="" href="aider.html"><span>M02</span>Aider</a><a class="" href="grok-build.html"><span>M03</span>Grok Build</a><a class="" href="openinterpreter.html"><span>M04</span>Open Interpreter</a><a class="" href="little-coder.html"><span>M05</span>Little Coder</a><a class="" href="monkeycode.html"><span>M06</span>MonkeyCode</a><a class="" href="opencode.html"><span>M07</span>OpenCode</a><a class="" href="oh-my-pi.html"><span>M08</span>Oh My Pi</a><a class="" href="claude-code.html"><span>M09</span>Claude Code（复原）</a><a class="" href="pi.html"><span>M10</span>Pi</a><a class="active" href="codex.html"><span>M11</span>OpenAI Codex</a><a class="" href="gemini-cli.html"><span>M12</span>Gemini CLI</a><a class="" href="jcode.html"><span>M13</span>JCode</a><a class="" href="kimi-cli.html"><span>M14</span>Kimi CLI</a><a class="" href="deepseek-reasonix.html"><span>M15</span>DeepSeek-Reasonix</a><a class="" href="codewhale.html"><span>M16</span>CodeWhale</a><a class="" href="prime-agent.html"><span>M17</span>Prime Agent</a><a class="" href="deepagents.html"><span>M18</span>DeepAgents</a></nav><div class="toc-foot">SOURCE-LOCKED<br>固定提交 · 可回放</div></aside><main class="tutorial-main"><section class="module-hero"><div class="module-eyebrow">M11 · SOURCE-GROUNDED TUTORIAL</div><h1>OpenAI Codex<br><em>从源码学会它怎么工作</em></h1><p class="module-thesis">安全、可恢复、可观测和多 Agent 控制面最均衡的企业级基座之一。 我们不把 README 当结论，而是沿主循环、工具、上下文、权限、扩展、协作和状态一路读到实现。</p><div class="module-meta"><span>Rust · Secure Multi-Agent Runtime</span><span>Apache-2.0</span><span>3418498f0142</span><span>27 个结论 · 63 处引用</span></div><div class="module-actions"><a href="../reports/codex.html">回到源码审计报告 ↗</a><a href="https://github.com/openai/codex/tree/3418498f01422f5f650ea645d4bd19e05c3a9616">打开固定源码 ↗</a><label><span>⌕</span><input type="search" placeholder="搜索本章源码与概念…" data-lesson-search></label></div></section>
+  <section class="module-intro"><div class="intro-copy"><div class="module-kicker">这门课怎么读</div><h2>先建立直觉，再沿一条任务链钻进代码</h2><p>参考教程的做法不是把 API 名称罗列出来，而是从一个小白能理解的问题开始，先解释“为什么需要这个机制”，再用概念对比、执行链路和固定提交的源码回答“它究竟怎么做”。本页把 OpenAI Codex 的 27 个源码结论重新编排成十节课；每个结论都保留证据等级、文件路径、行号和可点击源码。</p><div class="learning-contract"><div><b>你会得到</b><span>一张可复述的架构地图</span><span>一次完整任务的链路追踪</span><span>能迁移到自研 Harness 的设计判断</span></div><div><b>你不会得到</b><span>把 README 功能当成已验证事实</span><span>把 prompt 约束说成 OS 沙箱</span><span>把一次双模型调用夸成多 Agent 平台</span></div></div></div><aside class="intro-stats"><div><b>10</b><span>学习章节</span></div><div><b>27</b><span>源码结论</span></div><div><b>28</b><span>被引文件</span></div><div><b>63</b><span>精确引用</span></div></aside></section>
+  <section class="module-section map-section" id="map"><div class="module-kicker">M00 · MAP</div><h2>先看全景：这个 Agent 的控制面在哪里</h2><p class="section-question">下面的图不是产品宣传图，而是把固定提交里最关键的入口、循环、模型、工具、安全、状态和协作节点放在一张地图上。</p><div class="diagram-pair"><figure><figcaption><b>架构图</b><a href="../diagrams/codex-architecture.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/codex-architecture.html" title="OpenAI Codex 架构图" loading="lazy"></iframe></figure><figure><figcaption><b>一轮执行链路</b><a href="../diagrams/codex-sequence.html">全屏打开 ↗</a></figcaption><iframe src="../diagrams/codex-sequence.html" title="OpenAI Codex 执行链路" loading="lazy"></iframe></figure></div><div class="route-cards"><div><b>核心机制</b><p>turn 内多 step；不可漂移 snapshot；流式工具 future</p></div><div><b>上下文</b><p>COW 历史；配对/多模态成本；本地压缩自救</p></div><div><b>适用建设</b><p>企业内研发平台、安全执行、复杂长任务、多 Agent</p></div></div></section>
+  <section class="module-section trace-section" id="trace"><div class="module-kicker">M00.5 · TRACE</div><h2>跟踪一个任务：从输入到交付</h2><p class="section-question">把下面九步当成你读源码时的“地图坐标”。每到一个节点，都能回到后面的章节查具体实现。</p><div class="trace-board" role="img" aria-label="OpenAI Codex 一次任务的执行链路"><div class="trace-step"><span>01</span><b>提交 turn 与环境</b><small>任务进入</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>02</span><b>注入 AGENTS/skills/plugins</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>03</span><b>捕获不可漂移 step snapshot</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>04</span><b>SSE/WebSocket 流式采样</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>05</span><b>工具 future 边流边启动</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>06</span><b>审批与 OS 沙箱变换</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>07</span><b>读并行/写排他执行</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>08</span><b>写 rollout 与 metrics</b><small>把结果交给下一层</small></div><div class="trace-arrow">↓</div><div class="trace-step"><span>09</span><b>follow-up/steer/compact 或结束</b><small>交付/续跑</small></div></div><div class="trace-note"><b>读图提醒</b><p>箭头只表示控制面之间的关系，不代表每个实现都同步、串行或拥有 OS 隔离；真正的边界要以对应章节的源码摘录和 caveat 为准。</p></div></section>
+  <section class="module-section" id="orientation" data-chapter><div class="module-kicker">M01 · ORIENTATION</div><h2>先把 Agent 看成一台会交付的机器</h2><p class="section-question">如果只看 README，你知道它能做什么；钻进源码后，我们要知道它为什么能做、什么时候会停、失败后谁负责收拾。</p><div class="analogy"><b>先用一个生活比喻</b><p>把 Agent 想成一间带传送带的工作室：入口收任务，主循环决定下一步，模型负责提出动作，工具负责动手，状态账本负责让下一班人接着干。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>读源码时先问</th><th>本课的判断方式</th></tr></thead><tbody><tr><td>这一层有没有独立证据？</td><td>没有就不把其他层的能力冒充成默认行为；回到固定提交继续追调用链。</td></tr><tr><td>谁拥有最终控制权？</td><td>区分模型输出、框架规则、用户审批和 OS 隔离四种不同力量。</td></tr></tbody></table></div><div class="empty-lesson"><b>这一章先建立通用概念</b><p>固定提交账本没有把该维度单独拆出，但它会在其他章节的源码路径中体现。先沿执行链路阅读，再回到报告页核对证据。</p></div><div class="checkpoint"><b>小练习 1</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="loop" data-chapter><div class="module-kicker">M02 · LOOP</div><h2>主循环：模型为什么会继续动</h2><p class="section-question">一次模型调用为什么会变成十几步？循环靠什么继续，靠什么停止？</p><div class="analogy"><b>先用一个生活比喻</b><p>像一个会看回执的快递员：模型先写行动单，工具返回回执，主循环把回执放回桌面，再让模型决定下一张行动单。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照</td><td><code>codex-rs/core/src/session/turn.rs:153</code></td><td>一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</td></tr><tr><td>流式采样与工具 Future 同时推进，并可被新消息抢占</td><td><code>codex-rs/core/src/session/turn.rs:2034</code></td><td>模型说到一个完整动作就能开工，不必等整段回答结束；用户中途补充信息时，系统也能在安全位置收住并接新指令。</td></tr><tr><td>重试预算属于 turn-scoped client session，窗口超限不当作普通网络错误重试</td><td><code>codex-rs/core/src/session/turn.rs:1176</code></td><td>同一轮尽量复用连接和粘性状态；行李箱塞不下不会盲目重拨网络，而是交给压缩逻辑处理。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-loop-001" data-search="每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照 run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 stepcontext，并用同一视图构造上下文、工具与模型请求。 一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。 architecture-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">01</span><div><div class="lesson-eyebrow">L1 · fact · codex-loop-001</div><h3>每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>run_turn 在采样前处理压缩、skills/plugins、session/input hooks 和待处理输入；随后为一个 step 捕获 StepContext，并用同一视图构造上下文、工具与模型请求。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>一轮任务可以问模型很多次，但每一次“想一想并行动”的小步都先拍一张现场快照，避免工具清单和提示词在同一步里前后不一致。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>配置热更新只能在安全边界生效，换来 prompt cache 和工具调用的确定性。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274">codex-rs/core/src/session/turn.rs · L153–L274 ↗</a></div><pre><code>  153  pub(crate) async fn run_turn(
+  154      sess: Arc&lt;Session&gt;,
+  155      turn_context: Arc&lt;TurnContext&gt;,
+  156      turn_extension_data: Arc&lt;codex_extension_api::ExtensionData&gt;,
+  157      input: Vec&lt;TurnInput&gt;,
+  158      prewarmed_client_session: Option&lt;ModelClientSession&gt;,
+  159      cancellation_token: CancellationToken,
+  160  ) -&gt; CodexResult&lt;Option&lt;String&gt;&gt; {
+  161      let mut client_session =
+  162          prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());
+  163      // TODO(ccunningham): Pre-turn compaction runs before context updates and the
+  164      // new user message are recorded. Estimate pending incoming items (context
+  165      // diffs/full reinjection + user input) and trigger compaction preemptively
+  166      // when they would push the thread over the compaction threshold.
+  167      if let Err(err) = run_pre_sampling_compact(
+  168          &amp;sess,
+  169          &amp;turn_context,
+  170          &amp;mut client_session,
+  171          &amp;cancellation_token,
+  172      )
+  173      .await
+  174      {
+  175          if matches!(err.details(), CodexErrorDetails::TurnAborted) {
+  176              run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;input).await;
+  177              return Err(err);
+      … 86 lines omitted; exact range 153–274 …
+  264          if run_hooks_and_record_inputs(&amp;sess, &amp;turn_context, &amp;pending_input).await {
+  265              break;
+  266          }
+  267  
+  268          let window_id = sess.current_window_id().await;
+  269          super::rollout_budget::maybe_record_reminder(
+  270              sess.as_ref(),
+  271              turn_context.as_ref(),
+  272              &amp;window_id,
+  273          )
+  274          .await;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L153-L274"><code>codex-rs/core/src/session/turn.rs:153–274</code></a><small>turn 初始化、压缩、hooks 与 step context。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L275-L455"><code>codex-rs/core/src/session/turn.rs:275–455</code></a><small>step 循环、待处理输入、压缩和停止控制。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-loop-002" data-search="流式采样与工具 future 同时推进，并可被新消息抢占 try_run_sampling_request 消费流式 responseevent；完整 tool item 到达后进入 futuresordered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。 模型说到一个完整动作就能开工，不必等整段回答结束；用户中途补充信息时，系统也能在安全位置收住并接新指令。 architecture-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">02</span><div><div class="lesson-eyebrow">L1 · fact · codex-loop-002</div><h3>流式采样与工具 Future 同时推进，并可被新消息抢占</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>try_run_sampling_request 消费流式 ResponseEvent；完整 tool item 到达后进入 FuturesOrdered，工具参数 diff 可边流边展示；若 commentary/reasoning 期间 mailbox 有消息，则返回 needs_follow_up。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>模型说到一个完整动作就能开工，不必等整段回答结束；用户中途补充信息时，系统也能在安全位置收住并接新指令。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>响应更快，但对调用顺序、取消、配对和幂等要求很高。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168">codex-rs/core/src/session/turn.rs · L2034–L2168 ↗</a></div><pre><code> 2034      tool_runtime: ToolCallRuntime,
+ 2035      sess: Arc&lt;Session&gt;,
+ 2036      turn_context: Arc&lt;TurnContext&gt;,
+ 2037      turn_store: Arc&lt;codex_extension_api::ExtensionData&gt;,
+ 2038      client_session: &amp;mut ModelClientSession,
+ 2039      responses_metadata: &amp;CodexResponsesMetadata,
+ 2040      turn_diff_tracker: SharedTurnDiffTracker,
+ 2041      prompt: &amp;Prompt,
+ 2042      cancellation_token: CancellationToken,
+ 2043  ) -&gt; CodexResult&lt;SamplingRequestResult&gt; {
+ 2044      feedback_tags!(
+ 2045          model = turn_context.model_info.slug.clone(),
+ 2046          approval_policy = turn_context.approval_policy.value(),
+ 2047          sandbox_policy = &amp;turn_context.sandbox_policy(),
+ 2048          effort = turn_context.reasoning_effort,
+ 2049          auth_mode = sess.services.auth_manager.auth_mode(),
+ 2050          features = sess.features.enabled_features(),
+ 2051      );
+ 2052      let inference_trace = sess.services.rollout_thread_trace.inference_trace_context(
+ 2053          turn_context.sub_id.as_str(),
+ 2054          turn_context.model_info.slug.as_str(),
+ 2055          turn_context.provider.info().name.as_str(),
+ 2056      );
+ 2057      let sampling_timing_guard = turn_context.turn_timing_state.begin_sampling();
+ 2058      let uses_sequential_cutoff_reasoning_summaries = turn_context
+      … 99 lines omitted; exact range 2034–2168 …
+ 2158                      let item_id = previous.id();
+ 2159                      flush_assistant_text_segments_for_item(
+ 2160                          &amp;sess,
+ 2161                          &amp;turn_context,
+ 2162                          plan_mode_state.as_mut(),
+ 2163                          &amp;mut assistant_message_stream_parsers,
+ 2164                          &amp;item_id,
+ 2165                      )
+ 2166                      .await;
+ 2167                  }
+ 2168                  if let Some(state) = plan_mode_state.as_mut()</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2034-L2168"><code>codex-rs/core/src/session/turn.rs:2034–2168</code></a><small>流式事件、工具 future 与参数 diff。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L2169-L2265"><code>codex-rs/core/src/session/turn.rs:2169–2265</code></a><small>mailbox 抢占和 follow-up。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-loop-003" data-search="重试预算属于 turn-scoped client session，窗口超限不当作普通网络错误重试 run_sampling_request 在一个 turn 内复用 modelclientsession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 provider 的 stream retry 上限重试。 同一轮尽量复用连接和粘性状态；行李箱塞不下不会盲目重拨网络，而是交给压缩逻辑处理。 architecture-loop">
+    <div class="lesson-finding-head"><span class="lesson-number">03</span><div><div class="lesson-eyebrow">L1 · fact · codex-loop-003</div><h3>重试预算属于 turn-scoped client session，窗口超限不当作普通网络错误重试</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>run_sampling_request 在一个 turn 内复用 ModelClientSession；上下文超限和 usage limit 直接上抛，其他可重试错误才按 Provider 的 stream retry 上限重试。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>同一轮尽量复用连接和粘性状态；行李箱塞不下不会盲目重拨网络，而是交给压缩逻辑处理。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>把语义恢复与传输恢复分开，避免无效重试放大费用。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273">codex-rs/core/src/session/turn.rs · L1176–L1273 ↗</a></div><pre><code> 1176  async fn run_sampling_request(
+ 1177      sess: Arc&lt;Session&gt;,
+ 1178      step_context: Arc&lt;StepContext&gt;,
+ 1179      turn_store: Arc&lt;codex_extension_api::ExtensionData&gt;,
+ 1180      turn_diff_tracker: SharedTurnDiffTracker,
+ 1181      client_session: &amp;mut ModelClientSession,
+ 1182      responses_metadata: &amp;CodexResponsesMetadata,
+ 1183      input: Vec&lt;ResponseItem&gt;,
+ 1184      cancellation_token: CancellationToken,
+ 1185  ) -&gt; CodexResult&lt;(SamplingRequestResult, Vec&lt;ResponseItem&gt;)&gt; {
+ 1186      let turn_context = Arc::clone(&amp;step_context.turn);
+ 1187      let router = Arc::clone(&amp;step_context.tool_router);
+ 1188  
+ 1189      let base_instructions = sess.get_base_instructions().await;
+ 1190  
+ 1191      let tool_runtime = ToolCallRuntime::new(
+ 1192          Arc::clone(&amp;router),
+ 1193          Arc::clone(&amp;sess),
+ 1194          Arc::clone(&amp;step_context),
+ 1195          Arc::clone(&amp;turn_diff_tracker),
+ 1196      );
+ 1197      let _code_mode_worker = sess.services.code_mode_service.start_turn_worker(
+ 1198          &amp;sess,
+ 1199          Arc::clone(&amp;step_context),
+ 1200          Arc::clone(&amp;router),
+      … 62 lines omitted; exact range 1176–1273 …
+ 1263              max_retries,
+ 1264              err,
+ 1265              client_session,
+ 1266              &amp;sess,
+ 1267              &amp;turn_context,
+ 1268              ResponsesStreamRequest::Sampling,
+ 1269          )
+ 1270          .await?;
+ 1271          turn_context.turn_timing_state.record_sampling_retry();
+ 1272      }
+ 1273  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/turn.rs#L1176-L1273"><code>codex-rs/core/src/session/turn.rs:1176–1273</code></a><small>turn-scoped client session 与错误分类重试。</small></li><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24"><code>codex-rs/core/src/client.rs:1–24</code></a><small>ModelClientSession 生命周期、WebSocket 复用与重试预算。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 2</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="model" data-chapter><div class="module-kicker">M03 · MODEL</div><h2>模型调用：流式输出如何变成可执行步骤</h2><p class="section-question">模型输出的文字、思考、工具调用和错误，经过哪些转换才进入 Agent 状态？</p><div class="analogy"><b>先用一个生活比喻</b><p>模型像电话另一端的同事：你听到的不是一整段录音，而是一串实时片段；Harness 要边听边拼装，还要能在电话断线时留下可恢复的记录。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>它允许换“接线地址和门禁方式”，但要求对方都说 Responses 这门语言；不是任意 Chat Completions 方言翻译器。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>模型协议只保留 Responses API，但 Provider 端点与认证可扩展</td><td><code>codex-rs/model-provider-info/src/lib.rs:54</code></td><td>它允许换“接线地址和门禁方式”，但要求对方都说 Responses 这门语言；不是任意 Chat Completions 方言翻译器。</td></tr><tr><td>传输层同时支持 SSE 与可复用 WebSocket，并带 turn 粘性状态</td><td><code>codex-rs/core/src/client.rs:1</code></td><td>每轮对话尽量占用一条可复用的高速通道，还带着本轮路由票据；热身失败不会把整轮任务判死。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-provider-001" data-search="模型协议只保留 responses api，但 provider 端点与认证可扩展 wireapi 枚举只有 responses，反序列化 chat 会报迁移错误；modelproviderinfo 允许自定义 base url、环境密钥、命令认证、aws sigv4、headers、query 和重试。 它允许换“接线地址和门禁方式”，但要求对方都说 responses 这门语言；不是任意 chat completions 方言翻译器。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">04</span><div><div class="lesson-eyebrow">L1 · fact · codex-provider-001</div><h3>模型协议只保留 Responses API，但 Provider 端点与认证可扩展</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>WireApi 枚举只有 Responses，反序列化 chat 会报迁移错误；ModelProviderInfo 允许自定义 base URL、环境密钥、命令认证、AWS SigV4、headers、query 和重试。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它允许换“接线地址和门禁方式”，但要求对方都说 Responses 这门语言；不是任意 Chat Completions 方言翻译器。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>兼容面更一致，第三方 Provider 必须实现 Responses 语义而非只暴露 chat/completions。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L54-L84">codex-rs/model-provider-info/src/lib.rs · L54–L84 ↗</a></div><pre><code>   54  /// Wire protocol that the provider speaks.
+   55  #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
+   56  #[serde(rename_all = &quot;lowercase&quot;)]
+   57  pub enum WireApi {
+   58      /// The Responses API exposed by OpenAI at `/v1/responses`.
+   59      #[default]
+   60      Responses,
+   61  }
+   62  
+   63  impl fmt::Display for WireApi {
+   64      fn fmt(&amp;self, f: &amp;mut fmt::Formatter&lt;&#39;_&gt;) -&gt; fmt::Result {
+   65          let value = match self {
+   66              Self::Responses =&gt; &quot;responses&quot;,
+   67          };
+   68          f.write_str(value)
+   69      }
+   70  }
+   71  
+   72  impl&lt;&#39;de&gt; Deserialize&lt;&#39;de&gt; for WireApi {
+   73      fn deserialize&lt;D&gt;(deserializer: D) -&gt; Result&lt;Self, D::Error&gt;
+   74      where
+   75          D: serde::Deserializer&lt;&#39;de&gt;,
+   76      {
+   77          let value = String::deserialize(deserializer)?;
+   78          match value.as_str() {
+   79              &quot;responses&quot; =&gt; Ok(Self::Responses),
+   80              &quot;chat&quot; =&gt; Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
+   81              _ =&gt; Err(serde::de::Error::unknown_variant(&amp;value, &amp;[&quot;responses&quot;])),
+   82          }
+   83      }
+   84  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L54-L84"><code>codex-rs/model-provider-info/src/lib.rs:54–84</code></a><small>Responses-only wire API。</small></li><li><span>config</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L86-L144"><code>codex-rs/model-provider-info/src/lib.rs:86–144</code></a><small>Provider 端点、认证、headers、重试和能力配置。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-provider-002" data-search="传输层同时支持 sse 与可复用 websocket，并带 turn 粘性状态 modelclientsession 按 turn 创建，延迟缓存 responses websocket 和 x-codex-turn-state；预热是 generate=false 的 v2 response.create，失败后由常规重试/回退处理。 每轮对话尽量占用一条可复用的高速通道，还带着本轮路由票据；热身失败不会把整轮任务判死。 provider-streaming">
+    <div class="lesson-finding-head"><span class="lesson-number">05</span><div><div class="lesson-eyebrow">L1 · fact · codex-provider-002</div><h3>传输层同时支持 SSE 与可复用 WebSocket，并带 turn 粘性状态</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ModelClientSession 按 turn 创建，延迟缓存 Responses WebSocket 和 x-codex-turn-state；预热是 generate=false 的 v2 response.create，失败后由常规重试/回退处理。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>每轮对话尽量占用一条可复用的高速通道，还带着本轮路由票据；热身失败不会把整轮任务判死。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>交互延迟低，但 Provider 必须准确声明 WebSocket 能力，AWS 认证当前明确不能与 WebSocket 同开。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24">codex-rs/core/src/client.rs · L1–L24 ↗</a></div><pre><code>    1  //! Session- and turn-scoped helpers for talking to model provider APIs.
+    2  //!
+    3  //! `ModelClient` is intended to live for the lifetime of a Codex session and holds the stable
+    4  //! configuration and state needed to talk to a provider (auth, provider selection, conversation id,
+    5  //! and transport fallback state).
+    6  //!
+    7  //! Per-turn settings (model selection, reasoning controls, telemetry context, and turn metadata)
+    8  //! are passed explicitly to streaming and unary methods so that the turn lifetime is visible at the
+    9  //! call site.
+   10  //!
+   11  //! A [`ModelClientSession`] is created per turn and is used to stream one or more Responses API
+   12  //! requests during that turn. It caches a Responses WebSocket connection (opened lazily) and stores
+   13  //! per-turn state such as the `x-codex-turn-state` token used for sticky routing.
+   14  //!
+   15  //! WebSocket prewarm is a v2-only `response.create` with `generate=false`; it waits for completion
+   16  //! so the next request can reuse the same connection and `previous_response_id`.
+   17  //!
+   18  //! Turn execution performs prewarm as a best-effort step before the first stream request so the
+   19  //! subsequent request can reuse the same connection.
+   20  //!
+   21  //! ## Retry-Budget Tradeoff
+   22  //!
+   23  //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
+   24  //! fails, normal stream retry/fallback logic handles recovery on the same turn.</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L1-L24"><code>codex-rs/core/src/client.rs:1–24</code></a><small>turn-scoped WebSocket、预热与 fallback。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/model-provider-info/src/lib.rs#L156-L186"><code>codex-rs/model-provider-info/src/lib.rs:156–186</code></a><small>AWS 与 WebSocket/auth 冲突校验。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 3</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="tools" data-chapter><div class="module-kicker">M04 · TOOLS</div><h2>工具系统：Agent 的手脚怎样被注册和调度</h2><p class="section-question">模型看见的工具说明，和真正执行工具的代码，是不是同一个东西？并发、编辑和失败结果怎么处理？</p><div class="analogy"><b>先用一个生活比喻</b><p>工具系统像机场：模型提交登机牌，注册表确认航班，权限闸机检查证件，调度器决定跑道，最后才允许真正起飞。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>每个新工具不只是写一个 execute 函数，还要说明如何取消、怎么记日志、钩子看什么、参数流到一半时如何展示。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>工具有统一 typed runtime 契约，hooks、观测和流式参数 diff 都是一级能力</td><td><code>codex-rs/core/src/tools/registry.rs:48</code></td><td>每个新工具不只是写一个 execute 函数，还要说明如何取消、怎么记日志、钩子看什么、参数流到一半时如何展示。</td></tr><tr><td>并发工具用读写锁实现“并行组 + 全局排他工具”</td><td><code>codex-rs/core/src/tools/parallel.rs:74</code></td><td>能并行的工具像多人同时读资料；危险或有状态的工具拿独占钥匙，等所有并行动作结束后自己运行。</td></tr><tr><td>工具暴露与分发分离，兼容旧 shell 又不污染模型可见清单</td><td><code>codex-rs/core/src/tools/spec_plan_tests.rs:637</code></td><td>后台可以保留旧插座做兼容，但模型眼前只摆当前应该用的工具，避免同功能多把扳手。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-tools-001" data-search="工具有统一 typed runtime 契约，hooks、观测和流式参数 diff 都是一级能力 coretoolruntime 扩展 toolexecutor，统一声明 payload 匹配、取消清理、telemetry tags、pre/post hook payload、hook 输入改写和参数 diff consumer。 每个新工具不只是写一个 execute 函数，还要说明如何取消、怎么记日志、钩子看什么、参数流到一半时如何展示。 tools-editing">
+    <div class="lesson-finding-head"><span class="lesson-number">06</span><div><div class="lesson-eyebrow">L1 · fact · codex-tools-001</div><h3>工具有统一 typed runtime 契约，hooks、观测和流式参数 diff 都是一级能力</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>CoreToolRuntime 扩展 ToolExecutor，统一声明 payload 匹配、取消清理、telemetry tags、pre/post hook payload、hook 输入改写和参数 diff consumer。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>每个新工具不只是写一个 execute 函数，还要说明如何取消、怎么记日志、钩子看什么、参数流到一半时如何展示。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>扩展成本高于轻量 Agent，但跨工具的安全和观测语义更一致。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L48-L149">codex-rs/core/src/tools/registry.rs · L48–L149 ↗</a></div><pre><code>   48  /// Typed runtime contract for locally executed tools.
+   49  ///
+   50  /// Implementers provide the shared `ToolExecutor` behavior plus optional
+   51  /// core-owned metadata for hooks, telemetry, tool search, and argument diffs.
+   52  pub(crate) trait CoreToolRuntime: ToolExecutor&lt;ToolInvocation&gt; {
+   53      fn matches_kind(&amp;self, payload: &amp;ToolPayload) -&gt; bool {
+   54          matches!(
+   55              payload,
+   56              ToolPayload::Function { .. } | ToolPayload::ToolSearch { .. }
+   57          )
+   58      }
+   59  
+   60      /// Whether cancellation should let the handler finish teardown before the
+   61      /// host returns an aborted tool response.
+   62      fn waits_for_runtime_cancellation(&amp;self) -&gt; bool {
+   63          false
+   64      }
+   65  
+   66      fn telemetry_tags&lt;&#39;a&gt;(
+   67          &amp;&#39;a self,
+   68          _invocation: &amp;&#39;a ToolInvocation,
+   69      ) -&gt; BoxFuture&lt;&#39;a, ToolTelemetryTags&gt; {
+   70          Box::pin(async { Vec::new() })
+   71      }
+   72  
+      … 66 lines omitted; exact range 48–149 …
+  139          Ok(ToolInvocation {
+  140              payload: ToolPayload::Function { arguments },
+  141              ..invocation
+  142          })
+  143      }
+  144  
+  145      /// Creates an optional consumer for streamed tool argument diffs.
+  146      fn create_diff_consumer(&amp;self) -&gt; Option&lt;Box&lt;dyn ToolArgumentDiffConsumer&gt;&gt; {
+  147          None
+  148      }
+  149  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L48-L149"><code>codex-rs/core/src/tools/registry.rs:48–149</code></a><small>CoreToolRuntime 完整契约。</small></li><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/registry.rs#L151-L188"><code>codex-rs/core/src/tools/registry.rs:151–188</code></a><small>参数 diff 与统一结果。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-tools-002" data-search="并发工具用读写锁实现“并行组 + 全局排他工具” toolcallruntime 对支持并发的 handler 取读锁，不支持并发的取写锁；取消时按 handler 语义等待清理或 abort，并输出结构化 aborted result 与分段时延。 能并行的工具像多人同时读资料；危险或有状态的工具拿独占钥匙，等所有并行动作结束后自己运行。 tools-editing">
+    <div class="lesson-finding-head"><span class="lesson-number">07</span><div><div class="lesson-eyebrow">L1 · fact · codex-tools-002</div><h3>并发工具用读写锁实现“并行组 + 全局排他工具”</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ToolCallRuntime 对支持并发的 handler 取读锁，不支持并发的取写锁；取消时按 handler 语义等待清理或 abort，并输出结构化 aborted result 与分段时延。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>能并行的工具像多人同时读资料；危险或有状态的工具拿独占钥匙，等所有并行动作结束后自己运行。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>不是简单 Promise.all，避免非并行工具与其他调用交叉污染环境。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L74-L145">codex-rs/core/src/tools/parallel.rs · L74–L145 ↗</a></div><pre><code>   74      #[instrument(level = &quot;trace&quot;, skip_all)]
+   75      pub(crate) fn handle_tool_call(
+   76          self,
+   77          call: ToolCall,
+   78          cancellation_token: CancellationToken,
+   79      ) -&gt; impl std::future::Future&lt;Output = Result&lt;ResponseInputItem, CodexErr&gt;&gt; {
+   80          let error_call = call.clone();
+   81          let future =
+   82              self.handle_tool_call_with_source(call, ToolCallSource::Direct, cancellation_token);
+   83          async move {
+   84              match future.await {
+   85                  Ok(response) =&gt; Ok(response.into_response()),
+   86                  Err(FunctionCallError::Fatal(message)) =&gt; Err(CodexErr::Fatal(message)),
+   87                  Err(other) =&gt; Ok(Self::failure_response(error_call, other)),
+   88              }
+   89          }
+   90          .in_current_span()
+   91      }
+   92  
+   93      #[instrument(level = &quot;trace&quot;, skip_all)]
+   94      pub(crate) fn handle_tool_call_with_source(
+   95          self,
+   96          call: ToolCall,
+   97          source: ToolCallSource,
+   98          cancellation_token: CancellationToken,
+      … 36 lines omitted; exact range 74–145 …
+  135                  } else {
+  136                      Either::Right(lock.write().await)
+  137                  };
+  138                  // Admission through the parallel-execution gate marks the end
+  139                  // of dispatch waiting and the start of handler execution.
+  140                  if let Some(execution_started_at) = execution_started_at {
+  141                      let _ = execution_started_at.set(Instant::now());
+  142                  }
+  143  
+  144                  router
+  145                      .dispatch_tool_call_with_terminal_outcome(</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L74-L145"><code>codex-rs/core/src/tools/parallel.rs:74–145</code></a><small>读写锁并发策略。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/parallel.rs#L146-L202"><code>codex-rs/core/src/tools/parallel.rs:146–202</code></a><small>取消与 timing 记录。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-tools-003" data-search="工具暴露与分发分离，兼容旧 shell 又不污染模型可见清单 工具规划测试确认 unified exec 可把 exec_command/write_stdin 暴露给模型，同时保留隐藏的 legacy shell_command 仅供分发；apply_patch、web search 和动态工具也按环境、模型及 provider capability gate。 后台可以保留旧插座做兼容，但模型眼前只摆当前应该用的工具，避免同功能多把扳手。 tools-editing">
+    <div class="lesson-finding-head"><span class="lesson-number">08</span><div><div class="lesson-eyebrow">L3 · fact · codex-tools-003</div><h3>工具暴露与分发分离，兼容旧 shell 又不污染模型可见清单</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>工具规划测试确认 unified exec 可把 exec_command/write_stdin 暴露给模型，同时保留隐藏的 legacy shell_command 仅供分发；apply_patch、web search 和动态工具也按环境、模型及 Provider capability gate。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>后台可以保留旧插座做兼容，但模型眼前只摆当前应该用的工具，避免同功能多把扳手。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>迁移期兼容性强，且 prompt tool schema 保持紧凑稳定。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708">codex-rs/core/src/tools/spec_plan_tests.rs · L637–L708 ↗</a></div><pre><code>  637  async fn shell_family_registers_visible_unified_exec_and_hidden_legacy_shell() {
+  638      let plan = probe(|turn| {
+  639          set_features(turn, &amp;[Feature::ShellTool, Feature::UnifiedExec]);
+  640          set_feature(turn, Feature::ShellZshFork, /*enabled*/ false);
+  641          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  642      })
+  643      .await;
+  644  
+  645      plan.assert_visible_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;]);
+  646      plan.assert_visible_lacks(&amp;[&quot;shell_command&quot;]);
+  647      plan.assert_registered_contains(&amp;[&quot;exec_command&quot;, &quot;write_stdin&quot;, &quot;shell_command&quot;]);
+  648      assert_eq!(plan.exposure(&quot;shell_command&quot;), ToolExposure::Hidden);
+  649      assert!(has_parameter(plan.visible_spec(&quot;exec_command&quot;), &quot;shell&quot;));
+  650  }
+  651  
+  652  #[tokio::test]
+  653  async fn shell_zsh_fork_stays_standalone_until_unified_exec_composition_is_enabled() {
+  654      let standalone = probe(|turn| {
+  655          set_features(turn, &amp;[Feature::ShellTool, Feature::UnifiedExec]);
+  656          set_feature(turn, Feature::ShellZshFork, /*enabled*/ true);
+  657          set_feature(turn, Feature::UnifiedExecZshFork, /*enabled*/ false);
+  658          turn.model_info.shell_type = ConfigShellToolType::ShellCommand;
+  659      })
+  660      .await;
+  661  
+      … 36 lines omitted; exact range 637–708 …
+  698      let plan = probe(|turn| {
+  699          set_features(
+  700              turn,
+  701              &amp;[
+  702                  Feature::ShellTool,
+  703                  Feature::UnifiedExec,
+  704                  Feature::ShellZshFork,
+  705                  Feature::UnifiedExecZshFork,
+  706              ],
+  707          );
+  708          turn.unified_exec_shell_mode =</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>test</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708"><code>codex-rs/core/src/tools/spec_plan_tests.rs:637–708</code></a><small>unified exec 与隐藏 legacy shell。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan.rs#L310-L328"><code>codex-rs/core/src/tools/spec_plan.rs:310–328</code></a><small>web search capability gate。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan.rs#L917-L936"><code>codex-rs/core/src/tools/spec_plan.rs:917–936</code></a><small>动态工具与 namespace handler。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 4</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="context" data-chapter><div class="module-kicker">M05 · CONTEXT</div><h2>上下文：有限窗口怎样装下长任务</h2><p class="section-question">当对话、工具输出、计划和记忆越来越多，系统怎样决定留下什么、折叠什么、放到哪里？</p><div class="analogy"><b>先用一个生活比喻</b><p>上下文不是聊天记录，而是一张会整理的工作台：常用零件放桌面，旧材料装进档案盒，必要时只留下索引卡。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>像有版本号的账本：读取者共享同一份快照，真要改时才复制，且每笔工具调用都要能对上回执。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>历史是带版本号的 Copy-on-Write 账本，不是随手拼接的消息数组</td><td><code>codex-rs/core/src/context_manager/history.rs:38</code></td><td>像有版本号的账本：读取者共享同一份快照，真要改时才复制，且每笔工具调用都要能对上回执。</td></tr><tr><td>上下文裁剪同时维护工具调用配对并计算多模态成本</td><td><code>codex-rs/core/src/context_manager/history.rs:189</code></td><td>剪历史不能只撕掉一页：工具问题和答案必须一起处理；图片、音频和加密内容也不能当作零体积。</td></tr><tr><td>本地压缩会自救：压缩请求自身超限时逐项删旧记录再重试</td><td><code>codex-rs/core/src/compact.rs:240</code></td><td>连“请帮我整理行李”这句话都塞不进去时，它会先扔掉最旧且成对的票据，直到能完成整理。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-context-001" data-search="历史是带版本号的 copy-on-write 账本，不是随手拼接的消息数组 contextmanager 用 arc&lt;vec&lt;responseitem&gt;&gt; 保存历史并维护 history_version、token info、reference context 和 world-state baseline；写入前过滤非 api item、截断并在取 prompt 时规范化。 像有版本号的账本：读取者共享同一份快照，真要改时才复制，且每笔工具调用都要能对上回执。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">09</span><div><div class="lesson-eyebrow">L1 · fact · codex-context-001</div><h3>历史是带版本号的 Copy-on-Write 账本，不是随手拼接的消息数组</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>ContextManager 用 Arc&lt;Vec&lt;ResponseItem&gt;&gt; 保存历史并维护 history_version、token info、reference context 和 world-state baseline；写入前过滤非 API item、截断并在取 prompt 时规范化。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>像有版本号的账本：读取者共享同一份快照，真要改时才复制，且每笔工具调用都要能对上回执。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>适合并发读取和回滚，也让 compaction、fork 与增量世界状态有明确一致性边界。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L38-L60">codex-rs/core/src/context_manager/history.rs · L38–L60 ↗</a></div><pre><code>   38  /// Transcript of thread history
+   39  #[derive(Debug, Clone, Default)]
+   40  pub(crate) struct ContextManager {
+   41      /// The oldest items are at the beginning of the vector. Snapshots share the vector until a
+   42      /// caller needs to mutate it, avoiding deep copies for read-only history consumers.
+   43      items: Arc&lt;Vec&lt;ResponseItem&gt;&gt;,
+   44      /// Bumped whenever history is rewritten, such as compaction or rollback.
+   45      history_version: u64,
+   46      token_info: Option&lt;TokenUsageInfo&gt;,
+   47      /// Reference context snapshot used for diffing and producing model-visible
+   48      /// settings update items.
+   49      ///
+   50      /// This is the baseline for the next regular model turn, and may already
+   51      /// match the current turn after context updates are persisted.
+   52      ///
+   53      /// When this is `None`, settings diffing treats the next turn as having no
+   54      /// baseline and emits a full reinjection of context state. Rollback may
+   55      /// also clear this when it trims a mixed initial-context developer bundle
+   56      /// whose non-diff fragments no longer exist in the surviving history.
+   57      reference_context_item: Option&lt;TurnContextItem&gt;,
+   58      /// World state most recently appended to model-visible history.
+   59      world_state_baseline: Option&lt;WorldStateSnapshot&gt;,
+   60  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L38-L60"><code>codex-rs/core/src/context_manager/history.rs:38–60</code></a><small>COW history 与版本/状态字段。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L123-L146"><code>codex-rs/core/src/context_manager/history.rs:123–146</code></a><small>record、truncate 与 normalize。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-context-002" data-search="上下文裁剪同时维护工具调用配对并计算多模态成本 remove_oldest_item 会同步移除对应 call/output 并清 world baseline；normalize 修复配对并过滤不支持的图像/音频，token 估算覆盖 reasoning、compaction、图像、音频和 encrypted content。 剪历史不能只撕掉一页：工具问题和答案必须一起处理；图片、音频和加密内容也不能当作零体积。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">10</span><div><div class="lesson-eyebrow">L1 · fact · codex-context-002</div><h3>上下文裁剪同时维护工具调用配对并计算多模态成本</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>remove_oldest_item 会同步移除对应 call/output 并清 world baseline；normalize 修复配对并过滤不支持的图像/音频，token 估算覆盖 reasoning、compaction、图像、音频和 encrypted content。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>剪历史不能只撕掉一页：工具问题和答案必须一起处理；图片、音频和加密内容也不能当作零体积。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>上下文预算比纯文本字符计数可靠，降低 Provider 因协议不完整而拒绝请求的概率。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L189-L248">codex-rs/core/src/context_manager/history.rs · L189–L248 ↗</a></div><pre><code>  189      pub(crate) fn remove_first_item(&amp;mut self) {
+  190          if !self.items.is_empty() {
+  191              // Remove the oldest item (front of the list). Items are ordered from
+  192              // oldest → newest, so index 0 is the first entry recorded.
+  193              let items = Arc::make_mut(&amp;mut self.items);
+  194              let removed = items.remove(0);
+  195              // If the removed item participates in a call/output pair, also remove
+  196              // its corresponding counterpart to keep the invariants intact without
+  197              // running a full normalization pass.
+  198              normalize::remove_corresponding_for(items, &amp;removed);
+  199              self.world_state_baseline = None;
+  200          }
+  201      }
+  202  
+  203      pub(crate) fn replace(&amp;mut self, items: Vec&lt;ResponseItem&gt;) {
+  204          self.items = Arc::new(items);
+  205          self.history_version = self.history_version.saturating_add(1);
+  206          self.world_state_baseline = None;
+  207      }
+  208  
+  209      /// Drop the last `num_turns` instruction turns from this history.
+  210      ///
+  211      /// Instruction turns are history messages that should behave like a new prompt boundary:
+  212      /// ordinary user messages and structured assistant inter-agent instructions.
+  213      ///
+      … 24 lines omitted; exact range 189–248 …
+  238          let mut cut_idx = if n_from_end &gt;= user_positions.len() {
+  239              first_instruction_turn_idx
+  240          } else {
+  241              user_positions[user_positions.len() - n_from_end]
+  242          };
+  243  
+  244          cut_idx =
+  245              self.trim_pre_turn_context_updates(&amp;snapshot, first_instruction_turn_idx, cut_idx);
+  246  
+  247          self.replace(snapshot[..cut_idx].to_vec());
+  248      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L189-L248"><code>codex-rs/core/src/context_manager/history.rs:189–248</code></a><small>成对删除、替换和回滚。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L295-L386"><code>codex-rs/core/src/context_manager/history.rs:295–386</code></a><small>usage、normalize 与工具输出截断。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/context_manager/history.rs#L493-L558"><code>codex-rs/core/src/context_manager/history.rs:493–558</code></a><small>模型可见 token 估算。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-context-003" data-search="本地压缩会自救：压缩请求自身超限时逐项删旧记录再重试 compact 使用模型生成摘要；若压缩调用本身超出窗口，就删除最老 item 及其配对继续尝试，成功后保留真实 user 消息、插入摘要前缀、推进窗口并重算 usage。 连“请帮我整理行李”这句话都塞不进去时，它会先扔掉最旧且成对的票据，直到能完成整理。 context-compaction">
+    <div class="lesson-finding-head"><span class="lesson-number">11</span><div><div class="lesson-eyebrow">L1 · fact · codex-context-003</div><h3>本地压缩会自救：压缩请求自身超限时逐项删旧记录再重试</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>compact 使用模型生成摘要；若压缩调用本身超出窗口，就删除最老 item 及其配对继续尝试，成功后保留真实 user 消息、插入摘要前缀、推进窗口并重算 usage。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>连“请帮我整理行李”这句话都塞不进去时，它会先扔掉最旧且成对的票据，直到能完成整理。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>长会话更耐用；源码也明确提示多次摘要会逐步降低准确性。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/compact.rs#L240-L318">codex-rs/core/src/compact.rs · L240–L318 ↗</a></div><pre><code>  240  async fn run_compact_task_inner_impl(
+  241      sess: Arc&lt;Session&gt;,
+  242      turn_context: Arc&lt;TurnContext&gt;,
+  243      input: Vec&lt;UserInput&gt;,
+  244      initial_context_injection: InitialContextInjection,
+  245      compaction_metadata: CompactionTurnMetadata,
+  246  ) -&gt; CodexResult&lt;String&gt; {
+  247      let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
+  248      sess.emit_turn_item_started(&amp;turn_context, &amp;compaction_item)
+  249          .await;
+  250      let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
+  251  
+  252      let mut history = sess.clone_history().await;
+  253      history.record_items(
+  254          &amp;[initial_input_for_turn.into()],
+  255          turn_context.model_info.truncation_policy.into(),
+  256      );
+  257  
+  258      let max_retries = turn_context.provider.info().stream_max_retries();
+  259      let mut retries = 0;
+  260      let mut client_session = sess.services.model_client.new_session();
+  261      // Reuse one client session so turn-scoped state (sticky routing, websocket incremental
+  262      // request tracking)
+  263      // survives retries within this compact turn.
+  264      let window_id = sess.current_window_id().await;
+      … 43 lines omitted; exact range 240–318 …
+  308              }
+  309              Err(e) if matches!(e.details(), CodexErrorDetails::ContextWindowExceeded) =&gt; {
+  310                  if turn_input_len &gt; 1 {
+  311                      // Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact.
+  312                      error!(
+  313                          &quot;Context window exceeded while compacting; removing oldest history item. Error: {e}&quot;
+  314                      );
+  315                      history.remove_first_item();
+  316                      retries = 0;
+  317                      continue;
+  318                  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/compact.rs#L240-L318"><code>codex-rs/core/src/compact.rs:240–318</code></a><small>compact overflow 自救与重试。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/compact.rs#L319-L392"><code>codex-rs/core/src/compact.rs:319–392</code></a><small>摘要替换、窗口推进和准确性警告。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 5</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="security" data-chapter><div class="module-kicker">M06 · SECURITY</div><h2>权限与沙箱：能做什么，在哪里做</h2><p class="section-question">审批按钮、规则引擎、容器和操作系统沙箱分别解决什么问题？为什么“问过用户”不等于“隔离了风险”？</p><div class="analogy"><b>先用一个生活比喻</b><p>审批像门卫问你有没有预约，沙箱像把访客关在指定房间；前者决定是否放行，后者限制放行后能摸到什么。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>一条轴决定要不要敲门，另一条轴决定进门后活动范围；“不用问”不等于“拥有整台机器”。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>审批策略把“何时问”与“允许做什么”分成两条轴</td><td><code>codex-rs/protocol/src/protocol.rs:890</code></td><td>一条轴决定要不要敲门，另一条轴决定进门后活动范围；“不用问”不等于“拥有整台机器”。</td></tr><tr><td>审批缺失默认中止，且可授予一次、本会话或规则/网络修订</td><td><code>codex-rs/core/src/session/mod.rs:2295</code></td><td>授权不是一个“永远允许”按钮；可以只放这次、放本会话、或把精确规则写进政策，没人回答则停下。</td></tr><tr><td>沙箱按平台变换真实进程：macOS Seatbelt、Linux seccomp/bwrap/landlock、Windows restricted token</td><td><code>codex-rs/sandboxing/src/manager.rs:34</code></td><td>不是在提示词里说“请别乱动”，而是在启动进程前给命令套上操作系统能执行的限制器。</td></tr><tr><td>自定义 permission profile 默认从受限文件系统和受限网络开始</td><td><code>codex-rs/core/src/config/permissions.rs:203</code></td><td>自定义政策从“什么都别给”开始逐项开门，而不是先全开再查漏补缺。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-permission-001" data-search="审批策略把“何时问”与“允许做什么”分成两条轴 askforapproval 有 unlesstrusted、onrequest、granular 和 never；sandboxpolicy 独立描述 dangerfullaccess、readonly、externalsandbox 与 workspacewrite。 一条轴决定要不要敲门，另一条轴决定进门后活动范围；“不用问”不等于“拥有整台机器”。 permissions-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">12</span><div><div class="lesson-eyebrow">L2 · fact · codex-permission-001</div><h3>审批策略把“何时问”与“允许做什么”分成两条轴</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>AskForApproval 有 UnlessTrusted、OnRequest、Granular 和 Never；SandboxPolicy 独立描述 DangerFullAccess、ReadOnly、ExternalSandbox 与 WorkspaceWrite。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>一条轴决定要不要敲门，另一条轴决定进门后活动范围；“不用问”不等于“拥有整台机器”。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>企业策略能单独收紧提权频率与文件/网络能力。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L890-L932">codex-rs/protocol/src/protocol.rs · L890–L932 ↗</a></div><pre><code>  890  /// Determines the conditions under which the user is consulted to approve
+  891  /// running the command proposed by Codex.
+  892  #[derive(
+  893      Debug,
+  894      Clone,
+  895      Copy,
+  896      Default,
+  897      PartialEq,
+  898      Eq,
+  899      Hash,
+  900      Serialize,
+  901      Deserialize,
+  902      Display,
+  903      JsonSchema,
+  904      TS,
+  905  )]
+  906  #[serde(rename_all = &quot;kebab-case&quot;)]
+  907  #[strum(serialize_all = &quot;kebab-case&quot;)]
+  908  pub enum AskForApproval {
+  909      /// Under this policy, only &quot;known safe&quot; commands—as determined by
+  910      /// `is_safe_command()`—that **only read files** are auto‑approved.
+  911      /// Everything else will ask the user to approve.
+  912      #[serde(rename = &quot;untrusted&quot;)]
+  913      #[strum(serialize = &quot;untrusted&quot;)]
+  914      UnlessTrusted,
+      … 7 lines omitted; exact range 890–932 …
+  922      ///
+  923      /// When a field is `true`, commands in that category are allowed. When it
+  924      /// is `false`, those requests are automatically rejected instead of shown
+  925      /// to the user.
+  926      #[strum(serialize = &quot;granular&quot;)]
+  927      Granular(GranularApprovalConfig),
+  928  
+  929      /// Never ask the user to approve commands. Failures are immediately returned
+  930      /// to the model, and never escalated to the user for approval.
+  931      Never,
+  932  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L890-L932"><code>codex-rs/protocol/src/protocol.rs:890–932</code></a><small>审批策略枚举。</small></li><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L995-L1043"><code>codex-rs/protocol/src/protocol.rs:995–1043</code></a><small>legacy sandbox policy 枚举。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-permission-002" data-search="审批缺失默认中止，且可授予一次、本会话或规则/网络修订 命令审批包含 command、cwd、reason、network amendment、execpolicy amendment、additional permissions 和 plugin provenance；等待通道消失时默认 abort。reviewdecision 支持单次、session、execpolicy/network amendment、拒绝、超时和 abort。 授权不是一个“永远允许”按钮；可以只放这次、放本会话、或把精确规则写进政策，没人回答则停下。 permissions-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">13</span><div><div class="lesson-eyebrow">L1 · fact · codex-permission-002</div><h3>审批缺失默认中止，且可授予一次、本会话或规则/网络修订</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>命令审批包含 command、cwd、reason、network amendment、execpolicy amendment、additional permissions 和 plugin provenance；等待通道消失时默认 Abort。ReviewDecision 支持单次、session、execpolicy/network amendment、拒绝、超时和 abort。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>授权不是一个“永远允许”按钮；可以只放这次、放本会话、或把精确规则写进政策，没人回答则停下。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>失败关闭且授权可结构化沉淀，适合审计。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L2295-L2376">codex-rs/core/src/session/mod.rs · L2295–L2376 ↗</a></div><pre><code> 2295      pub async fn request_command_approval(
+ 2296          &amp;self,
+ 2297          turn_context: &amp;TurnContext,
+ 2298          call_id: String,
+ 2299          approval_id: Option&lt;String&gt;,
+ 2300          environment_id: Option&lt;String&gt;,
+ 2301          command: Vec&lt;String&gt;,
+ 2302          cwd: AbsolutePathBuf,
+ 2303          reason: Option&lt;String&gt;,
+ 2304          network_approval_context: Option&lt;NetworkApprovalContext&gt;,
+ 2305          proposed_execpolicy_amendment: Option&lt;ExecPolicyAmendment&gt;,
+ 2306          additional_permissions: Option&lt;AdditionalPermissionProfile&gt;,
+ 2307          available_decisions: Option&lt;Vec&lt;ReviewDecision&gt;&gt;,
+ 2308          plugin_attribution_override: Option&lt;PluginCommandAttribution&gt;,
+ 2309      ) -&gt; ReviewDecision {
+ 2310          let _elicitation = self.services.elicitations.register();
+ 2311          //  command-level approvals use `call_id`.
+ 2312          // `approval_id` is only present for subcommand callbacks (execve intercept)
+ 2313          let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
+ 2314          // Add the tx_approve callback to the map before sending the request.
+ 2315          let (tx_approve, rx_approve) = oneshot::channel();
+ 2316          let prev_entry = {
+ 2317              let mut active = self.active_turn.lock().await;
+ 2318              match active.as_mut() {
+ 2319                  Some(at) =&gt; {
+      … 46 lines omitted; exact range 2295–2376 …
+ 2366              cwd,
+ 2367              reason,
+ 2368              network_approval_context,
+ 2369              proposed_execpolicy_amendment,
+ 2370              proposed_network_policy_amendments,
+ 2371              additional_permissions,
+ 2372              available_decisions: Some(available_decisions),
+ 2373              parsed_cmd,
+ 2374          });
+ 2375          self.send_event(turn_context, event).await;
+ 2376          rx_approve.await.unwrap_or(ReviewDecision::Abort)</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L2295-L2376"><code>codex-rs/core/src/session/mod.rs:2295–2376</code></a><small>命令审批请求与默认 Abort。</small></li><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/protocol/src/protocol.rs#L4094-L4135"><code>codex-rs/protocol/src/protocol.rs:4094–4135</code></a><small>ReviewDecision 完整类型。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-sandbox-001" data-search="沙箱按平台变换真实进程：macos seatbelt、linux seccomp/bwrap/landlock、windows restricted token sandboxmanager 将抽象策略映射到平台后端；auto 只在策略要求时选沙箱，require/forbid 明确覆盖选择，随后把命令变换为对应 launcher。 不是在提示词里说“请别乱动”，而是在启动进程前给命令套上操作系统能执行的限制器。 permissions-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">14</span><div><div class="lesson-eyebrow">L1 · fact · codex-sandbox-001</div><h3>沙箱按平台变换真实进程：macOS Seatbelt、Linux seccomp/bwrap/landlock、Windows restricted token</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>SandboxManager 将抽象策略映射到平台后端；Auto 只在策略要求时选沙箱，Require/Forbid 明确覆盖选择，随后把命令变换为对应 launcher。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>不是在提示词里说“请别乱动”，而是在启动进程前给命令套上操作系统能执行的限制器。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>强度取决于平台与后端可用性；报告不把 unsupported 平台推断成同等隔离。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L34-L73">codex-rs/sandboxing/src/manager.rs · L34–L73 ↗</a></div><pre><code>   34  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+   35  pub enum SandboxType {
+   36      None,
+   37      MacosSeatbelt,
+   38      LinuxSeccomp,
+   39      WindowsRestrictedToken,
+   40  }
+   41  
+   42  impl SandboxType {
+   43      pub fn as_metric_tag(self) -&gt; &amp;&#39;static str {
+   44          match self {
+   45              SandboxType::None =&gt; &quot;none&quot;,
+   46              SandboxType::MacosSeatbelt =&gt; &quot;seatbelt&quot;,
+   47              SandboxType::LinuxSeccomp =&gt; &quot;seccomp&quot;,
+   48              SandboxType::WindowsRestrictedToken =&gt; &quot;windows_sandbox&quot;,
+   49          }
+   50      }
+   51  }
+   52  
+   53  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+   54  pub enum SandboxablePreference {
+   55      Auto,
+   56      Require,
+   57      Forbid,
+   58  }
+      … 4 lines omitted; exact range 34–73 …
+   63      } else if cfg!(target_os = &quot;linux&quot;) {
+   64          Some(SandboxType::LinuxSeccomp)
+   65      } else if cfg!(target_os = &quot;windows&quot;) {
+   66          if windows_sandbox_enabled {
+   67              Some(SandboxType::WindowsRestrictedToken)
+   68          } else {
+   69              None
+   70          }
+   71      } else {
+   72          None
+   73      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L34-L73"><code>codex-rs/sandboxing/src/manager.rs:34–73</code></a><small>平台 sandbox 类型映射。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/sandboxing/src/manager.rs#L280-L367"><code>codex-rs/sandboxing/src/manager.rs:280–367</code></a><small>Auto/Require/Forbid 选择与命令变换。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-sandbox-002" data-search="自定义 permission profile 默认从受限文件系统和受限网络开始 custom profile 编译器先建立 restricted filesystem 与 restricted network，再应用条目；网络只有显式 true 才启用，workspacewrite 默认也关闭网络，并保护 .git hooks 等元数据子路径。 自定义政策从“什么都别给”开始逐项开门，而不是先全开再查漏补缺。 permissions-sandbox">
+    <div class="lesson-finding-head"><span class="lesson-number">15</span><div><div class="lesson-eyebrow">L1 · fact · codex-sandbox-002</div><h3>自定义 permission profile 默认从受限文件系统和受限网络开始</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>custom profile 编译器先建立 restricted filesystem 与 restricted network，再应用条目；网络只有显式 true 才启用，WorkspaceWrite 默认也关闭网络，并保护 .git hooks 等元数据子路径。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>自定义政策从“什么都别给”开始逐项开门，而不是先全开再查漏补缺。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>默认拒绝更适合作为组织级安全基线。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L203-L213">codex-rs/core/src/config/permissions.rs · L203–L213 ↗</a></div><pre><code>  203  fn extensible_builtin_parent_profile(profile_name: &amp;str) -&gt; Option&lt;PermissionProfileToml&gt; {
+  204      let file_system = match profile_name {
+  205          BUILT_IN_READ_ONLY_PROFILE =&gt; FileSystemSandboxPolicy::read_only(),
+  206          BUILT_IN_WORKSPACE_PROFILE =&gt; FileSystemSandboxPolicy::workspace_write(
+  207              &amp;[],
+  208              /*exclude_tmpdir_env_var*/ false,
+  209              /*exclude_slash_tmp*/ false,
+  210          ),
+  211          _ =&gt; return None,
+  212      };
+  213      Some(permission_profile_toml_from_file_system_policy(file_system))</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>config</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L203-L213"><code>codex-rs/core/src/config/permissions.rs:203–213</code></a><small>内建 read-only/workspace profile。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L347-L407"><code>codex-rs/core/src/config/permissions.rs:347–407</code></a><small>自定义 profile 编译与 glob 警告。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/permissions.rs#L507-L520"><code>codex-rs/core/src/config/permissions.rs:507–520</code></a><small>网络显式开启。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 6</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="ecosystem" data-chapter><div class="module-kicker">M07 · ECOSYSTEM</div><h2>指令、MCP、Skills 与插件：能力如何接进来</h2><p class="section-question">一条系统指令、一个 Skill、一个 MCP server 和一个插件，分别在什么时候进入上下文和执行路径？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像给工作室接设备：说明书不是设备，设备也不等于电源；成熟 Harness 会分别治理发现、信任、加载、调用和卸载。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>它不是每轮临时扫一遍外接工具，而是维护一套有版本、有健康状态、有认证身份的连接池。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>MCP 是带复用、认证、required gate 和 catalog revision 的运行时</td><td><code>codex-rs/codex-mcp/src/connection_manager.rs:66</code></td><td>它不是每轮临时扫一遍外接工具，而是维护一套有版本、有健康状态、有认证身份的连接池。</td></tr><tr><td>模型只能看到显式可见且能绑定到同一目录版本的 MCP 工具</td><td><code>codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs:34</code></td><td>展示给模型的工具名和真正执行它的连接必须来自同一版目录，不能拿新版菜单去点旧版厨房。</td></tr><tr><td>AGENTS.md 从项目根向 cwd 分层合并，局部 override 优先且有总字节预算</td><td><code>codex-rs/core/src/agents_md.rs:1</code></td><td>公司规章先读，走进子目录后再叠加本地规章；同一层的 override 像贴在门上的最新通知。</td></tr><tr><td>Skills、plugins 和 extensions 都在初始上下文构建期受预算与来源控制</td><td><code>codex-rs/core/src/session/mod.rs:3336</code></td><td>扩展不是把所有说明一股脑塞进提示词，而是先做预算，再按可信来源和消息层级装配。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-mcp-001" data-search="mcp 是带复用、认证、required gate 和 catalog revision 的运行时 mcpconnectionset 同时管理 server、required servers、工具目录版本、codex apps cache、plugin provenance、工具命名前缀和 elicitation；连接配置/oauth 凭据一致且存活时才复用。 它不是每轮临时扫一遍外接工具，而是维护一套有版本、有健康状态、有认证身份的连接池。 mcp-connectors">
+    <div class="lesson-finding-head"><span class="lesson-number">16</span><div><div class="lesson-eyebrow">L1 · fact · codex-mcp-001</div><h3>MCP 是带复用、认证、required gate 和 catalog revision 的运行时</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>McpConnectionSet 同时管理 server、required servers、工具目录版本、Codex Apps cache、plugin provenance、工具命名前缀和 elicitation；连接配置/OAuth 凭据一致且存活时才复用。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它不是每轮临时扫一遍外接工具，而是维护一套有版本、有健康状态、有认证身份的连接池。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>工具清单可稳定捕获到 step snapshot，连接变化不会悄悄污染正在执行的一步。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117">codex-rs/codex-mcp/src/connection_manager.rs · L66–L117 ↗</a></div><pre><code>   66  pub(crate) struct McpServerConnection {
+   67      identity: Option&lt;McpServerConnectionIdentity&gt;,
+   68      client: AsyncManagedClient,
+   69  }
+   70  
+   71  impl McpServerConnection {
+   72      async fn reusable_client(
+   73          &amp;self,
+   74          desired: &amp;McpServerConnectionIdentity,
+   75      ) -&gt; Option&lt;ManagedClient&gt; {
+   76          let current = self.identity.as_ref()?;
+   77          if !current.has_same_connection_config(desired) {
+   78              return None;
+   79          }
+   80          if !self.client.startup_complete.load(Ordering::Acquire) {
+   81              return None;
+   82          }
+   83          let client = self.client.client().await.ok()?;
+   84          if client.client.is_closed().await {
+   85              return None;
+   86          }
+   87          let Ok(desired_credentials) = desired.oauth_credentials() else {
+   88              return Some(client);
+   89          };
+   90          let reusable = match client.client.managed_oauth_credentials().await {
+      … 16 lines omitted; exact range 66–117 …
+  107      fn cancel_startup(&amp;self) {
+  108          if !self.client.startup_complete.load(Ordering::Acquire) {
+  109              self.client.cancel_token.cancel();
+  110          }
+  111      }
+  112  }
+  113  
+  114  impl Drop for McpServerConnection {
+  115      fn drop(&amp;mut self) {
+  116          self.client.cancel_token.cancel();
+  117      }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L66-L117"><code>codex-rs/codex-mcp/src/connection_manager.rs:66–117</code></a><small>连接复用、OAuth 一致性和取消。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager.rs#L143-L199"><code>codex-rs/codex-mcp/src/connection_manager.rs:143–199</code></a><small>连接集状态、required server 与 catalog revision。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-mcp-002" data-search="模型只能看到显式可见且能绑定到同一目录版本的 mcp 工具 tool_catalog 过滤 ui visibility，不含 metadata 时默认可见；capture_binding 在读锁下捕获 revision、ready client、过滤后的 tools 和 prepared calls，无法精确绑定的工具被省略。 展示给模型的工具名和真正执行它的连接必须来自同一版目录，不能拿新版菜单去点旧版厨房。 mcp-connectors">
+    <div class="lesson-finding-head"><span class="lesson-number">17</span><div><div class="lesson-eyebrow">L1 · fact · codex-mcp-002</div><h3>模型只能看到显式可见且能绑定到同一目录版本的 MCP 工具</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>tool_catalog 过滤 UI visibility，不含 metadata 时默认可见；capture_binding 在读锁下捕获 revision、ready client、过滤后的 tools 和 prepared calls，无法精确绑定的工具被省略。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>展示给模型的工具名和真正执行它的连接必须来自同一版目录，不能拿新版菜单去点旧版厨房。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>减少热刷新导致的工具错配和 TOCTOU 风险。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55">codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs · L34–L55 ↗</a></div><pre><code>   34  /// Returns whether a tool may be included in model-facing tool declarations.
+   35  ///
+   36  /// Tools without visibility metadata remain visible. Tools with visibility
+   37  /// metadata are hidden unless they explicitly include `model`.
+   38  ///
+   39  /// &lt;https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx#resource-discovery&gt;
+   40  pub fn tool_is_model_visible(tool: &amp;ToolInfo) -&gt; bool {
+   41      let Some(visibility) = tool
+   42          .tool
+   43          .meta
+   44          .as_deref()
+   45          .and_then(|meta| meta.get(MCP_UI_META_KEY))
+   46          .and_then(serde_json::Value::as_object)
+   47          .and_then(|ui| ui.get(MCP_UI_VISIBILITY_META_KEY))
+   48          .and_then(serde_json::Value::as_array)
+   49      else {
+   50          return true;
+   51      };
+   52      visibility
+   53          .iter()
+   54          .any(|target| target.as_str() == Some(MCP_UI_MODEL_VISIBILITY))
+   55  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L34-L55"><code>codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs:34–55</code></a><small>model visibility 规则。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs#L127-L230"><code>codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs:127–230</code></a><small>revision 锁、ready client 与 prepared call 绑定。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-instructions-001" data-search="agents.md 从项目根向 cwd 分层合并，局部 override 优先且有总字节预算 发现逻辑以 project root marker 截断上行范围，从根到 cwd 每层最多选 agents.override.md、agents.md 或 fallback 文件之一；按总预算读取，超出部分截断。 公司规章先读，走进子目录后再叠加本地规章；同一层的 override 像贴在门上的最新通知。 instructions-skills-plugins-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">18</span><div><div class="lesson-eyebrow">L1 · fact · codex-instructions-001</div><h3>AGENTS.md 从项目根向 cwd 分层合并，局部 override 优先且有总字节预算</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>发现逻辑以 project root marker 截断上行范围，从根到 cwd 每层最多选 AGENTS.override.md、AGENTS.md 或 fallback 文件之一；按总预算读取，超出部分截断。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>公司规章先读，走进子目录后再叠加本地规章；同一层的 override 像贴在门上的最新通知。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>目录作用域明确，但超预算时越靠后的深层说明更可能被截断，需要可视化告警。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agents_md.rs#L1-L16">codex-rs/core/src/agents_md.rs · L1–L16 ↗</a></div><pre><code>    1  //! AGENTS.md discovery and user instruction assembly.
+    2  //!
+    3  //! Project-level documentation is primarily stored in files named `AGENTS.md`.
+    4  //! Additional fallback filenames can be configured via `project_doc_fallback_filenames`.
+    5  //! We include the concatenation of all files found along the path from the
+    6  //! project root to the current working directory as follows:
+    7  //!
+    8  //! 1.  Determine the project root by walking upwards from the current working
+    9  //!     directory until a configured `project_root_markers` entry is found.
+   10  //!     When `project_root_markers` is unset, the default marker list is used
+   11  //!     (`.git`). If no marker is found, only the current working directory is
+   12  //!     considered. An empty marker list disables parent traversal.
+   13  //! 2.  Collect every `AGENTS.md` found from the project root down to the
+   14  //!     current working directory (inclusive) and concatenate their contents in
+   15  //!     that order.
+   16  //! 3.  We do **not** walk past the project root.</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agents_md.rs#L1-L16"><code>codex-rs/core/src/agents_md.rs:1–16</code></a><small>根到 cwd 的发现语义。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agents_md.rs#L89-L150"><code>codex-rs/core/src/agents_md.rs:89–150</code></a><small>总字节预算与截断。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agents_md.rs#L207-L247"><code>codex-rs/core/src/agents_md.rs:207–247</code></a><small>候选文件优先级。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-extension-001" data-search="skills、plugins 和 extensions 都在初始上下文构建期受预算与来源控制 build_initial_context 按 context window 计算 skill metadata budget，超限发 warning；plugins 先按配置加载，再生成推荐插件上下文；extension contributors 可注入 developer、contextual user 或独立 developer fragment。 扩展不是把所有说明一股脑塞进提示词，而是先做预算，再按可信来源和消息层级装配。 instructions-skills-plugins-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">19</span><div><div class="lesson-eyebrow">L1 · fact · codex-extension-001</div><h3>Skills、plugins 和 extensions 都在初始上下文构建期受预算与来源控制</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>build_initial_context 按 context window 计算 skill metadata budget，超限发 warning；plugins 先按配置加载，再生成推荐插件上下文；extension contributors 可注入 developer、contextual user 或独立 developer fragment。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>扩展不是把所有说明一股脑塞进提示词，而是先做预算，再按可信来源和消息层级装配。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>可扩展性强且照顾 prompt cache；插件推荐与已安装插件被区分。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L3336-L3397">codex-rs/core/src/session/mod.rs · L3336–L3397 ↗</a></div><pre><code> 3336      pub(crate) async fn build_initial_context_with_world_state(
+ 3337          &amp;self,
+ 3338          turn_context: &amp;TurnContext,
+ 3339          world_state: &amp;WorldState,
+ 3340      ) -&gt; Vec&lt;ResponseItem&gt; {
+ 3341          let mut developer_sections = Vec::&lt;String&gt;::with_capacity(8);
+ 3342          let mut contextual_user_sections = Vec::&lt;String&gt;::with_capacity(2);
+ 3343          let mut separate_developer_sections = Vec::&lt;String&gt;::new();
+ 3344          let (session_source, auto_compact_window_ids) = {
+ 3345              let state = self.state.lock().await;
+ 3346              (
+ 3347                  state.session_configuration.session_source.clone(),
+ 3348                  state.auto_compact_window_ids(),
+ 3349              )
+ 3350          };
+ 3351          let separate_guardian_developer_message =
+ 3352              crate::guardian::is_guardian_reviewer_source(&amp;session_source);
+ 3353          // Keep the guardian policy prompt out of the aggregated developer bundle so it
+ 3354          // stays isolated as its own top-level developer message for guardian subagents.
+ 3355          if !separate_guardian_developer_message
+ 3356              &amp;&amp; let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
+ 3357              &amp;&amp; !developer_instructions.is_empty()
+ 3358          {
+ 3359              developer_sections.push(developer_instructions.to_string());
+ 3360          }
+      … 26 lines omitted; exact range 3336–3397 …
+ 3387                          msg: EventMsg::Warning(WarningEvent {
+ 3388                              message: warning_message,
+ 3389                          }),
+ 3390                      })
+ 3391                      .await;
+ 3392                  }
+ 3393                  if !host_catalog_in_world_state {
+ 3394                      developer_sections.push(skills_instructions.render());
+ 3395                  }
+ 3396              }
+ 3397          }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L3336-L3397"><code>codex-rs/core/src/session/mod.rs:3336–3397</code></a><small>skills 预算、warning 和 developer 注入。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/session/mod.rs#L3398-L3440"><code>codex-rs/core/src/session/mod.rs:3398–3440</code></a><small>plugins 推荐与 extension contributors。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-hooks-001" data-search="hooks 覆盖 session、prompt、permission、tool、compact、stop 与 subagent 生命周期 runtime 为 session/subagent start、pretooluse、permissionrequest、posttooluse、userpromptsubmit 等构造稳定 payload；hook 可阻断、改写输入或注入额外上下文，完成事件同时进入指标和 analytics。 钩子既能当门卫，也能当翻译器和旁路记录员；每次执行都有开始、结束和耗时记录。 instructions-skills-plugins-hooks">
+    <div class="lesson-finding-head"><span class="lesson-number">20</span><div><div class="lesson-eyebrow">L1 · fact · codex-hooks-001</div><h3>Hooks 覆盖 session、prompt、permission、tool、compact、stop 与 subagent 生命周期</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>runtime 为 session/subagent start、PreToolUse、PermissionRequest、PostToolUse、UserPromptSubmit 等构造稳定 payload；hook 可阻断、改写输入或注入额外上下文，完成事件同时进入指标和 analytics。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>钩子既能当门卫，也能当翻译器和旁路记录员；每次执行都有开始、结束和耗时记录。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>组织可插入治理逻辑，但 hook 本身应被当作有权限的代码并受项目信任策略保护。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/hook_runtime.rs#L103-L220">codex-rs/core/src/hook_runtime.rs · L103–L220 ↗</a></div><pre><code>  103  pub(crate) async fn run_pending_session_start_hooks(
+  104      sess: &amp;Arc&lt;Session&gt;,
+  105      turn_context: &amp;Arc&lt;TurnContext&gt;,
+  106  ) -&gt; bool {
+  107      while let Some(session_start_source) = sess.take_pending_session_start_source().await {
+  108          // Pending session-start hooks are reused to dispatch thread-spawn subagent
+  109          // starts. Other subagent sessions are internal/system work and do not run
+  110          // start hooks.
+  111          let target = match &amp;turn_context.session_source {
+  112              SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_role, .. })
+  113                  if matches!(
+  114                      session_start_source,
+  115                      codex_hooks::SessionStartSource::Startup
+  116                  ) =&gt;
+  117              {
+  118                  let context = subagent_hook_context(sess, agent_role);
+  119                  StartHookTarget::SubagentStart {
+  120                      turn_id: turn_context.sub_id.clone(),
+  121                      agent_id: context.agent_id,
+  122                      agent_type: context.agent_type,
+  123                  }
+  124              }
+  125              SessionSource::SubAgent(_) =&gt; return false,
+  126              _ =&gt; StartHookTarget::SessionStart {
+  127                  source: session_start_source,
+      … 82 lines omitted; exact range 103–220 …
+  210      {
+  211          PreToolUseHookResult::Blocked(format!(
+  212              &quot;Command blocked by PreToolUse hook: {reason}. Command: {command}&quot;
+  213          ))
+  214      } else {
+  215          PreToolUseHookResult::Blocked(format!(
+  216              &quot;Tool call blocked by PreToolUse hook: {reason}. Tool: {}&quot;,
+  217              tool_name.name()
+  218          ))
+  219      }
+  220  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/hook_runtime.rs#L103-L220"><code>codex-rs/core/src/hook_runtime.rs:103–220</code></a><small>session/subagent start 与 PreToolUse。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/hook_runtime.rs#L222-L285"><code>codex-rs/core/src/hook_runtime.rs:222–285</code></a><small>PermissionRequest 与 PostToolUse。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/hook_runtime.rs#L649-L705"><code>codex-rs/core/src/hook_runtime.rs:649–705</code></a><small>hook events、metrics 与 analytics。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 7</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="collaboration" data-chapter><div class="module-kicker">M08 · COLLABORATION</div><h2>子 Agent：把一个大任务拆成可治理的协作</h2><p class="section-question">什么时候是普通工具调用，什么时候才算子 Agent？子 Agent 的上下文、预算、取消和结果怎样回到父 Agent？</p><div class="analogy"><b>先用一个生活比喻</b><p>不是把同事叫来聊天就叫协作；真正的协作要有工单、权限、截止时间、交付物和回收机制。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>每个子 Agent 都有自己的会话账本，但兄弟们共用一张组织架构表、并发配额和总预算。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>多 Agent 是共享控制面的线程树，不是主循环里的递归函数</td><td><code>codex-rs/core/src/agent/control.rs:70</code></td><td>每个子 Agent 都有自己的会话账本，但兄弟们共用一张组织架构表、并发配额和总预算。</td></tr><tr><td>fork 可选全历史、最近 N 轮或空白；消息可只入队也可触发 turn</td><td><code>codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs:39</code></td><td>派工时可把整本案卷、最近几页或一张白纸交给下属；便签可以只塞进邮箱，也可以按门铃让他立即处理。</td></tr><tr><td>驻留上限与同时执行上限分离，V2 子 Agent 才受执行 limiter</td><td><code>codex-rs/core/src/config/mod.rs:1547</code></td><td>可以让许多子会话留在通讯录里，但只有有限几个同时开工；已经在干活的人收到补充便签不会再算一个工位。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-agent-001" data-search="多 agent 是共享控制面的线程树，不是主循环里的递归函数 每棵 root thread 树共享 agentcontrol、registry、v2 residency、execution limiter 和 rollout budget；spawn 通过 threadmanager 创建独立 thread，子线程继承环境与 exec policy。 每个子 agent 都有自己的会话账本，但兄弟们共用一张组织架构表、并发配额和总预算。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">21</span><div><div class="lesson-eyebrow">L1 · fact · codex-agent-001</div><h3>多 Agent 是共享控制面的线程树，不是主循环里的递归函数</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>每棵 root thread 树共享 AgentControl、registry、V2 residency、execution limiter 和 rollout budget；spawn 通过 ThreadManager 创建独立 thread，子线程继承环境与 exec policy。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>每个子 Agent 都有自己的会话账本，但兄弟们共用一张组织架构表、并发配额和总预算。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>隔离了对话状态，同时能做全树限流、恢复和协作观测。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control.rs#L70-L111">codex-rs/core/src/agent/control.rs · L70–L111 ↗</a></div><pre><code>   70      pub(crate) fork_parent_spawn_call_id: Option&lt;String&gt;,
+   71      pub(crate) fork_mode: Option&lt;SpawnAgentForkMode&gt;,
+   72      pub(crate) parent_thread_id: Option&lt;ThreadId&gt;,
+   73      pub(crate) environments: Option&lt;Vec&lt;TurnEnvironmentSelection&gt;&gt;,
+   74  }
+   75  
+   76  #[derive(Clone, Debug)]
+   77  pub(crate) struct LiveAgent {
+   78      pub(crate) thread_id: ThreadId,
+   79      pub(crate) metadata: AgentMetadata,
+   80      pub(crate) status: AgentStatus,
+   81  }
+   82  
+   83  #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+   84  pub(crate) struct ListedAgent {
+   85      pub(crate) agent_name: String,
+   86      pub(crate) agent_status: AgentStatus,
+   87  }
+   88  
+   89  /// Control-plane handle for multi-agent operations.
+   90  /// `AgentControl` is held by each session (via `SessionServices`). It provides capability to
+   91  /// spawn new agents and the inter-agent communication layer.
+   92  /// An `AgentControl` instance is intended to be created at most once per root thread/session
+   93  /// tree. That same `AgentControl` is then shared with every sub-agent spawned from that root,
+   94  /// which keeps the registry scoped to that root thread rather than the entire `ThreadManager`.
+      … 6 lines omitted; exact range 70–111 …
+  101      /// This is `Weak` to avoid reference cycles and shadow persistence of the form
+  102      /// `ThreadManagerState -&gt; CodexThread -&gt; Session -&gt; SessionServices -&gt; ThreadManagerState`.
+  103      manager: Weak&lt;ThreadManagerState&gt;,
+  104      state: Arc&lt;AgentRegistry&gt;,
+  105      v2_residency: Arc&lt;V2Residency&gt;,
+  106      agent_execution_limiter: Arc&lt;AgentExecutionLimiter&gt;,
+  107      /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
+  108      rollout_budget: Arc&lt;RolloutBudget&gt;,
+  109  }
+  110  
+  111  impl AgentControl {</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control.rs#L70-L111"><code>codex-rs/core/src/agent/control.rs:70–111</code></a><small>root-scoped control plane 状态。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control/spawn.rs#L365-L445"><code>codex-rs/core/src/agent/control/spawn.rs:365–445</code></a><small>spawn、额度、驻留与环境/策略继承。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-agent-002" data-search="fork 可选全历史、最近 n 轮或空白；消息可只入队也可触发 turn spawn_agent v2 解析 fork_turns none/all/正整数，默认 all；send_message 只投递队列，followup 类通信可触发空闲 agent 开新 turn，wait 同时监听 mailbox、steer 和 timeout。 派工时可把整本案卷、最近几页或一张白纸交给下属；便签可以只塞进邮箱，也可以按门铃让他立即处理。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">22</span><div><div class="lesson-eyebrow">L1 · fact · codex-agent-002</div><h3>fork 可选全历史、最近 N 轮或空白；消息可只入队也可触发 turn</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>spawn_agent V2 解析 fork_turns none/all/正整数，默认 all；send_message 只投递队列，followup 类通信可触发空闲 agent 开新 turn，wait 同时监听 mailbox、steer 和 timeout。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>派工时可把整本案卷、最近几页或一张白纸交给下属；便签可以只塞进邮箱，也可以按门铃让他立即处理。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>上下文成本可控，并避免普通消息总是打断正在执行的子任务。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165">codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs · L39–L165 ↗</a></div><pre><code>   39  async fn handle_spawn_agent(
+   40      invocation: ToolInvocation,
+   41  ) -&gt; Result&lt;SpawnAgentResult, FunctionCallError&gt; {
+   42      let ToolInvocation {
+   43          session,
+   44          turn,
+   45          payload,
+   46          call_id,
+   47          ..
+   48      } = invocation;
+   49      let arguments = function_arguments(payload)?;
+   50      let args: SpawnAgentArgs = parse_arguments(&amp;arguments)?;
+   51      let fork_mode = args.fork_mode()?;
+   52      let role_name = args
+   53          .agent_type
+   54          .as_deref()
+   55          .map(str::trim)
+   56          .filter(|role| !role.is_empty());
+   57  
+   58      let message = message_content(args.message)?;
+   59      let session_source = turn.session_source.clone();
+   60      let child_depth = next_thread_spawn_depth(&amp;session_source);
+   61      let mut config =
+   62          build_agent_spawn_config(&amp;session.get_base_instructions().await, turn.as_ref())?;
+   63      if let Some(service_tier) = args.service_tier.as_ref() {
+      … 91 lines omitted; exact range 39–165 …
+  155  
+  156      let hide_agent_metadata = turn.config.multi_agent_v2.hide_spawn_agent_metadata;
+  157      if hide_agent_metadata {
+  158          Ok(SpawnAgentResult::HiddenMetadata { task_name })
+  159      } else {
+  160          Ok(SpawnAgentResult::WithNickname {
+  161              task_name,
+  162              nickname,
+  163          })
+  164      }
+  165  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L39-L165"><code>codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs:39–165</code></a><small>spawn 参数、子配置和 telemetry。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs#L173-L220"><code>codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs:173–220</code></a><small>fork_turns 解析和限制。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs#L37-L118"><code>codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs:37–118</code></a><small>mailbox/steer/timeout wait。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-agent-003" data-search="驻留上限与同时执行上限分离，v2 子 agent 才受执行 limiter v2 的 effective_agent_max_threads 从 max_concurrent_threads_per_session 减去 root；agentexecutionlimiter 只在 v2 subagent 启动新 turn 时检查 active 数，已有 active turn 的消息不重复占槽，guard drop 释放名额。 可以让许多子会话留在通讯录里，但只有有限几个同时开工；已经在干活的人收到补充便签不会再算一个工位。 subagents-collaboration">
+    <div class="lesson-finding-head"><span class="lesson-number">23</span><div><div class="lesson-eyebrow">L1 · fact · codex-agent-003</div><h3>驻留上限与同时执行上限分离，V2 子 Agent 才受执行 limiter</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>V2 的 effective_agent_max_threads 从 max_concurrent_threads_per_session 减去 root；AgentExecutionLimiter 只在 V2 SubAgent 启动新 turn 时检查 active 数，已有 active turn 的消息不重复占槽，guard drop 释放名额。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>可以让许多子会话留在通讯录里，但只有有限几个同时开工；已经在干活的人收到补充便签不会再算一个工位。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>资源治理比单一 agent count 精细，恢复/驻留和运行并发可以独立调优。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560">codex-rs/core/src/config/mod.rs · L1547–L1560 ↗</a></div><pre><code> 1547      pub(crate) fn effective_agent_max_threads(
+ 1548          &amp;self,
+ 1549          multi_agent_version: MultiAgentVersion,
+ 1550      ) -&gt; Option&lt;usize&gt; {
+ 1551          match multi_agent_version {
+ 1552              MultiAgentVersion::V2 =&gt; Some(
+ 1553                  self.multi_agent_v2
+ 1554                      .max_concurrent_threads_per_session
+ 1555                      .saturating_sub(1),
+ 1556              ),
+ 1557              MultiAgentVersion::Disabled | MultiAgentVersion::V1 =&gt; {
+ 1558                  self.agent_max_threads.or(DEFAULT_AGENT_MAX_THREADS)
+ 1559              }
+ 1560          }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>config</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/config/mod.rs#L1547-L1560"><code>codex-rs/core/src/config/mod.rs:1547–1560</code></a><small>V2/legacy 有效线程数计算。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control/execution.rs#L14-L118"><code>codex-rs/core/src/agent/control/execution.rs:14–118</code></a><small>执行 limiter、guard 与适用范围。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 8</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="state" data-chapter><div class="module-kicker">M09 · STATE</div><h2>会话、持久化与观测：让一次运行变成可追溯事实</h2><p class="section-question">如果进程崩了、用户刷新了、任务跑了一夜，系统凭什么恢复并解释“刚才究竟发生了什么”？</p><div class="analogy"><b>先用一个生活比喻</b><p>内存像白板，数据库像目录，append-only journal 像监控录像；可靠 Harness 不只保存最后答案，还保存每次转弯。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>先把每一步写成可重放流水账，后台书记员负责落盘；书记员一旦坏掉，后续调用会记得这次故障而不是假装成功。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>会话采用 JSONL rollout 作为事件事实源，后台 writer 支持 persist、flush 与失败记忆</td><td><code>codex-rs/rollout/src/recorder.rs:93</code></td><td>先把每一步写成可重放流水账，后台书记员负责落盘；书记员一旦坏掉，后续调用会记得这次故障而不是假装成功。</td></tr><tr><td>SQLite 是可查询镜像，并把状态、日志、目标和记忆拆库降低锁竞争</td><td><code>codex-rs/state/src/lib.rs:1</code></td><td>流水账负责忠实记录，SQLite 像索引卡片箱，负责快速搜索；不同类型卡片分柜，避免大家抢同一把锁。</td></tr><tr><td>观测横跨模型、工具、hooks、MCP、rollout 与 SQLite，不只是一份 CLI 日志</td><td><code>codex-rs/core/src/client.rs:74</code></td><td>既能看模型这段花了多久，也能拆出排队、工具处理、钩子、连接器和数据库的时间与故障。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-persistence-001" data-search="会话采用 jsonl rollout 作为事件事实源，后台 writer 支持 persist、flush 与失败记忆 rolloutrecorder 将创建/恢复参数与 rolloutitem 送入后台命令队列；writer task 保存 terminal failure，公开 persist、flush、shutdown acknowledgement。 先把每一步写成可重放流水账，后台书记员负责落盘；书记员一旦坏掉，后续调用会记得这次故障而不是假装成功。 persistence-observability">
+    <div class="lesson-finding-head"><span class="lesson-number">24</span><div><div class="lesson-eyebrow">L1 · fact · codex-persistence-001</div><h3>会话采用 JSONL rollout 作为事件事实源，后台 writer 支持 persist、flush 与失败记忆</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>RolloutRecorder 将创建/恢复参数与 RolloutItem 送入后台命令队列；writer task 保存 terminal failure，公开 Persist、Flush、Shutdown acknowledgement。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>先把每一步写成可重放流水账，后台书记员负责落盘；书记员一旦坏掉，后续调用会记得这次故障而不是假装成功。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>支持 resume/fork/审计，也给崩溃恢复和一致性测试提供稳定基线。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/rollout/src/recorder.rs#L93-L171">codex-rs/rollout/src/recorder.rs · L93–L171 ↗</a></div><pre><code>   93  pub enum RolloutRecorderParams {
+   94      Create {
+   95          session_id: SessionId,
+   96          conversation_id: ThreadId,
+   97          forked_from_id: Option&lt;ThreadId&gt;,
+   98          parent_thread_id: Option&lt;ThreadId&gt;,
+   99          source: Box&lt;SessionSource&gt;,
+  100          thread_source: Option&lt;ThreadSource&gt;,
+  101          originator: String,
+  102          base_instructions: BaseInstructions,
+  103          dynamic_tools: Vec&lt;DynamicToolSpec&gt;,
+  104          selected_capability_roots: Vec&lt;SelectedCapabilityRoot&gt;,
+  105          multi_agent_version: Option&lt;MultiAgentVersion&gt;,
+  106          history_mode: ThreadHistoryMode,
+  107          history_base: Option&lt;HistoryPosition&gt;,
+  108          subagent_history_start_ordinal: Option&lt;u64&gt;,
+  109          initial_window_id: Option&lt;String&gt;,
+  110      },
+  111      Resume {
+  112          path: PathBuf,
+  113      },
+  114  }
+  115  
+  116  enum RolloutCmd {
+  117      AddItems(Vec&lt;RolloutItem&gt;),
+      … 43 lines omitted; exact range 93–171 …
+  161      }
+  162  
+  163      /// Return the terminal writer-task failure, if the task exited with an error.
+  164      fn terminal_failure(&amp;self) -&gt; Option&lt;IoError&gt; {
+  165          let guard = self
+  166              .terminal_failure
+  167              .lock()
+  168              .unwrap_or_else(std::sync::PoisonError::into_inner);
+  169          guard.as_ref().map(|err| clone_io_error(err.as_ref()))
+  170      }
+  171  }</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 2 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/rollout/src/recorder.rs#L93-L171"><code>codex-rs/rollout/src/recorder.rs:93–171</code></a><small>RolloutCmd 和 writer failure state。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/rollout/src/recorder.rs#L177-L290"><code>codex-rs/rollout/src/recorder.rs:177–290</code></a><small>create/resume 参数和 history metadata。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-persistence-002" data-search="sqlite 是可查询镜像，并把状态、日志、目标和记忆拆库降低锁竞争 state crate 从 jsonl rollout 提取元数据镜像到 sqlite；stateruntime 分别打开 state、logs、goals、memories 数据库，并明确把日志和分页历史分离以降低锁竞争。 流水账负责忠实记录，sqlite 像索引卡片箱，负责快速搜索；不同类型卡片分柜，避免大家抢同一把锁。 persistence-observability">
+    <div class="lesson-finding-head"><span class="lesson-number">25</span><div><div class="lesson-eyebrow">L1 · fact · codex-persistence-002</div><h3>SQLite 是可查询镜像，并把状态、日志、目标和记忆拆库降低锁竞争</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>state crate 从 JSONL rollout 提取元数据镜像到 SQLite；StateRuntime 分别打开 state、logs、goals、memories 数据库，并明确把日志和分页历史分离以降低锁竞争。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>流水账负责忠实记录，SQLite 像索引卡片箱，负责快速搜索；不同类型卡片分柜，避免大家抢同一把锁。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>兼顾可恢复事件源与 UI 查询性能，代价是要处理 backfill/reconciliation。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/state/src/lib.rs#L1-L10">codex-rs/state/src/lib.rs · L1–L10 ↗</a></div><pre><code>    1  //! SQLite-backed state for rollout metadata.
+    2  //!
+    3  //! This crate is intentionally small and focused: it extracts rollout metadata
+    4  //! from JSONL rollouts and mirrors it into a local SQLite database. Backfill
+    5  //! orchestration and rollout scanning live in `codex-core`.
+    6  
+    7  const _: () = assert!(
+    8      libsqlite3_sys::SQLITE_VERSION_NUMBER &gt;= 3_051_003,
+    9      &quot;bundled SQLite must include the WAL-reset corruption fix&quot;,
+   10  );</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/state/src/lib.rs#L1-L10"><code>codex-rs/state/src/lib.rs:1–10</code></a><small>rollout 到 SQLite 镜像定位。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/state/src/runtime.rs#L71-L125"><code>codex-rs/state/src/runtime.rs:71–125</code></a><small>分库状态与初始化。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/state/src/runtime.rs#L126-L170"><code>codex-rs/state/src/runtime.rs:126–170</code></a><small>各数据库独立打开与失败清理。</small></li></ul></details>
+  </article><article class="lesson-finding" id="lesson-codex-observe-001" data-search="观测横跨模型、工具、hooks、mcp、rollout 与 sqlite，不只是一份 cli 日志 模型 client 注入 sessiontelemetry 与 rollout inference trace；工具 runtime 记录 dispatch/handler/total timing；hooks 发开始/完成事件与 duration；mcp 记录 tool list/refresh；state 定义初始化、错误、回填与 fallback 指标。 既能看模型这段花了多久，也能拆出排队、工具处理、钩子、连接器和数据库的时间与故障。 persistence-observability">
+    <div class="lesson-finding-head"><span class="lesson-number">26</span><div><div class="lesson-eyebrow">L1 · fact · codex-observe-001</div><h3>观测横跨模型、工具、hooks、MCP、rollout 与 SQLite，不只是一份 CLI 日志</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>模型 client 注入 SessionTelemetry 与 rollout inference trace；工具 runtime 记录 dispatch/handler/total timing；hooks 发开始/完成事件与 duration；MCP 记录 tool list/refresh；state 定义初始化、错误、回填与 fallback 指标。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>既能看模型这段花了多久，也能拆出排队、工具处理、钩子、连接器和数据库的时间与故障。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>适合做端到端性能归因和故障回放，但需要明确遥测数据的隐私与导出策略。</p></div>
+        
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L74-L91">codex-rs/core/src/client.rs · L74–L91 ↗</a></div><pre><code>   74  use codex_otel::SessionTelemetry;
+   75  use codex_otel::current_span_w3c_trace_context;
+   76  use codex_protocol::auth::AuthMode;
+   77  
+   78  use codex_protocol::ThreadId;
+   79  use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+   80  use codex_protocol::config_types::Verbosity as VerbosityConfig;
+   81  use codex_protocol::models::ContentItem;
+   82  use codex_protocol::models::ResponseItem;
+   83  use codex_protocol::openai_models::ModelInfo;
+   84  use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+   85  use codex_protocol::protocol::InternalSessionSource;
+   86  use codex_protocol::protocol::SessionSource;
+   87  use codex_protocol::protocol::W3cTraceContext;
+   88  use codex_rollout_trace::CompactionTraceContext;
+   89  use codex_rollout_trace::InferenceTraceAttempt;
+   90  use codex_rollout_trace::InferenceTraceContext;
+   91  use codex_tools::create_tools_json_for_responses_api;</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/client.rs#L74-L91"><code>codex-rs/core/src/client.rs:74–91</code></a><small>SessionTelemetry 与 rollout trace。</small></li><li><span>implementation</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/hook_runtime.rs#L649-L691"><code>codex-rs/core/src/hook_runtime.rs:649–691</code></a><small>hook events 和 duration metric。</small></li><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/state/src/lib.rs#L81-L95"><code>codex-rs/state/src/lib.rs:81–95</code></a><small>SQLite/backfill/fallback metrics。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 9</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section><section class="module-section" id="maturity" data-chapter><div class="module-kicker">M10 · ENGINEERING</div><h2>测试、恢复与工程取舍：把漂亮机制变成可靠产品</h2><p class="section-question">哪些行为有测试证明？哪些只是配置或 prompt 约定？当安全、性能、可恢复性冲突时，源码选择了什么？</p><div class="analogy"><b>先用一个生活比喻</b><p>这像验收一座桥：图纸说明结构，测试证明承重，故障演练证明断电后还能不能让人安全回来。</p></div><div class="source-answer"><b>这套实现先回答了什么？</b><p>它不是一段 CLI 脚本，而是一套带协议、TUI、app server、状态库、插件和跨平台后端的系统工程。</p></div><div class="section-route"><span>本节阅读法</span><i>先问问题</i><b>→</b><i>读事实</i><b>→</b><i>看代码</i><b>→</b><i>做迁移判断</i></div><div class="concept-table"><table><thead><tr><th>源码问题</th><th>固定提交给出的线索</th><th>白话结论</th></tr></thead><tbody><tr><td>这是大型、多前端、测试密集的 Rust Harness，许可证为 Apache-2.0</td><td><code>LICENSE:1</code></td><td>它不是一段 CLI 脚本，而是一套带协议、TUI、app server、状态库、插件和跨平台后端的系统工程。</td></tr></tbody></table></div><article class="lesson-finding" id="lesson-codex-maturity-001" data-search="这是大型、多前端、测试密集的 rust harness，许可证为 apache-2.0 固定快照含约 2,780 个 rust 文件、645 个 typescript 文件；源码树中约 487 个 test 命名文件、1,170 个含 rust test attribute 的文件，根许可证为 apache license 2.0。 它不是一段 cli 脚本，而是一套带协议、tui、app server、状态库、插件和跨平台后端的系统工程。 maturity-license">
+    <div class="lesson-finding-head"><span class="lesson-number">27</span><div><div class="lesson-eyebrow">L3 · fact · codex-maturity-001</div><h3>这是大型、多前端、测试密集的 Rust Harness，许可证为 Apache-2.0</h3></div></div>
+    <div class="lesson-finding-grid">
+      <div class="lesson-copy">
+        <div class="lesson-fact"><b>先看源码事实</b><p>固定快照含约 2,780 个 Rust 文件、645 个 TypeScript 文件；源码树中约 487 个 test 命名文件、1,170 个含 Rust test attribute 的文件，根许可证为 Apache License 2.0。</p></div>
+        <div class="lesson-plain"><b>翻译成白话</b><p>它不是一段 CLI 脚本，而是一套带协议、TUI、app server、状态库、插件和跨平台后端的系统工程。</p></div>
+        <div class="lesson-why"><b>为什么这对自研重要</b><p>可借鉴性高，但直接复刻意味着承担很大的平台与回归测试成本。</p></div>
+        <div class="lesson-boundary"><b>边界与风险</b><ul><li>文件数与测试文件数是对该固定 checkout 的机械统计，不等于测试覆盖率。</li></ul></div>
+      </div>
+      <div class="lesson-code-card"><div class="lesson-code-head"><span>固定提交源码摘录</span><button class="copy-code" type="button">复制</button></div><div class="lesson-code-path"><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/LICENSE#L1-L28">LICENSE · L1–L28 ↗</a></div><pre><code>    1                                   Apache License
+    2                             Version 2.0, January 2004
+    3                          http://www.apache.org/licenses/
+    4  
+    5  TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+    6  
+    7  1.  Definitions.
+    8  
+    9      &quot;License&quot; shall mean the terms and conditions for use, reproduction,
+   10      and distribution as defined by Sections 1 through 9 of this document.
+   11  
+   12      &quot;Licensor&quot; shall mean the copyright owner or entity authorized by
+   13      the copyright owner that is granting the License.
+   14  
+   15      &quot;Legal Entity&quot; shall mean the union of the acting entity and all
+   16      other entities that control, are controlled by, or are under common
+   17      control with that entity. For the purposes of this definition,
+   18      &quot;control&quot; means (i) the power, direct or indirect, to cause the
+   19      direction or management of such entity, whether by contract or
+   20      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   21      outstanding shares, or (iii) beneficial ownership of such entity.
+   22  
+   23      &quot;You&quot; (or &quot;Your&quot;) shall mean an individual or Legal Entity
+   24      exercising permissions granted by this License.
+   25  
+   26      &quot;Source&quot; form shall mean the preferred form for making modifications,
+   27      including but not limited to software source code, documentation
+   28      source, and configuration files.</code></pre></div>
+    </div>
+    <details class="lesson-evidence"><summary>为什么相信这条结论？查看 3 处证据</summary><ul><li><span>contract</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/LICENSE#L1-L28"><code>LICENSE:1–28</code></a><small>Apache License 2.0。</small></li><li><span>test</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/tools/spec_plan_tests.rs#L637-L708"><code>codex-rs/core/src/tools/spec_plan_tests.rs:637–708</code></a><small>代表性的工具规划回归测试。</small></li><li><span>test</span><a href="https://github.com/openai/codex/blob/3418498f01422f5f650ea645d4bd19e05c3a9616/codex-rs/core/src/agent/control_tests.rs#L2047-L2174"><code>codex-rs/core/src/agent/control_tests.rs:2047–2174</code></a><small>线程额度、释放与共享 limiter 测试。</small></li></ul></details>
+  </article><div class="checkpoint"><b>小练习 10</b><p>打开本节任意一个源码摘录，先遮住白话解释，只根据函数名、状态字段和调用顺序猜它解决什么问题；再展开证据列表，检查你的猜测有没有越过源码边界。</p></div></section>
+  <section class="module-section practice" id="practice"><div class="module-kicker">M11 · PRACTICE</div><h2>把读懂变成会判断</h2><p class="section-question">下面的练习不要求你先写一个完整 Agent，而是训练你检查设计边界：事实是什么、推断是什么、如果换成自研产品要补哪一层。</p><div class="practice-grid"><article><span>Q1</span><h3>每个 turn 由多个 step 组成，step 内共享一次不可漂移的上下文快照</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>配置热更新只能在安全边界生效，换来 prompt cache 和工具调用的确定性。</p><small>证据：codex-rs/core/src/session/turn.rs:153</small></details></article><article><span>Q2</span><h3>流式采样与工具 Future 同时推进，并可被新消息抢占</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>响应更快，但对调用顺序、取消、配对和幂等要求很高。</p><small>证据：codex-rs/core/src/session/turn.rs:2034</small></details></article><article><span>Q3</span><h3>重试预算属于 turn-scoped client session，窗口超限不当作普通网络错误重试</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>把语义恢复与传输恢复分开，避免无效重试放大费用。</p><small>证据：codex-rs/core/src/session/turn.rs:1176</small></details></article><article><span>Q4</span><h3>模型协议只保留 Responses API，但 Provider 端点与认证可扩展</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>兼容面更一致，第三方 Provider 必须实现 Responses 语义而非只暴露 chat/completions。</p><small>证据：codex-rs/model-provider-info/src/lib.rs:54</small></details></article><article><span>Q5</span><h3>传输层同时支持 SSE 与可复用 WebSocket，并带 turn 粘性状态</h3><p><b>问题：</b>如果把这段机制移植到你的 Agent，最先要确认哪个输入、状态或安全边界？</p><details><summary>参考答案</summary><p>交互延迟低，但 Provider 必须准确声明 WebSocket 能力，AWS 认证当前明确不能与 WebSocket 同开。</p><small>证据：codex-rs/core/src/client.rs:1</small></details></article></div></section>
+  <section class="module-section source-index" id="sources"><div class="module-kicker">APPENDIX · SOURCE INDEX</div><h2>本课读过的实现文件</h2><p class="section-question">文件索引帮助你在课程外继续追踪调用链；每一条路径来自固定提交的证据账本。</p><ol><li><span>01</span><code>codex-rs/core/src/session/turn.rs</code><small>L153–274, L275–455, L2034–2168, L2169–2265, L1176–1273</small></li><li><span>02</span><code>codex-rs/core/src/client.rs</code><small>L1–24, L1–24, L74–91</small></li><li><span>03</span><code>codex-rs/model-provider-info/src/lib.rs</code><small>L54–84, L86–144, L156–186</small></li><li><span>04</span><code>codex-rs/core/src/context_manager/history.rs</code><small>L38–60, L123–146, L189–248, L295–386, L493–558</small></li><li><span>05</span><code>codex-rs/core/src/compact.rs</code><small>L240–318, L319–392</small></li><li><span>06</span><code>codex-rs/core/src/tools/registry.rs</code><small>L48–149, L151–188</small></li><li><span>07</span><code>codex-rs/core/src/tools/parallel.rs</code><small>L74–145, L146–202</small></li><li><span>08</span><code>codex-rs/core/src/tools/spec_plan_tests.rs</code><small>L637–708, L637–708</small></li><li><span>09</span><code>codex-rs/core/src/tools/spec_plan.rs</code><small>L310–328, L917–936</small></li><li><span>10</span><code>codex-rs/protocol/src/protocol.rs</code><small>L890–932, L995–1043, L4094–4135</small></li><li><span>11</span><code>codex-rs/core/src/session/mod.rs</code><small>L2295–2376, L3336–3397, L3398–3440</small></li><li><span>12</span><code>codex-rs/sandboxing/src/manager.rs</code><small>L34–73, L280–367</small></li><li><span>13</span><code>codex-rs/core/src/config/permissions.rs</code><small>L203–213, L347–407, L507–520</small></li><li><span>14</span><code>codex-rs/codex-mcp/src/connection_manager.rs</code><small>L66–117, L143–199</small></li><li><span>15</span><code>codex-rs/codex-mcp/src/connection_manager/tool_catalog.rs</code><small>L34–55, L127–230</small></li><li><span>16</span><code>codex-rs/core/src/agents_md.rs</code><small>L1–16, L89–150, L207–247</small></li><li><span>17</span><code>codex-rs/core/src/hook_runtime.rs</code><small>L103–220, L222–285, L649–705, L649–691</small></li><li><span>18</span><code>codex-rs/core/src/agent/control.rs</code><small>L70–111</small></li><li><span>19</span><code>codex-rs/core/src/agent/control/spawn.rs</code><small>L365–445</small></li><li><span>20</span><code>codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs</code><small>L39–165, L173–220</small></li><li><span>21</span><code>codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs</code><small>L37–118</small></li><li><span>22</span><code>codex-rs/core/src/config/mod.rs</code><small>L1547–1560</small></li><li><span>23</span><code>codex-rs/core/src/agent/control/execution.rs</code><small>L14–118</small></li><li><span>24</span><code>codex-rs/rollout/src/recorder.rs</code><small>L93–171, L177–290</small></li><li><span>25</span><code>codex-rs/state/src/lib.rs</code><small>L1–10, L81–95</small></li><li><span>26</span><code>codex-rs/state/src/runtime.rs</code><small>L71–125, L126–170</small></li><li><span>27</span><code>LICENSE</code><small>L1–28</small></li><li><span>28</span><code>codex-rs/core/src/agent/control_tests.rs</code><small>L2047–2174</small></li></ol></section>
+  <section class="module-section next-section"><div class="next-lesson"><div><span>下一步</span><h2>从课程回到报告，做一次反向核验</h2><p>教程负责让你读懂，报告负责让你查证。打开报告页，任选一个章节，尝试只靠源码摘录复述它的边界。</p></div><a href="../reports/codex.html">查看 OpenAI Codex 报告 ↗</a></div></section>
+  <footer class="tutorial-footer"><div><span>FIXED SNAPSHOT</span><code>3418498f01422f5f650ea645d4bd19e05c3a9616</code></div><nav><a href="pi.html">← Pi</a><a href="gemini-cli.html">Gemini CLI →</a></nav></footer></main></div><script src="../assets/tutorial.js"></script></body></html>

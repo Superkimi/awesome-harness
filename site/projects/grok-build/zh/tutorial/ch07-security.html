@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="问用户、限制能力和隔离执行分别解决什么问题？"><title>Grok Build · M07 · 安全：审批、权限和边界</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Grok Build · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch07-security.html">中</a><a href="../../en/tutorial/ch07-security.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Grok Build</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="active" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>e5fd4816d432</div></aside><main><section class="chapter-hero"><p class="eyebrow">M07 · Grok Build · e5fd4816d432</p><h1>安全：审批、权限和边界</h1><p class="lede">问用户、限制能力和隔离执行分别解决什么问题？</p><div class="chapter-meta"><span>第 7 / 10 章</span><span>Rust / Markdown / Shell</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M07</span><b>Grok Build · M07 · 安全：审批、权限和边界</b></div><div class="video-links"><a href="../../../../videos/grok-build/ch07-security.mp4" data-video-status="published">MP4</a><a href="../../../../videos/grok-build/ch07-security.srt" data-video-status="published">SRT</a><em>e5fd4816d432</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>源码</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>审批像门卫问预约，权限像门禁卡，沙箱像指定房间；它们不是同一件事。</p></div><h2>先回答本章问题</h2><p>问用户、限制能力和隔离执行分别解决什么问题？ 它不像一个简单 while 循环，更像一间控制室：用户输入、工具结果、文件变化、后台任务、模型切换都从不同通道进来，由同一个会话 Actor 排队处理。</p><h2>再看这段源码</h2><div class="source-card"><div><span>crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs · L157–205</span><a href="https://github.com/xai-org/grok-build/blob/e5fd4816d43260c15ba785f103990c1ed6cea230/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs#L157-L205" target="_blank" rel="noreferrer">打开固定提交 ↗</a></div><pre><code>  157          Err(e) if e.kind() == std::io::ErrorKind::NotFound =&gt; PlanFileRead::Absent,
+  158          Err(_) =&gt; PlanFileRead::Unreadable,
+  159      }
+  160  }
+  161  /// Whether to intercept exit-plan tools for client-side plan approval.
+  162  ///
+  163  /// A mode-switch back to agent with `PlanFileRead::Absent` skips intercept
+  164  /// (leaving without approving is allowed). `Present` / `Unreadable` still intercept
+  165  /// (unreadable = fail-closed, empty approval UI rather than silent exit).
+  166  pub(super) fn should_intercept_exit_plan_approval(
+  167      is_exit_plan_mode: bool,
+  168      is_cursor_switch_to_agent: bool,
+  169      is_cursor_create_plan: bool,
+  170      plan_read: &amp;PlanFileRead,
+  171  ) -&gt; bool {
+  172      if !is_exit_plan_mode &amp;&amp; !is_cursor_switch_to_agent &amp;&amp; !is_cursor_create_plan {
+  173          return false;
+  174      }
+  175      if is_cursor_switch_to_agent &amp;&amp; matches!(plan_read, PlanFileRead::Absent) {
+  176          return false;
+  177      }
+  178      true
+  179  }
+  180  /// Whether this tool call exits file-backed plan mode (not inline plan creation).
+  181  pub(super) fn is_file_backed_exit_plan_input(tool_input: &amp;ToolInput) -&gt; bool {
+  182      if matches!(tool_input, ToolInput::ExitPlanMode(_)) {
+  183          return true;
+  184      }
+  185      false
+  186  }</code></pre></div><h2>翻译成小白能懂的话</h2><p>这段代码不是“顺便做了点事”，它在本章控制面上承担一个明确职责。阅读时先找输入、状态变化、外部副作用和错误出口，再把它放回 Grok Build 的完整任务链。</p><div class="flow-strip"><span>输入</span><i>→</i><span>规则 / 状态</span><i>→</i><span>动作</span><i>→</i><span>回执</span></div><h2>把它放进图里</h2><iframe class="diagram-frame" src="../diagrams/architecture.html" title="Grok Build architecture" loading="lazy"></iframe><h2>小练习：不要只会复述</h2><div class="exercise"><p>打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。</p><details><summary>查看提示</summary><p>提示：如果源码里只有 prompt 或 UI 文案，没有状态、权限或执行代码，不要把它写成强保证。</p></details></div></section><footer class="chapter-footer"><a href="ch06-context.html">← 上下文：长任务怎样不丢重点</a><a href="ch08-ecosystem.html">扩展：MCP、Skill、插件如何接入 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="哪些是源码事实，哪些是推断，哪些风险必须补？"><title>Goose · M10 · 证据与取舍：把源码结论带回自研</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Goose · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch10-evidence.html">中</a><a href="../../en/tutorial/ch10-evidence.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Goose</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="active" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>11deb564d09d</div></aside><main><section class="chapter-hero"><p class="eyebrow">M10 · Goose · 11deb564d09d</p><h1>证据与取舍：把源码结论带回自研</h1><p class="lede">哪些是源码事实，哪些是推断，哪些风险必须补？</p><div class="chapter-meta"><span>第 10 / 10 章</span><span>TypeScript / Rust / Markdown</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M10</span><b>Goose · M10 · 证据与取舍：把源码结论带回自研</b></div><div class="video-links"><a href="../../../../videos/goose/ch10-evidence.mp4" data-video-status="published">MP4</a><a href="../../../../videos/goose/ch10-evidence.srt" data-video-status="published">SRT</a><em>11deb564d09d</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>源码</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>源码审计像验桥：图纸是声明，测试是承重，恢复演练才说明断电后能不能回来。</p></div><h2>先回答本章问题</h2><p>哪些是源码事实，哪些是推断，哪些风险必须补？ 它不是“模型回答一次就结束”，而是模型说一步、系统做一步、把结果再交回模型，直到满足结束条件。</p><h2>再看这段源码</h2><div class="source-card"><div><span>crates/goose/src/session/session_manager.rs · L45–96</span><a href="https://github.com/aaif-goose/goose/blob/11deb564d09db782a17878af7cfafd299d9fa461/crates/goose/src/session/session_manager.rs#L45-L96" target="_blank" rel="noreferrer">打开固定提交 ↗</a></div><pre><code>   45  #[strum(serialize_all = &quot;snake_case&quot;)]
+   46  pub enum SessionType {
+   47      #[default]
+   48      User,
+   49      Scheduled,
+   50      SubAgent,
+   51      Hidden,
+   52      Terminal,
+   53      Gateway,
+   54      Acp,
+   55  }
+   56  
+   57  static SESSION_STORAGE: LazyLock&lt;Arc&lt;SessionStorage&gt;&gt; =
+   58      LazyLock::new(|| Arc::new(SessionStorage::new(Paths::data_dir())));
+   59  
+   60  #[derive(Debug, Clone, Serialize, Deserialize)]
+   61  pub struct Session {
+   62      pub id: String,
+   63      pub working_dir: PathBuf,
+   64      #[serde(alias = &quot;description&quot;)]
+   65      pub name: String,
+   66      #[serde(default)]
+   67      pub user_set_name: bool,
+   68      #[serde(default)]
+   69      pub session_type: SessionType,
+   70      pub created_at: DateTime&lt;Utc&gt;,
+   71      pub updated_at: DateTime&lt;Utc&gt;,
+   72      pub extension_data: ExtensionData,
+   73      #[serde(default)]
+   74      pub usage: Usage,</code></pre></div><h2>翻译成小白能懂的话</h2><p>这段代码不是“顺便做了点事”，它在本章控制面上承担一个明确职责。阅读时先找输入、状态变化、外部副作用和错误出口，再把它放回 Goose 的完整任务链。</p><div class="flow-strip"><span>输入</span><i>→</i><span>规则 / 状态</span><i>→</i><span>动作</span><i>→</i><span>回执</span></div><h2>把它放进图里</h2><iframe class="diagram-frame" src="../diagrams/architecture.html" title="Goose architecture" loading="lazy"></iframe><h2>小练习：不要只会复述</h2><div class="exercise"><p>打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。</p><details><summary>查看提示</summary><p>提示：如果源码里只有 prompt 或 UI 文案，没有状态、权限或执行代码，不要把它写成强保证。</p></details></div></section><footer class="chapter-footer"><a href="ch09-collaboration.html">← 协作：子 Agent 与工作流</a><a href="index.html">回到课程目录 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

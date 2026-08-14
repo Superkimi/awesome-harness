@@ -1,0 +1,29 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>Prime Agent · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">Prime Agent · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>Prime Agent</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">main<br>7787f07415d8</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · Prime Agent · 7787f07415d8</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>TypeScript / Markdown / Python</span><span>main</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>Prime Agent · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/prime-agent/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/prime-agent/ch02-architecture.srt" data-video-status="published">SRT</a><em>7787f07415d8</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>源码</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ Prime Agent 把“模型怎么流式回答、什么时候执行工具、用户插话后是否继续”抽成一个不依赖 TUI 的小内核，上层入口只负责喂配置和消费事件。</p><h2>再看这段源码</h2><div class="source-card"><div><span>packages/agent/src/agent-loop.ts · L317–345</span><a href="https://github.com/PrimeIntellect-ai/prime-agent/blob/7787f07415d843b9a800f6a4720e0c739bd608e5/packages/agent/src/agent-loop.ts#L317-L345" target="_blank" rel="noreferrer">打开固定提交 ↗</a></div><pre><code>  317  	// Check for steering messages at start (user may have typed while waiting)
+  318  	let pendingMessages: AgentMessage[] = await pollMessagesUnlessAborted(config.getSteeringMessages, signal);
+  319  
+  320  	const shouldStopBeforeTurn = (): boolean =&gt; !firstTurn &amp;&amp; (config.shouldStopBeforeTurn?.() ?? false);
+  321  
+  322  	// Outer loop: continues when queued follow-up messages arrive after agent would stop
+  323  	while (true) {
+  324  		throwIfAborted(signal);
+  325  		let hasMoreToolCalls = true;
+  326  
+  327  		// Inner loop: process tool calls and steering messages
+  328  		while (hasMoreToolCalls || pendingMessages.length &gt; 0) {
+  329  			throwIfAborted(signal);
+  330  			if (!firstTurn) {
+  331  				await emit({ type: &quot;turn_start&quot; });
+  332  			} else {
+  333  				firstTurn = false;
+  334  			}
+  335  
+  336  			// Process pending messages (inject before next assistant response)
+  337  			if (pendingMessages.length &gt; 0) {
+  338  				for (const message of pendingMessages) {
+  339  					await emit({ type: &quot;message_start&quot;, message });
+  340  					await emit({ type: &quot;message_end&quot;, message });
+  341  					currentContext.messages.push(message);
+  342  					newMessages.push(message);
+  343  				}
+  344  				pendingMessages = [];
+  345  			}</code></pre></div><h2>翻译成小白能懂的话</h2><p>这段代码不是“顺便做了点事”，它在本章控制面上承担一个明确职责。阅读时先找输入、状态变化、外部副作用和错误出口，再把它放回 Prime Agent 的完整任务链。</p><div class="flow-strip"><span>输入</span><i>→</i><span>规则 / 状态</span><i>→</i><span>动作</span><i>→</i><span>回执</span></div><h2>把它放进图里</h2><iframe class="diagram-frame" src="../diagrams/sequence.html" title="Prime Agent sequence" loading="lazy"></iframe><h2>小练习：不要只会复述</h2><div class="exercise"><p>打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。</p><details><summary>查看提示</summary><p>提示：如果源码里只有 prompt 或 UI 文案，没有状态、权限或执行代码，不要把它写成强保证。</p></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

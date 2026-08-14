@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="入口、运行时、模型、工具和状态怎样连起来？"><title>JCode · M02 · 架构：有哪些层，谁负责什么</title><link rel="stylesheet" href="../../../../assets/harness.css"></head><body><div class="reading-progress" id="reading-progress"></div><header class="site-top"><button class="menu-button" data-menu>☰</button><a class="brand" href="../../../../zh/index.html">AWESOME <em>HARNESS</em></a><span class="crumb">JCode · 中文</span><nav><a href="../../../../zh/index.html">总览</a><a href="../analysis.html">技术分析</a><a href="index.html">小白教程</a><a href="ch02-architecture.html">中</a><a href="../../en/tutorial/ch02-architecture.html">EN</a></nav></header><div class="layout"><aside class="side-nav" data-side><div class="side-project"><strong>JCode</strong><small>Legacy source-backed harness audit</small></div><a class="" href="../analysis.html">技术分析单页</a><div class="side-label">章节课程</div><a class="" href="ch01-overview.html"><span>M01</span>总览：先知道它解决什么问题</a><a class="active" href="ch02-architecture.html"><span>M02</span>架构：有哪些层，谁负责什么</a><a class="" href="ch03-loop.html"><span>M03</span>主循环：任务为什么会继续推进</a><a class="" href="ch04-model.html"><span>M04</span>模型与消息：流式结果如何进入状态</a><a class="" href="ch05-tools.html"><span>M05</span>工具：Agent 的手脚怎样被注册</a><a class="" href="ch06-context.html"><span>M06</span>上下文：长任务怎样不丢重点</a><a class="" href="ch07-security.html"><span>M07</span>安全：审批、权限和边界</a><a class="" href="ch08-ecosystem.html"><span>M08</span>扩展：MCP、Skill、插件如何接入</a><a class="" href="ch09-collaboration.html"><span>M09</span>协作：子 Agent 与工作流</a><a class="" href="ch10-evidence.html"><span>M10</span>证据与取舍：把源码结论带回自研</a><div class="side-foot">master<br>71fa60c4dc87</div></aside><main><section class="chapter-hero"><p class="eyebrow">M02 · JCode · 71fa60c4dc87</p><h1>架构：有哪些层，谁负责什么</h1><p class="lede">入口、运行时、模型、工具和状态怎样连起来？</p><div class="chapter-meta"><span>第 2 / 10 章</span><span>Rust / Python / Markdown</span><span>master</span></div></section><section class="prose video-panel compact"><div class="section-head"><span>视频与字幕</span><h2>把这次源码阅读做成可复习的短视频</h2></div><p>视频只承诺页面和源码中能证明的事实；脚本、画面、SRT 与成片会在同一个视频目录中按版本留痕。</p><div class="video-list"><article class="video-item"><div><span>M02</span><b>JCode · M02 · 架构：有哪些层，谁负责什么</b></div><div class="video-links"><a href="../../../../videos/jcode/ch02-architecture.mp4" data-video-status="published">MP4</a><a href="../../../../videos/jcode/ch02-architecture.srt" data-video-status="published">SRT</a><em>71fa60c4dc87</em></div></article></div></section><section class="lesson prose"><div class="lesson-route"><span>本章路线</span><b>问题</b><i>→</i><b>比喻</b><i>→</i><b>源码</b><i>→</i><b>练习</b></div><div class="callout"><b>先用一个生活比喻</b><p>像看一栋楼的管线图：入口、控制室、执行层和档案室各有职责，连线告诉你谁把什么交给谁。</p></div><h2>先回答本章问题</h2><p>入口、运行时、模型、工具和状态怎样连起来？ 模型还没开口，用户输入已经落账；即使后面 API 或工具出错，恢复时也不会连问题本身都丢掉。</p><h2>再看这段源码</h2><div class="source-card"><div><span>crates/jcode-app-core/src/agent/turn_loops.rs · L17–68</span><a href="https://github.com/1jehuang/jcode/blob/71fa60c4dc875ebdaf089e6e84b29cbd61cbb478/crates/jcode-app-core/src/agent/turn_loops.rs#L17-L68" target="_blank" rel="noreferrer">打开固定提交 ↗</a></div><pre><code>   17      const BATCH_NUDGE: &amp;str = &quot;&lt;system-reminder&gt;Several tool calls have been made one at a time. If the next independent operations can run concurrently, use the batch tool instead of making more sequential calls. Keep sequential calls when one result is required to decide the next operation.&lt;/system-reminder&gt;&quot;;
+   18  
+   19      fn update_sequential_tool_rounds(current: u32, tool_count: usize, used_batch: bool) -&gt; u32 {
+   20          if tool_count == 1 &amp;&amp; !used_batch {
+   21              current.saturating_add(1)
+   22          } else {
+   23              0
+   24          }
+   25      }
+   26  
+   27      fn should_inject_batch_nudge(pending: bool, batch_available: bool) -&gt; bool {
+   28          pending &amp;&amp; batch_available
+   29      }
+   30  
+   31      pub(super) async fn run_turn(&amp;mut self, print_output: bool) -&gt; Result&lt;String&gt; {
+   32          self.set_log_context();
+   33          crate::session_metrics::record_turn(&amp;self.session.id);
+   34          // Mark this session as actively streaming for presence UIs (e.g. the
+   35          // macOS menu bar indicator). Cleared automatically on every exit path.
+   36          let _streaming_guard = crate::session::StreamingGuard::new(self.session.id.clone());
+   37          // Register this turn&#39;s cancel signal so session-level cancels reach
+   38          // this in-flight turn even through stale control handles (issue #428).
+   39          let _turn_cancel_guard = crate::turn_cancel_registry::register_active_turn(
+   40              &amp;self.session.id,
+   41              self.graceful_shutdown.clone(),
+   42          );
+   43          let mut final_text = String::new();
+   44          let trace = trace_enabled();
+   45          let mut context_limit_retries = 0u32;
+   46          let mut incomplete_continuations = 0u32;</code></pre></div><h2>翻译成小白能懂的话</h2><p>这段代码不是“顺便做了点事”，它在本章控制面上承担一个明确职责。阅读时先找输入、状态变化、外部副作用和错误出口，再把它放回 JCode 的完整任务链。</p><div class="flow-strip"><span>输入</span><i>→</i><span>规则 / 状态</span><i>→</i><span>动作</span><i>→</i><span>回执</span></div><h2>把它放进图里</h2><iframe class="diagram-frame" src="../diagrams/sequence.html" title="JCode sequence" loading="lazy"></iframe><h2>小练习：不要只会复述</h2><div class="exercise"><p>打开上面的源码摘录，先遮住“白话解释”，回答三个问题：谁创建了状态？谁能改变它？失败时有没有明确回执或恢复入口？最后点击 GitHub 行号核对你的判断。</p><details><summary>查看提示</summary><p>提示：如果源码里只有 prompt 或 UI 文案，没有状态、权限或执行代码，不要把它写成强保证。</p></details></div></section><footer class="chapter-footer"><a href="ch01-overview.html">← 总览：先知道它解决什么问题</a><a href="ch03-loop.html">主循环：任务为什么会继续推进 →</a></footer></main></div><script src="../../../../assets/harness.js"></script></body></html>

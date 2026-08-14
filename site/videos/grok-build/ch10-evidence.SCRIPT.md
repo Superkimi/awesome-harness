@@ -1,0 +1,14 @@
+1. 评审问“安全和恢复是不是口号”，我用 PromptContext、结构化事件和 compaction 记录回答。
+2. 这一章不猜作者意图，只沿着固定版本的运行时代码、协议和测试看事实。
+3. 固定版本证据：crates/codegen/xai-grok-agent/src/prompt/context.rs:80-152 · PromptContext 是可序列化、可检查的一等契约；crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs:392-436 · 工具、权限、压缩和沙箱均产出结构化事件；crates/codegen/xai-grok-shell/src/session/compaction.rs:1282-1460 · 压缩后重建的是“任务状态”，不是纯聊天摘要。
+4. 事实一：系统提示词的输入不是散落变量，而是一张可以导出检查的配置表。
+5. 源码含义：Prompt provenance 和可重放性明显优于只在运行时拼字符串。
+6. 事实二：不仅能看到“失败了”，还能回答失败在哪个关、谁批准的、等了多久、压缩试了几次、沙箱挡了什么。
+7. 数据流：事件 → SessionActor → prepare/dispatch → 权限或沙箱 → 结构化结果。
+8. 小白动作：先把动作分成准备、执行、收尾三段，再给每段留一个失败出口。
+9. 第二个动作：把安全边界写成只读约束、访问类型、隔离方式和降级策略。
+10. 局限提醒：已审计 PromptContext、AGENTS/Claude/Cursor rules、模板和受众差异。
+11. 这一章的结论：Prompt provenance 和可重放性明显优于只在运行时拼字符串。
+12. 下一章继续沿着固定提交的源码锚点，回答一个真实工作问题。
+
+Fixed commit: e5fd4816d43260c15ba785f103990c1ed6cea230
