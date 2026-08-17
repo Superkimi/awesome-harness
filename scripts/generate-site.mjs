@@ -203,104 +203,410 @@ function implementationInventory(project, lang) {
   const entries = by(/(^|\/)(main|index|cli|server|app|run|command|entry|bootstrap)[^/]*\.(rs|ts|tsx|js|mjs|py|go|java|kt|ex|rb|sh)$/);
   const extensionFiles = by(/(plugin|mcp|skill|hook|extension|connector|adapter|provider)/);
   const testFiles = by(/(^|\/)(test|tests|spec|__tests__|fixtures|bench)/);
-  const commands = [];
-  for (const file of [...manifests, ...entries, ...extensionFiles]) {
-    try {
-      const content = fs.readFileSync(path.join(sourceRepo(project), file.relative), "utf8");
-      for (const match of content.matchAll(/(?:Command::new|subcommand|add_argument|add_subparsers|\.command\(|registerCommand|register_command|--[a-z][a-z0-9-]+)/g)) {
-        const token = match[0].replace(/.*(--)/, "--").slice(0, 48);
-        if (!commands.includes(token)) commands.push(token);
-        if (commands.length >= 16) break;
-      }
-    } catch (_) {}
-  }
-  const card = (label, list, note) => `<article class="inventory-card"><span>${esc(label)}</span><p>${esc(note)}</p><ul>${(list.length ? list : [{ relative: lang === "zh" ? "未在快照中命中；需从项目入口继续追踪" : "No hit in snapshot; continue from the entrypoint" }]).map((item) => { const isCommand = item.relative.startsWith("--") || item.relative === "subcommand" || item.relative === "Command::new"; const isFallback = item.relative.includes("未在") || item.relative.startsWith("No hit"); const labelMarkup = isCommand ? `<code>${esc(item.relative)}</code>` : `<a href="${isFallback ? "#" : esc(sourceUrlAtCommit(project, item.relative, 1, 24, project.commit))}" target="_blank" rel="noreferrer">${esc(item.relative)}</a>`; return `<li>${labelMarkup}${item.size ? `<small>${item.size} bytes</small>` : ""}</li>`; }).join("")}</ul></article>`;
-  const commandList = commands.map((command) => ({ relative: command }));
+  const commandSurface = commandInventory(project, lang);
+  const card = (label, list, note) => `<article class="inventory-card"><span>${esc(label)}</span><p>${esc(note)}</p><ul>${(list.length ? list : [{ relative: lang === "zh" ? "未在快照中命中；需从项目入口继续追踪" : "No hit in snapshot; continue from the entrypoint" }]).map((item) => { const isCommand = item.command || item.relative.startsWith("--") || item.relative === "subcommand" || item.relative === "Command::new"; const isFallback = item.relative.includes("未在") || item.relative.startsWith("No hit"); const labelMarkup = isCommand ? `<code>${esc(item.relative)}</code>` : `<a href="${isFallback ? "#" : esc(sourceUrlAtCommit(project, item.relative, 1, 24, project.commit))}" target="_blank" rel="noreferrer">${esc(item.relative)}</a>`; return `<li>${labelMarkup}${item.size ? `<small>${item.size} bytes</small>` : ""}</li>`; }).join("")}</ul></article>`;
+  const commandList = commandSurface.map((command) => ({ relative: `${command.label} · ${command.kind}`, command: true }));
   return `<section class="implementation-inventory"><div class="inventory-head"><span>${lang === "zh" ? "源码面板 · 实现面" : "SOURCE DOSSIER · IMPLEMENTATION SURFACE"}</span><b>${files.length} ${lang === "zh" ? "个可读文件" : "readable files"}</b></div><p>${lang === "zh" ? "这里把“入口、注册、扩展、测试和指令线索”从本地快照中单独列出；它不是根据 README 猜的功能清单。文件路径和提交行号仍然是最终证据。" : "This panel separates entrypoints, registration, extensions, tests, and command clues from the local snapshot; it is not a README-derived feature list. File paths and pinned lines remain the final evidence."}</p><div class="inventory-grid">${card(lang === "zh" ? "清单 / 构建入口" : "Manifests / build", manifests, lang === "zh" ? "依赖、脚本、workspace 或编译边界。" : "Dependencies, scripts, workspace, or build boundaries.")}${card(lang === "zh" ? "入口 / Session / UI" : "Entrypoints / session / UI", entries, lang === "zh" ? "主进程、CLI、服务或桌面入口候选。" : "Main process, CLI, service, or desktop entry candidates.")}${card(lang === "zh" ? "Plugins / MCP / Tools" : "Plugins / MCP / tools", extensionFiles, lang === "zh" ? "能力注册和外部连接器的真实文件面。" : "Actual files behind capability registration and connectors.")}${card(lang === "zh" ? "Tests / Bench / Fixtures" : "Tests / bench / fixtures", testFiles, lang === "zh" ? "用于验证状态、回执和失败边界的测试面。" : "Test surface for state, receipts, and failure boundaries.")}${card(lang === "zh" ? "指令 / 参数线索" : "Commands / argument clues", commandList, lang === "zh" ? "从代码中的命令构造器和参数声明提取的线索，需点击源码复核。" : "Clues extracted from command builders and argument declarations; verify in source.")}</div></section>`;
 }
 
 function commandInventory(project, lang) {
+  // Command names and source locations are language-neutral. Reuse the same
+  // parsed catalog for zh/en pages; only the surrounding prose is localized.
   const cacheKey = `${project.slug}\0${lang}`;
   if (commandInventoryCache.has(cacheKey)) return commandInventoryCache.get(cacheKey);
+
+  // A command page must be exhaustive about the source surface, but source
+  // trees also contain API paths, CSS tokens, test fixtures, and shell calls.
+  // Keep the parser deliberately layered: a token is a command only when it
+  // comes from a command registry/handler/CLI definition, not merely because a
+  // slash or --flag appears somewhere in a repository.
   const codeExts = new Set([".rs", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".py", ".go", ".java", ".kt", ".ex", ".rb", ".sh", ".fish", ".ps1"]);
   const files = sourceFiles(project)
-    .filter((file) => !/readme|(^|\/)docs?\//i.test(file.relative) && (codeExts.has(file.ext) || /(^|\/)(package\.json|pyproject\.toml|Cargo\.toml|go\.mod|deno\.json|composer\.json)$/i.test(file.relative)))
-    .sort((a, b) => {
-      const score = (file) => (/\/cmd\/|\/cli|command|entry|router|dispatch|slash|prompt|input|goal/i.test(file.relative) ? 8 : 0) - (/test|bench|fixture|example|vendor|update-helper|installer|release|deploy/i.test(file.relative) ? 7 : 0);
-      return score(b) - score(a) || a.relative.localeCompare(b.relative);
-    });
-  const candidates = [];
-  const seen = new Set();
-  const add = (label, file, line, kind, raw) => {
-    const normalized = String(label || "").trim().replace(/["'`]/g, "");
-    if (!normalized || normalized.length < 2 || normalized.length > 64 || seen.has(normalized.toLowerCase())) return;
-    if (/^(true|false|null|undefined|http|https|src|test|name|value|command)$/i.test(normalized)) return;
-    seen.add(normalized.toLowerCase());
-    const start = Math.max(1, line - 5);
-    const end = line + 12;
-    candidates.push({ label: normalized, path: file.relative, line, start, end, kind, raw, snippet: sourceSnippet(project, project.commit, file.relative, start, end, 42) });
+    .filter((file) => !/readme|(^|\/)docs?\//i.test(file.relative) && codeExts.has(file.ext))
+    .filter((file) => !/(^|\/)(node_modules|target|dist|build|coverage|vendor|fixtures?|examples?|benchmarks?|storybook|ui_tests?|tool-tester|rollout-trace)(\/|$)/i.test(file.relative))
+    .filter((file) => !/(^|\/)(test|tests|spec|__tests__|rollout-trace)(\/|$)|\.(?:test|spec)\.[^.]+$/i.test(file.relative) && !/(?:^|[\\/_-])tests?\.(?:rs|ts|tsx|js|mjs|py|go|java|kt|ex|rb)$/i.test(file.relative))
+    .sort((a, b) => commandPathScore(b.relative) - commandPathScore(a.relative) || a.relative.localeCompare(b.relative));
+  const entries = new Map();
+  const options = new Map();
+  const excludedSlash = /^(api|v1|session|sessions|workspace|workspaces|auth|oauth|bin|usr|tmp|dev|http|https|static|assets|health|healthz|readyz|ws|rpc|favicon|openwork-mark|backend-api)$/i;
+  const excludedToken = /^(true|false|null|undefined|http|https|src|test|tests|name|value|command|unknown|default|error|ok|ready|pending|loading|success|failed|cancelled|connected|disconnected|current|active|inactive|none|all|auto|low|medium|high|max|array|tool|agent|config|state|input|output|type|value|abort|builtin|calls?|chunks?|cells?|connectors?|items?|options?|args?|arguments?|schema|result|results?|data|message|description|label|title|id|key|kind|mode|status|role|session|workspace|provider)$/i;
+  const cleanName = (value) => String(value || "").trim().replace(/["'`]/g, "").replace(/\s+.*/, "").replace(/^\.+\//, "");
+  const kebab = (value) => cleanName(value).replace(/^\//, "").replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/[_\s]+/g, "-").toLowerCase();
+  const sourceKind = (kind) => kind === "slash" || kind === "slash-alias" ? "slash" : kind;
+  const likelySlash = (value) => {
+    const name = cleanName(value).replace(/^\//, "");
+    return name.length >= 2 && name.length <= 80 && /^[a-z][a-z0-9_.:-]*$/i.test(name) && !excludedSlash.test(name) && !name.includes("/");
   };
-  const patterns = [
-    { re: /(?:Command::new|Subcommand::with_name|\.command|subcommand|add_argument|add_subparsers|registerCommand|register_command|addCommand)\s*\(\s*["'`]([^"'`]+)["'`]/g, kind: "registered" },
-    { re: /(?<![\w/])(--[a-z][a-z0-9-]{2,})(?![\w-])/gi, kind: "flag" },
-    { re: /["'`](\/[a-z][a-z0-9_-]{2,})/gi, kind: "slash" }
-  ];
+  const likelyCli = (value) => {
+    const name = cleanName(value).split(/\s+/)[0];
+    return name.length >= 2 && name.length <= 80 && /^[a-z][a-z0-9_.:-]*$/i.test(name) && !excludedToken.test(name);
+  };
+  const descriptionFrom = (lines, zeroLine, kind) => {
+    const start = Math.max(0, zeroLine - 8);
+    const window = lines.slice(start, Math.min(lines.length, zeroLine + 6));
+    for (const line of window) {
+      const match = line.match(/(?:description|about|summary|help|hint|long_about|longDescription)\s*[:=]\s*["'`]([^"'`]{8,240})["'`]/i);
+      if (match) return match[1].replace(/\\n/g, " ").trim();
+    }
+    for (let i = zeroLine - 1; i >= start; i -= 1) {
+      const sourceLine = String(lines[i] || "");
+      if (!/^\s*(?:\/\/|#|\/\/\/|\*|\/\*\*)/.test(sourceLine)) continue;
+      const comment = sourceLine.replace(/^\s*(?:\/\/|#|\/\/\/|\*|\/\*\*)\s?/, "").trim();
+      if (comment.length >= 12 && !/^[@#*]/.test(comment) && !/^[-=]{2,}/.test(comment)) return comment.slice(0, 240);
+    }
+    for (let i = zeroLine + 1; i < Math.min(lines.length, zeroLine + 5); i += 1) {
+      const doc = String(lines[i] || "").trim().replace(/^['\"]{3}|['\"]{3}$/g, "");
+      if (doc.length >= 12 && !/^[-=]{2,}/.test(doc) && !/[{}();]/.test(doc) && !/^(if|return|const|let|var|use|import|pub|async|function|def|type|name|insert|hint)\b/.test(doc)) return doc.slice(0, 240);
+    }
+    const defaults = {
+      slash: lang === "zh" ? "交互层可直接触发的 slash 指令；本卡展示它的注册点和进入处理器后的执行边界。" : "An interactive slash command; this card shows its registry entry and the boundary into its handler.",
+      cli: lang === "zh" ? "CLI 子命令；解析器先把 argv 变成结构化参数，再交给对应处理器。" : "A CLI subcommand; argv is parsed into structured arguments before its handler runs.",
+      "builtin-tool": lang === "zh" ? "随 Agent 默认装配的工具能力；这里追踪 schema、注册和执行入口。" : "A tool assembled by the Agent by default; trace its schema, registration, and execution entry.",
+      option: lang === "zh" ? "命令参数；它改变解析后的运行配置或执行分支。" : "A command option; it changes parsed runtime configuration or an execution branch."
+    };
+    return defaults[kind] || defaults.cli;
+  };
+  const add = (label, file, line, kind, raw = "", detection = "source registry") => {
+    let normalized = cleanName(label);
+    if (!normalized) return;
+    if (/(?:\.(?:png|jpe?g|gif|webp|svg|ico|mp4|mov|avi|mkv|mp3|wav|srt|vtt))$/i.test(normalized)) return;
+    if (kind === "slash" || kind === "slash-alias") {
+      if (!likelySlash(normalized)) return;
+      normalized = `/${kebab(normalized)}`;
+    } else if (kind === "cli") {
+      if (!likelyCli(normalized)) return;
+      normalized = kebab(normalized);
+    } else if (kind === "builtin-tool") {
+      normalized = normalized.replace(/^\//, "");
+      if (normalized.length < 2 || normalized.length > 90 || !/^[a-z][a-z0-9_.:-]*$/i.test(normalized) || excludedToken.test(normalized) || /(?:error|exception)$/i.test(normalized) || /^(?:call|chunk|cell|connector|job|trace|test|fixture|mock|demo)[-_]/i.test(normalized)) return;
+    } else if (kind === "option") {
+      normalized = normalized.startsWith("-") ? normalized : `--${normalized}`;
+      if (!/^--[a-z][a-z0-9-]{1,70}$/i.test(normalized)) return;
+    }
+    const canonicalKind = sourceKind(kind);
+    const key = `${canonicalKind}:${normalized.toLowerCase()}`;
+    const start = Math.max(1, Number(line) - 5);
+    const end = Number(line) + 18;
+    const lines = String(raw.__lines || "").split(/\r?\n/);
+    const description = raw.description || descriptionFrom(lines.length > 1 ? lines : [], Math.max(0, Number(line) - 1), canonicalKind);
+    // Defer the pinned-commit read until after deduplication. A registry often
+    // mentions the same command in a parser, dispatcher, and help projection;
+    // doing git-show for every mention made a full 26-project build needlessly
+    // expensive.
+    const candidate = { label: normalized, path: file.relative, line: Number(line), start, end, kind: canonicalKind, raw: String(raw.text || raw), detection, description, snippet: "" };
+    const target = canonicalKind === "option" ? options : entries;
+    const existing = target.get(key);
+    if (!existing || commandPathScore(file.relative) > commandPathScore(existing.path)) target.set(key, candidate);
+  };
+  const lineInfo = (lines, index, text) => ({ text, __lines: lines.join("\n") });
+  // These are source registries, not every file whose name happens to contain
+  // “command” or “registry”.  In particular, UI command palettes, HTTP
+  // registries, fixture bundles, and error tables must never become built-ins.
+  const catalogish = (relative) => /(^|\/)(commands?|slash(?:-commands?)?|cli|control|subcommand|command-registry|builtin)(\/|[-_.]|$)/i.test(relative)
+    || /(?:^|\/)(?:slash-commands?|commands?|execute_commands)\.(?:rs|ts|tsx|js|mjs|py|go)$/i.test(relative);
+  const commandish = (relative) => catalogish(relative)
+    && !/(^|\/)(command-palette|command-suggestion|search-command|prompt-input|components?|views?|routes?|api|i18n|locales?|styles?|theme|vendor|fixtures?|examples?|storybook|evals?|cloud|session|shell)(\/|[-_.]|$)/i.test(relative)
+    && !/(?:\.bundle|(?:^|\/)errors?\.(?:rs|ts|tsx|js|mjs|go|py)$|crash-report|metrics|generated)/i.test(relative);
+  const toolish = (relative) => /(^|\/)(tool|tools|builtin-tools?|platform_tools|function_calls?|agentTools|tool-[a-z0-9-]+)(\/|[-_.]|$)/i.test(relative)
+    || /(^|\/)tool-[a-z0-9-]+\//i.test(relative);
+  const toolSource = (relative) => toolish(relative)
+    && !/(^|\/)(test|tests|spec|__tests__|ui_tests?|toolview|ui-tool|json[-_]?schema|schema|recoverable|parallel|router|trace|prompt|constants?|fixtures?|examples?|storybook|components?|dashboard|tool-tester|\.bundle|rollout-trace|communicate_tests?|provider-types?|conversation|acp\/server|controller|metrics|types?)(\/|[-_.]|$)/i.test(relative)
+    && !/(?:\.(?:test|spec)\.|(?:^|[\\/_-])tests?\.|(?:^|\/)errors?\.(?:rs|ts|tsx|js|mjs|go|py)$|tool-(?:stats|calls?|output|result)|powershellPermissions|readOnlyValidation|utils\/tools-manager|bash_token_efficient|tool_(?:io|request)|tool_controller|write_heartbeat|harness_aliases)/i.test(relative);
+  const projectToolSource = (relative) => {
+    if (!toolSource(relative)) return false;
+    if (project.slug === "claude-code") {
+      return /(?:^|\/)packages\/builtin-tools\/src\/tools\/[^/]+Tool\/.*(?:Tool|toolName)\.(?:ts|tsx)$/i.test(relative)
+        || /(?:^|\/)packages\/@ant\/computer-use-mcp\/src\/tools\.(?:ts|tsx)$/i.test(relative);
+    }
+    if (project.slug === "codex" || project.slug === "openinterpreter") {
+      return /(?:^|\/)codex-rs\/core\/src\/tools\/handlers\/(?:apply_patch_spec|extension_tools|get_context_remaining_spec|mcp_resource_spec|multi_agents_spec|new_context_window_spec|plan_spec|request_permissions|request_plugin_install_spec|request_user_input_spec|shell_spec|view_image_spec)\.rs$/i.test(relative);
+    }
+    if (project.slug === "codewhale") {
+      return /(?:^|\/)crates\/tui\/src\/(?:core\/engine\/tool_catalog|tools\/(?:bash|edit|read|user_input|js_execution|code_execution|mcp_registry|tool_search))\.(?:rs)$/i.test(relative)
+        && !/subagent\/mailbox|setup\/tools_mcp|mcp_registry/i.test(relative);
+    }
+    if (project.slug === "goose") {
+      return /(?:^|\/)crates\/goose(?:-[^/]+)?\/src\/(?:tools?|tool_monitor|tool_inspection)\//i.test(relative) && !/provider-types|conversation|tool_monitor|tool_inspection|acp\/server/i.test(relative);
+    }
+    if (project.slug === "grok-build") {
+      return /(?:^|\/)crates\/codegen\/xai-grok-(?:tools|pager|shell|workspace-types)\/src\/(?:implementations|scrollback\/blocks\/tool|tools)\//i.test(relative)
+        && !/types?\/|tool_io|tool_index|config\.rs|monitor\/tool\.rs/i.test(relative);
+    }
+    if (project.slug === "openwork" || project.slug === "multica" || project.slug === "eigent" || project.slug === "monkeycode") return false;
+    if (project.slug === "gemini-cli") {
+      return /(?:^|\/)packages\/core\/src\/tools\/(?:definitions\/base-declarations|tool-names)\.(?:ts|tsx)$/i.test(relative);
+    }
+    if (project.slug === "deepchat") {
+      return /(?:^|\/)src\/(?:main\/tool\/agentTools\/(?:agentPlanTool|agentBashHandler|agentMemoryTools|agentFffSearchHandler|agentTapeTools|agentToolManager|questionTool|cronJobTool|skillTools)|shared\/agentTools|main\/tool\/browser\/definitions)\.(?:ts|tsx)$/i.test(relative)
+        && !/chatSettingsTools|errors?|routes?/i.test(relative);
+    }
+    if (project.slug === "jcode") {
+      return /(?:^|\/)crates\/jcode-app-core\/src\/tool\/(?:bash|edit|grep|open|read|websearch|write|todo)\.(?:rs)$/i.test(relative)
+        && !/communicate_tests|inflight|discover/i.test(relative);
+    }
+    if (project.slug === "oh-my-pi") {
+      return /(?:^|\/)packages\/coding-agent\/src\/tools\/(?:[^/]+)\.(?:ts|tsx)$/i.test(relative)
+        || /(?:^|\/)packages\/coding-agent\/src\/core\/tools\/(?:[^/]+)\.(?:ts|tsx)$/i.test(relative)
+        || /(?:^|\/)packages\/agent\/src\/harness\/tools\/(?:[^/]+)\.(?:ts|tsx)$/i.test(relative);
+    }
+    if (project.slug === "pi" || project.slug === "prime-agent") {
+      return /(?:^|\/)packages\/(?:coding-agent\/src\/(?:core\/tools|utils)|agent\/src\/harness\/tools)\/(?:[^/]+)\.(?:ts|tsx)$/i.test(relative)
+        && !/utils\/tools-manager|tool-stats/i.test(relative);
+    }
+    if (project.slug === "deepseek-reasonix") {
+      return /(?:^|\/)internal\/tool\/(?:builtin|tool)\.(?:go)$/i.test(relative);
+    }
+    return true;
+  };
+  const slashish = (relative) => commandish(relative) && !toolish(relative);
+  const safeCatalogFile = (relative) => /(^|\/)(commands?|slash(?:-commands?)?|control|subcommand|command-registry|builtin)(\/|[-_.]|$)/i.test(relative)
+    || /(?:^|\/)(?:slash-commands?|commands?|execute_commands)\.(?:rs|ts|tsx|js|mjs|py|go)$/i.test(relative)
+    && !toolish(relative)
+    && !/(^|\/)(command-palette|command-suggestion|search-command|prompt-input|components?|views?|routes?|api|i18n|locales?|styles?|theme|vendor|fixtures?|examples?|storybook|evals?|cloud|session|shell)(\/|[-_.]|$)/i.test(relative)
+    && !/(?:\.bundle|(?:^|\/)errors?\.|crash-report|metrics|generated|internal\/command\/command\.(?:go|rs|ts|py)$)/i.test(relative);
+
   for (const file of files) {
     let content = "";
     try { content = fs.readFileSync(path.join(sourceRepo(project), file.relative), "utf8"); } catch (_) { continue; }
-    if (!content || content.length > 220000) continue;
+    if (!content || content.length > 300000) continue;
     const lines = content.split(/\r?\n/);
-    for (const { re, kind } of patterns) {
-      re.lastIndex = 0;
+    const isCommandFile = commandish(file.relative);
+    const isSlashFile = slashish(file.relative);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
       let match;
-      while ((match = re.exec(content)) && candidates.length < 18) {
-        const line = content.slice(0, match.index).split(/\r?\n/).length;
-        const raw = lines[line - 1] || "";
-        if (kind === "slash") {
-          const token = String(match[1] || "");
-          const relevant = /command|slash|prompt|directive|shortcut|input|action|handler|route|builtin|help|goal|plan|status|resume|compact|model/i.test(raw) || /^(goal|plan|help|status|resume|compact|model|settings|clear|quit|exit|review|run|test)$/i.test(token);
-          if (!relevant) continue;
+      // Aider and similar Python command classes make the handler itself the catalog.
+      match = line.match(/\b(?:def|function|async\s+function)\s+cmd_([A-Za-z0-9_-]+)\s*\(/);
+      if (match && isCommandFile) add(`/${match[1]}`, file, index + 1, "slash", lineInfo(lines, index, line), "cmd_* handler");
+      // Python click/typer, commander/yargs, and explicit registry calls.
+      if (commandish(file.relative) || /(^|\/)cli\//i.test(file.relative) || (project.slug === "little-coder" && /(?:^|\/)\.pi\/extensions\//i.test(file.relative))) {
+        for (const pattern of [
+          { re: /(?:\.command|registerCommand|register_command|addCommand)\s*\(\s*["'`]([^"'`]+)["'`]/g, kind: "cli", why: "command registration" },
+          { re: /(?:add_parser|add_subparsers)\s*\(\s*["'`]([^"'`]+)["'`]/g, kind: "cli", why: "argparse registration" },
+          { re: /@(?:app|cli|group|typer|click)[.]command\s*\(?(?:\s*name\s*=\s*)?["'`]([^"'`]+)["'`]/g, kind: "slash", why: "decorated slash handler" },
+          { re: /(?:CommandDef|SlashCommand|CommandInfo|CommandSpec|BuiltinSlashCommand)\s*\{[^\n]*\bname\s*[:=]\s*["'`]([^"'`]+)["'`]/g, kind: "slash", why: "command catalog entry" }
+        ]) {
+          pattern.re.lastIndex = 0;
+          while ((match = pattern.re.exec(line))) {
+            const detectedKind = project.slug === "little-coder" && /registerCommand/i.test(pattern.re.source) ? "slash" : pattern.kind;
+            add(match[1], file, index + 1, detectedKind, lineInfo(lines, index, line), pattern.why);
+          }
         }
-        if (kind === "flag" && /(^|\/)(\.github|\.githooks|benchmarks|testdata|fixtures|examples)\//i.test(file.relative)) continue;
-        if (/(update-helper|installer|release|deploy|workflow|e2ebench)/i.test(file.relative)) continue;
-        add(match[1], file, line, kind, raw);
       }
-      if (candidates.length >= 18) break;
+      if (isCommandFile || isSlashFile) {
+        const nearbyCatalog = lines.slice(Math.max(0, index - 8), Math.min(lines.length, index + 9)).join("\n");
+        const registryStrong = /(?:slash_registry|builtin-registry|execute_commands|slash[_-]?commands\.|aider\/commands\.py|command_registry)/i.test(file.relative);
+        const catalogLine = registryStrong || /kind\s*:\s*["']slash|SlashCommand|subCommands|BuiltinSlashCommand|CommandInfo|CommandSpec/i.test(nearbyCatalog);
+        for (const pattern of [
+          { re: /(?:name|label|insert)\s*[:=]\s*["'`](\/[^"'`\s]+)["'`]/g, kind: "slash", why: "named slash catalog" },
+          { re: /(?:name|label|insert)\s*[:=]\s*["'`]([a-z][a-z0-9_.:-]{1,80})["'`]/gi, kind: "slash", why: "named command catalog" },
+          { re: /aliases?\s*:[^"']*["'`](\/?[a-z][a-z0-9_.:-]{1,80})["'`]/gi, kind: "slash-alias", why: "command alias catalog" },
+          { re: /\bcase\s+["'`](\/?[a-z][a-z0-9_.:-]{1,80})["'`]/gi, kind: "slash", why: "dispatch switch" },
+          { re: /(?:#[[]command\(name\s*=|name\s*=)\s*["'`]([^"'`]+)["'`]/g, kind: "cli", why: "named CLI command" },
+          { re: /\bUse\s*:\s*["'`]([^"'`]+)["'`]/g, kind: "cli", why: "cobra Use" },
+          { re: /(?:Command::new|Subcommand::with_name)\s*\(\s*["'`]([^"'`]+)["'`]/g, kind: "cli", why: "Rust command constructor" }
+        ]) {
+          pattern.re.lastIndex = 0;
+          while ((match = pattern.re.exec(line))) {
+            if ((pattern.why === "named slash catalog" || pattern.why === "named command catalog") && !catalogLine) continue;
+            if (pattern.why === "dispatch switch" && (!isSlashFile || (!String(match[1]).startsWith("/") && !/(^|\/)(slash|control|commands?)(\/|[-_.]|$)/i.test(file.relative)))) continue;
+            const kind = pattern.kind === "slash" && !String(match[1]).startsWith("/") && /\b(case|name|label|insert)\b/.test(pattern.re.source) ? "slash" : pattern.kind;
+            add(match[1], file, index + 1, kind, lineInfo(lines, index, line), pattern.why);
+          }
+        }
+      }
+      // Built-in tools are a separate command surface: they are not slash or
+      // CLI commands, but they are callable instructions exposed to the model.
+      if (projectToolSource(file.relative)) {
+        for (const pattern of [
+          /\b(?:name|tool_name|id)\b\s*[:=]\s*["'`]([a-z][a-z0-9_.:-]{1,90})["'`]/gi,
+          /\b[A-Z][A-Z0-9_]*(?:TOOL|TOOL_NAME)\s*[:=]\s*["'`]([a-z][a-z0-9_.:-]{1,90})["'`]/g,
+          /(?:registerTool|register_tool|defineTool|define_tool)\s*\(\s*["'`]([^"'`]+)["'`]/g,
+          /(?:ToolDefinition|BuiltinTool)\s*::(?:new|from_name)\s*\(\s*["'`]([^"'`]+)["'`]/g
+        ]) {
+          pattern.lastIndex = 0;
+          while ((match = pattern.exec(line))) add(match[1], file, index + 1, "builtin-tool", lineInfo(lines, index, line), "tool registry");
+        }
+      }
+      // Keep the complete option surface, but render it as a compact table so
+      // flags do not masquerade as separate commands.
+      if (isCommandFile && !/(^|\/)(test|tests|fixtures?|examples?)(\/|$)/i.test(file.relative)) {
+        const flagRe = /(?<![\w/])(--[a-z][a-z0-9-]{1,70})(?![\w-])/gi;
+        while ((match = flagRe.exec(line))) add(match[1], file, index + 1, "option", lineInfo(lines, index, line), "argument declaration");
+      }
     }
-    if (candidates.length >= 18) break;
-  }
-  if (!candidates.length) {
-    const commandHits = conceptIndex(project).get("commands") || [];
-    for (const hit of commandHits.slice(0, 6)) {
-      const file = files.find((item) => item.relative === hit.path) || sourceFiles(project).find((item) => item.relative === hit.path);
-      if (file) add(lang === "zh" ? "命令面线索" : "command-surface clue", file, hit.line, "surface", "concept audit");
+
+    // Clap derives command names from enum variants. The variants are the
+    // authoritative CLI catalog even when no explicit `name =` attribute is
+    // present, so parse every Subcommand enum block instead of taking only the
+    // first matching line.
+    if (/\.rs$/i.test(file.ext) && /derive\s*\([^)]*Subcommand/i.test(content) && /(^|\/)(cli|command|commands|subcommand|slash[_-]?command)/i.test(file.relative)) {
+      for (let index = 0; index < lines.length; index += 1) {
+        if (!/derive\s*\([^)]*Subcommand/i.test(lines[index])) continue;
+        let cursor = index;
+        while (cursor < lines.length && !/\benum\s+[A-Za-z0-9_]+\s*\{/.test(lines[cursor])) cursor += 1;
+        if (cursor >= lines.length) continue;
+        let depth = 0; let started = false;
+        for (; cursor < lines.length; cursor += 1) {
+          const current = lines[cursor];
+          if (current.includes("{")) { depth += (current.match(/{/g) || []).length; started = true; }
+          if (started && cursor > index) {
+            const variant = current.match(/^\s*([A-Z][A-Za-z0-9_]*)\s*(?:\{|,|$)/);
+            if (variant && !/^(Args|Command|Error|Config|Output|State|Mode|Type|Value|Input|Options)$/.test(variant[1])) add(variant[1], file, cursor + 1, "cli", lineInfo(lines, cursor, current), "clap Subcommand variant");
+          }
+          if (started && current.includes("}")) { depth -= (current.match(/}/g) || []).length; if (depth <= 0) break; }
+        }
+      }
+    }
+    // Codex/OpenInterpreter keep their interactive surface in a plain Rust
+    // enum rather than a clap derive.  The enum variants are the canonical
+    // slash names (the dispatch layer applies kebab-case and aliases later).
+    if (/\/slash[_-]?command\.rs$/i.test(file.relative) && /enum\s+SlashCommand\s*\{/i.test(content)) {
+      let started = false; let depth = 0;
+      for (let cursor = 0; cursor < lines.length; cursor += 1) {
+        const current = lines[cursor];
+        if (/enum\s+SlashCommand\s*\{/i.test(current)) started = true;
+        if (!started) continue;
+        if (current.includes("{")) depth += (current.match(/{/g) || []).length;
+        const variant = current.match(/^\s*([A-Z][A-Za-z0-9_]*)\s*(?:\(|\{|,|$)/);
+        if (variant && !/^(SlashCommand|Command|Args|Error|State|Mode|Type|Value)$/.test(variant[1])) add(variant[1], file, cursor + 1, "slash", lineInfo(lines, cursor, current), "SlashCommand enum variant");
+        if (current.includes("}")) { depth -= (current.match(/}/g) || []).length; if (depth <= 0) break; }
+      }
     }
   }
-  if (!candidates.length) {
+
+  // Claude Code keeps the authoritative slash surface as an import table in
+  // src/commands.ts.  Reading that table avoids mistaking status/error labels
+  // inside individual command implementations for user-facing commands.
+  if (project.slug === "claude-code") {
+    const registryFile = files.find((file) => file.relative === "src/commands.ts");
+    if (registryFile) {
+      let registry = "";
+      try { registry = fs.readFileSync(path.join(sourceRepo(project), registryFile.relative), "utf8"); } catch (_) {}
+      const registryLines = registry.split(/\r?\n/);
+      for (let index = 0; index < registryLines.length; index += 1) {
+        const match = registryLines[index].match(/from\s+["']\.\/commands\/([^"']+?)(?:\/index)?\.(?:js|ts|tsx)["']/);
+        if (!match) continue;
+        const commandPath = match[1].replace(/\/index$/i, "").replace(/\/$/, "");
+        const name = path.basename(commandPath).replace(/[-_]command$/i, "");
+        if (name) add(`/${name}`, registryFile, index + 1, "slash", lineInfo(registryLines, index, registryLines[index]), "src/commands.ts import registry");
+      }
+    }
+  }
+
+  // Module-per-command layouts (CodeWhale, Claude-style slash command trees,
+  // Goose's slash command modules) often keep the literal name in a separate
+  // `CommandInfo` value. When the literal is not present, the module filename
+  // is still a source-backed command boundary and is worth documenting.
+  for (const file of files) {
+    const relative = file.relative;
+    if (!/(^|\/)(commands?|slash(?:-commands)?)(\/|$)/i.test(relative)) continue;
+    const base = path.basename(relative, file.ext).replace(/(?:[-_]?command)$/i, "");
+    if (!base || /^(index|mod|registry|discovery|types?|utils?|helpers?|parser|parse|completion|autocomplete|operator)$/i.test(base)) continue;
+    let content = "";
+    try { content = fs.readFileSync(path.join(sourceRepo(project), relative), "utf8"); } catch (_) { continue; }
+    if (!/(CommandInfo|CommandSpec|SlashCommand|execute|handler|runCommand|CommandResult|command registry|builtin)/i.test(content)) continue;
+    const line = Math.max(1, content.split(/\r?\n/).findIndex((entry) => /CommandInfo|CommandSpec|SlashCommand|execute|handler|runCommand|CommandResult/i.test(entry)) + 1);
+    add(`/${base}`, file, line, "slash", { text: content.split(/\r?\n/)[line - 1] || "", __lines: content }, "command module boundary");
+  }
+
+  // Final evidence gate.  The broad pass above intentionally errs on the
+  // side of finding a source location; this pass removes values that are
+  // demonstrably test data, UI state, API/error labels, or dynamic examples.
+  const keepCommandEvidence = (item) => {
+    const p = item.path.toLowerCase();
+    const l = item.label.toLowerCase();
+    if (/(^|\/)(tests?|spec|fixtures?|examples?|storybook|ui_tests?|tool-tester|rollout-trace)(\/|[-_.]|$)|(?:\.(?:test|spec)\.|(?:^|[\\/_-])tests?\.)/i.test(p)) return false;
+    if (item.kind === "builtin-tool") {
+      if (/(?:json[-_]?schema|tool-stats|tool_(?:io|request)|tool_controller|communicate_tests?|harness_aliases|write_heartbeat|bash_token_efficient|powershellpermissions|readonlyvalidation|crash-report|metrics|toolview|components?)/i.test(p)) return false;
+      if (/^(?:adapter|b_results|file|in-process|custom|self|main|origin|created_at|cursor|auth_method|font(size|Size)Level|language|theme|pid|msg_?\d+|call[-_]|chunk[-_]|cell[-_]|connector[-_]|job[-_]|session[-_]|tool[-_]?\d+|GEMINI\.md|MEMORY\.md)$/i.test(item.label)) return false;
+      if (project.slug === "deepchat" && !/^(?:agent-|deepchat_|cronjob|edit|exec|glob|grep|process|read|write|skill_|subagent_|scheduled|yobrowser|file_read-1)$/i.test(item.label)) return false;
+      if (project.slug === "deepseek-reasonix" && /^(?:mcp-tool:|mcp-tool$)/i.test(l)) return false;
+      if (project.slug === "deepseek-harness" && /(?:invariant|packages\/core\/tools\/src\/index\.ts)/i.test(p)) return false;
+      if (project.slug === "deepseek-harness" && /^(?:tool[-:]|tools:)/i.test(l)) return false;
+      if (project.slug === "jcode" && /^(?:t\d|aaaa|session-test|toolu_|msg-|owned-|sess-)/i.test(l)) return false;
+      if (project.slug === "codewhale" && /(?:mailbox|mcp_registry|setup\/tools_mcp|skill\.rs)/i.test(p)) return false;
+      if ((project.slug === "codex" || project.slug === "openinterpreter") && !/codex-rs\/core\/src\/tools\/handlers\//i.test(p)) return false;
+      if ((project.slug === "pi" || project.slug === "prime-agent")) {
+        if (/utils\/tools-manager|tool-stats/i.test(p)) return false;
+        const base = path.basename(item.path).replace(/\.[^.]+$/, "").replace(/[-_]/g, "_").toLowerCase();
+        if (!new RegExp(`^(?:${base}|${base.replace(/_tool$/, "")})$`, "i").test(item.label.replace(/[-_]/g, "_"))) return false;
+      }
+      if (project.slug === "oh-my-pi") {
+        const base = path.basename(item.path).replace(/\.[^.]+$/, "").replace(/[-_]/g, "_").toLowerCase();
+        if (!new RegExp(`^(?:${base}|${base.replace(/_tool$/, "")})$`, "i").test(item.label.replace(/[-_]/g, "_"))) return false;
+      }
+    }
+    if (item.kind === "cli") {
+      if (/(?:error|failure|blocked|timeout|status|environment|session-id|request-id|tool-id|path|url|sha|hash|token|command-line|cwd|pid|stderr|stdout|prompt|file|dir|json|text|number|origin|source|ref|user-message)/i.test(l)) return false;
+      if (/(^|\/)(ui|components?|routes?|api|errors?|metrics|tests?|fixtures?)(\/|[-_.]|$)/i.test(p)) return false;
+      if (project.slug === "claude-code") return /(^|\/)src\/cli\//i.test(p) && !/(?:errors?|permissions?|readOnlyValidation|powershell)/i.test(p);
+      if (project.slug === "codex" || project.slug === "openinterpreter") return /codex-rs\/(?:cli\/src\/(?:main|mcp_cmd|remote_control_cmd|plugin_cmd|marketplace_cmd)|exec\/src\/cli)\.rs$/i.test(p) || /codex-rs\/cli\/src\/bin\/logs_client\.rs$/i.test(p);
+      if (project.slug === "deepseek-harness" && /invariant|packages\/core\/tools\/src\/index\.ts/i.test(p)) return false;
+    }
+    if (item.kind === "slash") {
+      if (project.slug === "codex" || project.slug === "openinterpreter") return /codex-rs\/tui\/src\/slash_command\.rs$/i.test(p);
+      if (project.slug === "deepseek-reasonix") return /internal\/cli\/slash_registry\.go$/i.test(p);
+      if (project.slug === "goose") return /crates\/goose\/src\/(?:agents\/execute_commands\.rs|slash_commands\/)/i.test(p);
+      if (project.slug === "grok-build") return /xai-grok-pager\/src\/slash\//i.test(p);
+      if (project.slug === "codewhale") return /crates\/tui\/src\/commands\/groups\//i.test(p) && !/acceptance|tests?/i.test(p);
+      if (project.slug === "gemini-cli") return /packages\/cli\/src\/ui\/commands\//i.test(p);
+      if (project.slug === "claude-code") {
+        if (p === "src/commands.ts") return true;
+        if (!/src\/commands\//i.test(p) || item.detection !== "command module boundary") return false;
+        const match = p.match(/src\/commands\/([^/]+)\/([^/]+)\.(?:ts|tsx|js)$/i);
+        if (match) return match[2].toLowerCase() === "index" || match[2].replace(/[-_]/g, "").toLowerCase() === match[1].replace(/[-_]/g, "").toLowerCase();
+        return /src\/commands\/[^/]+\.(?:ts|tsx|js)$/i.test(p);
+      }
+      if (project.slug === "aider") return /aider\/commands\.py$/i.test(p);
+      if (project.slug === "oh-my-pi") return /packages\/coding-agent\/src\/slash-commands\/(?:builtin|helpers|types|builtin-[a-z-]+)\.(?:ts|tsx)$/i.test(p) || /packages\/coding-agent\/src\/core\/slash-commands\.ts$/i.test(p);
+    }
+    return true;
+  };
+
+  const result = [...entries.values()].filter((item) => item.kind !== "option" && keepCommandEvidence(item)).sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+  for (const item of result) item.snippet = sourceSnippet(project, project.commit, item.path, item.start, item.end, 42);
+  const optionList = [...options.values()].sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+  if (!result.length) {
     const fallback = findCitation(project, "tools");
-    candidates.push({ label: lang === "zh" ? "未定位的内置指令" : "built-in command not located", path: fallback.path, line: fallback.start, start: fallback.start, end: fallback.end, kind: "unlocated", raw: "", snippet: fallback.snippet });
+    result.push({ label: lang === "zh" ? "未定位的内置指令" : "built-in command not located", path: fallback.path, line: fallback.start, start: fallback.start, end: fallback.end, kind: "unlocated", raw: "", detection: "no command registry located", description: lang === "zh" ? "当前固定源码没有定位到可确认的内置指令注册器；本页不从 README 推断支持。" : "The pinned source did not expose a confirmed built-in command registry; this page does not infer support from README.", snippet: fallback.snippet });
   }
-  const result = candidates.slice(0, 12);
+  result.options = optionList;
+  result.coverage = { confirmed: result.filter((item) => item.kind !== "unlocated").length, options: optionList.length, sources: new Set(result.map((item) => item.path)).size };
   commandInventoryCache.set(cacheKey, result);
   return result;
+}
+
+function commandPathScore(relative) {
+  let score = 0;
+  if (/(?:slash_registry|builtin-registry|execute_commands|slash[_-]?commands\.|command_registry|aider\/commands\.py)/i.test(relative)) score += 40;
+  if (/(^|\/)(commands?|slash|cli|registry|router|dispatch|control|prompt|input|completion|subcommand|builtin)(\/|[-_.]|$)/i.test(relative)) score += 12;
+  if (/(^|\/)(src|crates|packages|internal|cmd)(\/|$)/i.test(relative)) score += 3;
+  if (/(^|\/)(routes?|api|i18n|locales?|components\/ui|styles?|theme|vendor|generated)(\/|$)/i.test(relative)) score -= 8;
+  if (/(^|\/)(test|tests|fixtures?|examples?|benchmarks?|evals|scripts\/release)(\/|$)|\.test\.|_test\.|\.spec\./i.test(relative)) score -= 12;
+  return score;
 }
 
 function commandExecutionSection(project, lang, hostFile = path.join(siteRoot, "projects", project.slug, lang, "analysis.html")) {
   const commands = commandInventory(project, lang);
   const commandDiagramFile = path.join(siteRoot, "projects", project.slug, lang, "diagrams", "commands.html");
   const commandDiagramHref = rel(hostFile, commandDiagramFile);
+  const miniDiagram = (command) => `<div class="command-mini-flow" role="img" aria-label="${esc(lang === "zh" ? `${command.label}：解析 → 路由 → 策略 → 处理器 → 回执` : `${command.label}: parse → route → policy → handler → receipt`)}"><span>${esc(command.label)}</span><i>→</i><span>${lang === "zh" ? "解析" : "parse"}</span><i>→</i><span>${lang === "zh" ? "路由" : "route"}</span><i>→</i><span>${lang === "zh" ? "策略" : "policy"}</span><i>→</i><span>${lang === "zh" ? "处理器" : "handler"}</span><i>→</i><span>${lang === "zh" ? "回执" : "receipt"}</span></div>`;
   const commandCards = commands.map((command, index) => {
     const source = sourceUrlAtCommit(project, command.path, command.start, command.end, project.commit);
-    const plain = command.kind === "slash"
-      ? (lang === "zh" ? "这是一个斜杠指令线索：先由交互层识别 token，再进入项目自己的路由或命令注册表。" : "A slash-command clue: the interaction layer recognises the token before routing it through the project's registry.")
-      : command.kind === "flag"
-        ? (lang === "zh" ? "这是 CLI 参数线索：解析器把文本参数变成结构化选项，后续执行层再决定状态和副作用。" : "A CLI-flag clue: the parser turns text into structured options before execution decides state and effects.")
-        : command.kind === "registered"
-          ? (lang === "zh" ? "这是注册点：命令名与处理函数在这里绑定，后面的执行图展示它如何穿过策略、工具和回执。" : "A registration point: the command name is bound to a handler here; the execution map traces policy, tools, and receipts after it.")
-          : (lang === "zh" ? "当前快照只定位到命令面相关文件，不能把它误写成一个已确认的用户命令。" : "The snapshot only locates a command-surface file; do not overstate it as a confirmed user command.");
-    return `<article class="command-card"><header><span>${String(index + 1).padStart(2, "0")}</span><div><h3><code>${esc(command.label)}</code></h3><small>${esc(command.kind)} · ${esc(command.path)}:${command.line}</small></div><a href="${esc(source)}" target="_blank" rel="noreferrer">${lang === "zh" ? "源码" : "Source"} ↗</a></header><p>${esc(plain)}</p><pre><code>${esc(command.snippet || command.raw || "// source evidence unavailable")}</code></pre><a class="command-map-link" href="${esc(`${commandDiagramHref}?command=${encodeURIComponent(command.label)}#command-flow`)}">${lang === "zh" ? "打开这条指令的执行图" : "Open this command's execution map"} →</a></article>`;
+    const scope = command.kind === "slash"
+      ? (lang === "zh" ? "交互 slash 指令" : "interactive slash command")
+      : command.kind === "cli"
+        ? (lang === "zh" ? "CLI 子命令" : "CLI subcommand")
+        : command.kind === "builtin-tool"
+          ? (lang === "zh" ? "模型可调用的内置工具" : "model-callable built-in tool")
+          : (lang === "zh" ? "源码边界" : "source boundary");
+    return `<article class="command-card"><header><span>${String(index + 1).padStart(2, "0")}</span><div><h3><code>${esc(command.label)}</code></h3><small>${esc(scope)} · ${esc(command.detection)} · ${esc(command.path)}:${command.line}</small></div><a href="${esc(source)}" target="_blank" rel="noreferrer">${lang === "zh" ? "源码" : "Source"} ↗</a></header><p>${esc(command.description)}</p>${miniDiagram(command)}<details><summary>${lang === "zh" ? "展开逐行源码证据" : "Expand line-level source evidence"}</summary><pre><code>${esc(command.snippet || command.raw || "// source evidence unavailable")}</code></pre></details><a class="command-map-link" href="${esc(`${commandDiagramHref}?command=${encodeURIComponent(command.label)}#command-flow`)}">${lang === "zh" ? "打开这条指令的动态执行图" : "Open this command's dynamic execution map"} →</a></article>`;
   }).join("");
-  return `<section class="command-execution" id="command-execution"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>${commands.length} ${lang === "zh" ? "条指令线索" : "command clues"}</b></div><p>${lang === "zh" ? "指令不是 UI 文案列表：每条线索都来自本地源码中的注册器、参数解析器或 slash token。点击源码行号，再用执行图查看从解析到回执的完整路径；未定位项会明确标注，不会被包装成事实。" : "Commands are not a UI copy list: each clue comes from a local registration site, argument parser, or slash token. Open the pinned lines, then use the execution map to follow parse → receipt; unlocated items stay explicitly marked."}</p><div class="command-grid">${commandCards}</div></section>`;
+  const optionList = commands.options || [];
+  const options = optionList.length ? `<details class="command-options"><summary>${lang === "zh" ? `展开全部 ${optionList.length} 个源码参数` : `Expand all ${optionList.length} source-located options`}</summary><div class="command-option-grid">${optionList.map((option) => `<a href="${esc(sourceUrlAtCommit(project, option.path, option.start, option.end, project.commit))}" target="_blank" rel="noreferrer"><code>${esc(option.label)}</code><small>${esc(option.path)}:${option.line}</small></a>`).join("")}</div></details>` : "";
+  const coverage = commands.coverage || { confirmed: commands.length, options: optionList.length, sources: new Set(commands.map((item) => item.path)).size };
+  return `<section class="command-execution command-coverage" id="command-execution" data-confirmed-commands="${coverage.confirmed}" data-source-options="${coverage.options}"><div class="command-head"><span>COMMAND SURFACE · SOURCE-LOCATED</span><b>${coverage.confirmed} ${lang === "zh" ? "条已确认指令" : "confirmed commands"}</b></div><p>${lang === "zh" ? `本节不再只取前几条命令样例：它把固定提交中能定位到的 slash 指令、CLI 子命令和内置工具全部列出；每条都有源码行号、说明、独立小链路图，并可切换到完整动态执行图。另有 ${coverage.options} 个参数和 ${coverage.sources} 个命令源码文件作为覆盖账本。` : `This section is exhaustive over the pinned command surface: every source-located slash command, CLI subcommand, and built-in tool is listed with source lines, an explanation, a per-command mini flow, and a link to the full dynamic execution map. The coverage ledger also records ${coverage.options} options across ${coverage.sources} command source files.`}</p><div class="command-grid">${commandCards}</div>${options}</section>`;
 }
 function sourceSnippet(project, commit, relative, start, end, maxLines = 72) {
   const repo = sourceRepo(project);
@@ -929,9 +1235,9 @@ function archifyDiagram(project, lang, type) {
   if (html.includes("id=\"archify-source-evidence-data\"")) html = html.replace(/<script id="archify-source-evidence-data"[^>]*>[\s\S]*?<\/script>/, evidence);
   else html = html.replace(/(<script id="archify-guided-views-data"[^>]*>[\s\S]*?<\/script>)/, `$1\n    ${evidence}`);
   if (type === "commands") {
-    const commandData = commandInventory(project, lang).map((command) => ({ label: command.label, kind: command.kind, path: command.path, line: command.line, start: command.start, end: command.end, href: sourceUrlAtCommit(project, command.path, command.start, command.end, project.commit) }));
+    const commandData = commandInventory(project, lang).map((command) => ({ label: command.label, kind: command.kind, path: command.path, line: command.line, start: command.start, end: command.end, description: command.description, href: sourceUrlAtCommit(project, command.path, command.start, command.end, project.commit) }));
     const selector = `<section id="command-flow" class="command-switcher" aria-label="${esc(lang === "zh" ? "选择指令" : "Choose a command")}"><span>${esc(lang === "zh" ? "当前指令" : "CURRENT COMMAND")}</span><select id="command-select">${commandData.map((command) => `<option value="${esc(command.label)}">${esc(command.label)}</option>`).join("")}</select><a id="command-source" target="_blank" rel="noreferrer">${esc(lang === "zh" ? "打开源码行" : "Open source lines")} ↗</a></section>`;
-    const commandScript = `<script id="archify-command-data" type="application/json">${JSON.stringify(commandData)}</script><script>(function(){const data=JSON.parse(document.getElementById('archify-command-data').textContent||'[]');const select=document.getElementById('command-select');const source=document.getElementById('command-source');const node=document.querySelector('[data-node-id="command"]');const title=node?.querySelector('[data-detail-anchor]');const sub=node?.querySelector('[data-detail]');function sync(){const item=data.find(x=>x.label===select.value)||data[0];if(!item)return;if(title)title.textContent='${esc(lang === "zh" ? "指令" : "Command")} / '+item.label;if(sub)sub.textContent=item.kind+' · '+item.path+':'+item.line;if(node){node.dataset.nodeLabel=item.label;node.dataset.nodeContext='commands';node.dataset.commandHref=item.href}if(source){source.href=item.href}try{history.replaceState(null,'',location.pathname+'?command='+encodeURIComponent(item.label)+'#command-flow')}catch(_){}}const initial=new URLSearchParams(location.search).get('command');if(initial&&data.some(x=>x.label===initial))select.value=initial;select?.addEventListener('change',sync);sync()})();</script>`;
+    const commandScript = `<script id="archify-command-data" type="application/json">${JSON.stringify(commandData)}</script><script>(function(){const data=JSON.parse(document.getElementById('archify-command-data').textContent||'[]');const select=document.getElementById('command-select');const source=document.getElementById('command-source');const node=document.querySelector('[data-node-id="command"]');const title=node?.querySelector('[data-detail-anchor]');const sub=node?.querySelector('[data-detail]');function sync(){const item=data.find(x=>x.label===select.value)||data[0];if(!item)return;if(title)title.textContent='${esc(lang === "zh" ? "指令" : "Command")} / '+item.label;if(sub)sub.textContent=item.kind+' · '+item.path+':'+item.line+' · '+(item.description||'');if(node){node.dataset.nodeLabel=item.label;node.dataset.nodeContext='commands';node.dataset.commandHref=item.href;node.dataset.commandDescription=item.description||''}if(source){source.href=item.href;source.title=item.description||''}try{history.replaceState(null,'',location.pathname+'?command='+encodeURIComponent(item.label)+'#command-flow')}catch(_){}}const initial=new URLSearchParams(location.search).get('command');if(initial&&data.some(x=>x.label===initial))select.value=initial;select?.addEventListener('change',sync);sync()})();</script>`;
     html = html.replace(/(<body[^>]*>)/, `$1${selector}`);
     html = html.replace(/(<\/body>)/, `${commandScript}$1`);
     html = html.replace(/<\/style>/, `</style><style>.command-switcher{display:flex;align-items:center;gap:.75rem;padding:12px 16px;margin:12px 0;border:1px solid var(--toolbar-border);background:var(--panel);font:12px monospace;color:var(--text-muted)}.command-switcher select{min-width:220px;padding:8px;border:1px solid var(--toolbar-border);background:var(--toolbar-bg);color:var(--toolbar-text);font:12px monospace}.command-switcher a{color:var(--arrow-emphasis)}@media(max-width:720px){.command-switcher{flex-wrap:wrap}.command-switcher select{width:100%}}</style>`);
@@ -1164,7 +1470,7 @@ const sourceMapCss = `.source-reading-map{margin:26px 0 8px;padding:18px 0;borde
 const inventoryCss = `.implementation-inventory{padding:52px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto;background:rgba(226,216,193,.2)}.inventory-head{display:flex;justify-content:space-between;gap:15px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.inventory-head b{color:var(--ink);font:15px Georgia,serif;letter-spacing:0}.implementation-inventory>p{max-width:980px;color:var(--muted);font-size:14px}.inventory-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}.inventory-card{min-width:0;border:1px solid var(--line);background:rgba(246,241,227,.62);padding:13px}.inventory-card>span{color:var(--red);font:9px "SFMono-Regular",monospace;letter-spacing:.08em}.inventory-card>p{margin:7px 0;color:var(--muted);font-size:11px;line-height:1.5}.inventory-card ul{display:grid;gap:6px;margin:0;padding:0;list-style:none}.inventory-card li{display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:6px}.inventory-card a,.inventory-card code{color:var(--ink);font:10px/1.4 "SFMono-Regular",monospace;overflow-wrap:anywhere}.inventory-card li small{color:var(--muted);font:9px monospace;white-space:nowrap}@media(max-width:1050px){.inventory-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.inventory-grid{grid-template-columns:1fr}.implementation-inventory{padding:42px 18px}}`;
 const conceptCss = `.concept-audit{padding:52px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto}.concept-audit-head{display:flex;justify-content:space-between;gap:15px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.concept-audit-head b{color:var(--ink);font:15px Georgia,serif;letter-spacing:0}.concept-audit>p{max-width:1050px;color:var(--muted);font-size:14px}.concept-audit-wrap{overflow:auto;border:1px solid var(--ink);box-shadow:var(--shadow)}.concept-audit table{border-collapse:collapse;width:100%;min-width:880px;background:rgba(246,241,227,.45);font-size:12px}.concept-audit th,.concept-audit td{padding:10px 12px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);vertical-align:top;text-align:left}.concept-audit thead th{background:var(--ink);color:var(--paper);font:9px "SFMono-Regular",monospace}.concept-audit tbody th{width:240px;color:var(--ink)}.concept-audit tbody th b{display:block;font-size:13px}.concept-audit tbody th small{display:block;margin-top:3px;color:var(--muted);font:10px/1.45 "SFMono-Regular",monospace}.concept-audit td:nth-child(2){width:150px}.concept-audit td small{display:block;margin-top:5px;color:var(--muted);font:9px monospace}.concept-audit td a{color:var(--red);font:10px/1.5 "SFMono-Regular",monospace;overflow-wrap:anywhere}.concept-audit td em{color:var(--muted);font-size:11px}.concept-status{display:inline-block;padding:3px 6px;border:1px solid currentColor;font:9px "SFMono-Regular",monospace}.concept-found{color:#087f69}.concept-missing{color:var(--red)}@media(max-width:760px){.concept-audit{padding:42px 18px}}`;
 const diagramCss = `.diagrams-v2{background:rgba(226,216,193,.12)}.diagram-stack{display:grid;grid-template-columns:1fr;gap:30px}.map-figure{scroll-margin-top:82px;background:rgba(246,241,227,.62);box-shadow:var(--shadow)}.map-figure figcaption{padding:18px 20px;background:rgba(235,227,209,.34)}.map-figure figcaption>b{font-size:25px}.map-figure>p{min-height:0;margin:0;padding:0 20px 18px;max-width:1000px;font-size:14px;line-height:1.65}.map-figure iframe{height:720px;background:#f5f1e6}.map-figure::after{content:"SOURCE-BACKED MAP · CLICK A NODE FOR EVIDENCE";display:block;padding:10px 20px;border-top:1px solid var(--line);color:var(--muted);font:9px "SFMono-Regular",monospace;letter-spacing:.08em}@media(max-width:1100px){.map-figure iframe{height:680px}}@media(max-width:760px){.map-figure iframe{height:560px}.map-figure figcaption>b{font-size:21px}}`;
-const commandCss = `.command-execution{padding:62px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto;background:rgba(226,216,193,.16)}.command-head{display:flex;justify-content:space-between;gap:16px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.command-head b{color:var(--ink);font:16px Georgia,serif;letter-spacing:0}.command-execution>p{max-width:980px;color:var(--muted);font-size:14px}.command-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:22px}.command-card{border:1px solid var(--line);background:rgba(246,241,227,.72);box-shadow:var(--shadow);min-width:0}.command-card header{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-bottom:1px solid var(--line)}.command-card header>span{color:var(--red);font:12px monospace}.command-card header>div{min-width:0;flex:1}.command-card h3{margin:0;color:var(--ink);font:600 18px Georgia,serif}.command-card h3 code{font:inherit;overflow-wrap:anywhere}.command-card header small{display:block;margin-top:4px;color:var(--muted);font:9px/1.4 monospace;overflow-wrap:anywhere}.command-card header>a{color:var(--red);font:9px monospace;white-space:nowrap}.command-card>p{padding:0 15px;color:var(--muted);font-size:12px;min-height:52px}.command-card pre{margin:0 12px 12px;max-height:230px;overflow:auto;background:#172e47;color:#ede5d4;padding:11px;font:9px/1.5 monospace}.command-map-link{display:block;padding:11px 15px;border-top:1px solid var(--line);color:var(--red);font:10px monospace}@media(max-width:900px){.command-grid{grid-template-columns:1fr}}`;
+const commandCss = `.command-execution{padding:62px clamp(24px,7vw,120px);border-bottom:1px solid var(--line);max-width:1600px;margin:0 auto;background:rgba(226,216,193,.16)}.command-head{display:flex;justify-content:space-between;gap:16px;align-items:center;color:var(--red);font:10px "SFMono-Regular",monospace;letter-spacing:.08em}.command-head b{color:var(--ink);font:16px Georgia,serif;letter-spacing:0}.command-execution>p{max-width:1120px;color:var(--muted);font-size:14px}.command-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:22px}.command-card{border:1px solid var(--line);background:rgba(246,241,227,.72);box-shadow:var(--shadow);min-width:0}.command-card header{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-bottom:1px solid var(--line)}.command-card header>span{color:var(--red);font:12px monospace}.command-card header>div{min-width:0;flex:1}.command-card h3{margin:0;color:var(--ink);font:600 18px Georgia,serif}.command-card h3 code{font:inherit;overflow-wrap:anywhere}.command-card header small{display:block;margin-top:4px;color:var(--muted);font:9px/1.4 monospace;overflow-wrap:anywhere}.command-card header>a{color:var(--red);font:9px monospace;white-space:nowrap}.command-card>p{padding:0 15px;color:var(--muted);font-size:12px;min-height:52px}.command-mini-flow{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:0 12px 12px;padding:10px;border:1px dashed var(--line);background:rgba(239,232,215,.72);color:var(--ink);font:9px/1.4 monospace}.command-mini-flow span{padding:4px 6px;border:1px solid var(--line);background:rgba(255,252,244,.8)}.command-mini-flow span:first-child{color:var(--red);font-weight:700}.command-mini-flow i{color:var(--red);font-style:normal}.command-card details{margin:0 12px 12px}.command-card summary,.command-options summary{cursor:pointer;color:var(--red);font:10px monospace}.command-card pre{margin:9px 0 0;max-height:260px;overflow:auto;background:#172e47;color:#ede5d4;padding:11px;font:9px/1.5 monospace}.command-map-link{display:block;padding:11px 15px;border-top:1px solid var(--line);color:var(--red);font:10px monospace}.command-options{margin-top:24px;border-top:1px solid var(--line);padding-top:17px}.command-option-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.command-option-grid a{display:flex;flex-direction:column;gap:3px;padding:8px 9px;border:1px solid var(--line);background:rgba(255,252,244,.58);color:var(--ink)}.command-option-grid code{font:11px monospace;color:var(--red)}.command-option-grid small{font:8px/1.3 monospace;color:var(--muted);overflow-wrap:anywhere}@media(max-width:1100px){.command-option-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:900px){.command-grid{grid-template-columns:1fr}.command-option-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:560px){.command-option-grid{grid-template-columns:1fr}}`;
 const lineAnnotCss = `.line-by-line{border-top:1px solid #536a7c}.line-by-line summary{cursor:pointer;padding:9px 13px;color:#c4d1d8;font:9px "SFMono-Regular",monospace}.line-by-line-scroll{max-height:370px;overflow:auto}.line-by-line table{border-collapse:collapse;width:100%;min-width:680px;font:9px/1.45 "SFMono-Regular",monospace}.line-by-line th,.line-by-line td{padding:6px 8px;border-right:1px solid #536a7c;border-bottom:1px solid #536a7c;text-align:left;vertical-align:top}.line-by-line thead th{position:sticky;top:0;background:#0d2238;color:#c4d1d8}.line-by-line tbody td:first-child{width:52px;color:#c4d1d8;text-align:right}.line-by-line tbody th{width:70px}.line-by-line tbody td:nth-child(3){min-width:320px;color:#ede5d4;white-space:pre-wrap}.line-by-line tbody td:nth-child(4){color:#c4d1d8;min-width:210px}.line-kind-input,.line-kind-state,.line-kind-branch,.line-kind-effect,.line-kind-return,.line-kind-flow{display:inline-block;padding:2px 4px;border:1px solid currentColor}.line-kind-input{color:#8fd3c5}.line-kind-state{color:#c2a4f5}.line-kind-branch{color:#f5b45d}.line-kind-effect{color:#ff9580}.line-kind-return{color:#84b8ff}.line-kind-flow{color:#b8c4cc}`;
 
 const js = `const bar=document.getElementById('reading-progress');const update=()=>{const max=document.documentElement.scrollHeight-innerHeight;bar&&(bar.style.width=(max?scrollY/max*100:0)+'%')};addEventListener('scroll',update,{passive:true});addEventListener('load',update);update();document.querySelector('[data-menu]')?.addEventListener('click',()=>document.querySelector('[data-side]')?.classList.toggle('open'));`;

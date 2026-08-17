@@ -56,6 +56,19 @@ for (const project of projects) {
     assert(analysis.includes("implementation-inventory"), `${project.slug}/${lang}: analysis has no source implementation inventory`);
     assert(analysis.includes("concept-audit"), `${project.slug}/${lang}: analysis has no requested-concept audit`);
     assert(analysis.includes("command-execution"), `${project.slug}/${lang}: analysis has no command execution dossier`);
+    const commandMatch = analysis.match(/class="command-execution command-coverage"[^>]*data-confirmed-commands="(\d+)"[^>]*data-source-options="(\d+)"/);
+    assert(commandMatch, `${project.slug}/${lang}: command coverage ledger is missing`);
+    if (commandMatch) {
+      const commandSection = analysis.slice(analysis.indexOf('class="command-execution command-coverage"'));
+      const cardCount = (commandSection.match(/class="command-card"/g) || []).length;
+      const expectedCards = Number(commandMatch[1]) || 1; // zero-confirmation projects render one explicit “not located” card
+      assert(cardCount === expectedCards, `${project.slug}/${lang}: command ledger says ${commandMatch[1]} but rendered ${cardCount} cards`);
+      assert(cardCount >= 1, `${project.slug}/${lang}: command dossier has no cards`);
+      const sourceLabels = [...commandSection.matchAll(/<small>[^<]*·[^<]*·\s*([^:<]+(?:\/[^:<]+)*\.[a-z0-9]+):\d+/gi)].map((match) => match[1]);
+      assert(!sourceLabels.some((sourcePath) => /(?:\/tests?\/|_tests?\.|\.test\.|\/fixtures?\/|\/examples?\/|\.bundle\/|\.(?:mp4|srt))$/i.test(sourcePath)), `${project.slug}/${lang}: command dossier includes test/fixture/media source paths`);
+      assert((commandSection.match(/class="command-mini-flow"/g) || []).length === cardCount, `${project.slug}/${lang}: a command card is missing its mini execution flow`);
+      assert((commandSection.match(/href="https:\/\/github\.com\//g) || []).length >= cardCount, `${project.slug}/${lang}: a command card is missing a pinned GitHub source link`);
+    }
     for (const type of ["architecture", "sequence", "capability", "loop", "commands"]) {
       const diagram = fs.readFileSync(path.join(base, "diagrams", `${type}.html`), "utf8");
       assert(diagram.includes("ARCHIFY-READY") || diagram.includes("archify-guided-views-data"), `${project.slug}/${lang}/${type}: diagram is missing Archify handoff marker`);
